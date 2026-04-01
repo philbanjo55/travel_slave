@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { fetchFullTrip } from '../services/supabase';
 import { getCachedFullTrip, getCachedTrips, cacheFullTrip } from '../services/database';
+import { calculateDriveTimes } from '../services/driveTimes';
 
 interface TripState {
   trips: any[];
@@ -65,6 +66,15 @@ export const useTripStore = create<TripState>((set, get) => ({
         currentTrip: fresh.trip,
         isSyncing: false,
       });
+
+      // Auto-calculate drive times if any stops are missing them
+      const allStops = fresh.days.flatMap((d: any) => d.stops || []);
+      const missingDriveTimes = allStops.some(
+        (s: any, i: number) => i > 0 && s.lat && s.lng && s.drive_override_minutes == null
+      );
+      if (missingDriveTimes) {
+        calculateDriveTimes(tripId).then(() => get().syncTrip(tripId)).catch(() => {});
+      }
     } catch {
       set({ isOffline: true, isSyncing: false });
     }
