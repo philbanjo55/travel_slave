@@ -7,34 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
-import { getLocalPhotoUri, isPhotoCached } from '../services/photoCache';
 import { useTripStore } from '../store/tripStore';
 import { getCachedPhotoUri } from '../services/photoCache';
 import { colors, typography, spacing, radius } from '../theme';
 
 const { width } = Dimensions.get('window');
 
-
-function CachedPhoto({ photo }: { photo: any }) {
-  const [uri, setUri] = React.useState<string>(photo.storage_url || photo.base64_data || photo.url || '');
-
-  React.useEffect(() => {
-    if (photo.id) {
-      isPhotoCached(photo.id).then(cached => {
-        if (cached) setUri(getLocalPhotoUri(photo.id));
-      }).catch(() => {});
-    }
-  }, [photo.id]);
-
-  if (!uri) return null;
-  return (
-    <Image
-      source={{ uri }}
-      style={styles.photo}
-      resizeMode="cover"
-    />
-  );
-}
 
 export default function StopDetailScreen() {
   const navigation = useNavigation<any>();
