@@ -44,7 +44,13 @@
           "locationAlwaysAndWhenInUsePermission": "Allow Philm+Frame to use your location for navigation."
         }
       ],
-      "expo-updates"
+      "expo-updates",
+      [
+        "react-native-maps",
+        {
+          "googleMapsApiKey": "AIzaSyBOA5Zf4L5Px9TVVG_MBzBnGy7lACMokPY"
+        }
+      ]
     ],
     "extra": {
       "eas": {
