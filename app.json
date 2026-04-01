@@ -24,11 +24,7 @@
         "WRITE_EXTERNAL_STORAGE",
         "CAMERA"
       ],
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyBOA5Zf4L5Px9TVVG_MBzBnGy7lACMokPY"
-        }
-      }
+      "config": {}
     },
     "plugins": [
       "expo-font",
