@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
-import { getPhotoUri, downloadPhoto } from '../services/photoCache';
+import { getPhotoUri } from '../services/photoCache';
 import { useTripStore } from '../store/tripStore';
 import { colors, typography, spacing, radius } from '../theme';
 
@@ -21,24 +21,11 @@ function PhotoItem({ photo }: { photo: any }) {
 
   React.useEffect(() => {
     let cancelled = false;
-    async function load() {
-      // Always check local first
-      const resolved = await getPhotoUri(photo);
-      if (cancelled) return;
-
-      if (resolved.startsWith('file://') || resolved.startsWith('/')) {
-        // Found locally — use it
+    getPhotoUri(photo).then(resolved => {
+      if (!cancelled && (resolved.startsWith('file://') || resolved.startsWith('/'))) {
         setUri(resolved);
-      } else if (resolved) {
-        // Not local yet — show URL immediately, download in background
-        setUri(resolved);
-        try {
-          const local = await downloadPhoto(photo.id, photo.storage_url);
-          if (!cancelled) setUri(local);
-        } catch {}
       }
-    }
-    load();
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, [photo.id]);
 
