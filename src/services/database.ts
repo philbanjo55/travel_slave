@@ -10,9 +10,21 @@ export async function initDatabase(): Promise<void> {
 
 export async function cacheFullTrip(tripId: string, tripData: any): Promise<void> {
   try {
+    // Strip photos before caching — base64 photos are too large for AsyncStorage
+    const stripped = {
+      ...tripData,
+      days: tripData.days.map((day: any) => ({
+        ...day,
+        stops: (day.stops || []).map((stop: any) => ({
+          ...stop,
+          stop_photos: [], // Photos load from Supabase when online
+        })),
+      })),
+      cachedAt: Date.now(),
+    };
     await AsyncStorage.setItem(
       `${TRIP_PREFIX}${tripId}`,
-      JSON.stringify({ ...tripData, cachedAt: Date.now() })
+      JSON.stringify(stripped)
     );
 
     // Also update the trips list
