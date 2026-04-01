@@ -19,27 +19,40 @@ function PhotoItem({ photo }: { photo: any }) {
   const [uri, setUri] = React.useState<string>(photo.storage_url || photo.base64_data || '');
 
   React.useEffect(() => {
-    if (!photo.id || !photo.storage_url) return;
-    // Check local cache first, download if missing
+    if (!photo.id) return;
     getPhotoUri(photo).then(async (resolvedUri) => {
-      if (resolvedUri.startsWith('file://')) {
-        // Already cached locally
+      if (resolvedUri.startsWith('file://') || resolvedUri.startsWith('/')) {
         setUri(resolvedUri);
       } else {
-        // Not cached — download now and use local path
+        // Try downloading to local storage
         try {
           const localPath = await downloadPhoto(photo.id, photo.storage_url);
           setUri(localPath);
         } catch {
-          // Download failed — use URL (works online only)
-          setUri(photo.storage_url);
+          setUri(photo.storage_url || photo.base64_data || '');
         }
       }
-    }).catch(() => {});
-  }, [photo.id]);
+    }).catch(() => {
+      setUri(photo.storage_url || photo.base64_data || '');
+    });
+  }, [photo.id, photo.storage_url]);
 
   if (!uri) return null;
-  return <Image source={{ uri }} style={styles.photo} resizeMode="cover" />;
+  return (
+    <Image
+      source={{ uri }}
+      style={styles.photo}
+      resizeMode="cover"
+      onError={() => {
+        // If URL fails (offline), try local cache
+        if (!uri.startsWith('file://')) {
+          getPhotoUri(photo).then(local => {
+            if (local.startsWith('file://')) setUri(local);
+          }).catch(() => {});
+        }
+      }}
+    />
+  );
 }
 
 export default function StopDetailScreen() {
