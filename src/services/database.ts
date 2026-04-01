@@ -2,26 +2,41 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const TRIPS_KEY = 'pf_trips';
 const TRIP_PREFIX = 'pf_trip_';
+const PHOTOS_PREFIX = 'pf_photos_';
 
 export async function initDatabase(): Promise<void> {
-  // AsyncStorage is ready immediately, nothing to init
   return;
 }
 
 export async function cacheFullTrip(tripId: string, tripData: any): Promise<void> {
   try {
+    // Cache photos separately
+    const photoMap: Record<string, any[]> = {};
+    const strippedDays = tripData.days.map((day: any) => ({
+      ...day,
+      stops: (day.stops || []).map((stop: any) => {
+        if (stop.stop_photos?.length) {
+          photoMap[stop.id] = stop.stop_photos;
+        }
+        return { ...stop, stop_photos: [] };
+      }),
+    }));
+
+    // Cache main trip data (no photos — stays well under 6MB)
     await AsyncStorage.setItem(
       `${TRIP_PREFIX}${tripId}`,
-      JSON.stringify({ ...tripData, cachedAt: Date.now() })
+      JSON.stringify({ ...tripData, days: strippedDays, cachedAt: Date.now() })
     );
 
-    // Also update the trips list
-    const existing = await getCachedTrips();
-    const others = existing.filter((t: any) => t.id !== tripData.trip.id);
-    await AsyncStorage.setItem(
-      TRIPS_KEY,
-      JSON.stringify([...others, tripData.trip])
-    );
+    // Cache photos separately — OK if this fails
+    try {
+      await AsyncStorage.setItem(
+        `${PHOTOS_PREFIX}${tripId}`,
+        JSON.stringify(photoMap)
+      );
+    } catch {
+      // Photos too large — skip, they'll load from network
+    }
   } catch (e) {
     console.warn('Cache write failed:', e);
   }
@@ -39,7 +54,27 @@ export async function getCachedTrips(): Promise<any[]> {
 export async function getCachedFullTrip(tripId: string): Promise<any | null> {
   try {
     const raw = await AsyncStorage.getItem(`${TRIP_PREFIX}${tripId}`);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const tripData = JSON.parse(raw);
+
+    // Try to reattach cached photos
+    try {
+      const photosRaw = await AsyncStorage.getItem(`${PHOTOS_PREFIX}${tripId}`);
+      if (photosRaw) {
+        const photoMap = JSON.parse(photosRaw);
+        tripData.days = tripData.days.map((day: any) => ({
+          ...day,
+          stops: (day.stops || []).map((stop: any) => ({
+            ...stop,
+            stop_photos: photoMap[stop.id] || [],
+          })),
+        }));
+      }
+    } catch {
+      // Photos not cached — fine, load from network
+    }
+
+    return tripData;
   } catch {
     return null;
   }
@@ -49,8 +84,7 @@ export async function getLastSynced(tripId: string): Promise<number | null> {
   try {
     const raw = await AsyncStorage.getItem(`${TRIP_PREFIX}${tripId}`);
     if (!raw) return null;
-    const data = JSON.parse(raw);
-    return data.cachedAt || null;
+    return JSON.parse(raw).cachedAt || null;
   } catch {
     return null;
   }
