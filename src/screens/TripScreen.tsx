@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  FlatList, ActivityIndicator,
+  FlatList, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
+import { calculateDriveTimes } from '../services/supabase';
 import { colors, typography, spacing, radius } from '../theme';
 import { format } from 'date-fns';
 
@@ -17,6 +18,7 @@ export default function TripScreen() {
   const { currentTripData, loadTrip, isSyncing, setCurrentDay } = useTripStore();
   const tabScrollRef = useRef<ScrollView>(null);
   const [activeDay, setActiveDay] = useState(0);
+  const [recalculating, setRecalculating] = useState(false);
 
   useEffect(() => { loadTrip(tripId); }, [tripId]);
 
@@ -25,6 +27,31 @@ export default function TripScreen() {
     setCurrentDay(index);
     tabScrollRef.current?.scrollTo({ x: Math.max(0, index * 72 - 100), animated: true });
   }, []);
+
+  const recalcDriveTimes = useCallback(async () => {
+    Alert.alert(
+      'Recalculate Drive Times',
+      'This will update all drive times using real Google Maps data. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Recalculate',
+          onPress: async () => {
+            setRecalculating(true);
+            try {
+              const result = await calculateDriveTimes(tripId);
+              Alert.alert('Done', `Updated ${result.updated} drive times.`);
+              loadTrip(tripId); // Refresh data
+            } catch (e) {
+              Alert.alert('Error', 'Failed to recalculate drive times.');
+            } finally {
+              setRecalculating(false);
+            }
+          }
+        }
+      ]
+    );
+  }, [tripId]);
 
   if (!currentTripData) {
     return (
@@ -52,6 +79,9 @@ export default function TripScreen() {
           </Text>
         </View>
         {isSyncing && <ActivityIndicator color={colors.accentDim} size="small" />}
+        <TouchableOpacity onPress={recalcDriveTimes} disabled={recalculating}>
+          <Ionicons name="time-outline" size={20} color={recalculating ? colors.textTertiary : colors.textSecondary} />
+        </TouchableOpacity>
       </View>
 
       <View style={styles.tabBarWrapper}>
