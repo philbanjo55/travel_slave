@@ -8,12 +8,23 @@ import { useNavigation } from '@react-navigation/native';
 import { useTripStore } from '../store/tripStore';
 import { colors, typography, spacing, radius } from '../theme';
 import { format, differenceInDays } from 'date-fns';
+import * as Updates from 'expo-updates';
 import { migratePhotosToStorage } from '../services/migratePhotos';
 
 export default function TripsScreen() {
   const navigation = useNavigation<any>();
   const { trips, loadTrips, isOffline } = useTripStore();
   const [migrating, setMigrating] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const updateDate = Updates.createdAt;
+      if (updateDate) {
+        setLastUpdate(format(new Date(updateDate), 'MMM d h:mm a'));
+      }
+    } catch {}
+  }, []);
 
   useEffect(() => { loadTrips(); }, []);
 
@@ -82,6 +93,9 @@ export default function TripsScreen() {
       </View>
 
       <Text style={styles.sectionLabel}>TRIPS</Text>
+      {lastUpdate && (
+        <Text style={styles.lastUpdate}>SYNCED {lastUpdate}</Text>
+      )}
 
       {trips.length === 0 ? (
         <View style={styles.loading}>
@@ -127,4 +141,5 @@ const styles = StyleSheet.create({
   tripSub: { ...typography.bodyMedium, marginBottom: 4 },
   tripMeta: { ...typography.labelMedium, color: colors.textTertiary },
   tripDivider: { height: 1, backgroundColor: colors.border },
+  lastUpdate: { ...typography.labelMedium, color: colors.textTertiary, paddingHorizontal: spacing.xl, marginTop: -spacing.sm, paddingBottom: spacing.md },
 });
