@@ -10,13 +10,18 @@ export async function initDatabase(): Promise<void> {
 
 export async function cacheFullTrip(tripId: string, tripData: any): Promise<void> {
   try {
-    // Cache photos separately
+    // Cache photos separately — metadata only, no base64
     const photoMap: Record<string, any[]> = {};
     const strippedDays = tripData.days.map((day: any) => ({
       ...day,
       stops: (day.stops || []).map((stop: any) => {
         if (stop.stop_photos?.length) {
-          photoMap[stop.id] = stop.stop_photos;
+          photoMap[stop.id] = stop.stop_photos.map((p: any) => ({
+            id: p.id,
+            stop_id: p.stop_id,
+            storage_url: p.storage_url,
+            position: p.position,
+          }));
         }
         return { ...stop, stop_photos: [] };
       }),
@@ -28,15 +33,11 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<void
       JSON.stringify({ ...tripData, days: strippedDays, cachedAt: Date.now() })
     );
 
-    // Cache photos separately — OK if this fails
-    try {
-      await AsyncStorage.setItem(
-        `${PHOTOS_PREFIX}${tripId}`,
-        JSON.stringify(photoMap)
-      );
-    } catch {
-      // Photos too large — skip, they'll load from network
-    }
+    // Cache photo metadata separately (tiny without base64)
+    await AsyncStorage.setItem(
+      `${PHOTOS_PREFIX}${tripId}`,
+      JSON.stringify(photoMap)
+    );
   } catch (e) {
     console.warn('Cache write failed:', e);
   }

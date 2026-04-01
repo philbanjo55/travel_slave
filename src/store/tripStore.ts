@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { fetchFullTrip } from '../services/supabase';
 import { getCachedFullTrip, getCachedTrips, cacheFullTrip } from '../services/database';
 import { calculateDriveTimes } from '../services/driveTimes';
-import { prefetchPhotos } from '../services/photoCache';
 import { downloadAllPhotos } from '../services/photoCache';
 
 interface TripState {

@@ -22,7 +22,7 @@ function PhotoItem({ photo }: { photo: any }) {
   React.useEffect(() => {
     let cancelled = false;
     getPhotoUri(photo).then(resolved => {
-      if (!cancelled && (resolved.startsWith('file://') || resolved.startsWith('/'))) {
+      if (!cancelled && resolved) {
         setUri(resolved);
       }
     }).catch(() => {});
@@ -49,24 +49,7 @@ export default function StopDetailScreen() {
 
   if (!stop) return null;
 
-  const [localPhotoUris, setLocalPhotoUris] = React.useState<Record<string, string>>({});
   const photos = stop.stop_photos || [];
-
-  React.useEffect(() => {
-    photos.forEach(async (photo: any) => {
-      if (photo.storage_url && photo.id) {
-        try {
-          const uri = await getCachedPhotoUri(photo.id, photo.storage_url);
-          setLocalPhotoUris(prev => ({ ...prev, [photo.id]: uri }));
-        } catch {}
-      }
-    });
-  }, [stop.id]);
-
-  const photosWithLocal = photos.map((p: any) => ({
-    ...p,
-    _localUri: localPhotoUris[p.id],
-  }));
 
   // Navigate from PREVIOUS stop to THIS stop (chained directions)
   const openNavigation = () => {
@@ -150,13 +133,13 @@ export default function StopDetailScreen() {
                 setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
               }}
             >
-              {photosWithLocal.map((photo: any) => (
+              {photos.map((photo: any) => (
                 <PhotoItem key={photo.id} photo={photo} />
               ))}
             </ScrollView>
-            {photosWithLocal.length > 1 && (
+            {photos.length > 1 && (
               <View style={styles.photoDots}>
-                {photosWithLocal.map((_: any, i: number) => (
+                {photos.map((_: any, i: number) => (
                   <View key={i} style={[styles.dot, i === photoIndex && styles.dotActive]} />
                 ))}
               </View>
