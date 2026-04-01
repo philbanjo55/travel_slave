@@ -47,7 +47,7 @@ export default function TripsScreen() {
       <StatusBar barStyle="light-content" backgroundColor="#000" />
 
       <View style={styles.header}>
-        <Text style={styles.brand}>PHILM+FRAME ✓</Text>
+        <Text style={styles.brand}>PHILM+FRAME</Text>
         {isOffline && <Text style={styles.offline}>OFFLINE</Text>}
       </View>
 
