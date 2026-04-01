@@ -115,7 +115,7 @@ export default function StopDetailScreen() {
               {photos.map((photo: any) => (
                 <Image
                   key={photo.id}
-                  source={{ uri: photo.base64_data || photo.url }}
+                  source={{ uri: photo.storage_url || photo.base64_data || photo.url }}
                   style={styles.photo}
                   resizeMode="cover"
                 />
