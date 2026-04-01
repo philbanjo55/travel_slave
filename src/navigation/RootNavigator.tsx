@@ -36,6 +36,7 @@ export default function RootNavigator() {
           headerShown: false,
           cardStyle: { backgroundColor: colors.background },
           gestureEnabled: true,
+          gestureResponseDistance: 25,
           cardStyleInterpolator: ({ current, layouts }) => ({
             cardStyle: {
               transform: [{

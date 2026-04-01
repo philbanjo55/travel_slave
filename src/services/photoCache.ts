@@ -36,18 +36,10 @@ export async function getPhotoUri(photo: any): Promise<string> {
   try {
     const path = localPath(photo.id);
     const info = await FileSystem.getInfoAsync(path);
-    await log('debug', 'getPhotoUri check', { 
-      photoId: photo.id, 
-      path, 
-      exists: info.exists,
-      info: JSON.stringify(info)
-    });
     if (info.exists) {
       return path;
     }
-  } catch (e) {
-    await log('error', 'getPhotoUri error', { photoId: photo.id, error: String(e) });
-  }
+  } catch {}
   return photo.storage_url || photo.base64_data || '';
 }
 
