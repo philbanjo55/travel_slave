@@ -84,7 +84,7 @@ export default function StopDetailScreen() {
         ) : null}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder>
         {/* Stop name */}
         <View style={styles.nameSection}>
           <Text style={styles.stopEmoji}>{stop.emoji || '📷'}</Text>
