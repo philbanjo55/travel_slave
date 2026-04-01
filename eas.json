@@ -18,9 +18,6 @@
       "android": { "buildType": "app-bundle" }
     }
   },
-  "update": {
-    "channel": "preview"
-  },
   "submit": {
     "production": {}
   }
