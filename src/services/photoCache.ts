@@ -36,7 +36,7 @@ export async function getPhotoUri(photo: any): Promise<string> {
   try {
     const path = localPath(photo.id);
     const info = await FileSystem.getInfoAsync(path);
-    if (info.exists && (info as any).size > 0) {
+    if (info.exists) {
       return path;
     }
   } catch {}
@@ -48,7 +48,7 @@ export async function downloadPhoto(photoId: string, url: string): Promise<strin
   await ensureDir();
   const path = localPath(photoId);
   const info = await FileSystem.getInfoAsync(path);
-  if (info.exists && (info as any).size > 0) return path;
+  if (info.exists) return path;
   const result = await FileSystem.downloadAsync(url, path);
   if (result.status !== 200) throw new Error(`Download failed: ${result.status}`);
   return path;
