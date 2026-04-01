@@ -14,6 +14,16 @@ import { colors, typography, spacing, radius } from '../theme';
 const { width } = Dimensions.get('window');
 
 
+
+function PhotoItem({ photo }: { photo: any }) {
+  const [uri, setUri] = React.useState(photo.storage_url || photo.base64_data || '');
+  React.useEffect(() => {
+    resolvePhotoUri(photo).then(setUri).catch(() => {});
+  }, [photo.id]);
+  if (!uri) return null;
+  return <Image source={{ uri }} style={styles.photo} resizeMode="cover" />;
+}
+
 export default function StopDetailScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();

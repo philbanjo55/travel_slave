@@ -1,33 +1,45 @@
 import * as FileSystem from 'expo-file-system';
 
-const PHOTO_DIR = `${FileSystem.documentDirectory}photos/`;
+const PHOTO_DIR = `${FileSystem.documentDirectory}pf_photos/`;
 
-async function ensureDir() {
+export async function ensurePhotoDir() {
   const info = await FileSystem.getInfoAsync(PHOTO_DIR);
   if (!info.exists) {
     await FileSystem.makeDirectoryAsync(PHOTO_DIR, { intermediates: true });
   }
 }
 
-export async function getCachedPhotoUri(photoId: string, storageUrl: string): Promise<string> {
-  await ensureDir();
-  const localPath = `${PHOTO_DIR}${photoId}.jpg`;
-  const info = await FileSystem.getInfoAsync(localPath);
-  if (info.exists) return localPath;
-  
-  // Download and cache
-  await FileSystem.downloadAsync(storageUrl, localPath);
-  return localPath;
+export function getLocalPhotoPath(photoId: string): string {
+  return `${PHOTO_DIR}${photoId}.jpg`;
 }
 
-export async function prefetchPhotos(photos: { id: string; storage_url: string }[]): Promise<void> {
-  await ensureDir();
-  for (const photo of photos) {
-    if (!photo.storage_url) continue;
-    const localPath = `${PHOTO_DIR}${photo.id}.jpg`;
-    const info = await FileSystem.getInfoAsync(localPath);
-    if (!info.exists) {
-      await FileSystem.downloadAsync(photo.storage_url, localPath).catch(() => {});
+export async function downloadAllPhotos(tripData: any): Promise<void> {
+  try {
+    await ensurePhotoDir();
+    const photos = tripData.days
+      .flatMap((d: any) => d.stops || [])
+      .flatMap((s: any) => s.stop_photos || [])
+      .filter((p: any) => p.storage_url && p.id);
+
+    for (const photo of photos) {
+      const localPath = getLocalPhotoPath(photo.id);
+      const info = await FileSystem.getInfoAsync(localPath);
+      if (!info.exists) {
+        await FileSystem.downloadAsync(photo.storage_url, localPath);
+      }
     }
+  } catch (e) {
+    console.warn('Photo download error:', e);
   }
+}
+
+// Returns local URI if cached, otherwise storage URL
+export async function resolvePhotoUri(photo: any): Promise<string> {
+  if (!photo?.id) return photo?.storage_url || photo?.base64_data || '';
+  try {
+    const localPath = getLocalPhotoPath(photo.id);
+    const info = await FileSystem.getInfoAsync(localPath);
+    if (info.exists) return localPath;
+  } catch {}
+  return photo.storage_url || photo.base64_data || '';
 }

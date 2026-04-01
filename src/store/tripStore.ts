@@ -3,7 +3,7 @@ import { fetchFullTrip } from '../services/supabase';
 import { getCachedFullTrip, getCachedTrips, cacheFullTrip } from '../services/database';
 import { calculateDriveTimes } from '../services/driveTimes';
 import { prefetchPhotos } from '../services/photoCache';
-import { cachePhotos } from '../services/photoCache';
+import { downloadAllPhotos } from '../services/photoCache';
 
 interface TripState {
   trips: any[];
@@ -81,7 +81,7 @@ export const useTripStore = create<TripState>((set, get) => ({
       });
 
       // Download photos to device filesystem for offline use
-      cachePhotos(fresh).catch(() => {});
+      downloadAllPhotos(fresh).catch(() => {});
     } catch {
       set({ isOffline: true, isSyncing: false });
     }
