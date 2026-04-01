@@ -37,3 +37,13 @@ export async function getPhotoUri(photo: any): Promise<string> {
   } catch {}
   return photo.storage_url || photo.base64_data || '';
 }
+
+export async function downloadPhoto(photoId: string, url: string): Promise<string> {
+  await ensureDir();
+  const localPath = `${PHOTO_DIR}${photoId}.jpg`;
+  const info = await FileSystem.getInfoAsync(localPath);
+  if (info.exists) return localPath;
+  const result = await FileSystem.downloadAsync(url, localPath);
+  if (result.status !== 200) throw new Error('Download failed');
+  return localPath;
+}

@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
-import { getPhotoUri } from '../services/photoCache';
+import { getPhotoUri, downloadPhoto } from '../services/photoCache';
 import { useTripStore } from '../store/tripStore';
 import { colors, typography, spacing, radius } from '../theme';
 
@@ -16,12 +16,28 @@ const { width } = Dimensions.get('window');
 
 
 function PhotoItem({ photo }: { photo: any }) {
-  const [uri, setUri] = React.useState<string>('');
+  const [uri, setUri] = React.useState<string>(photo.storage_url || photo.base64_data || '');
+
   React.useEffect(() => {
-    getPhotoUri(photo).then(setUri).catch(() => {
-      setUri(photo.storage_url || photo.base64_data || '');
-    });
+    if (!photo.id || !photo.storage_url) return;
+    // Check local cache first, download if missing
+    getPhotoUri(photo).then(async (resolvedUri) => {
+      if (resolvedUri.startsWith('file://')) {
+        // Already cached locally
+        setUri(resolvedUri);
+      } else {
+        // Not cached — download now and use local path
+        try {
+          const localPath = await downloadPhoto(photo.id, photo.storage_url);
+          setUri(localPath);
+        } catch {
+          // Download failed — use URL (works online only)
+          setUri(photo.storage_url);
+        }
+      }
+    }).catch(() => {});
   }, [photo.id]);
+
   if (!uri) return null;
   return <Image source={{ uri }} style={styles.photo} resizeMode="cover" />;
 }
