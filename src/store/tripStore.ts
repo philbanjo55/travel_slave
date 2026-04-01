@@ -56,9 +56,20 @@ export const useTripStore = create<TripState>((set, get) => ({
       });
     }
 
-    // Try network sync in background
+    // Network sync
     try {
       set({ isSyncing: true });
+
+      // Check and calculate missing drive times FIRST before caching
+      const allStops = (await fetchFullTrip(tripId)).days.flatMap((d: any) => d.stops || []);
+      const missingDriveTimes = allStops.some(
+        (s: any, i: number) => i > 0 && s.lat && s.lng && s.drive_override_minutes == null
+      );
+      if (missingDriveTimes) {
+        await calculateDriveTimes(tripId).catch((e) => console.error("Drive times failed:", e));
+      }
+
+      // NOW fetch fresh data (with drive times) and cache
       const fresh = await fetchFullTrip(tripId);
       await cacheFullTrip(tripId, fresh);
       set({
@@ -66,20 +77,6 @@ export const useTripStore = create<TripState>((set, get) => ({
         currentTrip: fresh.trip,
         isSyncing: false,
       });
-
-      // Auto-calculate drive times if any stops are missing them
-      const allStops = fresh.days.flatMap((d: any) => d.stops || []);
-      const missingDriveTimes = allStops.some(
-        (s: any, i: number) => i > 0 && s.lat && s.lng && s.drive_override_minutes == null
-      );
-      if (missingDriveTimes) {
-        calculateDriveTimes(tripId).then(async () => {
-        // Re-fetch and re-cache with drive times included
-        const updated = await fetchFullTrip(tripId);
-        await cacheFullTrip(tripId, updated);
-        set({ currentTripData: updated });
-      }).catch((e) => console.error("Drive times failed:", e));
-      }
     } catch {
       set({ isOffline: true, isSyncing: false });
     }
