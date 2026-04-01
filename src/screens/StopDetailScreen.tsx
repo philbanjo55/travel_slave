@@ -15,44 +15,35 @@ const { width } = Dimensions.get('window');
 
 
 
+
 function PhotoItem({ photo }: { photo: any }) {
-  const [uri, setUri] = React.useState<string>(photo.storage_url || photo.base64_data || '');
+  const [uri, setUri] = React.useState<string>('');
 
   React.useEffect(() => {
-    if (!photo.id) return;
-    getPhotoUri(photo).then(async (resolvedUri) => {
-      if (resolvedUri.startsWith('file://') || resolvedUri.startsWith('/')) {
-        setUri(resolvedUri);
-      } else {
-        // Try downloading to local storage
+    let cancelled = false;
+    async function load() {
+      // Always check local first
+      const resolved = await getPhotoUri(photo);
+      if (cancelled) return;
+
+      if (resolved.startsWith('file://') || resolved.startsWith('/')) {
+        // Found locally — use it
+        setUri(resolved);
+      } else if (resolved) {
+        // Not local yet — show URL immediately, download in background
+        setUri(resolved);
         try {
-          const localPath = await downloadPhoto(photo.id, photo.storage_url);
-          setUri(localPath);
-        } catch {
-          setUri(photo.storage_url || photo.base64_data || '');
-        }
+          const local = await downloadPhoto(photo.id, photo.storage_url);
+          if (!cancelled) setUri(local);
+        } catch {}
       }
-    }).catch(() => {
-      setUri(photo.storage_url || photo.base64_data || '');
-    });
-  }, [photo.id, photo.storage_url]);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [photo.id]);
 
   if (!uri) return null;
-  return (
-    <Image
-      source={{ uri }}
-      style={styles.photo}
-      resizeMode="cover"
-      onError={() => {
-        // If URL fails (offline), try local cache
-        if (!uri.startsWith('file://')) {
-          getPhotoUri(photo).then(local => {
-            if (local.startsWith('file://')) setUri(local);
-          }).catch(() => {});
-        }
-      }}
-    />
-  );
+  return <Image source={{ uri }} style={styles.photo} resizeMode="cover" />;
 }
 
 export default function StopDetailScreen() {

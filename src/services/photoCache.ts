@@ -1,6 +1,23 @@
 import * as FileSystem from 'expo-file-system';
 
 const PHOTO_DIR = `${FileSystem.documentDirectory}pf_photos/`;
+const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2';
+
+async function log(level: string, message: string, data?: any) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/app_logs`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify({ level, message, data }),
+    });
+  } catch {}
+}
 
 async function ensureDir() {
   const info = await FileSystem.getInfoAsync(PHOTO_DIR);
@@ -9,58 +26,74 @@ async function ensureDir() {
   }
 }
 
-export async function downloadAllPhotos(tripData: any): Promise<number> {
+function localPath(photoId: string): string {
+  return `${PHOTO_DIR}${photoId}.jpg`;
+}
+
+// Get local file URI if cached, otherwise return storage URL
+export async function getPhotoUri(photo: any): Promise<string> {
+  if (!photo?.id) return photo?.storage_url || photo?.base64_data || '';
+  try {
+    const path = localPath(photo.id);
+    const info = await FileSystem.getInfoAsync(path);
+    if (info.exists && (info as any).size > 0) {
+      return path;
+    }
+  } catch {}
+  return photo.storage_url || photo.base64_data || '';
+}
+
+// Download a single photo to local storage
+export async function downloadPhoto(photoId: string, url: string): Promise<string> {
+  await ensureDir();
+  const path = localPath(photoId);
+  const info = await FileSystem.getInfoAsync(path);
+  if (info.exists && (info as any).size > 0) return path;
+  const result = await FileSystem.downloadAsync(url, path);
+  if (result.status !== 200) throw new Error(`Download failed: ${result.status}`);
+  return path;
+}
+
+// Download ALL photos for a trip — call once after sync
+export async function downloadAllPhotos(tripData: any): Promise<void> {
   try {
     await ensureDir();
     const photos = tripData.days
       .flatMap((d: any) => d.stops || [])
       .flatMap((s: any) => s.stop_photos || [])
       .filter((p: any) => p.storage_url && p.id);
-    
-    console.log(`Starting photo download: ${photos.length} photos found`);
-    if (photos.length > 0) {
-      console.log('Sample photo:', JSON.stringify(photos[0]).slice(0, 200));
-    }
-    
+
     let downloaded = 0;
     let alreadyCached = 0;
+    let failed = 0;
+
     for (const photo of photos) {
-      const localPath = `${PHOTO_DIR}${photo.id}.jpg`;
-      const info = await FileSystem.getInfoAsync(localPath);
-      if (!info.exists) {
-        const result = await FileSystem.downloadAsync(photo.storage_url, localPath).catch((e) => {
-          console.warn('Download failed for', photo.id, e);
-          return null;
-        });
-        if (result?.status === 200) downloaded++;
-      } else {
+      const path = localPath(photo.id);
+      const info = await FileSystem.getInfoAsync(path);
+      if (info.exists && (info as any).size > 0) {
         alreadyCached++;
+        continue;
+      }
+      try {
+        const result = await FileSystem.downloadAsync(photo.storage_url, path);
+        if (result.status === 200) {
+          downloaded++;
+        } else {
+          failed++;
+        }
+      } catch (e) {
+        failed++;
       }
     }
-    console.log(`Photos: ${downloaded} downloaded, ${alreadyCached} already cached, ${photos.length} total`);
-    return downloaded;
+
+    await log('info', 'Photo cache complete', {
+      total: photos.length,
+      downloaded,
+      alreadyCached,
+      failed,
+      dir: PHOTO_DIR,
+    });
   } catch (e) {
-    console.warn('Photo download error:', e);
-    return 0;
+    await log('error', 'downloadAllPhotos failed', { error: String(e) });
   }
-}
-
-export async function getPhotoUri(photo: any): Promise<string> {
-  if (!photo?.id) return photo?.storage_url || photo?.base64_data || '';
-  try {
-    const localPath = `${PHOTO_DIR}${photo.id}.jpg`;
-    const info = await FileSystem.getInfoAsync(localPath);
-    if (info.exists) return localPath;
-  } catch {}
-  return photo.storage_url || photo.base64_data || '';
-}
-
-export async function downloadPhoto(photoId: string, url: string): Promise<string> {
-  await ensureDir();
-  const localPath = `${PHOTO_DIR}${photoId}.jpg`;
-  const info = await FileSystem.getInfoAsync(localPath);
-  if (info.exists) return localPath;
-  const result = await FileSystem.downloadAsync(url, localPath);
-  if (result.status !== 200) throw new Error('Download failed');
-  return localPath;
 }
