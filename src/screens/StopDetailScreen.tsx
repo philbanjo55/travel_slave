@@ -101,14 +101,13 @@ export default function StopDetailScreen() {
 
         {/* Photos */}
         {photos.length > 0 && (
-          <View style={styles.photoSection}>
+          <View style={[styles.photoSection, { overflow: "hidden" }]}>
             <ScrollView
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
-              directionalLockEnabled
-              nestedScrollEnabled
-              disableIntervalMomentum
+              bounces={false}
+              overScrollMode="never"
               onMomentumScrollEnd={(e) => {
                 setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
               }}

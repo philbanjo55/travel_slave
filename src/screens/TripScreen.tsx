@@ -89,9 +89,8 @@ export default function TripScreen() {
           ref={tabScrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
-          directionalLockEnabled
-          nestedScrollEnabled={false}
           bounces={false}
+          overScrollMode="never"
           contentContainerStyle={styles.tabBarContent}
         >
           {days.map((d: any, index: number) => {
