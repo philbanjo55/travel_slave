@@ -17,7 +17,6 @@ const { width } = Dimensions.get('window');
 
 function CachedPhoto({ photo }: { photo: any }) {
   const [uri, setUri] = React.useState<string>(photo.storage_url || photo.base64_data || photo.url || '');
-  const { width } = require('react-native').Dimensions.get('window');
 
   React.useEffect(() => {
     if (photo.id) {
@@ -31,7 +30,7 @@ function CachedPhoto({ photo }: { photo: any }) {
   return (
     <Image
       source={{ uri }}
-      style={{ width, height: 260 }}
+      style={styles.photo}
       resizeMode="cover"
     />
   );
