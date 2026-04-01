@@ -9,7 +9,7 @@ async function ensureDir() {
   }
 }
 
-export async function downloadAllPhotos(tripData: any): Promise<void> {
+export async function downloadAllPhotos(tripData: any): Promise<number> {
   try {
     await ensureDir();
     const photos = tripData.days
@@ -27,8 +27,10 @@ export async function downloadAllPhotos(tripData: any): Promise<void> {
       }
     }
     console.log(`Photos cached: ${downloaded} new, ${photos.length} total`);
+    return downloaded;
   } catch (e) {
     console.warn('Photo download error:', e);
+    return 0;
   }
 }
 

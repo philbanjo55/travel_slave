@@ -81,9 +81,16 @@ export const useTripStore = create<TripState>((set, get) => ({
       });
 
       // Download all photos to device filesystem for offline use
-      // Run in background but start immediately
       setTimeout(() => {
-        downloadAllPhotos(fresh).catch(() => {});
+        downloadAllPhotos(fresh)
+          .then((count) => {
+            if (count > 0) {
+              // Notify user photos are ready offline
+              const { Alert } = require('react-native');
+              Alert.alert('📷 Photos Ready', `${count} photos cached for offline use.`);
+            }
+          })
+          .catch(() => {});
       }, 500);
     } catch {
       set({ isOffline: true, isSyncing: false });
