@@ -36,7 +36,6 @@ export default function RootNavigator() {
           headerShown: false,
           cardStyle: { backgroundColor: colors.background },
           gestureEnabled: true,
-          gestureResponseDistance: 25,
           cardStyleInterpolator: ({ current, layouts }) => ({
             cardStyle: {
               transform: [{
@@ -50,9 +49,9 @@ export default function RootNavigator() {
         }}
       >
         <Stack.Screen name="Trips" component={TripsScreen} />
-        <Stack.Screen name="Trip" component={TripScreen} />
+        <Stack.Screen name="Trip" component={TripScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Day" component={DayScreen} />
-        <Stack.Screen name="StopDetail" component={StopDetailScreen} />
+        <Stack.Screen name="StopDetail" component={StopDetailScreen} options={{ gestureEnabled: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
