@@ -142,7 +142,7 @@ export default function StopDetailScreen() {
               }}
             >
               {photosWithLocal.map((photo: any) => (
-                <CachedPhoto key={photo.id} photo={photo} />
+                <PhotoItem key={photo.id} photo={photo} />
               ))}
             </ScrollView>
             {photosWithLocal.length > 1 && (
