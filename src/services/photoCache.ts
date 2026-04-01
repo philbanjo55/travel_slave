@@ -17,16 +17,27 @@ export async function downloadAllPhotos(tripData: any): Promise<number> {
       .flatMap((s: any) => s.stop_photos || [])
       .filter((p: any) => p.storage_url && p.id);
     
+    console.log(`Starting photo download: ${photos.length} photos found`);
+    if (photos.length > 0) {
+      console.log('Sample photo:', JSON.stringify(photos[0]).slice(0, 200));
+    }
+    
     let downloaded = 0;
+    let alreadyCached = 0;
     for (const photo of photos) {
       const localPath = `${PHOTO_DIR}${photo.id}.jpg`;
       const info = await FileSystem.getInfoAsync(localPath);
       if (!info.exists) {
-        const result = await FileSystem.downloadAsync(photo.storage_url, localPath).catch(() => null);
-        if (result) downloaded++;
+        const result = await FileSystem.downloadAsync(photo.storage_url, localPath).catch((e) => {
+          console.warn('Download failed for', photo.id, e);
+          return null;
+        });
+        if (result?.status === 200) downloaded++;
+      } else {
+        alreadyCached++;
       }
     }
-    console.log(`Photos cached: ${downloaded} new, ${photos.length} total`);
+    console.log(`Photos: ${downloaded} downloaded, ${alreadyCached} already cached, ${photos.length} total`);
     return downloaded;
   } catch (e) {
     console.warn('Photo download error:', e);
