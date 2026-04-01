@@ -16,13 +16,17 @@ export async function downloadAllPhotos(tripData: any): Promise<void> {
       .flatMap((d: any) => d.stops || [])
       .flatMap((s: any) => s.stop_photos || [])
       .filter((p: any) => p.storage_url && p.id);
+    
+    let downloaded = 0;
     for (const photo of photos) {
       const localPath = `${PHOTO_DIR}${photo.id}.jpg`;
       const info = await FileSystem.getInfoAsync(localPath);
       if (!info.exists) {
-        await FileSystem.downloadAsync(photo.storage_url, localPath).catch(() => {});
+        const result = await FileSystem.downloadAsync(photo.storage_url, localPath).catch(() => null);
+        if (result) downloaded++;
       }
     }
+    console.log(`Photos cached: ${downloaded} new, ${photos.length} total`);
   } catch (e) {
     console.warn('Photo download error:', e);
   }

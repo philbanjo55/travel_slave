@@ -80,8 +80,11 @@ export const useTripStore = create<TripState>((set, get) => ({
         isSyncing: false,
       });
 
-      // Download photos to device filesystem for offline use
-      downloadAllPhotos(fresh).catch(() => {});
+      // Download all photos to device filesystem for offline use
+      // Run in background but start immediately
+      setTimeout(() => {
+        downloadAllPhotos(fresh).catch(() => {});
+      }, 500);
     } catch {
       set({ isOffline: true, isSyncing: false });
     }
