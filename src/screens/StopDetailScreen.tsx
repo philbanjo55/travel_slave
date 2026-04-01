@@ -106,6 +106,9 @@ export default function StopDetailScreen() {
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
+              directionalLockEnabled
+              nestedScrollEnabled
+              disableIntervalMomentum
               onMomentumScrollEnd={(e) => {
                 setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
               }}
