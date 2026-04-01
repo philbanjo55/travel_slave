@@ -180,7 +180,7 @@ export default function TripScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1, backgroundColor: colors.background, overflow: 'hidden' },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background },
   header: {
     flexDirection: 'row', alignItems: 'center',
@@ -191,7 +191,7 @@ const styles = StyleSheet.create({
   headerCenter: { flex: 1 },
   tripTitle: { fontSize: 16, fontWeight: '600', color: colors.textPrimary },
   tripDates: { ...typography.labelMedium, color: colors.textTertiary, marginTop: 2 },
-  tabBarWrapper: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  tabBarWrapper: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, overflow: 'hidden' },
   tabBarContent: { paddingHorizontal: spacing.md },
   tab: {
     paddingHorizontal: spacing.md, paddingVertical: spacing.md,

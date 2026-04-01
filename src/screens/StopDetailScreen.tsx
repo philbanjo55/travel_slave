@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
   signalText: { ...typography.labelMedium, fontSize: 9 },
   fromLabel: { fontSize: 11, color: colors.textTertiary, fontStyle: 'italic' },
 
-  photoSection: { marginBottom: spacing.lg },
+  photoSection: { marginBottom: spacing.lg, overflow: 'hidden' },
   photo: { width, height: 260 },
   photoDots: { flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.sm },
   dot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.border },
