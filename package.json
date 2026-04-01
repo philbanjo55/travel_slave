@@ -29,7 +29,8 @@
     "react-native-url-polyfill": "^2.0.0",
     "zustand": "^4.5.2",
     "date-fns": "^3.6.0",
-    "@expo/vector-icons": "^14.0.2"
+    "@expo/vector-icons": "^14.0.2",
+    "expo-updates": "~0.25.0"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",

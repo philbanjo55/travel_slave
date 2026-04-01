@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build and Update Android
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build Android
+    name: Build Android APK
     type: build
     params:
       platform: android

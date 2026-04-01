@@ -43,13 +43,23 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow Philm+Frame to use your location for navigation."
         }
-      ]
+      ],
+      "expo-updates"
     ],
     "extra": {
       "eas": {
         "projectId": "766c58f8-02a0-4ba7-8426-2fb86227bdec"
       }
     },
-    "owner": "philandframe"
+    "owner": "philandframe",
+    "updates": {
+      "url": "https://u.expo.dev/766c58f8-02a0-4ba7-8426-2fb86227bdec",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
   }
 }
