@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import { fetchFullTrip } from '../services/supabase';
-import { Image } from 'react-native';
 import { getCachedFullTrip, getCachedTrips, cacheFullTrip } from '../services/database';
 import { calculateDriveTimes } from '../services/driveTimes';
+import { prefetchPhotos } from '../services/photoCache';
+import { cachePhotos } from '../services/photoCache';
 
 interface TripState {
   trips: any[];
@@ -79,13 +80,8 @@ export const useTripStore = create<TripState>((set, get) => ({
         isSyncing: false,
       });
 
-      // Prefetch all photo URLs to device cache for offline use
-      const photoUrls = fresh.days
-        .flatMap((d: any) => d.stops || [])
-        .flatMap((s: any) => s.stop_photos || [])
-        .map((p: any) => p.storage_url)
-        .filter(Boolean);
-      photoUrls.forEach((url: string) => Image.prefetch(url).catch(() => {}));
+      // Download photos to device filesystem for offline use
+      cachePhotos(fresh).catch(() => {});
     } catch {
       set({ isOffline: true, isSyncing: false });
     }

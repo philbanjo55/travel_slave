@@ -7,10 +7,35 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
+import { getLocalPhotoUri, isPhotoCached } from '../services/photoCache';
 import { useTripStore } from '../store/tripStore';
+import { getCachedPhotoUri } from '../services/photoCache';
 import { colors, typography, spacing, radius } from '../theme';
 
 const { width } = Dimensions.get('window');
+
+
+function CachedPhoto({ photo }: { photo: any }) {
+  const [uri, setUri] = React.useState<string>(photo.storage_url || photo.base64_data || photo.url || '');
+  const { width } = require('react-native').Dimensions.get('window');
+
+  React.useEffect(() => {
+    if (photo.id) {
+      isPhotoCached(photo.id).then(cached => {
+        if (cached) setUri(getLocalPhotoUri(photo.id));
+      }).catch(() => {});
+    }
+  }, [photo.id]);
+
+  if (!uri) return null;
+  return (
+    <Image
+      source={{ uri }}
+      style={{ width, height: 260 }}
+      resizeMode="cover"
+    />
+  );
+}
 
 export default function StopDetailScreen() {
   const navigation = useNavigation<any>();
@@ -28,7 +53,24 @@ export default function StopDetailScreen() {
 
   if (!stop) return null;
 
+  const [localPhotoUris, setLocalPhotoUris] = React.useState<Record<string, string>>({});
   const photos = stop.stop_photos || [];
+
+  React.useEffect(() => {
+    photos.forEach(async (photo: any) => {
+      if (photo.storage_url && photo.id) {
+        try {
+          const uri = await getCachedPhotoUri(photo.id, photo.storage_url);
+          setLocalPhotoUris(prev => ({ ...prev, [photo.id]: uri }));
+        } catch {}
+      }
+    });
+  }, [stop.id]);
+
+  const photosWithLocal = photos.map((p: any) => ({
+    ...p,
+    _localUri: localPhotoUris[p.id],
+  }));
 
   // Navigate from PREVIOUS stop to THIS stop (chained directions)
   const openNavigation = () => {
@@ -112,18 +154,13 @@ export default function StopDetailScreen() {
                 setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
               }}
             >
-              {photos.map((photo: any) => (
-                <Image
-                  key={photo.id}
-                  source={{ uri: photo.storage_url || photo.base64_data || photo.url }}
-                  style={styles.photo}
-                  resizeMode="cover"
-                />
+              {photosWithLocal.map((photo: any) => (
+                <CachedPhoto key={photo.id} photo={photo} />
               ))}
             </ScrollView>
-            {photos.length > 1 && (
+            {photosWithLocal.length > 1 && (
               <View style={styles.photoDots}>
-                {photos.map((_: any, i: number) => (
+                {photosWithLocal.map((_: any, i: number) => (
                   <View key={i} style={[styles.dot, i === photoIndex && styles.dotActive]} />
                 ))}
               </View>
