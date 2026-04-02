@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getPhotoUri } from '../services/photoCache';
 import { useTripStore } from '../store/tripStore';
 import { colors, typography, spacing, radius } from '../theme';
+import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 
 const { width } = Dimensions.get('window');
 
@@ -97,10 +98,15 @@ export default function StopDetailScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.timeLabel}>{stop.time_label || ''}</Text>
+        <View style={styles.timeRow}>
+          <Text style={styles.timeLabel}>{stop.time_label || ''}</Text>
+          {stop.duration_minutes && stop.time_label ? (
+            <Text style={styles.timeEndLabel}>— {addMinutesToTimeLabel(stop.time_label, stop.duration_minutes)}</Text>
+          ) : null}
+        </View>
         {stop.duration_minutes ? (
           <View style={styles.durBadge}>
-            <Text style={styles.durText}>{stop.duration_minutes} MIN</Text>
+            <Text style={styles.durText}>{minutesToHoursMin(stop.duration_minutes).toUpperCase()}</Text>
           </View>
         ) : null}
       </View>
@@ -287,7 +293,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   backBtn: { padding: spacing.xs },
-  timeLabel: { fontSize: 13, fontWeight: '500', color: colors.textSecondary, flex: 1 },
+  timeRow: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  timeLabel: { fontSize: 13, fontWeight: '500', color: colors.textSecondary },
+  timeEndLabel: { fontSize: 13, color: colors.textTertiary, marginLeft: 4 },
   durBadge: {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,

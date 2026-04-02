@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import { calculateDriveTimes } from '../services/supabase';
 import { colors, typography, spacing, radius } from '../theme';
+import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format } from 'date-fns';
 
 export default function TripScreen() {
@@ -143,7 +144,7 @@ export default function TripScreen() {
                 {item.drive_override_minutes ? (
                   <View style={styles.driveBadge}>
                     <Ionicons name="car-outline" size={10} color={colors.textTertiary} />
-                    <Text style={styles.driveText}>{item.drive_override_minutes} min</Text>
+                    <Text style={styles.driveText}>{minutesToHoursMin(item.drive_override_minutes)}</Text>
                   </View>
                 ) : null}
               </View>
@@ -153,12 +154,17 @@ export default function TripScreen() {
               onPress={() => navigation.navigate('StopDetail', { stopId: item.id, dayId: day.id })}
               activeOpacity={0.7}
             >
-              <Text style={styles.stopTime}>{item.time_label || ''}</Text>
+              <View style={styles.stopTimeCol}>
+                <Text style={styles.stopTime}>{item.time_label || ''}</Text>
+                {item.duration_minutes && item.time_label ? (
+                  <Text style={styles.stopEndTime}>{addMinutesToTimeLabel(item.time_label, item.duration_minutes)}</Text>
+                ) : null}
+              </View>
               <Text style={styles.stopEmoji}>{item.emoji || '📷'}</Text>
               <View style={styles.stopMeta}>
                 <Text style={styles.stopName} numberOfLines={1}>{item.name}</Text>
                 {item.duration_minutes ? (
-                  <Text style={styles.stopDur}>{item.duration_minutes} min</Text>
+                  <Text style={styles.stopDur}>{minutesToHoursMin(item.duration_minutes)}</Text>
                 ) : null}
               </View>
               <View style={styles.stopRight}>
@@ -226,7 +232,9 @@ const styles = StyleSheet.create({
   },
   driveText: { fontSize: 10, color: colors.textTertiary },
   stopRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md, gap: spacing.sm },
-  stopTime: { fontSize: 12, fontWeight: '500', color: colors.textSecondary, width: 68, flexShrink: 0 },
+  stopTimeCol: { width: 68, flexShrink: 0 },
+  stopTime: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
+  stopEndTime: { fontSize: 10, color: colors.textTertiary, marginTop: 1 },
   stopEmoji: { fontSize: 18, width: 26 },
   stopMeta: { flex: 1 },
   stopName: { fontSize: 14, fontWeight: '500', color: colors.textPrimary },
