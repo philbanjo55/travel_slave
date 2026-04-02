@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
-import { calculateDriveTimes } from '../services/supabase';
+import { calculateDriveTimes, supabase } from '../services/supabase';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format } from 'date-fns';
@@ -27,6 +27,24 @@ export default function TripScreen() {
     setActiveDay(index);
     setCurrentDay(index);
     tabScrollRef.current?.scrollTo({ x: Math.max(0, index * 72 - 100), animated: true });
+  }, []);
+
+  const toggleDayChecked = useCallback(async (dayId: string, currentChecked: boolean) => {
+    const newChecked = !currentChecked;
+    // Optimistic local update
+    useTripStore.setState((state) => {
+      if (!state.currentTripData) return state;
+      return {
+        currentTripData: {
+          ...state.currentTripData,
+          days: state.currentTripData.days.map((d: any) =>
+            d.id === dayId ? { ...d, checked: newChecked } : d
+          ),
+        },
+      };
+    });
+    // Persist to Supabase
+    supabase.from('days').update({ checked: newChecked }).eq('id', dayId).then();
   }, []);
 
   const recalcDriveTimes = useCallback(async () => {
@@ -101,6 +119,7 @@ export default function TripScreen() {
                 key={d.id}
                 style={[styles.tab, isActive && styles.tabActive]}
                 onPress={() => goToDay(index)}
+                onLongPress={() => toggleDayChecked(d.id, d.checked)}
               >
                 <Text style={[styles.tabDayNum, isActive && styles.tabDayNumActive]}>
                   {`Day ${d.day_number}`}
