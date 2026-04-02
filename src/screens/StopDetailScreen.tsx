@@ -60,11 +60,17 @@ export default function StopDetailScreen() {
     const url = `google.navigation:q=${stop.lat},${stop.lng}&mode=d`;
 
     Linking.openURL(url).catch(() => {
-      // Fallback to geo: URI if google.navigation not available
       Linking.openURL(`geo:${stop.lat},${stop.lng}?q=${stop.lat},${stop.lng}(${encodeURIComponent(stop.name)})`).catch(() => {
         Alert.alert('Maps not available', 'Could not open Google Maps.');
       });
     });
+  };
+
+  // Show route from previous stop to this stop (for planning)
+  const openRouteFromPrev = () => {
+    if (!stop.lat || !stop.lng || !prevStop?.lat || !prevStop?.lng) return;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${prevStop.lat},${prevStop.lng}&destination=${stop.lat},${stop.lng}&travelmode=driving`;
+    Linking.openURL(url);
   };
 
   // Full day route in Google Maps
@@ -165,6 +171,15 @@ export default function StopDetailScreen() {
               <Ionicons name="navigate-outline" size={18} color={colors.textPrimary} />
               <Text style={styles.actionText}>
                 Navigate here
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {prevStop?.lat && prevStop?.lng && stop.lat && stop.lng && (
+            <TouchableOpacity style={styles.actionBtn} onPress={openRouteFromPrev}>
+              <Ionicons name="git-commit-outline" size={18} color={colors.textPrimary} />
+              <Text style={styles.actionText}>
+                Route from {prevStop.name?.replace(/^[^\w]*/, '').split(' ').slice(0, 3).join(' ')}
               </Text>
             </TouchableOpacity>
           )}
