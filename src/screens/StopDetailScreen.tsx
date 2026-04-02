@@ -56,17 +56,14 @@ export default function StopDetailScreen() {
   const openNavigation = () => {
     if (!stop.lat || !stop.lng) return;
 
-    let url: string;
-    if (prevStop?.lat && prevStop?.lng) {
-      // Google Maps directions from previous stop to this stop
-      url = `https://www.google.com/maps/dir/?api=1&origin=${prevStop.lat},${prevStop.lng}&destination=${stop.lat},${stop.lng}&travelmode=driving`;
-    } else {
-      // Just navigate to this stop
-      url = `https://www.google.com/maps/dir/?api=1&destination=${stop.lat},${stop.lng}&travelmode=driving`;
-    }
+    // Use google.navigation intent — works offline with downloaded maps
+    const url = `google.navigation:q=${stop.lat},${stop.lng}&mode=d`;
 
     Linking.openURL(url).catch(() => {
-      Alert.alert('Maps not available', 'Could not open Google Maps.');
+      // Fallback to geo: URI if google.navigation not available
+      Linking.openURL(`geo:${stop.lat},${stop.lng}?q=${stop.lat},${stop.lng}(${encodeURIComponent(stop.name)})`).catch(() => {
+        Alert.alert('Maps not available', 'Could not open Google Maps.');
+      });
     });
   };
 
@@ -74,6 +71,7 @@ export default function StopDetailScreen() {
   const openFullDayRoute = () => {
     const pts = stops.filter((s: any) => s.lat && s.lng);
     if (pts.length < 2) return;
+    // geo: doesn't support waypoints, so use web URL (requires internet)
     const origin = `${pts[0].lat},${pts[0].lng}`;
     const dest = `${pts[pts.length-1].lat},${pts[pts.length-1].lng}`;
     const waypoints = pts.slice(1, -1).map((s: any) => `${s.lat},${s.lng}`).join('|');
@@ -166,7 +164,7 @@ export default function StopDetailScreen() {
             <TouchableOpacity style={styles.actionBtn} onPress={openNavigation}>
               <Ionicons name="navigate-outline" size={18} color={colors.textPrimary} />
               <Text style={styles.actionText}>
-                {prevStop ? 'Directions from prev stop' : 'Navigate here'}
+                Navigate here
               </Text>
             </TouchableOpacity>
           )}
