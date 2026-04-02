@@ -31,20 +31,22 @@ export default function TripScreen() {
 
   const toggleDayChecked = useCallback(async (dayId: string, currentChecked: boolean) => {
     const newChecked = !currentChecked;
-    // Optimistic local update
+    // Optimistic local update — also clear review if marking as checked
     useTripStore.setState((state) => {
       if (!state.currentTripData) return state;
       return {
         currentTripData: {
           ...state.currentTripData,
           days: state.currentTripData.days.map((d: any) =>
-            d.id === dayId ? { ...d, checked: newChecked } : d
+            d.id === dayId ? { ...d, checked: newChecked, review: newChecked ? false : d.review } : d
           ),
         },
       };
     });
     // Persist to Supabase
-    supabase.from('days').update({ checked: newChecked }).eq('id', dayId).then();
+    const updates: any = { checked: newChecked };
+    if (newChecked) updates.review = false;
+    supabase.from('days').update(updates).eq('id', dayId).then();
   }, []);
 
   const recalcDriveTimes = useCallback(async () => {
@@ -229,7 +231,7 @@ const styles = StyleSheet.create({
   tabDate: { fontSize: 12, fontWeight: '600', color: colors.textTertiary, marginTop: 2 },
   tabDateActive: { color: colors.textPrimary },
   checkedDot: { position: 'absolute', top: 8, right: 8, width: 5, height: 5, borderRadius: 3, backgroundColor: colors.signalOk },
-  reviewDot: { position: 'absolute', top: 8, left: 8, width: 5, height: 5, borderRadius: 3, backgroundColor: colors.signalWarning },
+  reviewDot: { position: 'absolute', top: 8, left: 8, width: 5, height: 5, borderRadius: 3, backgroundColor: '#d4a017' },
   dayHeader: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.xl, paddingTop: spacing.lg, paddingBottom: spacing.md,
