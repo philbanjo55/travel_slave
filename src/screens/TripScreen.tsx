@@ -108,6 +108,7 @@ export default function TripScreen() {
                 <Text style={[styles.tabDate, isActive && styles.tabDateActive]}>
                   {d.date ? format(new Date(d.date), 'MMM d') : ''}
                 </Text>
+                {d.checked && <View style={styles.checkedDot} />}
               </TouchableOpacity>
             );
           })}
@@ -207,6 +208,7 @@ const styles = StyleSheet.create({
   tabDayNumActive: { color: colors.textSecondary },
   tabDate: { fontSize: 12, fontWeight: '600', color: colors.textTertiary, marginTop: 2 },
   tabDateActive: { color: colors.textPrimary },
+  checkedDot: { position: 'absolute', top: 8, right: 8, width: 5, height: 5, borderRadius: 3, backgroundColor: colors.signalOk },
   dayHeader: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.xl, paddingTop: spacing.lg, paddingBottom: spacing.md,
