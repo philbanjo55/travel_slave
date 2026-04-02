@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { fetchFullTrip } from '../services/supabase';
-import { getCachedFullTrip, getCachedTrips, cacheFullTrip } from '../services/database';
+import { getCachedFullTrip, getCachedTrips, cacheFullTrip, cacheTrips } from '../services/database';
 import { calculateDriveTimes } from '../services/driveTimes';
 import { downloadAllPhotos } from '../services/photoCache';
 
@@ -41,6 +41,7 @@ export const useTripStore = create<TripState>((set, get) => ({
       const { fetchTrips } = await import('../services/supabase');
       const trips = await fetchTrips();
       set({ trips });
+      await cacheTrips(trips);
     } catch {
       set({ isOffline: true });
     }

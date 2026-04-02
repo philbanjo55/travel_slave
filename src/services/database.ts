@@ -8,6 +8,12 @@ export async function initDatabase(): Promise<void> {
   return;
 }
 
+export async function cacheTrips(trips: any[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+  } catch {}
+}
+
 export async function cacheFullTrip(tripId: string, tripData: any): Promise<void> {
   try {
     // Cache photos separately — metadata only, no base64
@@ -37,6 +43,14 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<void
     await AsyncStorage.setItem(
       `${PHOTOS_PREFIX}${tripId}`,
       JSON.stringify(photoMap)
+    );
+
+    // Update trips list cache
+    const existing = await getCachedTrips();
+    const others = existing.filter((t: any) => t.id !== tripData.trip.id);
+    await AsyncStorage.setItem(
+      TRIPS_KEY,
+      JSON.stringify([...others, tripData.trip])
     );
   } catch (e) {
     console.warn('Cache write failed:', e);
