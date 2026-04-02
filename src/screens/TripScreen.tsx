@@ -29,24 +29,29 @@ export default function TripScreen() {
     tabScrollRef.current?.scrollTo({ x: Math.max(0, index * 72 - 100), animated: true });
   }, []);
 
-  const toggleDayChecked = useCallback(async (dayId: string, currentChecked: boolean) => {
-    const newChecked = !currentChecked;
-    // Optimistic local update — also clear review if marking as checked
+  const cycleDayStatus = useCallback(async (dayId: string, checked: boolean, review: boolean) => {
+    // Cycle: off → green → yellow → off
+    let newChecked = false;
+    let newReview = false;
+    if (!checked && !review) {
+      newChecked = true; // → green
+    } else if (checked && !review) {
+      newReview = true; // → yellow
+    }
+    // else yellow → off (both false)
+
     useTripStore.setState((state) => {
       if (!state.currentTripData) return state;
       return {
         currentTripData: {
           ...state.currentTripData,
           days: state.currentTripData.days.map((d: any) =>
-            d.id === dayId ? { ...d, checked: newChecked, review: newChecked ? false : d.review } : d
+            d.id === dayId ? { ...d, checked: newChecked, review: newReview } : d
           ),
         },
       };
     });
-    // Persist to Supabase
-    const updates: any = { checked: newChecked };
-    if (newChecked) updates.review = false;
-    supabase.from('days').update(updates).eq('id', dayId).then();
+    supabase.from('days').update({ checked: newChecked, review: newReview }).eq('id', dayId).then();
   }, []);
 
   const recalcDriveTimes = useCallback(async () => {
@@ -121,7 +126,7 @@ export default function TripScreen() {
                 key={d.id}
                 style={[styles.tab, isActive && styles.tabActive]}
                 onPress={() => goToDay(index)}
-                onLongPress={() => toggleDayChecked(d.id, d.checked)}
+                onLongPress={() => cycleDayStatus(d.id, d.checked, d.review)}
               >
                 <Text style={[styles.tabDayNum, isActive && styles.tabDayNumActive]}>
                   {`Day ${d.day_number}`}
