@@ -123,7 +123,7 @@ export default function ReciprocityScreen() {
     { name: 'Polarizer', stops: 1.5, note: '1–2 stops, varies with angle' },
     { name: 'Red 25', stops: 3 },
     { name: 'Red 29', stops: 4 },
-    { name: 'Hoya R72', stops: 4, note: 'Ilford rates 4 stops for SFX 200. Some shoot at 5 — bracket.' },
+    { name: 'Hoya R72', stops: 5, note: 'SFX 200 — most shoot at EI 6 (5 stops)' },
     { name: 'ND64 (6-stop)', stops: 6 },
     { name: '3-stop ND', stops: 3 },
   ];
