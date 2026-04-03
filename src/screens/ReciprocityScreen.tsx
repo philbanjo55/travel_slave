@@ -115,6 +115,7 @@ export default function ReciprocityScreen() {
   const [format, setFormat] = useState<'4x5' | '120'>('4x5');
   const [selectedStock, setSelectedStock] = useState(0);
   const [inputTime, setInputTime] = useState('');
+  const [targetTime, setTargetTime] = useState('');
 
   const stocks = format === '4x5' ? FILM_STOCKS_4x5 : FILM_STOCKS_120;
   const stock = stocks[selectedStock];
@@ -213,6 +214,41 @@ export default function ReciprocityScreen() {
     };
   }, [stock, metered]);
 
+  // Aperture adjustment calculation
+  const apertureAdj = useMemo(() => {
+    const target = parseFloat(targetTime);
+    if (!result || !target || target <= 0) return null;
+    if (Math.abs(result.adjusted - target) < 0.5) return null; // no adjustment needed
+
+    // How many stops between the reciprocity result and the target?
+    const stopsDiff = Math.log2(result.adjusted / target);
+
+    // Calculate new f-stop: each stop = sqrt(2) change in f-number
+    // Opening up = smaller f-number, closing down = larger f-number
+    const baseF = 22;
+    const newF = baseF / Math.pow(2, stopsDiff / 2);
+
+    // Find nearest standard f-stop (third stops)
+    const thirdStops = [
+      1, 1.1, 1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3.2, 3.5,
+      4, 4.5, 5, 5.6, 6.3, 7.1, 8, 9, 10, 11, 13, 14, 16, 18, 20,
+      22, 25, 29, 32, 36, 40, 45, 51, 57, 64,
+    ];
+    const nearestF = thirdStops.reduce((prev, curr) =>
+      Math.abs(curr - newF) < Math.abs(prev - newF) ? curr : prev
+    );
+
+    const direction = stopsDiff > 0 ? 'Open' : 'Close';
+
+    return {
+      stopsDiff: Math.abs(stopsDiff),
+      direction,
+      newF,
+      nearestF,
+      targetSeconds: target,
+    };
+  }, [result, targetTime]);
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
@@ -295,11 +331,42 @@ export default function ReciprocityScreen() {
             </View>
             <TouchableOpacity
               style={styles.timerBtn}
-              onPress={() => startTimer(result.adjusted)}
+              onPress={() => startTimer(apertureAdj ? apertureAdj.targetSeconds : result.adjusted)}
             >
               <Ionicons name="timer-outline" size={18} color={colors.accent} />
-              <Text style={styles.timerBtnText}>Start Timer</Text>
+              <Text style={styles.timerBtnText}>
+                Start Timer{apertureAdj ? ` (${formatTime(apertureAdj.targetSeconds)})` : ''}
+              </Text>
             </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Aperture Adjustment */}
+        {result && (
+          <View style={styles.apertureSection}>
+            <Text style={styles.inputLabel}>TARGET EXPOSURE TIME (OPTIONAL)</Text>
+            <TextInput
+              style={styles.apertureInput}
+              value={targetTime}
+              onChangeText={setTargetTime}
+              keyboardType="decimal-pad"
+              placeholder="Desired actual seconds..."
+              placeholderTextColor={colors.textTertiary}
+              selectionColor={colors.accent}
+            />
+            {apertureAdj && (
+              <View style={styles.apertureResult}>
+                <Text style={styles.apertureDirection}>
+                  {apertureAdj.direction} {apertureAdj.stopsDiff.toFixed(1)} stops from f/22
+                </Text>
+                <Text style={styles.apertureValue}>
+                  f/{apertureAdj.nearestF}
+                </Text>
+                <Text style={styles.apertureSub}>
+                  Shoot at f/{apertureAdj.nearestF} for ~{formatTime(apertureAdj.targetSeconds)} actual exposure
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -496,6 +563,32 @@ const styles = StyleSheet.create({
     borderRadius: radius.md, borderWidth: 1, borderColor: colors.accent,
   },
   timerBtnText: { fontSize: 14, fontWeight: '600', color: colors.accent },
+
+  // Aperture adjustment
+  apertureSection: {
+    marginHorizontal: spacing.xl, marginTop: spacing.lg,
+  },
+  apertureInput: {
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+    fontSize: 18, fontWeight: '600', color: colors.textPrimary,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    textAlign: 'center', marginTop: spacing.sm,
+  },
+  apertureResult: {
+    marginTop: spacing.md, backgroundColor: colors.surface,
+    borderRadius: radius.md, padding: spacing.lg, alignItems: 'center',
+    borderWidth: 1, borderColor: '#d4a017',
+  },
+  apertureDirection: {
+    fontSize: 13, fontWeight: '600', color: '#d4a017',
+  },
+  apertureValue: {
+    fontSize: 32, fontWeight: '700', color: colors.textPrimary, marginVertical: spacing.sm,
+  },
+  apertureSub: {
+    fontSize: 11, color: colors.textTertiary, textAlign: 'center',
+  },
 
   // Timer overlay
   timerOverlay: {
