@@ -297,7 +297,7 @@ export default function ReciprocityScreen() {
               style={styles.timerBtn}
               onPress={() => startTimer(result.adjusted)}
             >
-              <Ionicons name="timer-outline" size={18} color="#fff" />
+              <Ionicons name="timer-outline" size={18} color={colors.accent} />
               <Text style={styles.timerBtnText}>Start Timer</Text>
             </TouchableOpacity>
           </View>
@@ -409,9 +409,9 @@ const styles = StyleSheet.create({
     flex: 1, paddingVertical: spacing.sm, alignItems: 'center',
     backgroundColor: colors.surface,
   },
-  formatBtnActive: { backgroundColor: colors.accent },
+  formatBtnActive: { backgroundColor: '#1a1a2e', borderBottomWidth: 2, borderBottomColor: colors.accent },
   formatText: { fontSize: 14, fontWeight: '600', color: colors.textTertiary },
-  formatTextActive: { color: '#fff' },
+  formatTextActive: { color: colors.accent },
 
   stockGrid: {
     flexDirection: 'row', flexWrap: 'wrap',
@@ -491,11 +491,11 @@ const styles = StyleSheet.create({
   // Timer button
   timerBtn: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    marginTop: spacing.lg, backgroundColor: colors.accent,
+    marginTop: spacing.lg, backgroundColor: '#1a1a2e',
     paddingHorizontal: spacing.xl, paddingVertical: spacing.sm,
-    borderRadius: radius.md,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.accent,
   },
-  timerBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  timerBtnText: { fontSize: 14, fontWeight: '600', color: colors.accent },
 
   // Timer overlay
   timerOverlay: {
