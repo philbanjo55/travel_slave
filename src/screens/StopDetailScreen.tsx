@@ -41,6 +41,7 @@ export default function StopDetailScreen() {
   const { stopId, dayId } = route.params;
   const { currentTripData } = useTripStore();
   const [photoIndex, setPhotoIndex] = useState(0);
+  const [fieldPhotoIndex, setFieldPhotoIndex] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const day = currentTripData?.days.find((d: any) => d.id === dayId);
@@ -51,11 +52,13 @@ export default function StopDetailScreen() {
 
   if (!stop) return null;
 
-  const photos = stop.stop_photos || [];
-  const { pickAndUpload, deletePhoto, uploading, error } = usePhotoUpload(stop.id);
+  const allPhotos = stop.stop_photos || [];
+  const refPhotos = allPhotos.filter((p: any) => !p.photo_type || p.photo_type === 'reference');
+  const fieldPhotos = allPhotos.filter((p: any) => p.photo_type === 'field');
+  const { pickAndUpload, takePhoto, deletePhoto, uploading, uploadProgress, error } = usePhotoUpload(stop.id);
 
-  const handlePhotoLongPress = (photoId: string) => {
-    Alert.alert('Delete Photo', 'Remove this reference photo?', [
+  const handlePhotoLongPress = (photoId: string, type: string) => {
+    Alert.alert('Delete Photo', `Remove this ${type} photo?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => deletePhoto(photoId) },
     ]);
@@ -139,9 +142,9 @@ export default function StopDetailScreen() {
           )}
         </View>
 
-        {/* Photos */}
+        {/* Reference Photos */}
         <View style={[styles.photoSection, { overflow: "hidden" }]}>
-          {photos.length > 0 && (
+          {refPhotos.length > 0 && (
             <>
               <ScrollView
                 horizontal
@@ -153,19 +156,19 @@ export default function StopDetailScreen() {
                   setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
                 }}
               >
-                {photos.map((photo: any) => (
+                {refPhotos.map((photo: any) => (
                   <TouchableOpacity
                     key={photo.id}
-                    onLongPress={() => handlePhotoLongPress(photo.id)}
+                    onLongPress={() => handlePhotoLongPress(photo.id, 'reference')}
                     activeOpacity={0.9}
                   >
                     <PhotoItem photo={photo} />
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-              {photos.length > 1 && (
+              {refPhotos.length > 1 && (
                 <View style={styles.photoDots}>
-                  {photos.map((_: any, i: number) => (
+                  {refPhotos.map((_: any, i: number) => (
                     <View key={i} style={[styles.dot, i === photoIndex && styles.dotActive]} />
                   ))}
                 </View>
@@ -174,19 +177,19 @@ export default function StopDetailScreen() {
           )}
           <TouchableOpacity
             style={styles.addPhotoBtn}
-            onPress={pickAndUpload}
+            onPress={() => pickAndUpload('reference')}
             disabled={uploading}
           >
             {uploading ? (
               <>
                 <ActivityIndicator size="small" color={colors.accent} />
-                <Text style={styles.addPhotoText}>Uploading...</Text>
+                <Text style={styles.addPhotoText}>Uploading{uploadProgress ? ` ${uploadProgress}` : ''}...</Text>
               </>
             ) : (
               <>
-                <Ionicons name="camera-outline" size={16} color={colors.accent} />
+                <Ionicons name="images-outline" size={16} color={colors.accent} />
                 <Text style={styles.addPhotoText}>
-                  {photos.length > 0 ? 'Add Photo' : 'Add Reference Photo'}
+                  {refPhotos.length > 0 ? 'Add Reference Photos' : 'Add Reference Photos'}
                 </Text>
               </>
             )}
@@ -319,6 +322,60 @@ export default function StopDetailScreen() {
           </TouchableOpacity>
         )}
 
+        {/* Field Photos — taken on location */}
+        <View style={styles.fieldPhotoSection}>
+          <Text style={styles.fieldPhotoTitle}>FIELD PHOTOS</Text>
+          {fieldPhotos.length > 0 && (
+            <>
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                bounces={false}
+                overScrollMode="never"
+                onMomentumScrollEnd={(e) => {
+                  setFieldPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
+                }}
+              >
+                {fieldPhotos.map((photo: any) => (
+                  <TouchableOpacity
+                    key={photo.id}
+                    onLongPress={() => handlePhotoLongPress(photo.id, 'field')}
+                    activeOpacity={0.9}
+                  >
+                    <PhotoItem photo={photo} />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {fieldPhotos.length > 1 && (
+                <View style={styles.photoDots}>
+                  {fieldPhotos.map((_: any, i: number) => (
+                    <View key={i} style={[styles.dot, i === fieldPhotoIndex && styles.dotActive]} />
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+          <View style={styles.fieldPhotoBtns}>
+            <TouchableOpacity
+              style={[styles.addPhotoBtn, { flex: 1 }]}
+              onPress={() => takePhoto('field')}
+              disabled={uploading}
+            >
+              <Ionicons name="camera-outline" size={16} color={colors.accent} />
+              <Text style={styles.addPhotoText}>Take Photo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.addPhotoBtn, { flex: 1 }]}
+              onPress={() => pickAndUpload('field')}
+              disabled={uploading}
+            >
+              <Ionicons name="images-outline" size={16} color={colors.accent} />
+              <Text style={styles.addPhotoText}>From Roll</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <View style={{ height: 80 }} />
       </ScrollView>
     </SafeAreaView>
@@ -383,6 +440,17 @@ const styles = StyleSheet.create({
   },
   addPhotoText: { fontSize: 12, fontWeight: '500', color: colors.accent },
   uploadError: { fontSize: 11, color: '#e74c3c', textAlign: 'center', marginTop: spacing.xs, marginHorizontal: spacing.xl },
+  fieldPhotoSection: {
+    marginTop: spacing.xl, borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border, paddingTop: spacing.lg,
+  },
+  fieldPhotoTitle: {
+    ...typography.labelMedium, paddingHorizontal: spacing.xl, marginBottom: spacing.md,
+  },
+  fieldPhotoBtns: {
+    flexDirection: 'row', gap: spacing.sm,
+    marginHorizontal: spacing.xl, marginTop: spacing.sm,
+  },
   dotActive: { backgroundColor: colors.accent },
 
   infoCard: {
