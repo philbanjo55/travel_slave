@@ -7,31 +7,35 @@ import { downloadPhoto } from '../services/photoCache';
 
 const STORAGE_BUCKET = 'photos';
 const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2';
 
 async function uploadToStorage(stopId: string, uri: string): Promise<{ id: string; storage_url: string }> {
-  // Read file as base64
-  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-  
   // Generate a unique ID
   const photoId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const filename = `${stopId}/${photoId}.jpg`;
 
-  // Upload to Supabase Storage via REST
-  const uploadRes = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${STORAGE_BUCKET}/${filename}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-        'Content-Type': 'image/jpeg',
-      },
-      body: bytes,
-    }
-  );
+  // Read file as base64 and convert to ArrayBuffer
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
 
-  if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
+  // Decode base64 to Uint8Array for Supabase upload
+  const binaryString = global.atob
+    ? global.atob(base64)
+    : Buffer.from(base64, 'base64').toString('binary');
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  // Upload via Supabase JS client
+  const { error: uploadError } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(filename, bytes, {
+      contentType: 'image/jpeg',
+      upsert: true,
+    });
+
+  if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
 
   const storage_url = `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}/${filename}`;
   return { id: photoId, storage_url };
