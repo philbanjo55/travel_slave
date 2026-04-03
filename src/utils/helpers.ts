@@ -19,8 +19,9 @@ export function minutesToHoursMin(minutes: number): string {
 }
 
 export function addMinutesToTimeLabel(timeLabel: string, minutes: number): string {
-  // Parse "3:45 PM" style labels
-  const match = timeLabel.match(/^(\d+):(\d+)\s*(AM|PM)$/i);
+  // Parse "3:45 PM" or "~3:45 PM" style labels
+  const cleaned = timeLabel.replace(/^~\s*/, '');
+  const match = cleaned.match(/^(\d+):(\d+)\s*(AM|PM)$/i);
   if (!match) return timeLabel;
 
   let [, h, m, period] = match;

@@ -7,10 +7,32 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
+import { getPhotoUri } from '../services/photoCache';
 import { useTripStore } from '../store/tripStore';
 import { colors, typography, spacing, radius } from '../theme';
+import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 
 const { width } = Dimensions.get('window');
+
+
+
+
+function PhotoItem({ photo }: { photo: any }) {
+  const [uri, setUri] = React.useState<string>('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    getPhotoUri(photo).then(resolved => {
+      if (!cancelled && resolved) {
+        setUri(resolved);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [photo.id]);
+
+  if (!uri) return null;
+  return <Image source={{ uri }} style={styles.photo} resizeMode="cover" />;
+}
 
 export default function StopDetailScreen() {
   const navigation = useNavigation<any>();
@@ -34,24 +56,28 @@ export default function StopDetailScreen() {
   const openNavigation = () => {
     if (!stop.lat || !stop.lng) return;
 
-    let url: string;
-    if (prevStop?.lat && prevStop?.lng) {
-      // Google Maps directions from previous stop to this stop
-      url = `https://www.google.com/maps/dir/?api=1&origin=${prevStop.lat},${prevStop.lng}&destination=${stop.lat},${stop.lng}&travelmode=driving`;
-    } else {
-      // Just navigate to this stop
-      url = `https://www.google.com/maps/dir/?api=1&destination=${stop.lat},${stop.lng}&travelmode=driving`;
-    }
+    // Use google.navigation intent — works offline with downloaded maps
+    const url = `google.navigation:q=${stop.lat},${stop.lng}&mode=d`;
 
     Linking.openURL(url).catch(() => {
-      Alert.alert('Maps not available', 'Could not open Google Maps.');
+      Linking.openURL(`geo:${stop.lat},${stop.lng}?q=${stop.lat},${stop.lng}(${encodeURIComponent(stop.name)})`).catch(() => {
+        Alert.alert('Maps not available', 'Could not open Google Maps.');
+      });
     });
+  };
+
+  // Show route from previous stop to this stop (for planning)
+  const openRouteFromPrev = () => {
+    if (!stop.lat || !stop.lng || !prevStop?.lat || !prevStop?.lng) return;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${prevStop.lat},${prevStop.lng}&destination=${stop.lat},${stop.lng}&travelmode=driving`;
+    Linking.openURL(url);
   };
 
   // Full day route in Google Maps
   const openFullDayRoute = () => {
     const pts = stops.filter((s: any) => s.lat && s.lng);
     if (pts.length < 2) return;
+    // geo: doesn't support waypoints, so use web URL (requires internet)
     const origin = `${pts[0].lat},${pts[0].lng}`;
     const dest = `${pts[pts.length-1].lat},${pts[pts.length-1].lng}`;
     const waypoints = pts.slice(1, -1).map((s: any) => `${s.lat},${s.lng}`).join('|');
@@ -76,15 +102,20 @@ export default function StopDetailScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.timeLabel}>{stop.time_label || ''}</Text>
+        <View style={styles.timeRow}>
+          <Text style={styles.timeLabel}>{stop.time_label || ''}</Text>
+          {stop.duration_minutes && stop.time_label ? (
+            <Text style={styles.timeEndLabel}>— {addMinutesToTimeLabel(stop.time_label, stop.duration_minutes)}</Text>
+          ) : null}
+        </View>
         {stop.duration_minutes ? (
           <View style={styles.durBadge}>
-            <Text style={styles.durText}>{stop.duration_minutes} MIN</Text>
+            <Text style={styles.durText}>{minutesToHoursMin(stop.duration_minutes).toUpperCase()}</Text>
           </View>
         ) : null}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder>
         {/* Stop name */}
         <View style={styles.nameSection}>
           <Text style={styles.stopEmoji}>{stop.emoji || '📷'}</Text>
@@ -101,22 +132,19 @@ export default function StopDetailScreen() {
 
         {/* Photos */}
         {photos.length > 0 && (
-          <View style={styles.photoSection}>
+          <View style={[styles.photoSection, { overflow: "hidden" }]}>
             <ScrollView
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
+              bounces={false}
+              overScrollMode="never"
               onMomentumScrollEnd={(e) => {
                 setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
               }}
             >
               {photos.map((photo: any) => (
-                <Image
-                  key={photo.id}
-                  source={{ uri: photo.base64_data || photo.url }}
-                  style={styles.photo}
-                  resizeMode="cover"
-                />
+                <PhotoItem key={photo.id} photo={photo} />
               ))}
             </ScrollView>
             {photos.length > 1 && (
@@ -142,7 +170,16 @@ export default function StopDetailScreen() {
             <TouchableOpacity style={styles.actionBtn} onPress={openNavigation}>
               <Ionicons name="navigate-outline" size={18} color={colors.textPrimary} />
               <Text style={styles.actionText}>
-                {prevStop ? 'Directions from prev stop' : 'Navigate here'}
+                Navigate here
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {prevStop?.lat && prevStop?.lng && stop.lat && stop.lng && (
+            <TouchableOpacity style={styles.actionBtn} onPress={openRouteFromPrev}>
+              <Ionicons name="git-commit-outline" size={18} color={colors.textPrimary} />
+              <Text style={styles.actionText}>
+                Route from {prevStop.name?.replace(/^[^\w]*/, '').split(' ').slice(0, 3).join(' ')}
               </Text>
             </TouchableOpacity>
           )}
@@ -269,7 +306,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   backBtn: { padding: spacing.xs },
-  timeLabel: { fontSize: 13, fontWeight: '500', color: colors.textSecondary, flex: 1 },
+  timeRow: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  timeLabel: { fontSize: 13, fontWeight: '500', color: colors.textSecondary },
+  timeEndLabel: { fontSize: 13, color: colors.textTertiary, marginLeft: 4 },
   durBadge: {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
@@ -294,7 +333,7 @@ const styles = StyleSheet.create({
   signalText: { ...typography.labelMedium, fontSize: 9 },
   fromLabel: { fontSize: 11, color: colors.textTertiary, fontStyle: 'italic' },
 
-  photoSection: { marginBottom: spacing.lg },
+  photoSection: { marginBottom: spacing.lg, overflow: 'hidden' },
   photo: { width, height: 260 },
   photoDots: { flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.sm },
   dot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.border },

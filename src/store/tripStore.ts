@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { fetchFullTrip } from '../services/supabase';
-import { getCachedFullTrip, getCachedTrips, cacheFullTrip } from '../services/database';
+import { getCachedFullTrip, getCachedTrips, cacheFullTrip, cacheTrips } from '../services/database';
+import { calculateDriveTimes } from '../services/driveTimes';
+import { downloadAllPhotos } from '../services/photoCache';
 
 interface TripState {
   trips: any[];
@@ -39,6 +41,7 @@ export const useTripStore = create<TripState>((set, get) => ({
       const { fetchTrips } = await import('../services/supabase');
       const trips = await fetchTrips();
       set({ trips });
+      await cacheTrips(trips);
     } catch {
       set({ isOffline: true });
     }
@@ -55,9 +58,20 @@ export const useTripStore = create<TripState>((set, get) => ({
       });
     }
 
-    // Try network sync in background
+    // Network sync
     try {
       set({ isSyncing: true });
+
+      // Check and calculate missing drive times FIRST before caching
+      const allStops = (await fetchFullTrip(tripId)).days.flatMap((d: any) => d.stops || []);
+      const missingDriveTimes = allStops.some(
+        (s: any, i: number) => i > 0 && s.lat && s.lng && s.drive_override_minutes == null
+      );
+      if (missingDriveTimes) {
+        await calculateDriveTimes(tripId).catch((e) => console.error("Drive times failed:", e));
+      }
+
+      // NOW fetch fresh data (with drive times) and cache
       const fresh = await fetchFullTrip(tripId);
       await cacheFullTrip(tripId, fresh);
       set({
@@ -65,6 +79,11 @@ export const useTripStore = create<TripState>((set, get) => ({
         currentTrip: fresh.trip,
         isSyncing: false,
       });
+
+      // Download all photos to device filesystem for offline use
+      setTimeout(() => {
+        downloadAllPhotos(fresh).catch(() => {});
+      }, 1000);
     } catch {
       set({ isOffline: true, isSyncing: false });
     }
