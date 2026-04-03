@@ -450,6 +450,34 @@ export default function ReciprocityScreen() {
           </View>
         </Modal>
 
+        {/* Reference Table */}
+        <View style={styles.tableSection}>
+          <Text style={styles.tableTitle}>REFERENCE TABLE — {stock.name}</Text>
+          <View style={styles.tableHeader}>
+            <Text style={styles.tableHeaderCell}>Metered</Text>
+            <Text style={styles.tableHeaderCell}>Adjusted</Text>
+            <Text style={styles.tableHeaderCell}>Stops</Text>
+          </View>
+          {[1, 2, 4, 8, 10, 15, 30, 60, 120, 240].map(t => {
+            const adj = calculate(stock, t);
+            const stops = stopsCorrection(t, adj);
+            const isHighlighted = Math.abs(t - metered) < 0.5;
+            return (
+              <View key={t} style={[styles.tableRow, isHighlighted && styles.tableRowHighlight]}>
+                <Text style={[styles.tableCell, isHighlighted && styles.tableCellHighlight]}>
+                  {formatTime(t)}
+                </Text>
+                <Text style={[styles.tableCell, styles.tableCellBold, isHighlighted && styles.tableCellHighlight]}>
+                  {formatTime(adj)}
+                </Text>
+                <Text style={[styles.tableCell, isHighlighted && styles.tableCellHighlight]}>
+                  {stops}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+
         {/* Filter Reference */}
         <View style={styles.filterSection}>
           <Text style={styles.filterTitle}>FILTER STACK</Text>
@@ -487,34 +515,6 @@ export default function ReciprocityScreen() {
           {FILTERS.filter(f => f.note && activeFilters.has(f.name)).map(f => (
             <Text key={f.name} style={styles.filterNote}>⚠ {f.name}: {f.note}</Text>
           ))}
-        </View>
-
-        {/* Reference Table */}
-        <View style={styles.tableSection}>
-          <Text style={styles.tableTitle}>REFERENCE TABLE — {stock.name}</Text>
-          <View style={styles.tableHeader}>
-            <Text style={styles.tableHeaderCell}>Metered</Text>
-            <Text style={styles.tableHeaderCell}>Adjusted</Text>
-            <Text style={styles.tableHeaderCell}>Stops</Text>
-          </View>
-          {[1, 2, 4, 8, 10, 15, 30, 60, 120, 240].map(t => {
-            const adj = calculate(stock, t);
-            const stops = stopsCorrection(t, adj);
-            const isHighlighted = Math.abs(t - metered) < 0.5;
-            return (
-              <View key={t} style={[styles.tableRow, isHighlighted && styles.tableRowHighlight]}>
-                <Text style={[styles.tableCell, isHighlighted && styles.tableCellHighlight]}>
-                  {formatTime(t)}
-                </Text>
-                <Text style={[styles.tableCell, styles.tableCellBold, isHighlighted && styles.tableCellHighlight]}>
-                  {formatTime(adj)}
-                </Text>
-                <Text style={[styles.tableCell, isHighlighted && styles.tableCellHighlight]}>
-                  {stops}
-                </Text>
-              </View>
-            );
-          })}
         </View>
 
         <View style={{ height: 80 }} />
