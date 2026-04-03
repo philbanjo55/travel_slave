@@ -52,7 +52,7 @@ export default function StopDetailScreen() {
   if (!stop) return null;
 
   const photos = stop.stop_photos || [];
-  const { pickAndUpload, deletePhoto, uploading } = usePhotoUpload(stop.id);
+  const { pickAndUpload, deletePhoto, uploading, error } = usePhotoUpload(stop.id);
 
   const handlePhotoLongPress = (photoId: string) => {
     Alert.alert('Delete Photo', 'Remove this reference photo?', [
@@ -178,7 +178,10 @@ export default function StopDetailScreen() {
             disabled={uploading}
           >
             {uploading ? (
-              <ActivityIndicator size="small" color={colors.accent} />
+              <>
+                <ActivityIndicator size="small" color={colors.accent} />
+                <Text style={styles.addPhotoText}>Uploading...</Text>
+              </>
             ) : (
               <>
                 <Ionicons name="camera-outline" size={16} color={colors.accent} />
@@ -188,6 +191,9 @@ export default function StopDetailScreen() {
               </>
             )}
           </TouchableOpacity>
+          {error && (
+            <Text style={styles.uploadError}>Upload failed: {error}</Text>
+          )}
         </View>
 
         {/* Info */}
@@ -376,6 +382,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, borderStyle: 'dashed',
   },
   addPhotoText: { fontSize: 12, fontWeight: '500', color: colors.accent },
+  uploadError: { fontSize: 11, color: '#e74c3c', textAlign: 'center', marginTop: spacing.xs, marginHorizontal: spacing.xl },
   dotActive: { backgroundColor: colors.accent },
 
   infoCard: {
