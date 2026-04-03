@@ -59,14 +59,17 @@ export function usePhotoUpload(stopId: string) {
       const nextPos = existing?.length ? (existing[0].position + 1) : 0;
 
       // Save record with storage_url
-      const { error: insertError } = await supabase
+      const { data: inserted, error: insertError } = await supabase
         .from('stop_photos')
-        .insert({ stop_id: stopId, storage_url, position: nextPos });
+        .insert({ stop_id: stopId, storage_url, position: nextPos })
+        .select('id')
+        .single();
 
       if (insertError) throw insertError;
 
-      // Cache locally immediately
-      await downloadPhoto(photoId, storage_url).catch(() => {});
+      // Cache locally using the DB-generated UUID
+      const dbId = inserted?.id || photoId;
+      await downloadPhoto(dbId, storage_url).catch(() => {});
 
       await refreshCurrentTrip();
     } catch (err: any) {
