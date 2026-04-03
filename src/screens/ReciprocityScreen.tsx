@@ -116,6 +116,34 @@ export default function ReciprocityScreen() {
   const [selectedStock, setSelectedStock] = useState(0);
   const [inputTime, setInputTime] = useState('');
   const [targetTime, setTargetTime] = useState('');
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
+
+  type FilterDef = { name: string; stops: number; note?: string };
+  const FILTERS: FilterDef[] = [
+    { name: 'Polarizer', stops: 1.5, note: '1–2 stops, varies with angle' },
+    { name: 'Red 25', stops: 3 },
+    { name: 'Red 29', stops: 4 },
+    { name: 'Hoya R72', stops: 4, note: 'Ilford rates 4 stops for SFX 200. Some shoot at 5 — bracket.' },
+    { name: 'ND64 (6-stop)', stops: 6 },
+    { name: '3-stop ND', stops: 3 },
+  ];
+
+  const toggleFilter = (name: string) => {
+    setActiveFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const totalFilterStops = useMemo(() => {
+    let total = 0;
+    FILTERS.forEach(f => { if (activeFilters.has(f.name)) total += f.stops; });
+    return total;
+  }, [activeFilters]);
+
+  const totalFilterFactor = useMemo(() => Math.pow(2, totalFilterStops), [totalFilterStops]);
 
   const stocks = format === '4x5' ? FILM_STOCKS_4x5 : FILM_STOCKS_120;
   const stock = stocks[selectedStock];
@@ -422,6 +450,45 @@ export default function ReciprocityScreen() {
           </View>
         </Modal>
 
+        {/* Filter Reference */}
+        <View style={styles.filterSection}>
+          <Text style={styles.filterTitle}>FILTER STACK</Text>
+          <View style={styles.filterGrid}>
+            {FILTERS.map(f => {
+              const active = activeFilters.has(f.name);
+              return (
+                <TouchableOpacity
+                  key={f.name}
+                  style={[styles.filterChip, active && styles.filterChipActive]}
+                  onPress={() => toggleFilter(f.name)}
+                >
+                  <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                    {f.name}
+                  </Text>
+                  <Text style={[styles.filterChipStops, active && styles.filterChipStopsActive]}>
+                    +{f.stops}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {activeFilters.size > 0 && (
+            <View style={styles.filterResult}>
+              <Text style={styles.filterResultLabel}>COMBINED</Text>
+              <Text style={styles.filterResultValue}>+{totalFilterStops} stops</Text>
+              <Text style={styles.filterResultFactor}>{totalFilterFactor.toFixed(0)}× factor</Text>
+              {metered > 0 && (
+                <Text style={styles.filterResultExample}>
+                  {formatTime(metered)} metered → {formatTime(metered * totalFilterFactor)} with filters
+                </Text>
+              )}
+            </View>
+          )}
+          {FILTERS.filter(f => f.note && activeFilters.has(f.name)).map(f => (
+            <Text key={f.name} style={styles.filterNote}>⚠ {f.name}: {f.note}</Text>
+          ))}
+        </View>
+
         {/* Reference Table */}
         <View style={styles.tableSection}>
           <Text style={styles.tableTitle}>REFERENCE TABLE — {stock.name}</Text>
@@ -589,6 +656,38 @@ const styles = StyleSheet.create({
   apertureSub: {
     fontSize: 11, color: colors.textTertiary, textAlign: 'center',
   },
+
+  // Filter stack
+  filterSection: {
+    marginHorizontal: spacing.xl, marginTop: spacing.xl,
+  },
+  filterTitle: { ...typography.labelMedium, marginBottom: spacing.md },
+  filterGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs,
+  },
+  filterChip: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderRadius: radius.sm, backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  filterChipActive: {
+    borderColor: colors.accent, backgroundColor: '#1a1a2e',
+  },
+  filterChipText: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
+  filterChipTextActive: { color: colors.textPrimary },
+  filterChipStops: { fontSize: 10, fontWeight: '600', color: colors.textTertiary },
+  filterChipStopsActive: { color: colors.accent },
+  filterResult: {
+    marginTop: spacing.md, backgroundColor: colors.surface,
+    borderRadius: radius.md, padding: spacing.lg, alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  filterResultLabel: { fontSize: 10, fontWeight: '600', color: colors.textTertiary, letterSpacing: 1 },
+  filterResultValue: { fontSize: 28, fontWeight: '700', color: colors.textPrimary, marginVertical: spacing.xs },
+  filterResultFactor: { fontSize: 13, color: colors.accent, fontWeight: '500' },
+  filterResultExample: { fontSize: 11, color: colors.textTertiary, marginTop: spacing.sm },
+  filterNote: { fontSize: 10, color: '#d4a017', marginTop: spacing.xs, paddingHorizontal: spacing.xs },
 
   // Timer overlay
   timerOverlay: {
