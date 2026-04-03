@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Dimensions,
+  TextInput, Dimensions, Vibration, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -120,6 +120,88 @@ export default function ReciprocityScreen() {
   const stock = stocks[selectedStock];
   const metered = parseFloat(inputTime) || 0;
 
+  // Timer state
+  const [timerActive, setTimerActive] = useState(false);
+  const [timerPhase, setTimerPhase] = useState<'countdown' | 'running' | 'done'>('countdown');
+  const [countdownValue, setCountdownValue] = useState(3);
+  const [remainingMs, setRemainingMs] = useState(0);
+  const [totalMs, setTotalMs] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef(0);
+  const exposureMsRef = useRef(0);
+
+  const clearTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const stopTimer = useCallback(() => {
+    clearTimer();
+    setTimerActive(false);
+  }, [clearTimer]);
+
+  const startTimer = useCallback((adjustedSeconds: number) => {
+    clearTimer();
+    const expMs = Math.round(adjustedSeconds * 1000);
+    exposureMsRef.current = expMs;
+    setTotalMs(expMs);
+    setTimerPhase('countdown');
+    setCountdownValue(3);
+    setTimerActive(true);
+
+    // 3-second countdown
+    let count = 3;
+    Vibration.vibrate(100);
+
+    timerRef.current = setInterval(() => {
+      count -= 1;
+      if (count > 0) {
+        setCountdownValue(count);
+        Vibration.vibrate(100);
+      } else {
+        // Countdown done — start exposure timer
+        clearTimer();
+        Vibration.vibrate([0, 300, 100, 300]); // double buzz = GO
+        setTimerPhase('running');
+        setRemainingMs(exposureMsRef.current);
+        startTimeRef.current = Date.now();
+
+        timerRef.current = setInterval(() => {
+          const elapsed = Date.now() - startTimeRef.current;
+          const remaining = exposureMsRef.current - elapsed;
+          if (remaining <= 0) {
+            clearTimer();
+            setRemainingMs(0);
+            setTimerPhase('done');
+            Vibration.vibrate([0, 500, 200, 500, 200, 500]); // triple buzz = DONE
+          } else {
+            setRemainingMs(remaining);
+          }
+        }, 100);
+      }
+    }, 1000);
+  }, [clearTimer]);
+
+  useEffect(() => {
+    return () => clearTimer(); // cleanup on unmount
+  }, [clearTimer]);
+
+  function formatTimerDisplay(ms: number): string {
+    const totalSec = Math.ceil(ms / 1000);
+    if (totalSec < 60) return `${totalSec}`;
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function formatTimerLabel(ms: number): string {
+    const totalSec = Math.ceil(ms / 1000);
+    if (totalSec < 60) return 'seconds';
+    return 'min:sec';
+  }
+
   const result = useMemo(() => {
     if (metered <= 0) return null;
     const adjusted = calculate(stock, metered);
@@ -211,8 +293,67 @@ export default function ReciprocityScreen() {
               <Text style={styles.resultStops}>{result.stops} stops correction</Text>
               <Text style={styles.resultOriginal}>from {result.meteredFormatted} metered</Text>
             </View>
+            <TouchableOpacity
+              style={styles.timerBtn}
+              onPress={() => startTimer(result.adjusted)}
+            >
+              <Ionicons name="timer-outline" size={18} color="#fff" />
+              <Text style={styles.timerBtnText}>Start Timer</Text>
+            </TouchableOpacity>
           </View>
         )}
+
+        {/* Timer Overlay */}
+        <Modal
+          visible={timerActive}
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={stopTimer}
+        >
+          <View style={styles.timerOverlay}>
+            {timerPhase === 'countdown' && (
+              <View style={styles.timerCenter}>
+                <Text style={styles.timerLabel}>GET READY</Text>
+                <Text style={styles.timerCountdown}>{countdownValue}</Text>
+                <Text style={styles.timerSub}>Open shutter when timer starts</Text>
+              </View>
+            )}
+
+            {timerPhase === 'running' && (
+              <View style={styles.timerCenter}>
+                <Text style={styles.timerLabel}>EXPOSING — {stock.name}</Text>
+                <Text style={styles.timerRunning}>{formatTimerDisplay(remainingMs)}</Text>
+                <Text style={styles.timerUnit}>{formatTimerLabel(remainingMs)}</Text>
+                <View style={styles.progressBarBg}>
+                  <View
+                    style={[
+                      styles.progressBarFill,
+                      { width: `${Math.max(0, Math.min(100, ((totalMs - remainingMs) / totalMs) * 100))}%` },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.timerElapsed}>
+                  {formatTime(Math.round((totalMs - remainingMs) / 1000))} of {formatTime(Math.round(totalMs / 1000))}
+                </Text>
+              </View>
+            )}
+
+            {timerPhase === 'done' && (
+              <View style={styles.timerCenter}>
+                <Text style={styles.timerLabel}>EXPOSURE COMPLETE</Text>
+                <Ionicons name="checkmark-circle" size={80} color="#4CAF50" />
+                <Text style={styles.timerDoneText}>Close shutter</Text>
+                <Text style={styles.timerSub}>{formatTime(Math.round(totalMs / 1000))} on {stock.name}</Text>
+              </View>
+            )}
+
+            <TouchableOpacity style={styles.timerStopBtn} onPress={stopTimer}>
+              <Text style={styles.timerStopText}>
+                {timerPhase === 'done' ? 'Done' : 'Cancel'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
 
         {/* Reference Table */}
         <View style={styles.tableSection}>
@@ -346,4 +487,59 @@ const styles = StyleSheet.create({
   tableCell: { flex: 1, fontSize: 13, color: colors.textSecondary, textAlign: 'center' },
   tableCellBold: { fontWeight: '600', color: colors.textPrimary },
   tableCellHighlight: { color: colors.accent },
+
+  // Timer button
+  timerBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginTop: spacing.lg, backgroundColor: colors.accent,
+    paddingHorizontal: spacing.xl, paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+  },
+  timerBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+
+  // Timer overlay
+  timerOverlay: {
+    flex: 1, backgroundColor: '#000',
+    justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: spacing.xl,
+  },
+  timerCenter: { alignItems: 'center', justifyContent: 'center' },
+  timerLabel: {
+    fontSize: 12, fontWeight: '700', letterSpacing: 2,
+    color: colors.textTertiary, marginBottom: spacing.lg,
+  },
+  timerCountdown: {
+    fontSize: 120, fontWeight: '200', color: colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+  },
+  timerRunning: {
+    fontSize: 80, fontWeight: '300', color: colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+  },
+  timerUnit: {
+    fontSize: 14, color: colors.textTertiary, marginTop: spacing.xs,
+  },
+  timerSub: {
+    fontSize: 14, color: colors.textTertiary, marginTop: spacing.xl,
+  },
+  timerDoneText: {
+    fontSize: 24, fontWeight: '600', color: '#4CAF50', marginTop: spacing.lg,
+  },
+  timerElapsed: {
+    fontSize: 12, color: colors.textTertiary, marginTop: spacing.md,
+  },
+  progressBarBg: {
+    width: width - spacing.xl * 4, height: 4,
+    backgroundColor: '#1a1a2e', borderRadius: 2, marginTop: spacing.xl,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: 4, backgroundColor: colors.accent, borderRadius: 2,
+  },
+  timerStopBtn: {
+    position: 'absolute', bottom: 60,
+    paddingHorizontal: spacing.xl * 2, paddingVertical: spacing.md,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
+  },
+  timerStopText: { fontSize: 16, fontWeight: '500', color: colors.textSecondary },
 });
