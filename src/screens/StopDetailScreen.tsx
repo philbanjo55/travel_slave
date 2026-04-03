@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Image, Linking, Dimensions, Alert,
+  Image, Linking, Dimensions, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { getPhotoUri } from '../services/photoCache';
+import { usePhotoUpload } from '../hooks/usePhotoUpload';
 import { useTripStore } from '../store/tripStore';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
@@ -51,6 +52,14 @@ export default function StopDetailScreen() {
   if (!stop) return null;
 
   const photos = stop.stop_photos || [];
+  const { pickAndUpload, deletePhoto, uploading } = usePhotoUpload(stop.id);
+
+  const handlePhotoLongPress = (photoId: string) => {
+    Alert.alert('Delete Photo', 'Remove this reference photo?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deletePhoto(photoId) },
+    ]);
+  };
 
   // Navigate from PREVIOUS stop to THIS stop (chained directions)
   const openNavigation = () => {
@@ -131,31 +140,55 @@ export default function StopDetailScreen() {
         </View>
 
         {/* Photos */}
-        {photos.length > 0 && (
-          <View style={[styles.photoSection, { overflow: "hidden" }]}>
-            <ScrollView
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              bounces={false}
-              overScrollMode="never"
-              onMomentumScrollEnd={(e) => {
-                setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
-              }}
-            >
-              {photos.map((photo: any) => (
-                <PhotoItem key={photo.id} photo={photo} />
-              ))}
-            </ScrollView>
-            {photos.length > 1 && (
-              <View style={styles.photoDots}>
-                {photos.map((_: any, i: number) => (
-                  <View key={i} style={[styles.dot, i === photoIndex && styles.dotActive]} />
+        <View style={[styles.photoSection, { overflow: "hidden" }]}>
+          {photos.length > 0 && (
+            <>
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                bounces={false}
+                overScrollMode="never"
+                onMomentumScrollEnd={(e) => {
+                  setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
+                }}
+              >
+                {photos.map((photo: any) => (
+                  <TouchableOpacity
+                    key={photo.id}
+                    onLongPress={() => handlePhotoLongPress(photo.id)}
+                    activeOpacity={0.9}
+                  >
+                    <PhotoItem photo={photo} />
+                  </TouchableOpacity>
                 ))}
-              </View>
+              </ScrollView>
+              {photos.length > 1 && (
+                <View style={styles.photoDots}>
+                  {photos.map((_: any, i: number) => (
+                    <View key={i} style={[styles.dot, i === photoIndex && styles.dotActive]} />
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+          <TouchableOpacity
+            style={styles.addPhotoBtn}
+            onPress={pickAndUpload}
+            disabled={uploading}
+          >
+            {uploading ? (
+              <ActivityIndicator size="small" color={colors.accent} />
+            ) : (
+              <>
+                <Ionicons name="camera-outline" size={16} color={colors.accent} />
+                <Text style={styles.addPhotoText}>
+                  {photos.length > 0 ? 'Add Photo' : 'Add Reference Photo'}
+                </Text>
+              </>
             )}
-          </View>
-        )}
+          </TouchableOpacity>
+        </View>
 
         {/* Info */}
         {stop.info && (
@@ -337,6 +370,12 @@ const styles = StyleSheet.create({
   photo: { width, height: 260 },
   photoDots: { flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.sm },
   dot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.border },
+  addPhotoBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    marginHorizontal: spacing.xl, marginTop: spacing.sm, paddingVertical: spacing.sm,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, borderStyle: 'dashed',
+  },
+  addPhotoText: { fontSize: 12, fontWeight: '500', color: colors.accent },
   dotActive: { backgroundColor: colors.accent },
 
   infoCard: {
