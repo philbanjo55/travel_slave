@@ -5,6 +5,7 @@ import TripsScreen from '../screens/TripsScreen';
 import TripScreen from '../screens/TripScreen';
 import DayScreen from '../screens/DayScreen';
 import StopDetailScreen from '../screens/StopDetailScreen';
+import ReciprocityScreen from '../screens/ReciprocityScreen';
 import { colors } from '../theme';
 
 export type RootStackParamList = {
@@ -12,6 +13,7 @@ export type RootStackParamList = {
   Trip: { tripId: string };
   Day: { tripId: string; dayIndex: number };
   StopDetail: { stopId: string; dayId: string };
+  Reciprocity: undefined;
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -52,6 +54,7 @@ export default function RootNavigator() {
         <Stack.Screen name="Trip" component={TripScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Day" component={DayScreen} />
         <Stack.Screen name="StopDetail" component={StopDetailScreen} options={{ gestureEnabled: false }} />
+        <Stack.Screen name="Reciprocity" component={ReciprocityScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

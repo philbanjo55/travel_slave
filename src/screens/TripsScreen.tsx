@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import { colors, typography, spacing, radius } from '../theme';
 import { format, differenceInDays } from 'date-fns';
@@ -89,6 +90,12 @@ export default function TripsScreen() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
           {migrating && <ActivityIndicator size="small" color={colors.accentDim} />}
           {isOffline && <Text style={styles.offline}>OFFLINE</Text>}
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Reciprocity')}
+            style={{ padding: spacing.xs }}
+          >
+            <Ionicons name="calculator-outline" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
         </View>
       </View>
 
