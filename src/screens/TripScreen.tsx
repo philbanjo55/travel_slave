@@ -7,7 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
-import { calculateDriveTimes, supabase } from '../services/supabase';
+import { supabase } from '../services/supabase';
+import { calculateDriveTimesForTrip } from '../services/driveTimes';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format } from 'date-fns';
@@ -65,7 +66,7 @@ export default function TripScreen() {
           onPress: async () => {
             setRecalculating(true);
             try {
-              const result = await calculateDriveTimes(tripId);
+              const result = await calculateDriveTimesForTrip(tripId);
               Alert.alert('Done', `Updated ${result.updated} drive times.`);
               loadTrip(tripId); // Refresh data
             } catch (e) {
