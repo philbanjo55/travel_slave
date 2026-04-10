@@ -32,7 +32,7 @@ function PhotoItem({ photo }: { photo: any }) {
   }, [photo.id]);
 
   if (!uri) return null;
-  return <Image source={{ uri }} style={styles.photo} resizeMode="cover" />;
+  return <Image source={{ uri }} style={styles.photo} resizeMode="contain" />;
 }
 
 export default function StopDetailScreen() {
@@ -430,7 +430,7 @@ const styles = StyleSheet.create({
   fromLabel: { fontSize: 11, color: colors.textTertiary, fontStyle: 'italic' },
 
   photoSection: { marginBottom: spacing.lg, overflow: 'hidden' },
-  photo: { width, height: 260 },
+  photo: { width, height: 260, backgroundColor: '#111' },
   photoDots: { flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.sm },
   dot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.border },
   addPhotoBtn: {
