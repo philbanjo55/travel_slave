@@ -117,6 +117,7 @@ export default function ReciprocityScreen() {
   const [inputTime, setInputTime] = useState('');
   const [targetTime, setTargetTime] = useState('');
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
+  const [deltaP, setDeltaP] = useState<1.26 | 1.20>(1.26);
 
   type FilterDef = { name: string; stops: number; note?: string };
   const FILTERS: FilterDef[] = [
@@ -146,7 +147,10 @@ export default function ReciprocityScreen() {
   const totalFilterFactor = useMemo(() => Math.pow(2, totalFilterStops), [totalFilterStops]);
 
   const stocks = format === '4x5' ? FILM_STOCKS_4x5 : FILM_STOCKS_120;
-  const stock = stocks[selectedStock];
+  const rawStock = stocks[selectedStock];
+  const stock: FilmStock = rawStock.name === 'Delta 100'
+    ? { ...rawStock, p: deltaP, source: `Ilford official (P=${deltaP})` }
+    : rawStock;
   const metered = parseFloat(inputTime) || 0;
 
   // Timer state
@@ -318,6 +322,24 @@ export default function ReciprocityScreen() {
         {/* Source info */}
         <Text style={styles.sourceText}>{stock.source}</Text>
         {stock.note && <Text style={styles.noteText}>{stock.note}</Text>}
+
+        {/* Delta 100 P-value toggle */}
+        {rawStock.name === 'Delta 100' && (
+          <View style={styles.pToggleRow}>
+            <Text style={styles.pToggleLabel}>P value:</Text>
+            {([1.26, 1.20] as const).map(p => (
+              <TouchableOpacity
+                key={p}
+                style={[styles.pToggleBtn, deltaP === p && styles.pToggleBtnActive]}
+                onPress={() => setDeltaP(p)}
+              >
+                <Text style={[styles.pToggleText, deltaP === p && styles.pToggleTextActive]}>
+                  {p.toFixed(2)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {/* Time Input */}
         <View style={styles.inputSection}>
@@ -568,6 +590,20 @@ const styles = StyleSheet.create({
     fontSize: 10, color: colors.signalWarning || '#d4a017',
     paddingHorizontal: spacing.xl, marginTop: 2,
   },
+  pToggleRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingHorizontal: spacing.xl, marginTop: spacing.sm,
+  },
+  pToggleLabel: { fontSize: 11, color: colors.textTertiary },
+  pToggleBtn: {
+    paddingHorizontal: spacing.md, paddingVertical: 4,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border,
+  },
+  pToggleBtnActive: {
+    borderColor: colors.accent, backgroundColor: colors.accent + '22',
+  },
+  pToggleText: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
+  pToggleTextActive: { color: colors.accent },
 
   inputSection: { paddingHorizontal: spacing.xl, marginTop: spacing.lg },
   inputLabel: { ...typography.labelMedium, marginBottom: spacing.sm },
