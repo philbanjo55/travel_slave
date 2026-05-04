@@ -9,7 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import { supabase } from '../services/supabase';
 import { colors, typography, spacing, radius } from '../theme';
-import { format, differenceInDays } from 'date-fns';
+import { format, parseISO, differenceInDays } from 'date-fns';
 import * as Updates from 'expo-updates';
 import { migratePhotosToStorage } from '../services/migratePhotos';
 
@@ -72,10 +72,10 @@ export default function TripsScreen() {
   };
 
   const renderTrip = ({ item }: { item: any }) => {
-    const start = item.start_date ? format(new Date(item.start_date), 'MMM d') : '';
-    const end = item.end_date ? format(new Date(item.end_date), 'MMM d, yyyy') : '';
+    const start = item.start_date ? format(parseISO(item.start_date), 'MMM d') : '';
+    const end = item.end_date ? format(parseISO(item.end_date), 'MMM d, yyyy') : '';
     const days = item.start_date && item.end_date
-      ? differenceInDays(new Date(item.end_date), new Date(item.start_date))
+      ? differenceInDays(parseISO(item.end_date), parseISO(item.start_date))
       : null;
 
     return (

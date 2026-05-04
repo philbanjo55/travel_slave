@@ -11,7 +11,7 @@ import { supabase } from '../services/supabase';
 import { calculateDriveTimesForTrip } from '../services/driveTimes';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 
 export default function TripScreen() {
   const navigation = useNavigation<any>();
@@ -101,8 +101,8 @@ export default function TripScreen() {
         <View style={styles.headerCenter}>
           <Text style={styles.tripTitle}>{trip.title}</Text>
           <Text style={styles.tripDates}>
-            {trip.start_date ? format(new Date(trip.start_date), 'MMM d') : ''} —{' '}
-            {trip.end_date ? format(new Date(trip.end_date), 'MMM d, yyyy') : ''}
+            {trip.start_date ? format(parseISO(trip.start_date), 'MMM d') : ''} —{' '}
+            {trip.end_date ? format(parseISO(trip.end_date), 'MMM d, yyyy') : ''}
           </Text>
         </View>
         {isSyncing && <ActivityIndicator color={colors.accentDim} size="small" />}
@@ -133,7 +133,7 @@ export default function TripScreen() {
                   {`Day ${d.day_number}`}
                 </Text>
                 <Text style={[styles.tabDate, isActive && styles.tabDateActive]}>
-                  {d.date ? format(new Date(d.date), 'MMM d') : ''}
+                  {d.date ? format(parseISO(d.date), 'MMM d') : ''}
                 </Text>
                 {d.checked && <View style={styles.checkedDot} />}
                 {d.review && <View style={styles.reviewDot} />}
