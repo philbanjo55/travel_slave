@@ -122,7 +122,12 @@ export async function calculateDriveTimesForTrip(tripId: string): Promise<{
  */
 function isAnchorStop(name: string): boolean {
   if (!name) return false;
-  return name.includes('\u2192') || /\bflight\b/i.test(name);
+  // Arrow character (→) indicates a flight or directed movement
+  if (name.includes('\u2192')) return true;
+  // Pattern matches for externally-fixed times:
+  //   flight, land/landing, arrive/arrival, airport
+  //   check-in / check-out / check in / check out (hotel/accommodation)
+  return /\b(flight|land(?:ing)?|arriv(?:e|al)|airport|check[\s-]?(?:in|out))\b/i.test(name);
 }
 
 /**
