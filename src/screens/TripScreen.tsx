@@ -8,7 +8,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import { supabase } from '../services/supabase';
-import { calculateDriveTimesForTrip } from '../services/driveTimes';
+import { calculateDriveTimesForTrip, recalculateTimeLabels } from '../services/driveTimes';
 import DaySummary from '../components/DaySummary';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
@@ -58,8 +58,8 @@ export default function TripScreen() {
 
   const recalcDriveTimes = useCallback(async () => {
     Alert.alert(
-      'Recalculate Drive Times',
-      'This will update all drive times using real Google Maps data. Continue?',
+      'Recalculate Schedule',
+      'This will update all drive times using real Google Maps data, then rewrite each stop\'s time so the day cadence reflects the new drive times. Flights and other anchor stops keep their existing times. Continue?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -67,11 +67,15 @@ export default function TripScreen() {
           onPress: async () => {
             setRecalculating(true);
             try {
-              const result = await calculateDriveTimesForTrip(tripId);
-              Alert.alert('Done', `Updated ${result.updated} drive times.`);
+              const drive = await calculateDriveTimesForTrip(tripId);
+              const times = await recalculateTimeLabels(tripId);
+              Alert.alert(
+                'Done',
+                `Updated ${drive.updated} drive times and ${times.stopsUpdated} stop times across ${times.daysProcessed} days.`
+              );
               loadTrip(tripId); // Refresh data
             } catch (e) {
-              Alert.alert('Error', 'Failed to recalculate drive times.');
+              Alert.alert('Error', 'Failed to recalculate schedule.');
             } finally {
               setRecalculating(false);
             }
