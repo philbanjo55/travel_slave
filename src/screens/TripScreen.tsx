@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import { supabase } from '../services/supabase';
 import { calculateDriveTimesForTrip } from '../services/driveTimes';
+import DaySummary from '../components/DaySummary';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
@@ -158,6 +159,8 @@ export default function TripScreen() {
           </TouchableOpacity>
         </View>
       )}
+
+      <DaySummary stops={stops} />
 
       <FlatList
         data={stops}

@@ -8,6 +8,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
+import DaySummary from '../components/DaySummary';
 import { colors, typography, spacing, radius } from '../theme';
 
 const { height } = Dimensions.get('window');
@@ -112,6 +113,8 @@ export default function DayScreen() {
           />
         </View>
       </TouchableOpacity>
+
+      <DaySummary stops={stops} />
 
       {/* Stop list */}
       <FlatList
