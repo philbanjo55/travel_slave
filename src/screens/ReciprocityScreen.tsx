@@ -53,6 +53,7 @@ type FilmStock = {
 const FILM_STOCKS_4x5: FilmStock[] = [
   { name: 'Delta 100', method: 'power', p: 1.26, source: 'Ilford official PDF' },
   { name: 'FP4+', method: 'power', p: 1.26, source: 'Ilford official PDF' },
+  { name: 'Pan F+ 50', method: 'power', p: 1.26, source: 'HARMAN 4x5 launch May 2026 · Bond/Roos field', note: '3-mo latent image — develop within weeks of exposure' },
   { name: 'HP5+', method: 'power', p: 1.31, source: 'Ilford official PDF' },
   { name: 'T-Max 400', method: 'lookup', data: TMY_DATA, source: 'Kodak F-4016 + Bond' },
   { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Kodak F-4016' },
@@ -60,6 +61,7 @@ const FILM_STOCKS_4x5: FilmStock[] = [
   { name: 'Provia 100F', method: 'provia', source: 'Fuji data sheet', note: 'No correction up to 128s' },
   { name: 'Portra 160', method: 'portra', source: 'Sachs/community R²=0.995' },
   { name: 'Portra 400', method: 'portra', source: 'Same curve as 160' },
+  { name: 'Custom', method: 'power', p: 1.26, source: 'User defined — field testing', note: 'Tap +/- to adjust P value' },
 ];
 
 const FILM_STOCKS_120: FilmStock[] = [
@@ -67,6 +69,7 @@ const FILM_STOCKS_120: FilmStock[] = [
   { name: 'Tri-X 400', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017' },
   { name: 'T-Max 400', method: 'lookup', data: TMY_DATA, source: 'Kodak F-4016 + Bond' },
   { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Kodak F-4016' },
+  { name: 'Custom', method: 'power', p: 1.26, source: 'User defined — field testing', note: 'Tap +/- to adjust P value' },
 ];
 
 function calculate(stock: FilmStock, metered: number): number {
@@ -118,6 +121,7 @@ export default function ReciprocityScreen() {
   const [targetTime, setTargetTime] = useState('');
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [deltaP, setDeltaP] = useState<1.26 | 1.20>(1.26);
+  const [customP, setCustomP] = useState(1.26);
 
   type FilterDef = { name: string; stops: number; note?: string };
   const FILTERS: FilterDef[] = [
@@ -150,7 +154,9 @@ export default function ReciprocityScreen() {
   const rawStock = stocks[selectedStock];
   const stock: FilmStock = rawStock.name === 'Delta 100'
     ? { ...rawStock, p: deltaP, source: `Ilford official (P=${deltaP})` }
-    : rawStock;
+    : rawStock.name === 'Custom'
+      ? { ...rawStock, p: customP, source: `User defined (P=${customP.toFixed(2)})` }
+      : rawStock;
   const metered = parseFloat(inputTime) || 0;
 
   // Timer state
@@ -338,6 +344,36 @@ export default function ReciprocityScreen() {
                 </Text>
               </TouchableOpacity>
             ))}
+          </View>
+        )}
+
+        {/* Custom P-value stepper */}
+        {rawStock.name === 'Custom' && (
+          <View style={styles.pToggleRow}>
+            <Text style={styles.pToggleLabel}>P value:</Text>
+            <TouchableOpacity
+              style={styles.pToggleBtn}
+              onPress={() => setCustomP(p => Math.max(1.00, +(p - 0.01).toFixed(2)))}
+              onLongPress={() => setCustomP(p => Math.max(1.00, +(p - 0.05).toFixed(2)))}
+            >
+              <Text style={styles.pToggleText}>−</Text>
+            </TouchableOpacity>
+            <View style={[styles.pToggleBtn, styles.pToggleBtnActive, { minWidth: 56, alignItems: 'center' }]}>
+              <Text style={[styles.pToggleText, styles.pToggleTextActive]}>{customP.toFixed(2)}</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.pToggleBtn}
+              onPress={() => setCustomP(p => Math.min(1.60, +(p + 0.01).toFixed(2)))}
+              onLongPress={() => setCustomP(p => Math.min(1.60, +(p + 0.05).toFixed(2)))}
+            >
+              <Text style={styles.pToggleText}>+</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.pToggleBtn}
+              onPress={() => setCustomP(1.26)}
+            >
+              <Text style={styles.pToggleText}>reset</Text>
+            </TouchableOpacity>
           </View>
         )}
 
