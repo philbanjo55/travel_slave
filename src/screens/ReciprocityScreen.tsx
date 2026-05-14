@@ -312,17 +312,38 @@ export default function ReciprocityScreen() {
 
         {/* Film Stock Picker */}
         <View style={styles.stockGrid}>
-          {stocks.map((s, i) => (
-            <TouchableOpacity
-              key={s.name}
-              style={[styles.stockBtn, selectedStock === i && styles.stockBtnActive]}
-              onPress={() => setSelectedStock(i)}
-            >
-              <Text style={[styles.stockName, selectedStock === i && styles.stockNameActive]} numberOfLines={1}>
-                {s.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {stocks.map((s, i) => {
+            // Compute label for the second line: P value, lookup, or special method
+            let secondLine = '';
+            if (s.method === 'power' && s.p !== undefined) {
+              // Show dynamic P for Delta 100 and Custom, static P for others
+              if (s.name === 'Delta 100') secondLine = `P=${deltaP.toFixed(2)}`;
+              else if (s.name === 'Custom') secondLine = `P=${customP.toFixed(2)}`;
+              else secondLine = `P=${s.p.toFixed(2)}`;
+            } else if (s.method === 'lookup') {
+              secondLine = 'lookup table';
+            } else if (s.method === 'provia') {
+              secondLine = 'no corr <128s';
+            } else if (s.method === 'portra') {
+              secondLine = 'community curve';
+            }
+            return (
+              <TouchableOpacity
+                key={s.name}
+                style={[styles.stockBtn, selectedStock === i && styles.stockBtnActive]}
+                onPress={() => setSelectedStock(i)}
+              >
+                <Text style={[styles.stockName, selectedStock === i && styles.stockNameActive]} numberOfLines={1}>
+                  {s.name}
+                </Text>
+                {secondLine ? (
+                  <Text style={[styles.stockSubtext, selectedStock === i && styles.stockSubtextActive]} numberOfLines={1}>
+                    {secondLine}
+                  </Text>
+                ) : null}
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {/* Source info */}
@@ -617,6 +638,8 @@ const styles = StyleSheet.create({
   stockBtnActive: { borderColor: colors.accent, backgroundColor: '#1a1a2e' },
   stockName: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
   stockNameActive: { color: colors.accent },
+  stockSubtext: { fontSize: 9, fontWeight: '400', color: colors.textTertiary, marginTop: 1 },
+  stockSubtextActive: { color: colors.accent, opacity: 0.7 },
 
   sourceText: {
     fontSize: 10, color: colors.textTertiary,
