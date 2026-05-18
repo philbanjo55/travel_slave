@@ -35,9 +35,10 @@ import com.philmframe.wear.ui.PhilmTheme
  * Single activity host. Wear OS standalone — no companion phone app needed.
  *
  * On a Wear OS device the app fills the screen edge-to-edge.
- * On a phone (dev testing) the same Compose UI is wrapped in a 380dp circular
- * Box with inner padding so TimeText and page dots stay inside the visible
- * round area instead of being clipped at the corners.
+ * On a phone (dev testing) the same Compose UI is wrapped in a 240dp circular
+ * Box — the Galaxy Watch Ultra's true 1.5" / 38.1mm display diameter.
+ * Since Android dp is density-independent (160 dp = 1 inch on any device),
+ * 240 dp renders at the actual physical size of the watch on Phil's phone.
  *
  * Hardware keys captured here:
  *   - KEYCODE_STEM_1: Galaxy Watch Ultra's Quick Button when mapped to this app
@@ -73,53 +74,54 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Phone-only wrapper: 380dp circle in the middle of the phone screen with a
- * subtle bezel ring, plus a "SIMULATE QUICK BUTTON" tap target below it so
- * Phil can test the hardware-key flow without sideloading to the watch.
+ * Phone-only wrapper: 240dp circle (= Galaxy Watch Ultra's true 1.5" physical
+ * display diameter) in the middle of the phone screen with a thin bezel ring,
+ * plus a "SIMULATE QUICK BUTTON" tap target below it so Phil can test the
+ * hardware-key flow without sideloading to the watch.
  *
- * Inner padding of 18dp insets the Wear UI from the bezel so TimeText (top)
- * and page dots (bottom) don't get clipped where the circle curves inward.
+ * Zero inner padding — on the real watch, Scaffold positions TimeText and
+ * the page indicator along the curved bezel, so the entire 240dp circle is
+ * available to content. Mirroring that here means the layout density Phil
+ * sees on his phone is exactly what shows up on his wrist.
+ *
+ * Caveat: on phone preview, the rectangular Scaffold draws TimeText straight
+ * across the top of the bounding square instead of curving it along the bezel,
+ * so the corner pixels of TimeText get clipped by CircleShape. The body
+ * content (which is what matters for evaluating layout density) is accurate.
  */
 @Composable
 private fun PhonePreviewFrame(content: @Composable () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0A0A0A)), // very dark slate for the "table" around the watch
+            .background(Color(0xFF0A0A0A)), // dark slate for the "table" around the watch
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "PHONE PREVIEW — Galaxy Watch Ultra shape",
+                text = "PHONE PREVIEW — actual size (1.5\" / 240dp)",
                 fontWeight = FontWeight.W600,
                 fontSize = 11.sp,
                 color = Color(0xFF666666),
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            // The "watch": 380dp circle with bezel ring and inset content
+            // The "watch": 240dp circle with thin bezel ring, zero content inset
             Box(
                 modifier = Modifier
-                    .size(380.dp)
+                    .size(240.dp)
                     .clip(CircleShape)
                     .border(
-                        width = 6.dp,
-                        color = Color(0xFF1A1A1A),
+                        width = 2.dp,
+                        color = Color(0xFF2A2A2A),
                         shape = CircleShape,
                     )
                     .background(PhilmColors.background),
             ) {
-                // 18dp inner padding so TimeText/page dots stay inside the round area
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(18.dp),
-                ) {
-                    content()
-                }
+                content()
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Simulate Quick Button — fires the same TimerTrigger that
             // KEYCODE_STEM_1 fires on the actual watch
