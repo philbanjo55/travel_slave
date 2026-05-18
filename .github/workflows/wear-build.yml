@@ -6,10 +6,10 @@ on:
     paths:
       - 'wear/**'
       - '.github/workflows/wear-build.yml'
-  workflow_dispatch: # allows manual trigger from Actions tab
+  workflow_dispatch:
 
 permissions:
-  contents: write  # needed for creating Releases
+  contents: write
 
 jobs:
   build:
@@ -26,61 +26,120 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle wrapper
-        # Our committed gradlew is a stub; generate the real wrapper here
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 platform-tools'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Generate Gradle wrapper if missing
         working-directory: wear
         run: |
-          # Use system gradle to bootstrap a real wrapper if needed
           if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "::group::Generating Gradle wrapper"
             gradle wrapper --gradle-version 8.7 --distribution-type bin
+            echo "::endgroup::"
           fi
           chmod +x gradlew
+          ./gradlew --version
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('wear/**/*.gradle*', 'wear/gradle/libs.versions.toml') }}
-          restore-keys: ${{ runner.os }}-gradle-
+      - name: Run unit tests
+        working-directory: wear
+        continue-on-error: true
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       - name: Build debug APK
         working-directory: wear
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        run: ./gradlew :app:assembleDebug --stacktrace
 
-      - name: Find APK
+      - name: Find APK and rename for stable URL
         id: apk
         run: |
           APK=$(find wear/app/build/outputs/apk -name "*.apk" | head -n1)
-          echo "path=$APK" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename $APK)" >> "$GITHUB_OUTPUT"
-          ls -la "$APK"
+          if [ -z "$APK" ]; then
+            echo "::error::No APK found"
+            exit 1
+          fi
+          # Build numbers in the filename so users see what they have
+          STABLE_NAME="philm-reciprocity-latest.apk"
+          VERSIONED_NAME="philm-reciprocity-build${{ github.run_number }}.apk"
+          cp "$APK" "$STABLE_NAME"
+          cp "$APK" "$VERSIONED_NAME"
+          ls -la "$STABLE_NAME" "$VERSIONED_NAME"
+          echo "stable=$STABLE_NAME" >> "$GITHUB_OUTPUT"
+          echo "versioned=$VERSIONED_NAME" >> "$GITHUB_OUTPUT"
+          echo "size=$(du -h $STABLE_NAME | cut -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: philm-reciprocity-debug
-          path: ${{ steps.apk.outputs.path }}
+          path: |
+            wear/app/build/outputs/apk/debug/*.apk
+            wear/app/build/reports/tests/**
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: warn
 
-      - name: Create dated pre-release
-        if: github.ref == 'refs/heads/update' || github.ref == 'refs/heads/main'
+      # === Two releases: versioned snapshot AND rolling "latest" ===
+
+      - name: Create versioned snapshot release
+        if: success() && (github.ref == 'refs/heads/update' || github.ref == 'refs/heads/main')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: wear-${{ github.run_number }}
-          name: Wear OS APK build #${{ github.run_number }}
+          tag_name: wear-build-${{ github.run_number }}
+          name: "Wear APK build #${{ github.run_number }}"
           body: |
-            Automated debug APK build of Philm Reciprocity for Wear OS.
+            Automated debug build of Philm Reciprocity for Wear OS.
 
-            **Commit**: ${{ github.sha }}
-            **Branch**: ${{ github.ref_name }}
+            - **Commit:** ${{ github.sha }}
+            - **Branch:** ${{ github.ref_name }}
+            - **Size:** ${{ steps.apk.outputs.size }}
 
-            Download `${{ steps.apk.outputs.name }}` below to your phone, then
-            sideload to Galaxy Watch Ultra via Wear Installer 2 or ADB.
-          files: ${{ steps.apk.outputs.path }}
+            Tap `${{ steps.apk.outputs.versioned }}` below on your phone to download, then install.
+          files: ${{ steps.apk.outputs.versioned }}
           prerelease: true
-          generate_release_notes: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update rolling "latest-wear" release
+        if: success() && (github.ref == 'refs/heads/update' || github.ref == 'refs/heads/main')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-wear
+          name: "Philm Reciprocity — Latest Wear APK"
+          body: |
+            **One-tap download for the most recent successful build.**
+
+            This release is automatically updated on every push to `update` or `main`.
+
+            **Bookmark this stable URL on your phone:**
+            👉 https://github.com/${{ github.repository }}/releases/download/latest-wear/philm-reciprocity-latest.apk
+
+            - Build: #${{ github.run_number }}
+            - Commit: ${{ github.sha }}
+            - Branch: ${{ github.ref_name }}
+          files: ${{ steps.apk.outputs.stable }}
+          prerelease: false
+          make_latest: 'true'
+
+      # === Final friendly summary in the Actions UI ===
+
+      - name: Build summary
+        if: success()
+        run: |
+          {
+            echo "## ✅ Wear OS APK ready"
+            echo ""
+            echo "### One-tap download (always points to newest build):"
+            echo ""
+            echo "👉 https://github.com/${{ github.repository }}/releases/download/latest-wear/philm-reciprocity-latest.apk"
+            echo ""
+            echo "Bookmark that URL on your phone — every push refreshes it."
+            echo ""
+            echo "### This build:"
+            echo "- Build #${{ github.run_number }}"
+            echo "- Commit \`${{ github.sha }}\`"
+            echo "- Branch \`${{ github.ref_name }}\`"
+            echo "- APK size: ${{ steps.apk.outputs.size }}"
+          } >> $GITHUB_STEP_SUMMARY

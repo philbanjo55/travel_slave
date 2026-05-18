@@ -5,7 +5,6 @@ composeBom = "2024.09.03"
 wearCompose = "1.4.0"
 activityCompose = "1.9.2"
 lifecycle = "2.8.6"
-horologist = "0.6.20"
 coroutines = "1.8.1"
 
 [libraries]
@@ -25,9 +24,6 @@ androidx-wear-compose-foundation = { group = "androidx.wear.compose", name = "co
 androidx-wear-compose-navigation = { group = "androidx.wear.compose", name = "compose-navigation", version.ref = "wearCompose" }
 
 androidx-lifecycle-runtime = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
-
-horologist-compose-tools = { group = "com.google.android.horologist", name = "horologist-compose-tools", version.ref = "horologist" }
-horologist-compose-layout = { group = "com.google.android.horologist", name = "horologist-compose-layout", version.ref = "horologist" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
