@@ -2,13 +2,10 @@ package com.philmframe.wear.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -18,21 +15,31 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material.HorizontalPageIndicator
+import androidx.wear.compose.material.PageIndicatorState
+import androidx.wear.compose.material.SwipeToDismissBox
+import androidx.wear.compose.material.rememberSwipeToDismissBoxState
 import com.philmframe.wear.data.TimerTrigger
 import com.philmframe.wear.data.rememberAppState
 
 /**
  * Top-level container. Horizontal pager across 4 main pages:
- *   0 — Reciprocity (primary)
- *   1 — Filter stack
- *   2 — Aperture priority
- *   3 — Reference table
  *
- * Overlays:
- *   - Film picker (when invoked from Reciprocity)
- *   - Countdown (when timer fires from button or hardware Quick Button)
+ *   0 = Reciprocity   — primary calculator with rotary + START button
+ *   1 = Filter stack  — toggleable filter list with running stops total
+ *   2 = Aperture      — target seconds → new f-stop (snapped to thirds)
+ *   3 = Reference     — adjusted exposure preview at standard times
+ *
+ * Overlays (shown on top of all pages, dismissed via swipe-from-left-edge):
+ *   - Film picker       — invoked from the stock pill on the Reciprocity screen
+ *   - Countdown timer   — invoked by the START button OR hardware Quick Button
+ *
+ * The Quick Button (KEYCODE_STEM_1) is captured by MainActivity, which calls
+ * TimerTrigger.fire(). This Composable observes that flow and launches the
+ * countdown using the current AppState.adjusted value (whatever the rotary
+ * input has set as the metered exposure, with all reciprocity correction
+ * applied for the currently selected film stock).
  */
 @Composable
 fun PhilmReciprocityApp() {
@@ -43,7 +50,7 @@ fun PhilmReciprocityApp() {
     // Listen for hardware Quick Button trigger
     val pendingTrigger by TimerTrigger.pending.collectAsState()
     LaunchedEffect(pendingTrigger) {
-        if (pendingTrigger != null && countdownExposure == null && !showFilmPicker) {
+        if (pendingTrigger && countdownExposure == null && !showFilmPicker) {
             countdownExposure = state.adjusted
             TimerTrigger.consume()
         }
@@ -51,17 +58,49 @@ fun PhilmReciprocityApp() {
 
     val pagerState = rememberPagerState(initialPage = 0) { 4 }
 
+    val pageIndicatorState = remember {
+        object : PageIndicatorState {
+            override val pageOffset: Float get() = pagerState.currentPageOffsetFraction
+            override val selectedPage: Int get() = pagerState.currentPage
+            override val pageCount: Int get() = 4
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(PhilmColors.background)) {
         when {
-            countdownExposure != null -> CountdownScreen(
-                exposureSeconds = countdownExposure!!,
-                stockName = state.stock.name,
-                onDismiss = { countdownExposure = null },
-            )
-            showFilmPicker -> FilmPickerScreen(
-                state = state,
-                onDismiss = { showFilmPicker = false },
-            )
+            countdownExposure != null -> {
+                val dismissState = rememberSwipeToDismissBoxState()
+                SwipeToDismissBox(
+                    state = dismissState,
+                    onDismissed = { countdownExposure = null },
+                ) { isBackground ->
+                    if (isBackground) {
+                        Box(Modifier.fillMaxSize().background(PhilmColors.background))
+                    } else {
+                        CountdownScreen(
+                            exposureSeconds = countdownExposure!!,
+                            stockName = state.stock.name,
+                            onDismiss = { countdownExposure = null },
+                        )
+                    }
+                }
+            }
+            showFilmPicker -> {
+                val dismissState = rememberSwipeToDismissBoxState()
+                SwipeToDismissBox(
+                    state = dismissState,
+                    onDismissed = { showFilmPicker = false },
+                ) { isBackground ->
+                    if (isBackground) {
+                        Box(Modifier.fillMaxSize().background(PhilmColors.background))
+                    } else {
+                        FilmPickerScreen(
+                            state = state,
+                            onDismiss = { showFilmPicker = false },
+                        )
+                    }
+                }
+            }
             else -> {
                 HorizontalPager(state = pagerState) { page ->
                     when (page) {
@@ -75,31 +114,13 @@ fun PhilmReciprocityApp() {
                         3 -> ReferenceTableScreen(state = state)
                     }
                 }
-                PageDots(
-                    pageCount = 4,
-                    currentPage = pagerState.currentPage,
+                HorizontalPageIndicator(
+                    pageIndicatorState = pageIndicatorState,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 6.dp),
+                        .padding(bottom = 4.dp),
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun PageDots(pageCount: Int, currentPage: Int, modifier: Modifier = Modifier) {
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        repeat(pageCount) { i ->
-            Box(
-                modifier = Modifier
-                    .padding(horizontal = 2.dp)
-                    .size(if (i == currentPage) 6.dp else 4.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (i == currentPage) PhilmColors.accent else PhilmColors.textTertiary,
-                    ),
-            )
         }
     }
 }

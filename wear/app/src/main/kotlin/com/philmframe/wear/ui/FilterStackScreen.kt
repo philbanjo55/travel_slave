@@ -22,7 +22,12 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
+import androidx.wear.compose.material.TimeText
+import androidx.wear.compose.material.Vignette
+import androidx.wear.compose.material.VignettePosition
 import com.philmframe.wear.data.AppState
 import com.philmframe.wear.data.FILTERS
 import com.philmframe.wear.data.filterFactor
@@ -31,7 +36,7 @@ import com.philmframe.wear.data.totalFilterStops
 
 /**
  * Filter stack picker. Tap to toggle. Running total at top.
- * Combined factor applied to metered time = preview shown.
+ * Combined factor applied to metered time → preview shown.
  */
 @Composable
 fun FilterStackScreen(state: AppState) {
@@ -40,12 +45,17 @@ fun FilterStackScreen(state: AppState) {
     val total = totalFilterStops(active)
     val factor = filterFactor(active)
 
-    ScalingLazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(PhilmSpacing.xs),
+    Scaffold(
+        timeText = { TimeText() },
+        vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) },
     ) {
+        ScalingLazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(PhilmSpacing.xs),
+        ) {
         item {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(text = "FILTER STACK", style = PhilmType.labelMedium)
@@ -102,6 +112,7 @@ fun FilterStackScreen(state: AppState) {
                     )
                 }
             }
+        }
         }
     }
 }

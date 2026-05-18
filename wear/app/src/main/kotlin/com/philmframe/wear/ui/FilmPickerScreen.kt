@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -28,7 +28,12 @@ import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.Icon
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
+import androidx.wear.compose.material.TimeText
+import androidx.wear.compose.material.Vignette
+import androidx.wear.compose.material.VignettePosition
 import com.philmframe.wear.data.AppState
 import com.philmframe.wear.data.FILM_STOCKS_120
 import com.philmframe.wear.data.FILM_STOCKS_4X5
@@ -37,7 +42,7 @@ import com.philmframe.wear.data.Method
 
 /**
  * Film stock selector. Format toggle at top (4x5 / 120), then scrolling list.
- * Tap a stock → applies + returns. Tap top format pill → switches list.
+ * Tap a stock → applies + returns. Swipe right to dismiss.
  */
 @Composable
 fun FilmPickerScreen(
@@ -47,12 +52,17 @@ fun FilmPickerScreen(
     val stocks = if (state.format == "4x5") FILM_STOCKS_4X5 else FILM_STOCKS_120
     val listState = rememberScalingLazyListState()
 
-    ScalingLazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(PhilmSpacing.xs),
+    Scaffold(
+        timeText = { TimeText() },
+        vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) },
     ) {
+        ScalingLazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(PhilmSpacing.xs),
+        ) {
         // Format toggle at top
         item {
             Row(
@@ -98,12 +108,13 @@ fun FilmPickerScreen(
                     .padding(PhilmSpacing.sm),
             ) {
                 Icon(
-                    imageVector = Icons.Filled.ArrowBack,
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
                     tint = PhilmColors.textPrimary,
                     modifier = Modifier.size(16.dp),
                 )
             }
+        }
         }
     }
 }

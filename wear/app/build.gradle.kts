@@ -40,6 +40,7 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material.icons.core)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
@@ -48,7 +49,10 @@ dependencies {
     implementation(libs.androidx.wear.compose.navigation)
 
     implementation(libs.androidx.lifecycle.runtime)
+    implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.horologist.compose.tools)
     implementation(libs.horologist.compose.layout)
+
+    testImplementation("junit:junit:4.13.2")
 }

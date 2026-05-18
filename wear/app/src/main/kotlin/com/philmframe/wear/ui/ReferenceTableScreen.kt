@@ -4,10 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -16,16 +14,20 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
+import androidx.wear.compose.material.TimeText
+import androidx.wear.compose.material.Vignette
+import androidx.wear.compose.material.VignettePosition
 import com.philmframe.wear.data.AppState
 import com.philmframe.wear.data.calculateAdjusted
 import com.philmframe.wear.data.formatTime
 import com.philmframe.wear.data.stopsCorrection
 
 /**
- * Reference table — preview adjusted exposures at 1/2/4/8/15/30/60/120/240/600s
- * for the currently selected stock. Compresses the RN reference table into a
- * scrollable list for the watch.
+ * Reference table — preview adjusted exposures at standard metered times
+ * for the currently selected stock. Compresses the RN reference table.
  */
 @Composable
 fun ReferenceTableScreen(state: AppState) {
@@ -33,12 +35,17 @@ fun ReferenceTableScreen(state: AppState) {
     val listState = rememberScalingLazyListState()
     val rows = listOf(1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0, 600.0)
 
-    ScalingLazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(3.dp),
+    Scaffold(
+        timeText = { TimeText() },
+        vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) },
     ) {
+        ScalingLazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
         item {
             Text(
                 text = stock.name.uppercase(),
@@ -97,6 +104,7 @@ fun ReferenceTableScreen(state: AppState) {
                     )
                 }
             }
+        }
         }
     }
 }

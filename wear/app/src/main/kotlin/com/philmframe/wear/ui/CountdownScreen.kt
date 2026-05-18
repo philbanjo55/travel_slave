@@ -3,7 +3,6 @@ package com.philmframe.wear.ui
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -18,7 +17,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,9 +27,9 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Text
 import com.philmframe.wear.buzz.Buzz
 import com.philmframe.wear.data.formatTime
+import com.philmframe.wear.input.findActivity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 
 private enum class Phase { COUNTDOWN, RUNNING, DONE }
 
@@ -59,17 +57,13 @@ fun CountdownScreen(
     val totalMs = exposureMs
 
     // Keep screen on for the whole flow
-    val window = remember {
-        (ctx as? android.app.Activity)?.window
-    }
-    DisposableEffect(Unit) {
-        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    val activity = remember(ctx) { ctx.findActivity() }
+    DisposableEffect(activity) {
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
-
-    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         // 3-2-1 countdown — buzz on each tick (matches RN: Vibration.vibrate(100))
