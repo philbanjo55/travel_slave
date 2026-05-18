@@ -38,7 +38,6 @@ import com.philmframe.wear.data.F_STOPS
 import com.philmframe.wear.data.F_STOPS_INDEX_F22
 import com.philmframe.wear.data.formatFStop
 import com.philmframe.wear.data.formatTime
-import com.philmframe.wear.input.RotaryScrollable
 import kotlin.math.abs
 import kotlin.math.round
 
@@ -76,15 +75,13 @@ fun AperturePriorityScreen(
         timeText = { TimeText() },
         vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
     ) {
-        RotaryScrollable(
-            onRotate = { delta ->
-                // Rotary emits a Float delta — for an integer-step UI we just
-                // care about direction: each tick = ±1 third-stop position.
-                val step = if (delta > 0f) 1 else -1
-                state.nudgeAperture(step)
-                Buzz.click(ctx)
-            },
-        ) {
+        // No RotaryScrollable here — only the primary Reciprocity screen (page 1)
+        // owns rotary input. With two focusables competing in a HorizontalPager,
+        // events become unpredictable. This screen is fully tap/drag driven:
+        //   - Tap ± buttons for 1/3 stop steps
+        //   - Drag the f-stop pill vertically for fine-grained scrubbing
+        //   - Tap the pill to reset to f/22
+        Box(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
