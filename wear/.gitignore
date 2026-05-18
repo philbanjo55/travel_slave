@@ -1,0 +1,15 @@
+# Gradle
+.gradle/
+build/
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.kotlin/
+
+# Wrapper binary (regenerated on first build)
+gradle/wrapper/gradle-wrapper.jar
+
+# OS
+.DS_Store
