@@ -56,16 +56,16 @@ private val DisplayFont = FontFamily.Serif
 object PhilmType {
     val displayLarge = TextStyle(
         fontFamily = DisplayFont,
-        fontSize = 28.sp,
-        fontWeight = FontWeight.W400,
-        letterSpacing = 0.5.sp,
+        fontSize = 44.sp,
+        fontWeight = FontWeight.W300,
+        letterSpacing = (-0.5).sp,
         color = PhilmColors.textPrimary,
     )
     val displayMedium = TextStyle(
         fontFamily = DisplayFont,
-        fontSize = 22.sp,
-        fontWeight = FontWeight.W400,
-        letterSpacing = 0.3.sp,
+        fontSize = 30.sp,
+        fontWeight = FontWeight.W300,
+        letterSpacing = (-0.3).sp,
         color = PhilmColors.textPrimary,
     )
     val headlineLarge = TextStyle(

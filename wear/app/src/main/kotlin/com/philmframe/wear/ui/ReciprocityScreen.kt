@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
@@ -102,13 +103,15 @@ fun ReciprocityScreen(
                     )
                 }
 
-                // Big corrected exposure
+                // Big corrected exposure — hero element
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(text = "CORRECTED", style = PhilmType.labelMedium)
                     Text(text = formatTime(state.adjusted), style = PhilmType.displayLarge)
                     Text(
-                        text = "${state.correctionStops} stops",
-                        style = PhilmType.bodyMedium.copy(color = PhilmColors.accentDim),
+                        text = "CORRECTED · ${state.correctionStops} STOPS",
+                        style = PhilmType.bodySmall.copy(
+                            color = PhilmColors.accentDim,
+                            letterSpacing = 1.sp,
+                        ),
                     )
                 }
 
@@ -175,7 +178,6 @@ private fun MeteredAdjuster(seconds: Double, onChange: (Double) -> Unit) {
         else -> 60.0
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = "METERED", style = PhilmType.labelMedium)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PhilmSpacing.sm),
@@ -188,6 +190,13 @@ private fun MeteredAdjuster(seconds: Double, onChange: (Double) -> Unit) {
             )
             TouchStep(label = "+") { onChange(step) }
         }
+        Text(
+            text = "METERED",
+            style = PhilmType.bodySmall.copy(
+                color = PhilmColors.accentDim,
+                letterSpacing = 1.sp,
+            ),
+        )
     }
 }
 

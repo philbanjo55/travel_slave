@@ -113,7 +113,10 @@ fun PhilmReciprocityApp() {
                             onPickFilm = { showFilmPicker = true },
                             onStartTimer = { countdownExposure = state.adjusted },
                         )
-                        1 -> AperturePriorityScreen(state = state)
+                        1 -> AperturePriorityScreen(
+                            state = state,
+                            onStartTimer = { countdownExposure = state.apertureAdjustedSeconds },
+                        )
                         // Disabled for now — un-comment + bump pageCount above to 4
                         // to restore Filter Stack and Reference Table:
                         // 2 -> FilterStackScreen(state = state)
