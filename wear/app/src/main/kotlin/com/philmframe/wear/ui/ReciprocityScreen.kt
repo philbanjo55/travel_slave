@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -171,7 +173,10 @@ private fun MeteredAdjuster(seconds: Double, onChange: (Double) -> Unit) {
     // Fixed step sizes, regardless of current value:
     //   - Single tap   = ±1 second
     //   - Long press   = ±5 seconds
+    //   - Drag time number vertically = ±1 second per ~12dp
     // No adaptive acceleration — Phil wants predictable stepping.
+    val ctx = LocalContext.current
+    val density = LocalDensity.current.density
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -182,10 +187,35 @@ private fun MeteredAdjuster(seconds: Double, onChange: (Double) -> Unit) {
                 onTap = { onChange(-1.0) },
                 onLongPress = { onChange(-5.0) },
             )
+            // Time number — also acts as a drag handle. Drag up = +1s per ~12dp,
+            // drag down = -1s per ~12dp. Backup input in case rotary doesn't
+            // register on Galaxy Watch Ultra (no physical bezel/crown).
             Text(
                 text = formatTime(seconds),
                 style = PhilmType.headlineLarge,
-                modifier = Modifier.width(80.dp),
+                modifier = Modifier
+                    .width(80.dp)
+                    .pointerInput(Unit) {
+                        var accum = 0f
+                        detectVerticalDragGestures(
+                            onDragStart = { accum = 0f },
+                            onDragEnd = { accum = 0f },
+                        ) { _, dragAmount ->
+                            // Drag UP (negative dragAmount in Compose Y) = increase
+                            accum += -dragAmount
+                            val threshold = 12f * density
+                            while (accum >= threshold) {
+                                onChange(1.0)
+                                Buzz.click(ctx)
+                                accum -= threshold
+                            }
+                            while (accum <= -threshold) {
+                                onChange(-1.0)
+                                Buzz.click(ctx)
+                                accum += threshold
+                            }
+                        }
+                    },
             )
             TouchStep(
                 label = "+",

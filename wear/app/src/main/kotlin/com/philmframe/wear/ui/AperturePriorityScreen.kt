@@ -3,6 +3,7 @@ package com.philmframe.wear.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +21,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Icon
@@ -64,6 +67,7 @@ fun AperturePriorityScreen(
     onStartTimer: () -> Unit,
 ) {
     val ctx = LocalContext.current
+    val density = LocalDensity.current.density
     val baseline = state.adjusted
     val newTime = state.apertureAdjustedSeconds
     val stops = state.apertureStopsFromBase
@@ -119,6 +123,30 @@ fun AperturePriorityScreen(
                                     color = PhilmColors.accent,
                                     shape = RoundedCornerShape(PhilmRadius.full),
                                 )
+                                .pointerInput(Unit) {
+                                    // Drag vertically on the f-stop pill to step through
+                                    // third-stop positions. Drag up = stop down (smaller
+                                    // aperture, more time). Drag down = stop up (wider,
+                                    // less time). Backup input for Galaxy Watch Ultra.
+                                    var accum = 0f
+                                    detectVerticalDragGestures(
+                                        onDragStart = { accum = 0f },
+                                        onDragEnd = { accum = 0f },
+                                    ) { _, dragAmount ->
+                                        accum += -dragAmount
+                                        val threshold = 14f * density
+                                        while (accum >= threshold) {
+                                            state.nudgeAperture(1)
+                                            Buzz.click(ctx)
+                                            accum -= threshold
+                                        }
+                                        while (accum <= -threshold) {
+                                            state.nudgeAperture(-1)
+                                            Buzz.click(ctx)
+                                            accum += threshold
+                                        }
+                                    }
+                                }
                                 .clickable {
                                     state.resetAperture()
                                     Buzz.click(ctx)
