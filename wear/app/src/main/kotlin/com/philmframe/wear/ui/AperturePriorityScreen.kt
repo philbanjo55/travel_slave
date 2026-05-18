@@ -46,7 +46,11 @@ import kotlin.math.round
  * screen automatically — both screens share AppState. The user picks an
  * aperture different from f/22 and the screen computes:
  *
- *   newTime = baselineTime × (fNew / 22)²
+ *   newTime = baselineTime × 2^stopsFromF22
+ *
+ * where stopsFromF22 is exact thirds-of-a-stop from index position. Uses
+ * 2^stops directly rather than the rounded (fNew/22)² ratio, which would
+ * carry ~5.8% per-stop error from the conventional f-stop label rounding.
  *
  * Each ± tap moves the aperture by 1/3 stop along the standard third-stop
  * f-stop sequence (f/5.6 → f/64, 22 positions, baseline at index 12).

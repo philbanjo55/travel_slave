@@ -26,7 +26,9 @@ private val TRIX_DATA = listOf(1.0 to 2.0, 10.0 to 50.0, 100.0 to 1200.0)
 private val TMY_DATA = listOf(1.0 to 1.0, 10.0 to 15.0, 100.0 to 200.0, 240.0 to 540.0)
 
 val FILM_STOCKS_4X5 = listOf(
-    FilmStock("Delta 100", Method.POWER, p = 1.26, source = "Ilford official PDF"),
+    FilmStock("Delta 100", Method.POWER, p = 1.20,
+        source = "Phil calibrated · Praus dev + Imacon",
+        note = "Ilford publishes 1.26; 1.20 is Phil's tested value"),
     FilmStock("FP4+", Method.POWER, p = 1.26, source = "Ilford official PDF"),
     FilmStock("Pan F+ 50", Method.POWER, p = 1.26,
         source = "HARMAN 4x5 launch May 2026 · Bond/Roos field",

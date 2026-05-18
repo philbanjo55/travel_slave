@@ -20,7 +20,13 @@ class ReciprocityTest {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Power-law films (Delta 100, FP4+, Pan F+ 50 all use P=1.26)
+    // Power-law films
+    //   - Delta 100:   P=1.20 (Phil's Praus+Imacon calibration)
+    //   - FP4+:        P=1.26 (Ilford official)
+    //   - Pan F+ 50:   P=1.26 (HARMAN 4x5 launch)
+    //   - HP5+:        P=1.31 (Ilford)
+    //   - T-Max 100:   P=1.15 (Kodak F-4016)
+    //   - SFX 200:     P=1.43 (Ilford)
     // ─────────────────────────────────────────────────────────────
 
     @Test fun `Delta 100 power law at 1s returns unchanged`() {
@@ -28,25 +34,35 @@ class ReciprocityTest {
         assertClose(1.0, calculateAdjusted(delta100, 1.0))
     }
 
-    @Test fun `Delta 100 power law at 8s gives ~12_8s`() {
-        // 8^1.26 = 12.81
+    @Test fun `Delta 100 power law at 8s gives ~12_1s`() {
+        // 8^1.20 = 12.126
         val delta100 = FILM_STOCKS_4X5.first { it.name == "Delta 100" }
-        assertClose(12.81, calculateAdjusted(delta100, 8.0), eps = 0.05)
+        assertClose(12.13, calculateAdjusted(delta100, 8.0), eps = 0.05)
     }
 
-    @Test fun `Delta 100 power law at 60s gives ~165s`() {
-        // 60^1.26 ≈ 165
+    @Test fun `Delta 100 power law at 60s gives ~136s`() {
+        // 60^1.20 = 136.05
         val delta100 = FILM_STOCKS_4X5.first { it.name == "Delta 100" }
-        assertClose(165.40, calculateAdjusted(delta100, 60.0), eps = 0.5)
+        assertClose(136.05, calculateAdjusted(delta100, 60.0), eps = 0.5)
     }
 
-    @Test fun `Pan F+ 50 uses same P=1_26 as Delta 100`() {
+    @Test fun `FP4+ and Pan F+ 50 share P=1_26`() {
+        val fp4 = FILM_STOCKS_4X5.first { it.name == "FP4+" }
         val panf = FILM_STOCKS_4X5.first { it.name == "Pan F+ 50" }
-        val delta = FILM_STOCKS_4X5.first { it.name == "Delta 100" }
         assertClose(
-            calculateAdjusted(delta, 30.0),
+            calculateAdjusted(fp4, 30.0),
             calculateAdjusted(panf, 30.0),
         )
+    }
+
+    @Test fun `Delta 100 corrects less than FP4+ at the same time`() {
+        // Phil's P=1.20 should give a shorter adjusted time than the
+        // standard P=1.26 used by FP4+ and Pan F+
+        val delta100 = FILM_STOCKS_4X5.first { it.name == "Delta 100" }
+        val fp4 = FILM_STOCKS_4X5.first { it.name == "FP4+" }
+        val tDelta = calculateAdjusted(delta100, 30.0)
+        val tFp4 = calculateAdjusted(fp4, 30.0)
+        assert(tDelta < tFp4) { "Delta 100 (P=1.20) should be < FP4+ (P=1.26): $tDelta vs $tFp4" }
     }
 
     @Test fun `HP5+ uses P=1_31 for slightly more correction`() {
