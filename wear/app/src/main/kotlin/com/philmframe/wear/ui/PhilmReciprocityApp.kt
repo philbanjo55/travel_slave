@@ -50,9 +50,13 @@ fun PhilmReciprocityApp() {
     // Listen for hardware Quick Button trigger
     val pendingTrigger by TimerTrigger.pending.collectAsState()
     LaunchedEffect(pendingTrigger) {
-        if (pendingTrigger && countdownExposure == null && !showFilmPicker) {
-            countdownExposure = state.adjusted
+        if (pendingTrigger) {
+            // Consume immediately so the button can fire again on next press
             TimerTrigger.consume()
+            // Start countdown only if we're in a state where it's appropriate
+            if (countdownExposure == null && !showFilmPicker) {
+                countdownExposure = state.adjusted
+            }
         }
     }
 
