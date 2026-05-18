@@ -64,12 +64,40 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_STEM_1 || keyCode == KeyEvent.KEYCODE_STEM_PRIMARY) {
-            TimerTrigger.fire()
-            return true
+    /**
+     * Catch hardware button presses at the highest priority point in the key
+     * dispatch chain. dispatchKeyEvent runs BEFORE the view hierarchy gets the
+     * event, so Compose's focused rotary handler can't consume KEYCODE_STEM_1
+     * before we see it (which was the bug with the previous onKeyDown approach
+     * — Compose was eating the keypress).
+     *
+     * We catch ALL stem keycodes because:
+     *   - KEYCODE_STEM_1 is what spec says the Galaxy Watch Ultra Quick Button
+     *     emits per AOSP, but Samsung's One UI Watch has been known to remap
+     *     to STEM_2 in some firmware versions
+     *   - KEYCODE_STEM_PRIMARY is the Home key (top right) — system-reserved
+     *     for short press but in some firmware reaches apps anyway
+     *   - Casting the wide net costs nothing and means the button mapping
+     *     "just works" regardless of which specific code Samsung emits
+     *
+     * Returning true tells the system "consumed, don't propagate" — so when
+     * the Quick Button is mapped via Samsung Customize Buttons to "Open this
+     * app", a press while the app is already foreground fires the timer
+     * instead of being a no-op re-launch.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_STEM_1,
+                KeyEvent.KEYCODE_STEM_2,
+                KeyEvent.KEYCODE_STEM_3,
+                KeyEvent.KEYCODE_STEM_PRIMARY -> {
+                    TimerTrigger.fire()
+                    return true
+                }
+            }
         }
-        return super.onKeyDown(keyCode, event)
+        return super.dispatchKeyEvent(event)
     }
 }
 
