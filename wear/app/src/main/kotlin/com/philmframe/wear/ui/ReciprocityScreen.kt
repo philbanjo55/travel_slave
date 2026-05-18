@@ -3,6 +3,7 @@ package com.philmframe.wear.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -68,14 +70,10 @@ fun ReciprocityScreen(
     ) {
         RotaryScrollable(
             onRotate = { delta ->
-                val step = when {
-                    state.meteredSeconds < 5 -> 0.5
-                    state.meteredSeconds < 30 -> 1.0
-                    state.meteredSeconds < 120 -> 5.0
-                    state.meteredSeconds < 600 -> 15.0
-                    else -> 60.0
-                }
-                state.nudgeMetered(delta * step)
+                // Each rotary tick = ±1 second, regardless of current value.
+                // No adaptive acceleration — Phil wants predictable single-unit stepping.
+                val step = if (delta > 0f) 1.0 else -1.0
+                state.nudgeMetered(step)
                 Buzz.click(ctx)
             },
         ) {
@@ -170,25 +168,30 @@ private fun StockPill(name: String, pValue: Double?, onClick: () -> Unit) {
  */
 @Composable
 private fun MeteredAdjuster(seconds: Double, onChange: (Double) -> Unit) {
-    val step = when {
-        seconds < 5 -> 0.5
-        seconds < 30 -> 1.0
-        seconds < 120 -> 5.0
-        seconds < 600 -> 15.0
-        else -> 60.0
-    }
+    // Fixed step sizes, regardless of current value:
+    //   - Single tap   = ±1 second
+    //   - Long press   = ±5 seconds
+    // No adaptive acceleration — Phil wants predictable stepping.
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PhilmSpacing.sm),
         ) {
-            TouchStep(label = "−") { onChange(-step) }
+            TouchStep(
+                label = "−",
+                onTap = { onChange(-1.0) },
+                onLongPress = { onChange(-5.0) },
+            )
             Text(
                 text = formatTime(seconds),
                 style = PhilmType.headlineLarge,
                 modifier = Modifier.width(80.dp),
             )
-            TouchStep(label = "+") { onChange(step) }
+            TouchStep(
+                label = "+",
+                onTap = { onChange(1.0) },
+                onLongPress = { onChange(5.0) },
+            )
         }
         Text(
             text = "METERED",
@@ -201,7 +204,8 @@ private fun MeteredAdjuster(seconds: Double, onChange: (Double) -> Unit) {
 }
 
 @Composable
-private fun TouchStep(label: String, onClick: () -> Unit) {
+private fun TouchStep(label: String, onTap: () -> Unit, onLongPress: () -> Unit) {
+    val ctx = LocalContext.current
     Box(
         modifier = Modifier
             .size(28.dp)
@@ -212,7 +216,18 @@ private fun TouchStep(label: String, onClick: () -> Unit) {
                 color = PhilmColors.border,
                 shape = RoundedCornerShape(PhilmRadius.full),
             )
-            .clickable { onClick() },
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = {
+                        onTap()
+                        Buzz.click(ctx)
+                    },
+                    onLongPress = {
+                        onLongPress()
+                        Buzz.tick(ctx)
+                    },
+                )
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(

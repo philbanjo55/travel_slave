@@ -67,7 +67,7 @@ class AppState {
     }
 
     fun nudgeMetered(delta: Double) {
-        meteredSeconds = (meteredSeconds + delta).coerceIn(0.5, 1800.0)
+        meteredSeconds = (meteredSeconds + delta).coerceIn(1.0, 1800.0)
     }
 
     fun nudgeAperture(steps: Int) {
