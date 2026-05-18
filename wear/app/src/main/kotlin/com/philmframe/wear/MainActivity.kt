@@ -7,13 +7,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,10 +34,10 @@ import com.philmframe.wear.ui.PhilmTheme
 /**
  * Single activity host. Wear OS standalone — no companion phone app needed.
  *
- * When run on a Wear OS device, the app fills the screen edge-to-edge.
- * When run on a phone (for dev testing), the same Compose UI is wrapped in
- * a 360dp circular Box so you can see exactly what it'll look like on a
- * round watch face, with proper edge clipping.
+ * On a Wear OS device the app fills the screen edge-to-edge.
+ * On a phone (dev testing) the same Compose UI is wrapped in a 380dp circular
+ * Box with inner padding so TimeText and page dots stay inside the visible
+ * round area instead of being clipped at the corners.
  *
  * Hardware keys captured here:
  *   - KEYCODE_STEM_1: Galaxy Watch Ultra's Quick Button when mapped to this app
@@ -70,10 +73,12 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Phone-only wrapper that clips the Wear UI into a 360dp circle in the middle
- * of the phone screen, so you can preview exactly how the round watch face
- * will render — including vignette edges, TimeText curving (well, it stays
- * flat on phone but the spacing is right), and content clipped to the bezel.
+ * Phone-only wrapper: 380dp circle in the middle of the phone screen with a
+ * subtle bezel ring, plus a "SIMULATE QUICK BUTTON" tap target below it so
+ * Phil can test the hardware-key flow without sideloading to the watch.
+ *
+ * Inner padding of 18dp insets the Wear UI from the bezel so TimeText (top)
+ * and page dots (bottom) don't get clipped where the circle curves inward.
  */
 @Composable
 private fun PhonePreviewFrame(content: @Composable () -> Unit) {
@@ -92,7 +97,7 @@ private fun PhonePreviewFrame(content: @Composable () -> Unit) {
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            // The "watch": 360dp circle with a subtle bezel ring
+            // The "watch": 380dp circle with bezel ring and inset content
             Box(
                 modifier = Modifier
                     .size(380.dp)
@@ -104,13 +109,39 @@ private fun PhonePreviewFrame(content: @Composable () -> Unit) {
                     )
                     .background(PhilmColors.background),
             ) {
-                content()
+                // 18dp inner padding so TimeText/page dots stay inside the round area
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(18.dp),
+                ) {
+                    content()
+                }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Simulate Quick Button — fires the same TimerTrigger that
+            // KEYCODE_STEM_1 fires on the actual watch
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xFF2A2A2A))
+                    .clickable { TimerTrigger.fire() }
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    text = "▶ SIMULATE QUICK BUTTON",
+                    fontWeight = FontWeight.W600,
+                    fontSize = 11.sp,
+                    color = Color(0xFFCCCCCC),
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Tap, swipe, ± buttons all work — rotary doesn't (phone has no bezel)",
-                fontSize = 10.sp,
+                text = "Tap & swipe work — rotary doesn't (phone has no bezel)",
+                fontSize = 9.sp,
                 color = Color(0xFF555555),
             )
         }

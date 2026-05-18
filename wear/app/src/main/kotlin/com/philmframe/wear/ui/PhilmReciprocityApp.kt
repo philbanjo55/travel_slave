@@ -60,13 +60,13 @@ fun PhilmReciprocityApp() {
         }
     }
 
-    val pagerState = rememberPagerState(initialPage = 0) { 4 }
+    val pagerState = rememberPagerState(initialPage = 0) { 2 }
 
     val pageIndicatorState = remember {
         object : PageIndicatorState {
             override val pageOffset: Float get() = pagerState.currentPageOffsetFraction
             override val selectedPage: Int get() = pagerState.currentPage
-            override val pageCount: Int get() = 4
+            override val pageCount: Int get() = 2
         }
     }
 
@@ -113,9 +113,11 @@ fun PhilmReciprocityApp() {
                             onPickFilm = { showFilmPicker = true },
                             onStartTimer = { countdownExposure = state.adjusted },
                         )
-                        1 -> FilterStackScreen(state = state)
-                        2 -> AperturePriorityScreen(state = state)
-                        3 -> ReferenceTableScreen(state = state)
+                        1 -> AperturePriorityScreen(state = state)
+                        // Disabled for now — un-comment + bump pageCount above to 4
+                        // to restore Filter Stack and Reference Table:
+                        // 2 -> FilterStackScreen(state = state)
+                        // 3 -> ReferenceTableScreen(state = state)
                     }
                 }
                 HorizontalPageIndicator(
