@@ -70,7 +70,10 @@ fun AperturePriorityScreen(
     ) {
         RotaryScrollable(
             onRotate = { delta ->
-                state.nudgeAperture(delta)
+                // Rotary emits a Float delta — for an integer-step UI we just
+                // care about direction: each tick = ±1 third-stop position.
+                val step = if (delta > 0f) 1 else -1
+                state.nudgeAperture(step)
                 Buzz.click(ctx)
             },
         ) {
