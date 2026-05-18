@@ -71,6 +71,11 @@ fun ReciprocityScreen(
         vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
     ) {
         RotaryScrollable(
+            // Re-request focus every time the metered value changes — this means
+            // after any tap on a child button, the next state change pulls focus
+            // back to the rotary Box. Without this, the first tap permanently
+            // steals rotary focus.
+            focusKey = state.meteredSeconds,
             onRotate = { delta ->
                 // Each rotary tick = ±1 second, regardless of current value.
                 // No adaptive acceleration — Phil wants predictable single-unit stepping.
