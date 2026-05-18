@@ -22,9 +22,13 @@ object PhilmColors {
     val border = Color(0xFF2A2A2A)
     val borderSubtle = Color(0xFF1A1A1A)
 
-    val accent = Color(0xFFFFFFFF)
-    val accentDim = Color(0xFF888888)
-    val accentSubtle = Color(0x14FFFFFF) // rgba(255,255,255,0.08)
+    // Accent: photo-amber #FFAA00 — high-luminance, daylight-readable on OLED.
+    // Thematic reference: Gralab Model 300 darkroom timer's warm LED readout.
+    // Used on action items: START button, active f-stop pill, progress ring.
+    val accent = Color(0xFFFFAA00)
+    val accentDim = Color(0xFF888888)               // tertiary text gray (intentionally not amber)
+    val accentSubtle = Color(0x33FFAA00)             // 20% amber — subtle button bg tint
+    val accentGhost = Color(0x33FFAA00)              // ring background under depleting arc
 
     val textPrimary = Color(0xFFFFFFFF)
     val textSecondary = Color(0xFF888888)
