@@ -23,8 +23,24 @@ function bundleInfo() {
     embedded: Updates.isEmbeddedLaunch,    // true = no OTA applied, running the build's baked-in JS
   };
 }
-async function logDiag(message: string, data?: any) {
+const DIAG_KEY = 'pf_weather_diag';
+// Offline-surviving diagnostic: append events to AsyncStorage (works with no
+// network) and flush the queue to app_logs whenever we're next online. This is
+// how we observe what the OFFLINE read branch actually did.
+async function diagRecord(ev: any) {
   try {
+    const raw = await AsyncStorage.getItem(DIAG_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    arr.push({ ts: new Date().toISOString(), ...ev });
+    await AsyncStorage.setItem(DIAG_KEY, JSON.stringify(arr.slice(-25)));
+  } catch {}
+}
+async function diagFlush() {
+  try {
+    const raw = await AsyncStorage.getItem(DIAG_KEY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (!arr.length) return;
     await fetch(`${SUPABASE_URL}/rest/v1/app_logs`, {
       method: 'POST',
       headers: {
@@ -33,34 +49,10 @@ async function logDiag(message: string, data?: any) {
         'Content-Type': 'application/json',
         Prefer: 'return=minimal',
       },
-      body: JSON.stringify({ level: 'info', message, data }),
+      body: JSON.stringify(arr.map((e: any) => ({ level: 'info', message: 'weather diag', data: e }))),
     });
+    await AsyncStorage.removeItem(DIAG_KEY); // only runs if the POST succeeded (online)
   } catch {}
-}
-// Instrumented write — captures whether setItem actually persisted, reads it
-// back, and measures total AsyncStorage usage (the Android default cap is 6MB).
-// This is the test for the "store is full → silent write failure" hypothesis.
-async function cacheProbe(dayId: string, payloadStr: string) {
-  const out: any = { payloadBytes: payloadStr.length };
-  try {
-    await AsyncStorage.setItem(`${WEATHER_DAY_PREFIX}${dayId}`, payloadStr);
-    out.writeOk = true;
-  } catch (e: any) {
-    out.writeOk = false;
-    out.writeError = String(e?.message ?? e);
-  }
-  try {
-    const back = await AsyncStorage.getItem(`${WEATHER_DAY_PREFIX}${dayId}`);
-    out.readbackBytes = back ? back.length : 0;
-  } catch (e: any) { out.readbackError = String(e?.message ?? e); }
-  try {
-    const keys = await AsyncStorage.getAllKeys();
-    out.totalKeys = keys.length;
-    out.weatherDayKeys = keys.filter(k => k.startsWith(WEATHER_DAY_PREFIX)).length;
-    const pairs = await AsyncStorage.multiGet(keys as string[]);
-    out.totalKB = Math.round(pairs.reduce((s, [, v]) => s + (v ? v.length : 0), 0) / 1024);
-  } catch (e: any) { out.sizeError = String(e?.message ?? e); }
-  return out;
 }
 // ─────────────────────────────────────────────────────────────────
 
@@ -224,21 +216,30 @@ export async function pullWeather(
 export async function fetchLatestWeatherForDay(
   dayId: string
 ): Promise<Record<string, WeatherRow>> {
+  await diagFlush(); // ship any events recorded while offline
   try {
     const { data, error } = await supabase
       .from('latest_weather_per_stop')
       .select('*')
       .eq('day_id', dayId);
-    if (error || !data) throw error ?? new Error('no weather data');
-    const byStop: Record<string, WeatherRow> = {};
-    for (const row of data as WeatherRow[]) byStop[row.stop_id] = row;
-    const probe = await cacheProbe(dayId, JSON.stringify({ cachedAt: Date.now(), byStop }));
-    void logDiag('weather day: network → cached', { dayId, stops: Object.keys(byStop).length, ...bundleInfo(), ...probe });
-    return byStop;
-  } catch {
-    // Offline / read failed → serve the last cached copy if we have one.
+    if (error) throw error;
+    const rows = (data ?? []) as WeatherRow[];
+    if (rows.length > 0) {
+      const byStop: Record<string, WeatherRow> = {};
+      for (const row of rows) byStop[row.stop_id] = row;
+      await cacheWeatherForDay(dayId, byStop); // refresh the offline copy
+      await diagRecord({ branch: 'network', dayId, stops: rows.length, ...bundleInfo() });
+      return byStop;
+    }
+    // Empty result. An offline/failed read can surface as empty-without-error
+    // too, so NEVER let empty clobber or shadow a populated cache — prefer it.
+    const cachedOnEmpty = await getCachedWeatherForDay(dayId);
+    await diagRecord({ branch: 'empty', dayId, cachedStops: cachedOnEmpty ? Object.keys(cachedOnEmpty).length : 0, ...bundleInfo() });
+    return (cachedOnEmpty && Object.keys(cachedOnEmpty).length) ? cachedOnEmpty : {};
+  } catch (e: any) {
+    // Read threw (offline / network error) → serve the last cached copy.
     const cached = await getCachedWeatherForDay(dayId);
-    void logDiag('weather day: offline → cache', { dayId, found: cached ? Object.keys(cached).length : 0, ...bundleInfo() });
+    await diagRecord({ branch: 'offline', dayId, err: String(e?.message ?? e), cachedStops: cached ? Object.keys(cached).length : 0, ...bundleInfo() });
     return cached ?? {};
   }
 }
@@ -253,7 +254,7 @@ export async function fetchLatestWeatherForStop(
       .eq('stop_id', stopId)
       .maybeSingle();
     if (error) throw error;
-    if (!data) return null; // online, but genuinely no forecast for this stop
+    if (!data) return (await getCachedWeatherForStop(stopId)); // empty → prefer cache over blank
     const row = data as WeatherRow;
     await cacheWeatherForStop(stopId, row); // refresh the offline copy
     return row;
