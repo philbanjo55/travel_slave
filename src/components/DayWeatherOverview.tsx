@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 import {
   WeatherRow, summarizeDay, conditionIcon, conditionsText, shortDate, cToF, kmhToMph,
+  verificationStatus,
 } from '../services/weather';
 
 interface Props {
@@ -17,12 +18,36 @@ interface Props {
 
 export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, error }: Props) {
   const ov = summarizeDay(rows, dayDate);
+  const [showVerify, setShowVerify] = useState(false);
+
+  // Aggregate verification across the day's stops (derived from provenance).
+  const statuses = rows.map(r => ({ row: r, st: verificationStatus(r) }));
+  const verifiedCount = statuses.filter(s => s.st.verified).length;
+  const allVerified = statuses.length > 0 && verifiedCount === statuses.length;
 
   return (
     <View style={styles.card}>
       <View style={styles.headerRow}>
         <Text style={styles.label}>DAY WEATHER</Text>
         <View style={styles.headerRight}>
+          {statuses.length ? (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => setShowVerify(v => !v)}
+              style={[styles.vBadge, { borderColor: allVerified ? colors.signalOk : colors.accent }]}
+            >
+              <Ionicons
+                name={allVerified ? 'shield-checkmark' : 'shield-outline'}
+                size={9}
+                color={allVerified ? colors.signalOk : colors.accent}
+              />
+              <Text style={[styles.flagText, { color: allVerified ? colors.signalOk : colors.accent }]}>
+                {allVerified ? 'VERIFIED' : `${statuses.length - verifiedCount} UNVERIFIED`}
+              </Text>
+              <Ionicons name={showVerify ? 'chevron-up' : 'chevron-down'} size={9}
+                color={allVerified ? colors.signalOk : colors.accent} />
+            </TouchableOpacity>
+          ) : null}
           {ov ? (
             <View style={[styles.flag, ov.preview ? styles.flagPreview : styles.flagReal]}>
               <Ionicons
@@ -65,6 +90,34 @@ export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, 
       ) : (
         <Text style={styles.muted}>{onRefresh ? 'Tap refresh for the day forecast' : 'No weather pulled yet'}</Text>
       )}
+
+      {showVerify && statuses.length ? (
+        <View style={styles.verifyList}>
+          <Text style={styles.verifyHint}>
+            {allVerified
+              ? 'Every stop matched its exact requested hour from Open-Meteo.'
+              : 'Stops below need a re-pull (no exact-hour match or missing data).'}
+          </Text>
+          {statuses.map(({ row, st }, i) => {
+            const p = row.raw?.provenance;
+            return (
+              <View key={row.stop_id ?? i} style={styles.verifyItem}>
+                <Ionicons
+                  name={st.verified ? 'checkmark-circle' : 'alert-circle-outline'}
+                  size={12}
+                  color={st.verified ? colors.signalOk : colors.accent}
+                />
+                <Text style={styles.verifyItemLabel} numberOfLines={1}>
+                  {p?.requested_time_label ?? '—'} → {p?.matched_time_local?.slice(11) ?? '—'}
+                </Text>
+                <Text style={styles.verifyItemCoord}>
+                  {p ? `${Number(p.source_lat).toFixed(3)},${Number(p.source_lng).toFixed(3)}` : st.reason}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -110,4 +163,16 @@ const styles = StyleSheet.create({
   metricValue: { fontSize: 12, fontWeight: '600', color: colors.textPrimary },
   metricSub: { fontSize: 10, color: colors.textTertiary },
   muted: { ...typography.bodySmall, color: colors.textTertiary, marginTop: spacing.sm },
+  vBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    borderWidth: 1, borderRadius: radius.sm, paddingHorizontal: 5, paddingVertical: 2,
+  },
+  verifyList: {
+    marginTop: spacing.sm, paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, gap: 4,
+  },
+  verifyHint: { fontSize: 10, color: colors.textTertiary, fontStyle: 'italic', marginBottom: 2 },
+  verifyItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  verifyItemLabel: { fontSize: 11, color: colors.textSecondary, flex: 1, fontVariant: ['tabular-nums'] },
+  verifyItemCoord: { fontSize: 10, color: colors.textTertiary, fontVariant: ['tabular-nums'] },
 });

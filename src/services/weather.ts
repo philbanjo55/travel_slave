@@ -414,6 +414,21 @@ export function shortDate(d: string | null): string {
 // Open-Meteo refreshed its model run since the pull — not a pipeline error.
 // ─────────────────────────────────────────
 export interface VerifyCheck { field: string; stored: number | null; source: number | null; match: boolean; }
+// Derive the green/red verification status straight from a row's provenance —
+// no network call. "Verified" = the exact requested hour was found in the
+// Open-Meteo response and all core fields landed. This recomputes automatically
+// whenever the row changes (i.e. when a day is re-pulled).
+export interface VerifyStatus { verified: boolean; reason: string; }
+export function verificationStatus(row: WeatherRow | null | undefined): VerifyStatus {
+  const p = row?.raw?.provenance;
+  if (!p) return { verified: false, reason: 'No provenance — re-pull this day to verify' };
+  if (p.match_method !== 'exact') return { verified: false, reason: `Hour matched by ${p.match_method}, not exact` };
+  if (!p.matched_time_local) return { verified: false, reason: 'No matched timestamp recorded' };
+  const core = [row?.temperature_c, row?.cloud_cover_pct, row?.wind_gusts_kmh, row?.weather_code];
+  if (core.some(v => v == null)) return { verified: false, reason: 'One or more core fields missing' };
+  return { verified: true, reason: 'Exact hour match · data complete' };
+}
+
 export interface VerifyResult {
   ok: boolean;
   matchedTime: string | null;

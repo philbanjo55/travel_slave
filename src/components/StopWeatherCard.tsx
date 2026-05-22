@@ -6,7 +6,7 @@ import {
   WeatherRow, fetchLatestWeatherForStop,
   conditionsText, tempText, windText, windDir, visibilityText, clockFromISO, fogBadge,
   conditionIcon, scoreConditions, forecastMode, shortDate,
-  verifyStopWeather, VerifyResult,
+  verifyStopWeather, VerifyResult, verificationStatus,
 } from '../services/weather';
 
 interface Props {
@@ -26,6 +26,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
   const [loaded, setLoaded] = useState(weather !== undefined);
   const [verifying, setVerifying] = useState(false);
   const [verify, setVerify] = useState<VerifyResult | null>(null);
+  const [showVerify, setShowVerify] = useState(false);
 
   useEffect(() => {
     if (weather !== undefined) { setRow(weather ?? null); setLoaded(true); return; }
@@ -46,6 +47,8 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
   const dir = windDir(row.wind_direction_deg);
   const score = scoreConditions(shotType ?? null, row);
   const mode = forecastMode(row, dayDate);
+  const vstatus = verificationStatus(row);
+  const prov = row.raw?.provenance;
 
   // Precip split — only show parts that are non-zero.
   const precipParts: string[] = [];
@@ -70,6 +73,22 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           </View>
         </View>
         <View style={styles.badges}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => setShowVerify(v => !v)}
+            style={[styles.badge, styles.vBadge, { borderColor: vstatus.verified ? colors.signalOk : colors.accent }]}
+          >
+            <Ionicons
+              name={vstatus.verified ? 'shield-checkmark' : 'shield-outline'}
+              size={9}
+              color={vstatus.verified ? colors.signalOk : colors.accent}
+            />
+            <Text style={[styles.badgeText, { color: vstatus.verified ? colors.signalOk : colors.accent }]}>
+              {vstatus.verified ? 'VERIFIED' : 'UNVERIFIED'}
+            </Text>
+            <Ionicons name={showVerify ? 'chevron-up' : 'chevron-down'} size={9}
+              color={vstatus.verified ? colors.signalOk : colors.accent} />
+          </TouchableOpacity>
           {row.is_golden_hour ? (
             <View style={[styles.badge, { borderColor: colors.signalWarning }]}>
               <Ionicons name="sunny-outline" size={9} color={colors.signalWarning} />
@@ -135,50 +154,69 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           sub={row.surface_pressure_hpa != null ? `${Math.round(row.surface_pressure_hpa)} hPa` : ' '} />
       </View>
 
-      {/* Verify against source */}
-      <TouchableOpacity
-        style={styles.verifyBtn}
-        activeOpacity={0.7}
-        disabled={verifying}
-        onPress={async () => { setVerifying(true); setVerify(null); try { setVerify(await verifyStopWeather(row)); } finally { setVerifying(false); } }}
-      >
-        {verifying
-          ? <ActivityIndicator size="small" color={colors.textSecondary} />
-          : <Ionicons name="shield-checkmark-outline" size={13} color={colors.textSecondary} />}
-        <Text style={styles.verifyBtnText}>{verifying ? 'CHECKING…' : 'VERIFY AGAINST SOURCE'}</Text>
-      </TouchableOpacity>
-
-      {verify ? (
+      {/* Verification dropdown — toggled by the header badge */}
+      {showVerify ? (
         <View style={styles.verifyResult}>
-          {verify.error ? (
-            <Text style={styles.verifyMuted}>{verify.error}</Text>
-          ) : (
+          <View style={styles.verifyHead}>
+            <Ionicons
+              name={vstatus.verified ? 'checkmark-circle' : 'alert-circle-outline'}
+              size={14}
+              color={vstatus.verified ? colors.signalOk : colors.accent}
+            />
+            <Text style={[styles.verifyVerdict, { color: vstatus.verified ? colors.signalOk : colors.accent }]}>
+              {vstatus.verified ? 'Verified' : 'Not verified'}
+            </Text>
+          </View>
+          <Text style={styles.verifyMuted}>{vstatus.reason}</Text>
+
+          {prov ? (
             <>
-              <View style={styles.verifyHead}>
-                <Ionicons
-                  name={verify.ok ? 'checkmark-circle' : 'alert-circle-outline'}
-                  size={14}
-                  color={verify.ok ? colors.signalOk : colors.signalWarning}
-                />
-                <Text style={[styles.verifyVerdict, { color: verify.ok ? colors.signalOk : colors.signalWarning }]}>
-                  {verify.ok ? 'Verified — matches Open-Meteo' : 'Differs from current Open-Meteo'}
-                </Text>
-              </View>
-              <Text style={styles.verifyMeta}>
-                {verify.lat?.toFixed(4)}, {verify.lng?.toFixed(4)} · {verify.matchedTime?.replace('T', ' ')} · {verify.timezone}
+              <Text style={styles.provLine}>
+                Coords  {Number(prov.source_lat)?.toFixed(4)}, {Number(prov.source_lng)?.toFixed(4)}
               </Text>
-              {verify.checks.map(c => (
-                <View key={c.field} style={styles.verifyRow}>
-                  <Text style={styles.verifyField}>{c.field}</Text>
-                  <Text style={styles.verifyVals}>{c.stored ?? '—'} / {c.source ?? '—'}</Text>
-                  <Ionicons name={c.match ? 'checkmark' : 'close'} size={12} color={c.match ? colors.signalOk : colors.signalWarning} />
-                </View>
-              ))}
-              {!verify.ok ? (
-                <Text style={styles.verifyMuted}>Location & hour reconstructed correctly; values differ because Open-Meteo updated its forecast since you pulled. Refresh to sync.</Text>
-              ) : null}
+              <Text style={styles.provLine}>
+                Hour  {prov.requested_time_label ?? '—'} → {prov.matched_time_local?.replace('T', ' ') ?? '—'} ({prov.match_method})
+              </Text>
+              <Text style={styles.provLine}>
+                Zone  {prov.timezone ?? '—'} · {prov.date_mode === 'preview' ? 'preview date' : 'trip date'}
+              </Text>
             </>
-          )}
+          ) : null}
+
+          {/* Independent live re-check */}
+          <TouchableOpacity
+            style={styles.verifyBtn}
+            activeOpacity={0.7}
+            disabled={verifying}
+            onPress={async () => { setVerifying(true); setVerify(null); try { setVerify(await verifyStopWeather(row)); } finally { setVerifying(false); } }}
+          >
+            {verifying
+              ? <ActivityIndicator size="small" color={colors.textSecondary} />
+              : <Ionicons name="sync-outline" size={13} color={colors.textSecondary} />}
+            <Text style={styles.verifyBtnText}>{verifying ? 'CHECKING…' : 'RE-CHECK AGAINST OPEN-METEO'}</Text>
+          </TouchableOpacity>
+
+          {verify ? (
+            verify.error ? (
+              <Text style={styles.verifyMuted}>{verify.error}</Text>
+            ) : (
+              <>
+                <Text style={[styles.verifyVerdict, { color: verify.ok ? colors.signalOk : colors.signalWarning, marginTop: 2 }]}>
+                  {verify.ok ? '✓ Live values match' : '⚠ Live values differ'}
+                </Text>
+                {verify.checks.map(c => (
+                  <View key={c.field} style={styles.verifyRow}>
+                    <Text style={styles.verifyField}>{c.field}</Text>
+                    <Text style={styles.verifyVals}>{c.stored ?? '—'} / {c.source ?? '—'}</Text>
+                    <Ionicons name={c.match ? 'checkmark' : 'close'} size={12} color={c.match ? colors.signalOk : colors.signalWarning} />
+                  </View>
+                ))}
+                {!verify.ok ? (
+                  <Text style={styles.verifyMuted}>Location & hour reconstructed correctly; values differ only because Open-Meteo refreshed its forecast since the pull. Refresh the day to sync.</Text>
+                ) : null}
+              </>
+            )
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -255,9 +293,11 @@ const styles = StyleSheet.create({
 
   verifyBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    marginTop: spacing.md, paddingVertical: spacing.sm,
+    marginTop: spacing.sm, paddingVertical: spacing.sm,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.sm,
   },
+  vBadge: { gap: 3 },
+  provLine: { fontSize: 10, color: colors.textSecondary, fontVariant: ['tabular-nums'] },
   verifyBtnText: { fontSize: 10, fontWeight: '700', letterSpacing: 1, color: colors.textSecondary },
   verifyResult: { marginTop: spacing.sm, gap: 4 },
   verifyHead: { flexDirection: 'row', alignItems: 'center', gap: 5 },
