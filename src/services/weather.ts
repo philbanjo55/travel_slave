@@ -37,6 +37,31 @@ async function logDiag(message: string, data?: any) {
     });
   } catch {}
 }
+// Instrumented write — captures whether setItem actually persisted, reads it
+// back, and measures total AsyncStorage usage (the Android default cap is 6MB).
+// This is the test for the "store is full → silent write failure" hypothesis.
+async function cacheProbe(dayId: string, payloadStr: string) {
+  const out: any = { payloadBytes: payloadStr.length };
+  try {
+    await AsyncStorage.setItem(`${WEATHER_DAY_PREFIX}${dayId}`, payloadStr);
+    out.writeOk = true;
+  } catch (e: any) {
+    out.writeOk = false;
+    out.writeError = String(e?.message ?? e);
+  }
+  try {
+    const back = await AsyncStorage.getItem(`${WEATHER_DAY_PREFIX}${dayId}`);
+    out.readbackBytes = back ? back.length : 0;
+  } catch (e: any) { out.readbackError = String(e?.message ?? e); }
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    out.totalKeys = keys.length;
+    out.weatherDayKeys = keys.filter(k => k.startsWith(WEATHER_DAY_PREFIX)).length;
+    const pairs = await AsyncStorage.multiGet(keys as string[]);
+    out.totalKB = Math.round(pairs.reduce((s, [, v]) => s + (v ? v.length : 0), 0) / 1024);
+  } catch (e: any) { out.sizeError = String(e?.message ?? e); }
+  return out;
+}
 // ─────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────
@@ -207,8 +232,8 @@ export async function fetchLatestWeatherForDay(
     if (error || !data) throw error ?? new Error('no weather data');
     const byStop: Record<string, WeatherRow> = {};
     for (const row of data as WeatherRow[]) byStop[row.stop_id] = row;
-    await cacheWeatherForDay(dayId, byStop); // refresh the offline copy
-    void logDiag('weather day: network → cached', { dayId, stops: Object.keys(byStop).length, ...bundleInfo() });
+    const probe = await cacheProbe(dayId, JSON.stringify({ cachedAt: Date.now(), byStop }));
+    void logDiag('weather day: network → cached', { dayId, stops: Object.keys(byStop).length, ...bundleInfo(), ...probe });
     return byStop;
   } catch {
     // Offline / read failed → serve the last cached copy if we have one.
