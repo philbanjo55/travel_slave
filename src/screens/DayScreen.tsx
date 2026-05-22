@@ -9,6 +9,8 @@ import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import DaySummary from '../components/DaySummary';
+import DayWeatherSummary from '../components/DayWeatherSummary';
+import { WeatherRow, conditionIcon, scoreConditions } from '../services/weather';
 import { colors, typography, spacing, radius } from '../theme';
 
 const { height } = Dimensions.get('window');
@@ -21,6 +23,7 @@ export default function DayScreen() {
   const { currentTripData } = useTripStore();
   const mapRef = useRef<MapView>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
+  const [weather, setWeather] = useState<Record<string, WeatherRow>>({});
 
   const day = currentTripData?.days[dayIndex];
   if (!day) return null;
@@ -61,6 +64,9 @@ export default function DayScreen() {
           </TouchableOpacity>
         )}
       </View>
+
+      {/* Weather — pinned to the top so it's the first thing seen */}
+      <DayWeatherSummary dayId={day.id} onLoaded={setWeather} />
 
       {/* Map */}
       <TouchableOpacity
@@ -147,6 +153,29 @@ export default function DayScreen() {
                   {item.duration_minutes ? (
                     <Text style={styles.stopDur}>{item.duration_minutes} min</Text>
                   ) : null}
+                  {(() => {
+                    const w = weather[item.id];
+                    if (!w || w.temperature_c == null) return null;
+                    const sc = scoreConditions(item.shot_type, w);
+                    return (
+                      <View style={styles.stopWx}>
+                        <Ionicons name={conditionIcon(w.weather_code) as any} size={11} color={colors.textSecondary} />
+                        <Text style={styles.stopWxTemp}>{Math.round(w.temperature_c)}°</Text>
+                        {sc ? (
+                          <View style={styles.stopWxStars}>
+                            {[0, 1, 2, 3].map(i => (
+                              <Ionicons
+                                key={i}
+                                name={i < sc.stars ? 'star' : 'star-outline'}
+                                size={8}
+                                color={i < sc.stars ? colors.textSecondary : colors.textTertiary}
+                              />
+                            ))}
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  })()}
                 </View>
                 <View style={styles.stopIcons}>
                   {item.alltrails_url && <Ionicons name="trail-sign-outline" size={12} color={colors.textTertiary} />}
@@ -261,5 +290,8 @@ const styles = StyleSheet.create({
   stopBody: { flex: 1 },
   stopName: { fontSize: 14, fontWeight: '500', color: colors.textPrimary },
   stopDur: { fontSize: 11, color: colors.textTertiary, marginTop: 2 },
+  stopWx: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  stopWxTemp: { fontSize: 11, color: colors.textSecondary, fontWeight: '500' },
+  stopWxStars: { flexDirection: 'row', gap: 1, marginLeft: 2 },
   stopIcons: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
 });

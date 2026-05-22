@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getPhotoUri } from '../services/photoCache';
 import { usePhotoUpload } from '../hooks/usePhotoUpload';
 import { useTripStore } from '../store/tripStore';
+import StopWeatherCard from '../components/StopWeatherCard';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 
@@ -141,6 +142,9 @@ export default function StopDetailScreen() {
             <Text style={styles.fromLabel}>From {prevStop.name}</Text>
           )}
         </View>
+
+        {/* Weather — pinned near the top of the location */}
+        <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} />
 
         {/* Reference Photos */}
         <View style={[styles.photoSection, { overflow: "hidden" }]}>
