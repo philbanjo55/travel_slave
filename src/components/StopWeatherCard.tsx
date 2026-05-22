@@ -5,7 +5,7 @@ import { colors, typography, spacing, radius } from '../theme';
 import {
   WeatherRow, fetchLatestWeatherForStop,
   conditionsText, tempText, windText, windDir, visibilityText, clockFromISO, fogBadge,
-  conditionIcon, scoreConditions,
+  conditionIcon, scoreConditions, forecastMode, shortDate,
 } from '../services/weather';
 
 interface Props {
@@ -13,12 +13,14 @@ interface Props {
   // shot_type drives the rating (how good these conditions are for THIS kind
   // of shot). Pass it from the stop record.
   shotType?: string | null;
+  // The day's real date — used to flag preview (today+2) vs real trip-date data.
+  dayDate?: string | null;
   // If the parent already loaded the day's weather, pass the row to avoid a
   // second fetch. Otherwise the card self-fetches the latest stored forecast.
   weather?: WeatherRow | null;
 }
 
-export default function StopWeatherCard({ stopId, shotType, weather }: Props) {
+export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: Props) {
   const [row, setRow] = useState<WeatherRow | null>(weather ?? null);
   const [loaded, setLoaded] = useState(weather !== undefined);
 
@@ -40,6 +42,7 @@ export default function StopWeatherCard({ stopId, shotType, weather }: Props) {
   const showFeels = feels != null && Math.abs((feels ?? 0) - (row.temperature_c ?? 0)) >= 2;
   const dir = windDir(row.wind_direction_deg);
   const score = scoreConditions(shotType ?? null, row);
+  const mode = forecastMode(row, dayDate);
 
   // Precip split — only show parts that are non-zero.
   const precipParts: string[] = [];
@@ -50,7 +53,19 @@ export default function StopWeatherCard({ stopId, shotType, weather }: Props) {
   return (
     <View style={styles.section}>
       <View style={styles.headerRow}>
-        <Text style={styles.label}>WEATHER</Text>
+        <View style={styles.headerLeft}>
+          <Text style={styles.label}>WEATHER</Text>
+          <View style={[styles.flag, mode.preview ? styles.flagPreview : styles.flagReal]}>
+            <Ionicons
+              name={mode.preview ? 'flask-outline' : 'calendar-outline'}
+              size={9}
+              color={mode.preview ? colors.signalWarning : colors.signalOk}
+            />
+            <Text style={[styles.flagText, { color: mode.preview ? colors.signalWarning : colors.signalOk }]}>
+              {mode.preview ? `PREVIEW · ${shortDate(mode.forecastDate)}` : `TRIP DATE · ${shortDate(mode.forecastDate)}`}
+            </Text>
+          </View>
+        </View>
         <View style={styles.badges}>
           {row.is_golden_hour ? (
             <View style={[styles.badge, { borderColor: colors.signalWarning }]}>
@@ -149,7 +164,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.md,
   },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 1 },
   label: { ...typography.labelLarge, color: colors.textTertiary },
+  flag: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    borderWidth: 1, borderRadius: radius.sm,
+    paddingHorizontal: 5, paddingVertical: 2,
+  },
+  flagPreview: { borderColor: colors.signalWarning },
+  flagReal: { borderColor: colors.signalOk },
+  flagText: { fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
   badges: { flexDirection: 'row', gap: spacing.xs, flexShrink: 1, flexWrap: 'wrap', justifyContent: 'flex-end' },
   badge: {
     flexDirection: 'row', alignItems: 'center', gap: 3,

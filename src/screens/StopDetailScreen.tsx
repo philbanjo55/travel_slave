@@ -144,7 +144,7 @@ export default function StopDetailScreen() {
         </View>
 
         {/* Weather — pinned near the top of the location */}
-        <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} />
+        <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} />
 
         {/* Reference Photos */}
         <View style={[styles.photoSection, { overflow: "hidden" }]}>

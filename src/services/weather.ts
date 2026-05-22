@@ -318,3 +318,80 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
   s = clamp(s);
   return { stars: s, label: LABELS[s], reason: reason || LABELS[s] };
 }
+
+// ─────────────────────────────────────────
+// DAY-LEVEL OVERVIEW
+// Aggregates a day's stored stop forecasts into one overview, mirroring the
+// edge function's summary so it works on cached data without a fresh pull.
+// Also resolves the preview/real flag (all stops in a day share one date).
+// ─────────────────────────────────────────
+export interface DayOverview {
+  count: number;
+  tempMin: number;
+  tempMax: number;
+  avgCloud: number;
+  maxPrecip: number;
+  maxGust: number;
+  foggy: number;
+  golden: number;
+  code: number;       // representative condition code (for the day icon)
+  summary: string;
+  preview: boolean;        // true = today+2 preview, false = real trip date
+  forecastDate: string | null; // YYYY-MM-DD the forecast is actually for
+}
+
+function representativeCode(codes: number[]): number {
+  if (!codes.length) return 3;
+  const sev = (c: number) =>
+    c >= 95 ? 6 : (c >= 71 && c <= 86) ? 5 : (c >= 61 && c <= 82) ? 4
+    : (c >= 51 && c <= 57) ? 3 : (c === 45 || c === 48) ? 2 : c === 3 ? 1 : 0;
+  return codes.reduce((best, c) => (sev(c) > sev(best) ? c : best), codes[0]);
+}
+
+export function summarizeDay(
+  rows: WeatherRow[],
+  dayDate?: string | null
+): DayOverview | null {
+  const ok = rows.filter(r => r.cloud_cover_pct != null && r.temperature_c != null);
+  if (!ok.length) return null;
+
+  const temps = ok.map(r => r.temperature_c as number);
+  const tempMin = Math.round(Math.min(...temps));
+  const tempMax = Math.round(Math.max(...temps));
+  const avgCloud = Math.round(ok.reduce((s, r) => s + (r.cloud_cover_pct || 0), 0) / ok.length);
+  const maxPrecip = Math.max(...ok.map(r => r.precip_probability_pct ?? 0));
+  const maxGust = Math.max(...ok.map(r => r.wind_gusts_kmh ?? 0));
+  const golden = ok.filter(r => r.is_golden_hour).length;
+  const foggy = ok.filter(r => r.fog_risk && r.fog_risk !== 'none').length;
+  const code = representativeCode(ok.map(r => r.weather_code).filter((c): c is number => c != null));
+
+  const sky = avgCloud < 25 ? 'mostly clear' : avgCloud < 60 ? 'partly cloudy' : avgCloud < 85 ? 'cloudy' : 'overcast';
+  const wind = maxGust < 20 ? 'calm' : maxGust < 40 ? 'breezy' : maxGust < 60 ? 'windy' : 'very windy';
+  const rain = maxPrecip < 20 ? 'low rain risk' : maxPrecip < 50 ? `${maxPrecip}% rain risk` : `high rain risk (${maxPrecip}%)`;
+  const summary = `${sky[0].toUpperCase() + sky.slice(1)}, ${wind} (gusts ${Math.round(maxGust)} km/h), ${rain}.`
+    + (foggy ? ` Fog ${foggy > 1 ? 'risk at several stops' : 'risk at one stop'}.` : '')
+    + (golden ? ` ${golden} stop${golden > 1 ? 's' : ''} near golden hour.` : '');
+
+  const forecastDate = ok[0].forecast_valid_for ? ok[0].forecast_valid_for.slice(0, 10) : null;
+  const preview = !dayDate || (forecastDate != null && forecastDate !== dayDate);
+
+  return { count: ok.length, tempMin, tempMax, avgCloud, maxPrecip, maxGust, foggy, golden, code, summary, preview, forecastDate };
+}
+
+// Per-row preview/real resolution (for the stop card flag).
+export function forecastMode(
+  row: WeatherRow,
+  dayDate?: string | null
+): { preview: boolean; forecastDate: string | null } {
+  const forecastDate = row.forecast_valid_for ? row.forecast_valid_for.slice(0, 10) : null;
+  const preview = !dayDate || (forecastDate != null && forecastDate !== dayDate);
+  return { preview, forecastDate };
+}
+
+// "2026-05-24" → "May 24"
+export function shortDate(d: string | null): string {
+  if (!d) return '';
+  const dt = new Date(`${d}T12:00:00`);
+  if (isNaN(dt.getTime())) return '';
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}

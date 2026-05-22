@@ -11,6 +11,7 @@ import { supabase } from '../services/supabase';
 import { calculateDriveTimesForTrip, recalculateTimeLabels } from '../services/driveTimes';
 import { pullWeatherForTrip, fetchLatestWeatherForDay, WeatherRow, conditionIcon, scoreConditions } from '../services/weather';
 import DaySummary from '../components/DaySummary';
+import DayWeatherOverview from '../components/DayWeatherOverview';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
@@ -219,6 +220,8 @@ export default function TripScreen() {
           </TouchableOpacity>
         </View>
       )}
+
+      <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />
 
       <DaySummary stops={stops} />
 
