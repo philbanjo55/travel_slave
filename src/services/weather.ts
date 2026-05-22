@@ -246,82 +246,87 @@ export interface ConditionScore {
 
 const LABELS = ['Poor', 'Poor', 'Fair', 'Good', 'Excellent'];
 const clamp = (n: number) => Math.max(0, Math.min(4, n));
-const SEVERE = (c: number | null) => c != null && (c === 65 || c === 82 || c === 75 || c >= 95);
 
 export function scoreConditions(shotType: string | null, r: WeatherRow): ConditionScore | null {
   if (!shotType || shotType === 'logistics') return null;
+  if (r.is_dark) return { stars: 0, label: 'Poor', reason: 'After dark' };
 
   const cloud = r.cloud_cover_pct ?? 50;
   const gust = r.wind_gusts_kmh ?? r.wind_speed_kmh ?? 0;
   const pop = r.precip_probability_pct ?? 0;
-  const rain = (r.rain_mm ?? 0) + (r.showers_mm ?? 0);
+  const rainAmt = (r.rain_mm ?? 0) + (r.showers_mm ?? 0);
+  const snow = r.snowfall_cm ?? 0;
   const code = r.weather_code;
   const vis = r.visibility_m;
-  const foggy = r.fog_risk === 'likely' || r.fog_risk === 'possible';
+  const fog = r.fog_risk;
 
-  // Light-dependent shots are impossible after dark — overrides everything.
-  if (r.is_dark) return { stars: 0, label: 'Poor', reason: 'After dark' };
+  // How much the subject depends on seeing distance.
+  const longDistance = shotType === 'mountain' || shotType === 'seascape';
+  const closeSubject = shotType === 'waterfall' || shotType === 'canyon' || shotType === 'urban';
 
-  let s = 2;
-  let reason = '';
+  // Start from a perfect window and subtract weighted penalties.
+  // Priority (Phil): rain > visibility > wind > light/other.
 
-  switch (shotType) {
-    case 'waterfall':
-    case 'canyon': {
-      if (cloud >= 65) { s += 1; reason = 'Soft overcast light'; }
-      else if (cloud < 25) { s -= 1; reason = 'Harsh direct sun'; }
-      if (gust < 12) { s += 1; if (!reason) reason = 'Calm — clean long exposures'; }
-      else if (gust > 30) { s -= 1; reason = 'Wind will move foliage'; }
-      if (SEVERE(code) || rain > 10) { s -= 2; reason = 'Heavy rain — spate / safety risk'; }
-      break;
-    }
-    case 'mountain': {
-      if (cloud < 30) { s += 1; reason = 'Clear summits'; }
-      else if (cloud > 75) { s -= 2; reason = 'Summits likely socked in'; }
-      if (r.is_golden_hour) { s += 1; reason = 'Golden-hour light on peaks'; }
-      if (foggy || (vis != null && vis < 2000)) { s -= 1; reason = 'Low visibility'; }
-      break;
-    }
-    case 'seascape': {
-      if (gust > 55) return { stars: 0, label: 'Poor', reason: 'Dangerous wind / swell' };
-      if (gust < 15) { s += 1; reason = 'Calm sea'; }
-      else if (gust > 40) { s -= 2; reason = 'Heavy swell — exposed rocks'; }
-      if (SEVERE(code)) { s -= 2; reason = 'Storm conditions'; }
-      else if (cloud >= 30 && cloud <= 85) { s += 1; if (!reason) reason = 'Some sky drama'; }
-      break;
-    }
-    case 'reflection': {
-      // Wind dominates — mirror water needs near-still air.
-      if (gust < 6) s = 4;
-      else if (gust < 10) s = 3;
-      else if (gust < 16) s = 2;
-      else if (gust < 25) s = 1;
-      else s = 0;
-      reason = gust < 10 ? 'Near-still — mirror water' : 'Wind will break reflection';
-      if (SEVERE(code) || rain > 10) s = Math.min(s, 1);
-      break;
-    }
-    case 'castle': {
-      if (cloud >= 40 && cloud <= 90) { s += 1; reason = 'Moody sky'; }
-      if (r.is_golden_hour) { s += 1; reason = 'Golden-hour light on stone'; }
-      if (SEVERE(code)) { s -= 1; reason = 'Heavy rain — hard to shoot'; }
-      break;
-    }
-    case 'urban': {
-      s = 3; // weather-light
-      if (SEVERE(code)) { s -= 2; reason = 'Heavy rain'; }
-      else reason = 'Generally workable';
-      break;
-    }
-    default: {
-      if (cloud >= 65) s += 1;
-      if (SEVERE(code)) s -= 1;
-      reason = 'Mixed';
-    }
+  // #1 RAIN — the largest lever (0..3). Intensity-led; probability only nudges.
+  let rainPen = 0;
+  if (code === 65 || code === 82 || code === 75 || (code != null && code >= 95) || rainAmt > 6) rainPen = 3;            // heavy / storm
+  else if (code === 61 || code === 63 || code === 81 || code === 73 || rainAmt > 2) rainPen = 2;                          // steady rain
+  else if ((code != null && code >= 51 && code <= 57) || code === 80 || code === 71 || rainAmt > 0.2 || snow > 0) rainPen = 1; // drizzle / light
+  if (rainPen === 0 && pop >= 55) rainPen = 1;  // likely-but-light: a nudge, not a hammer
+
+  // #2 VISIBILITY — scaled up for long-distance landscapes, capped for close subjects.
+  let visBase = 0;
+  if (fog === 'likely' || (vis != null && vis < 1000)) visBase = 2;
+  else if (fog === 'possible' || (vis != null && vis < 4000)) visBase = 1;
+  else if (vis != null && vis < 8000) visBase = 0.5;
+  // For mountains, low cloud sitting on the summit is itself a visibility problem.
+  let obscure = 0;
+  if (shotType === 'mountain') {
+    const lowCloud = r.cloud_cover_low_pct ?? cloud;
+    if (lowCloud >= 90) obscure = 2;
+    else if (lowCloud >= 70) obscure = 1;
+  }
+  const visPen = (longDistance ? visBase * 1.5 : closeSubject ? Math.min(visBase, 1) : visBase) + obscure;
+
+  // #3 WIND — type-specific. Reflection is the special case where it gates everything.
+  let windPen = 0;
+  if (shotType === 'reflection') {
+    windPen = gust < 6 ? 0 : gust < 10 ? 0.5 : gust < 16 ? 1.5 : gust < 25 ? 2.5 : 4;
+  } else if (shotType === 'seascape') {
+    windPen = gust > 60 ? 4 : gust > 45 ? 2 : gust > 30 ? 1 : gust > 20 ? 0.5 : 0;
+  } else if (shotType === 'waterfall' || shotType === 'canyon') {
+    windPen = gust > 45 ? 2 : gust > 30 ? 1 : gust > 18 ? 0.5 : 0;
+  } else if (shotType === 'mountain' || shotType === 'castle') {
+    windPen = gust > 70 ? 1 : gust > 50 ? 0.5 : 0;
   }
 
-  s = clamp(s);
-  return { stars: s, label: LABELS[s], reason: reason || LABELS[s] };
+  // #4 LIGHT — minor trim only ("the other shit").
+  let lightPen = 0;
+  if (shotType === 'waterfall' || shotType === 'canyon') {
+    if (cloud < 25) lightPen = 1;        // harsh sun blows out moving water
+    else if (cloud < 45) lightPen = 0.5;
+  } else if (shotType === 'seascape' || shotType === 'castle') {
+    if (cloud > 92) lightPen = 0.5;      // flat, featureless sky (mountains handled via obscuration)
+  }
+
+  const s = clamp(Math.round(4 - rainPen - visPen - windPen - lightPen));
+
+  // Surface the dominant factor as the reason.
+  const factors: [number, string][] = [
+    [rainPen, rainPen >= 3 ? 'Heavy rain' : rainPen >= 2 ? 'Rain likely' : 'Some rain risk'],
+    [visPen, fog === 'likely' ? 'Fog — poor visibility'
+      : (shotType === 'mountain' && obscure > 0) ? 'Summit likely in cloud'
+      : 'Haze / low visibility'],
+    [windPen,
+      shotType === 'reflection' ? 'Wind breaking the reflection'
+      : shotType === 'seascape' ? 'Heavy swell / wind'
+      : 'Windy — motion in long exposures'],
+    [lightPen, (shotType === 'waterfall' || shotType === 'canyon') ? 'Harsh sun on the water' : 'Flat, featureless light'],
+  ];
+  const top = factors.reduce((m, f) => (f[0] > m[0] ? f : m), [0, ''] as [number, string]);
+  const reason = top[0] >= 0.5 ? top[1] : 'Clear window — dry, open, calm';
+
+  return { stars: s, label: LABELS[s], reason };
 }
 
 // ─────────────────────────────────────────
