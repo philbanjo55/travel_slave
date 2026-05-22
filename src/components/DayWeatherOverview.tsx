@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'rea
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 import {
-  WeatherRow, summarizeDay, conditionIcon, conditionsText, shortDate,
+  WeatherRow, summarizeDay, conditionIcon, conditionsText, shortDate, cToF, kmhToMph,
 } from '../services/weather';
 
 interface Props {
@@ -49,13 +49,13 @@ export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, 
         <>
           <View style={styles.headline}>
             <Ionicons name={conditionIcon(ov.code) as any} size={26} color={colors.textPrimary} />
-            <Text style={styles.range}>{ov.tempMin}–{ov.tempMax}°C</Text>
+            <Text style={styles.range}>{Math.round(cToF(ov.tempMin))}–{Math.round(cToF(ov.tempMax))}°F</Text>
             <Text style={styles.summary} numberOfLines={2}>{ov.summary}</Text>
           </View>
           <View style={styles.metrics}>
             <Metric icon="cloud-outline" value={`${ov.avgCloud}%`} sub="cloud" />
             <Metric icon="rainy-outline" value={`${ov.maxPrecip}%`} sub="max rain" />
-            <Metric icon="navigate-outline" value={`${Math.round(ov.maxGust)}`} sub="gust km/h" />
+            <Metric icon="navigate-outline" value={`${Math.round(kmhToMph(ov.maxGust))}`} sub="gust mph" />
             {ov.foggy ? <Metric icon="cloudy-outline" value={`${ov.foggy}`} sub="fog stops" /> : null}
             {ov.golden ? <Metric icon="sunny-outline" value={`${ov.golden}`} sub="golden" /> : null}
           </View>

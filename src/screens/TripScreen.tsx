@@ -9,7 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import { supabase } from '../services/supabase';
 import { calculateDriveTimesForTrip, recalculateTimeLabels } from '../services/driveTimes';
-import { pullWeatherForTrip, fetchLatestWeatherForDay, WeatherRow, conditionIcon, scoreConditions } from '../services/weather';
+import { pullWeatherForTrip, fetchLatestWeatherForDay, WeatherRow, conditionIcon, scoreConditions, cToF } from '../services/weather';
 import DaySummary from '../components/DaySummary';
 import DayWeatherOverview from '../components/DayWeatherOverview';
 import { colors, typography, spacing, radius } from '../theme';
@@ -267,7 +267,7 @@ export default function TripScreen() {
                   return (
                     <View style={styles.stopWx}>
                       <Ionicons name={conditionIcon(w.weather_code) as any} size={11} color={colors.textSecondary} />
-                      <Text style={styles.stopWxTemp}>{Math.round(w.temperature_c)}°</Text>
+                      <Text style={styles.stopWxTemp}>{Math.round(cToF(w.temperature_c))}°</Text>
                       {sc ? (
                         <View style={styles.stopWxStars}>
                           {[0, 1, 2, 3].map(i => (

@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import DaySummary from '../components/DaySummary';
 import DayWeatherSummary from '../components/DayWeatherSummary';
-import { WeatherRow, conditionIcon, scoreConditions } from '../services/weather';
+import { WeatherRow, conditionIcon, scoreConditions, cToF } from '../services/weather';
 import { colors, typography, spacing, radius } from '../theme';
 
 const { height } = Dimensions.get('window');
@@ -160,7 +160,7 @@ export default function DayScreen() {
                     return (
                       <View style={styles.stopWx}>
                         <Ionicons name={conditionIcon(w.weather_code) as any} size={11} color={colors.textSecondary} />
-                        <Text style={styles.stopWxTemp}>{Math.round(w.temperature_c)}°</Text>
+                        <Text style={styles.stopWxTemp}>{Math.round(cToF(w.temperature_c))}°</Text>
                         {sc ? (
                           <View style={styles.stopWxStars}>
                             {[0, 1, 2, 3].map(i => (

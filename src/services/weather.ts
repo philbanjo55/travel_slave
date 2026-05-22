@@ -173,12 +173,16 @@ export function conditionsText(code: number | null): string {
   return WMO[code] ?? `Code ${code}`;
 }
 
+// Display is imperial (US). Stored data stays metric — only formatting converts.
+export const cToF = (c: number) => (c * 9) / 5 + 32;
+export const kmhToMph = (k: number) => k * 0.621371;
+
 export function tempText(c: number | null): string {
-  return c == null ? '—' : `${Math.round(c)}°C`;
+  return c == null ? '—' : `${Math.round(cToF(c))}°F`;
 }
 
 export function windText(kmh: number | null): string {
-  return kmh == null ? '—' : `${Math.round(kmh)} km/h`;
+  return kmh == null ? '—' : `${Math.round(kmhToMph(kmh))} mph`;
 }
 
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -189,8 +193,9 @@ export function windDir(deg: number | null): string {
 
 export function visibilityText(m: number | null): string {
   if (m == null) return '—';
-  if (m < 1000) return `${m} m`;
-  return `${(m / 1000).toFixed(1)} km`;
+  const mi = m / 1609.34;
+  if (mi < 0.1) return `${Math.round(m * 3.28084)} ft`;
+  return `${mi.toFixed(1)} mi`;
 }
 
 // Sun times arrive as ISO with offset (e.g. 2026-06-28T04:38:00+01:00).
@@ -368,7 +373,7 @@ export function summarizeDay(
   const sky = avgCloud < 25 ? 'mostly clear' : avgCloud < 60 ? 'partly cloudy' : avgCloud < 85 ? 'cloudy' : 'overcast';
   const wind = maxGust < 20 ? 'calm' : maxGust < 40 ? 'breezy' : maxGust < 60 ? 'windy' : 'very windy';
   const rain = maxPrecip < 20 ? 'low rain risk' : maxPrecip < 50 ? `${maxPrecip}% rain risk` : `high rain risk (${maxPrecip}%)`;
-  const summary = `${sky[0].toUpperCase() + sky.slice(1)}, ${wind} (gusts ${Math.round(maxGust)} km/h), ${rain}.`
+  const summary = `${sky[0].toUpperCase() + sky.slice(1)}, ${wind} (gusts ${Math.round(kmhToMph(maxGust))} mph), ${rain}.`
     + (foggy ? ` Fog ${foggy > 1 ? 'risk at several stops' : 'risk at one stop'}.` : '')
     + (golden ? ` ${golden} stop${golden > 1 ? 's' : ''} near golden hour.` : '');
 
