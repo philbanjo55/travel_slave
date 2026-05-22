@@ -1,7 +1,13 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
 
 const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2';
+
+// Offline cache keys — match the app's existing AsyncStorage convention in
+// services/database.ts (pf_ prefix, JSON values).
+const WEATHER_DAY_PREFIX = 'pf_weather_day_';
+const WEATHER_STOP_PREFIX = 'pf_weather_stop_';
 
 // ─────────────────────────────────────────
 // TYPES
@@ -58,6 +64,71 @@ export interface PullWeatherResult {
 }
 
 // ─────────────────────────────────────────
+// OFFLINE CACHE (stale-while-revalidate)
+// Weather is small JSON (a few KB/day), so it lives in AsyncStorage — the same
+// mechanism services/database.ts uses for trips + photo metadata. Rows are
+// cached VERBATIM (including `raw` provenance and the score_* columns) so
+// scoreConditions, the verification badges, and the day overview all keep
+// working from cached rows without change.
+// ─────────────────────────────────────────
+interface CachedDay { cachedAt: number; byStop: Record<string, WeatherRow>; }
+interface CachedStop { cachedAt: number; row: WeatherRow; }
+
+export async function cacheWeatherForDay(
+  dayId: string,
+  byStop: Record<string, WeatherRow>
+): Promise<void> {
+  try {
+    const payload: CachedDay = { cachedAt: Date.now(), byStop };
+    await AsyncStorage.setItem(`${WEATHER_DAY_PREFIX}${dayId}`, JSON.stringify(payload));
+  } catch (e) {
+    console.warn('weather cache write failed (day):', e);
+  }
+}
+
+export async function getCachedWeatherForDay(
+  dayId: string
+): Promise<Record<string, WeatherRow> | null> {
+  try {
+    const raw = await AsyncStorage.getItem(`${WEATHER_DAY_PREFIX}${dayId}`);
+    if (!raw) return null;
+    return (JSON.parse(raw) as CachedDay).byStop ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheWeatherForStop(stopId: string, row: WeatherRow): Promise<void> {
+  try {
+    const payload: CachedStop = { cachedAt: Date.now(), row };
+    await AsyncStorage.setItem(`${WEATHER_STOP_PREFIX}${stopId}`, JSON.stringify(payload));
+  } catch (e) {
+    console.warn('weather cache write failed (stop):', e);
+  }
+}
+
+async function getCachedWeatherForStop(stopId: string): Promise<WeatherRow | null> {
+  // Prefer a dedicated per-stop entry; otherwise fall back to any cached day
+  // that already holds this stop — so a stop loaded only via its day screen is
+  // still available offline without ever having been fetched on its own.
+  try {
+    const raw = await AsyncStorage.getItem(`${WEATHER_STOP_PREFIX}${stopId}`);
+    if (raw) return (JSON.parse(raw) as CachedStop).row ?? null;
+  } catch {}
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    for (const k of keys) {
+      if (!k.startsWith(WEATHER_DAY_PREFIX)) continue;
+      const raw = await AsyncStorage.getItem(k);
+      if (!raw) continue;
+      const hit = (JSON.parse(raw) as CachedDay).byStop?.[stopId];
+      if (hit) return hit;
+    }
+  } catch {}
+  return null;
+}
+
+// ─────────────────────────────────────────
 // PULL — invokes the weather-pull edge function for one day.
 // Mirrors calculateDriveTimes() in supabase.ts: raw fetch, publishable
 // key as bearer. weather-pull is deployed with verify_jwt=false (matches
@@ -77,7 +148,17 @@ export async function pullWeather(
     },
     body: JSON.stringify({ day_id: dayId, test: opts.test === true }),
   });
-  return res.json();
+  const result: PullWeatherResult = await res.json();
+  // Make a fresh pull immediately offline-ready. The edge function's `stops`
+  // payload is a DIFFERENT shape from the stored row (it carries `provenance`
+  // + a nested `score`, not `raw` + flattened score_* columns), so rather than
+  // cache the response directly we re-read the canonical view rows — which also
+  // populates the day cache. The network is up (we just pulled), so this reads
+  // fresh; it's wrapped so a cache refresh hiccup never fails the pull.
+  if (result?.ok) {
+    try { await fetchLatestWeatherForDay(dayId); } catch {}
+  }
+  return result;
 }
 
 // ─────────────────────────────────────────
@@ -88,26 +169,40 @@ export async function pullWeather(
 export async function fetchLatestWeatherForDay(
   dayId: string
 ): Promise<Record<string, WeatherRow>> {
-  const { data, error } = await supabase
-    .from('latest_weather_per_stop')
-    .select('*')
-    .eq('day_id', dayId);
-  if (error || !data) return {};
-  const byStop: Record<string, WeatherRow> = {};
-  for (const row of data as WeatherRow[]) byStop[row.stop_id] = row;
-  return byStop;
+  try {
+    const { data, error } = await supabase
+      .from('latest_weather_per_stop')
+      .select('*')
+      .eq('day_id', dayId);
+    if (error || !data) throw error ?? new Error('no weather data');
+    const byStop: Record<string, WeatherRow> = {};
+    for (const row of data as WeatherRow[]) byStop[row.stop_id] = row;
+    await cacheWeatherForDay(dayId, byStop); // refresh the offline copy
+    return byStop;
+  } catch {
+    // Offline / read failed → serve the last cached copy if we have one.
+    return (await getCachedWeatherForDay(dayId)) ?? {};
+  }
 }
 
 export async function fetchLatestWeatherForStop(
   stopId: string
 ): Promise<WeatherRow | null> {
-  const { data, error } = await supabase
-    .from('latest_weather_per_stop')
-    .select('*')
-    .eq('stop_id', stopId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return data as WeatherRow;
+  try {
+    const { data, error } = await supabase
+      .from('latest_weather_per_stop')
+      .select('*')
+      .eq('stop_id', stopId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null; // online, but genuinely no forecast for this stop
+    const row = data as WeatherRow;
+    await cacheWeatherForStop(stopId, row); // refresh the offline copy
+    return row;
+  } catch {
+    // Offline / read failed → per-stop cache, then any day cache holding it.
+    return await getCachedWeatherForStop(stopId);
+  }
 }
 
 // Open-Meteo forecasts ~16 days out. If the target date is beyond that horizon
@@ -126,6 +221,9 @@ export function useTestModeFor(dateStr: string | null | undefined): boolean {
 // Pull weather for every day in a trip (the "whole trip" update). Calls
 // weather-pull once per day, auto-deciding test mode per day's date.
 // Sequential with light pacing since each day fans out to Open-Meteo per stop.
+// Each successful pull also refreshes that day's offline cache (pullWeather →
+// fetchLatestWeatherForDay), so a whole-trip update leaves every day usable
+// offline without visiting each day screen first.
 export async function pullWeatherForTrip(
   tripId: string,
   onProgress?: (done: number, total: number) => void
