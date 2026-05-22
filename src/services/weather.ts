@@ -40,6 +40,7 @@ export interface WeatherRow {
   is_golden_hour: boolean | null;
   is_dark: boolean | null;
   fog_risk: string | null;
+  raw?: any;
 }
 
 export interface PullWeatherResult {
@@ -404,4 +405,56 @@ export function shortDate(d: string | null): string {
   const dt = new Date(`${d}T12:00:00`);
   if (isNaN(dt.getTime())) return '';
   return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// ─────────────────────────────────────────
+// VERIFY — re-fetch Open-Meteo from a row's OWN stored provenance and compare.
+// Proves the stored data corresponds to the recorded location/date/hour.
+// A value difference (not a coordinate/time difference) usually just means
+// Open-Meteo refreshed its model run since the pull — not a pipeline error.
+// ─────────────────────────────────────────
+export interface VerifyCheck { field: string; stored: number | null; source: number | null; match: boolean; }
+export interface VerifyResult {
+  ok: boolean;
+  matchedTime: string | null;
+  lat: number | null;
+  lng: number | null;
+  timezone: string | null;
+  checks: VerifyCheck[];
+  error?: string;
+}
+
+export async function verifyStopWeather(row: WeatherRow): Promise<VerifyResult> {
+  const prov = row.raw?.provenance;
+  if (!prov || prov.source_lat == null || prov.source_lng == null || !prov.forecast_date) {
+    return { ok: false, matchedTime: null, lat: null, lng: null, timezone: null, checks: [],
+      error: 'No provenance on this forecast — re-pull the day to enable verification.' };
+  }
+  const lat = prov.source_lat, lng = prov.source_lng, date = prov.forecast_date;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}`
+    + `&hourly=temperature_2m,wind_gusts_10m,cloud_cover,weather_code&timezone=auto&wind_speed_unit=kmh`
+    + `&start_date=${date}&end_date=${date}`;
+  try {
+    const res = await fetch(url);
+    const j = await res.json();
+    const time: string[] = j?.hourly?.time ?? [];
+    let idx = prov.matched_time_local ? time.indexOf(prov.matched_time_local) : -1;
+    if (idx === -1 && prov.requested_hour != null) idx = prov.requested_hour;
+    const at = (a: any[]) => (a && idx >= 0 ? (a[idx] ?? null) : null);
+    const approx = (a: number | null, b: number | null) => a != null && b != null && Math.abs(Number(a) - Number(b)) < 0.1;
+    const checks: VerifyCheck[] = [
+      { field: 'Temp °C', stored: row.temperature_c, source: at(j.hourly?.temperature_2m) },
+      { field: 'Gusts km/h', stored: row.wind_gusts_kmh, source: at(j.hourly?.wind_gusts_10m) },
+      { field: 'Cloud %', stored: row.cloud_cover_pct, source: at(j.hourly?.cloud_cover) },
+      { field: 'Code', stored: row.weather_code, source: at(j.hourly?.weather_code) },
+    ].map(c => ({ ...c, match: approx(c.stored, c.source) }));
+    return {
+      ok: checks.every(c => c.match),
+      matchedTime: time[idx] ?? null,
+      lat, lng, timezone: j?.timezone ?? prov.timezone ?? null, checks,
+    };
+  } catch (e: any) {
+    return { ok: false, matchedTime: null, lat, lng, timezone: prov.timezone ?? null, checks: [],
+      error: String(e?.message ?? e) };
+  }
 }

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 import {
   WeatherRow, fetchLatestWeatherForStop,
   conditionsText, tempText, windText, windDir, visibilityText, clockFromISO, fogBadge,
   conditionIcon, scoreConditions, forecastMode, shortDate,
+  verifyStopWeather, VerifyResult,
 } from '../services/weather';
 
 interface Props {
@@ -23,6 +24,8 @@ interface Props {
 export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: Props) {
   const [row, setRow] = useState<WeatherRow | null>(weather ?? null);
   const [loaded, setLoaded] = useState(weather !== undefined);
+  const [verifying, setVerifying] = useState(false);
+  const [verify, setVerify] = useState<VerifyResult | null>(null);
 
   useEffect(() => {
     if (weather !== undefined) { setRow(weather ?? null); setLoaded(true); return; }
@@ -131,6 +134,53 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
         <Metric icon="moon-outline" label="SUNSET" value={clockFromISO(row.sunset)}
           sub={row.surface_pressure_hpa != null ? `${Math.round(row.surface_pressure_hpa)} hPa` : ' '} />
       </View>
+
+      {/* Verify against source */}
+      <TouchableOpacity
+        style={styles.verifyBtn}
+        activeOpacity={0.7}
+        disabled={verifying}
+        onPress={async () => { setVerifying(true); setVerify(null); try { setVerify(await verifyStopWeather(row)); } finally { setVerifying(false); } }}
+      >
+        {verifying
+          ? <ActivityIndicator size="small" color={colors.textSecondary} />
+          : <Ionicons name="shield-checkmark-outline" size={13} color={colors.textSecondary} />}
+        <Text style={styles.verifyBtnText}>{verifying ? 'CHECKING…' : 'VERIFY AGAINST SOURCE'}</Text>
+      </TouchableOpacity>
+
+      {verify ? (
+        <View style={styles.verifyResult}>
+          {verify.error ? (
+            <Text style={styles.verifyMuted}>{verify.error}</Text>
+          ) : (
+            <>
+              <View style={styles.verifyHead}>
+                <Ionicons
+                  name={verify.ok ? 'checkmark-circle' : 'alert-circle-outline'}
+                  size={14}
+                  color={verify.ok ? colors.signalOk : colors.signalWarning}
+                />
+                <Text style={[styles.verifyVerdict, { color: verify.ok ? colors.signalOk : colors.signalWarning }]}>
+                  {verify.ok ? 'Verified — matches Open-Meteo' : 'Differs from current Open-Meteo'}
+                </Text>
+              </View>
+              <Text style={styles.verifyMeta}>
+                {verify.lat?.toFixed(4)}, {verify.lng?.toFixed(4)} · {verify.matchedTime?.replace('T', ' ')} · {verify.timezone}
+              </Text>
+              {verify.checks.map(c => (
+                <View key={c.field} style={styles.verifyRow}>
+                  <Text style={styles.verifyField}>{c.field}</Text>
+                  <Text style={styles.verifyVals}>{c.stored ?? '—'} / {c.source ?? '—'}</Text>
+                  <Ionicons name={c.match ? 'checkmark' : 'close'} size={12} color={c.match ? colors.signalOk : colors.signalWarning} />
+                </View>
+              ))}
+              {!verify.ok ? (
+                <Text style={styles.verifyMuted}>Location & hour reconstructed correctly; values differ because Open-Meteo updated its forecast since you pulled. Refresh to sync.</Text>
+              ) : null}
+            </>
+          )}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -202,4 +252,19 @@ const styles = StyleSheet.create({
   metricLabel: { fontSize: 8, fontWeight: '700', letterSpacing: 1, color: colors.textTertiary },
   metricValue: { fontSize: 15, fontWeight: '600', color: colors.textPrimary },
   metricSub: { fontSize: 10, color: colors.textTertiary, marginTop: 1 },
+
+  verifyBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginTop: spacing.md, paddingVertical: spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.sm,
+  },
+  verifyBtnText: { fontSize: 10, fontWeight: '700', letterSpacing: 1, color: colors.textSecondary },
+  verifyResult: { marginTop: spacing.sm, gap: 4 },
+  verifyHead: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  verifyVerdict: { fontSize: 12, fontWeight: '600' },
+  verifyMeta: { fontSize: 10, color: colors.textTertiary },
+  verifyRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  verifyField: { fontSize: 11, color: colors.textSecondary, width: 80 },
+  verifyVals: { fontSize: 11, color: colors.textPrimary, flex: 1 },
+  verifyMuted: { fontSize: 10, color: colors.textTertiary, fontStyle: 'italic', marginTop: 2 },
 });
