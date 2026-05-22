@@ -109,6 +109,49 @@ export async function fetchLatestWeatherForStop(
   return data as WeatherRow;
 }
 
+// Open-Meteo forecasts ~16 days out. If the target date is beyond that horizon
+// (or missing), fall back to test mode (today+2) so we still get real,
+// sanity-checkable data. Within range, use the real trip date. This lets the
+// buttons "just work" now and automatically switch to true trip-date forecasts
+// as each day comes within range — no manual toggle.
+export function useTestModeFor(dateStr: string | null | undefined): boolean {
+  if (!dateStr) return true;
+  const target = new Date(`${dateStr}T12:00:00`).getTime();
+  if (isNaN(target)) return true;
+  const days = (target - Date.now()) / 86400000;
+  return days < 0 || days > 15;
+}
+
+// Pull weather for every day in a trip (the "whole trip" update). Calls
+// weather-pull once per day, auto-deciding test mode per day's date.
+// Sequential with light pacing since each day fans out to Open-Meteo per stop.
+export async function pullWeatherForTrip(
+  tripId: string,
+  onProgress?: (done: number, total: number) => void
+): Promise<{ days: number; ok: number; failed: number }> {
+  const { data: days, error } = await supabase
+    .from('days')
+    .select('id, date')
+    .eq('trip_id', tripId)
+    .order('day_number', { ascending: true });
+  if (error || !days) throw new Error('Failed to fetch days');
+
+  let ok = 0;
+  let failed = 0;
+  for (let i = 0; i < days.length; i++) {
+    const d = days[i] as { id: string; date: string | null };
+    try {
+      const res = await pullWeather(d.id, { test: useTestModeFor(d.date) });
+      if (res.ok) ok++; else failed++;
+    } catch {
+      failed++;
+    }
+    onProgress?.(i + 1, days.length);
+    await new Promise(r => setTimeout(r, 150));
+  }
+  return { days: days.length, ok, failed };
+}
+
 // ─────────────────────────────────────────
 // FORMATTING HELPERS
 // ─────────────────────────────────────────

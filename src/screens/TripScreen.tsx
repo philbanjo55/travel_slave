@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import { supabase } from '../services/supabase';
 import { calculateDriveTimesForTrip, recalculateTimeLabels } from '../services/driveTimes';
+import { pullWeatherForTrip, fetchLatestWeatherForDay, WeatherRow, conditionIcon, scoreConditions } from '../services/weather';
 import DaySummary from '../components/DaySummary';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
@@ -22,6 +23,9 @@ export default function TripScreen() {
   const tabScrollRef = useRef<ScrollView>(null);
   const [activeDay, setActiveDay] = useState(0);
   const [recalculating, setRecalculating] = useState(false);
+  const [weatherUpdating, setWeatherUpdating] = useState(false);
+  const [weatherProgress, setWeatherProgress] = useState<{ done: number; total: number } | null>(null);
+  const [dayWeather, setDayWeather] = useState<Record<string, WeatherRow>>({});
 
   useEffect(() => { loadTrip(tripId); }, [tripId]);
 
@@ -85,6 +89,51 @@ export default function TripScreen() {
     );
   }, [tripId]);
 
+  // Pull weather for the whole trip (week-view action).
+  const updateTripWeather = useCallback(async () => {
+    Alert.alert(
+      'Update Trip Weather',
+      'Pull the latest forecast for every stop across all days. Days within ~16 days use their real date; days further out use a near-date preview. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Update All',
+          onPress: async () => {
+            setWeatherUpdating(true);
+            setWeatherProgress({ done: 0, total: 0 });
+            try {
+              const res = await pullWeatherForTrip(tripId, (done, total) =>
+                setWeatherProgress({ done, total })
+              );
+              Alert.alert(
+                'Weather Updated',
+                `Pulled ${res.ok} of ${res.days} days${res.failed ? ` (${res.failed} failed)` : ''}.`
+              );
+              const d = useTripStore.getState().currentTripData?.days[activeDay];
+              if (d) setDayWeather(await fetchLatestWeatherForDay(d.id));
+            } catch (e) {
+              Alert.alert('Error', 'Failed to update trip weather.');
+            } finally {
+              setWeatherUpdating(false);
+              setWeatherProgress(null);
+            }
+          },
+        },
+      ]
+    );
+  }, [tripId, activeDay]);
+
+  // Load stored weather for the active day so per-stop chips show as you tab.
+  useEffect(() => {
+    const d = currentTripData?.days[activeDay];
+    if (!d) return;
+    let cancelled = false;
+    fetchLatestWeatherForDay(d.id)
+      .then(w => { if (!cancelled) setDayWeather(w); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeDay, currentTripData]);
+
   if (!currentTripData) {
     return (
       <View style={styles.loading}>
@@ -111,6 +160,13 @@ export default function TripScreen() {
           </Text>
         </View>
         {isSyncing && <ActivityIndicator color={colors.accentDim} size="small" />}
+        <TouchableOpacity onPress={updateTripWeather} disabled={weatherUpdating} style={styles.headerBtn}>
+          {weatherUpdating
+            ? (weatherProgress && weatherProgress.total > 0
+                ? <Text style={styles.wxProgress}>{weatherProgress.done}/{weatherProgress.total}</Text>
+                : <ActivityIndicator color={colors.textSecondary} size="small" />)
+            : <Ionicons name="partly-sunny-outline" size={20} color={colors.textSecondary} />}
+        </TouchableOpacity>
         <TouchableOpacity onPress={recalcDriveTimes} disabled={recalculating}>
           <Ionicons name="time-outline" size={20} color={recalculating ? colors.textTertiary : colors.textSecondary} />
         </TouchableOpacity>
@@ -201,6 +257,29 @@ export default function TripScreen() {
                 {item.duration_minutes ? (
                   <Text style={styles.stopDur}>{minutesToHoursMin(item.duration_minutes)}</Text>
                 ) : null}
+                {(() => {
+                  const w = dayWeather[item.id];
+                  if (!w || w.temperature_c == null) return null;
+                  const sc = scoreConditions(item.shot_type, w);
+                  return (
+                    <View style={styles.stopWx}>
+                      <Ionicons name={conditionIcon(w.weather_code) as any} size={11} color={colors.textSecondary} />
+                      <Text style={styles.stopWxTemp}>{Math.round(w.temperature_c)}°</Text>
+                      {sc ? (
+                        <View style={styles.stopWxStars}>
+                          {[0, 1, 2, 3].map(i => (
+                            <Ionicons
+                              key={i}
+                              name={i < sc.stars ? 'star' : 'star-outline'}
+                              size={8}
+                              color={i < sc.stars ? colors.textSecondary : colors.textTertiary}
+                            />
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                  );
+                })()}
               </View>
               <View style={styles.stopRight}>
                 {item.alltrails_url && (
@@ -275,5 +354,10 @@ const styles = StyleSheet.create({
   stopMeta: { flex: 1 },
   stopName: { fontSize: 14, fontWeight: '500', color: colors.textPrimary },
   stopDur: { fontSize: 11, color: colors.textTertiary, marginTop: 2 },
+  stopWx: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  stopWxTemp: { fontSize: 11, color: colors.textSecondary, fontWeight: '500' },
+  stopWxStars: { flexDirection: 'row', gap: 1, marginLeft: 2 },
+  headerBtn: { minWidth: 28, alignItems: 'center', justifyContent: 'center' },
+  wxProgress: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   stopRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
 });

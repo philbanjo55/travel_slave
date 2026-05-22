@@ -2,18 +2,17 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
-import { pullWeather, fetchLatestWeatherForDay, WeatherRow } from '../services/weather';
+import { pullWeather, fetchLatestWeatherForDay, useTestModeFor, WeatherRow } from '../services/weather';
 
 interface Props {
   dayId: string;
-  // When the trip date is >16 days out, Open-Meteo can't forecast it.
-  // Pass test so the function shifts to today+2 and returns real data.
-  // (Both current trips are far out, so default true for now.)
-  test?: boolean;
+  // The day's real date (from days.date). Used to auto-decide whether to pull
+  // the real forecast (within ~16 days) or fall back to test/today+2.
+  date?: string | null;
   onLoaded?: (byStop: Record<string, WeatherRow>) => void;
 }
 
-export default function DayWeatherSummary({ dayId, test = true, onLoaded }: Props) {
+export default function DayWeatherSummary({ dayId, date, onLoaded }: Props) {
   const [summary, setSummary] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -41,7 +40,7 @@ export default function DayWeatherSummary({ dayId, test = true, onLoaded }: Prop
     setLoading(true);
     setError(null);
     try {
-      const res = await pullWeather(dayId, { test });
+      const res = await pullWeather(dayId, { test: useTestModeFor(date) });
       if (!res.ok) {
         setError(res.error || 'Pull failed');
       } else {

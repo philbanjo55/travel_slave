@@ -66,7 +66,7 @@ export default function DayScreen() {
       </View>
 
       {/* Weather — pinned to the top so it's the first thing seen */}
-      <DayWeatherSummary dayId={day.id} onLoaded={setWeather} />
+      <DayWeatherSummary dayId={day.id} date={day.date} onLoaded={setWeather} />
 
       {/* Map */}
       <TouchableOpacity
