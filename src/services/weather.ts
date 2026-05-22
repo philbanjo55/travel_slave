@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Updates from 'expo-updates';
 import { supabase } from './supabase';
 
 const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
@@ -8,6 +9,35 @@ const SUPABASE_ANON_KEY = 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2';
 // services/database.ts (pf_ prefix, JSON values).
 const WEATHER_DAY_PREFIX = 'pf_weather_day_';
 const WEATHER_STOP_PREFIX = 'pf_weather_stop_';
+
+// ── TEMP DIAGNOSTIC ──────────────────────────────────────────────
+// Posts to app_logs (same channel photoCache uses) so we can confirm from the
+// DB which JS bundle the device is actually running, its EAS channel, and
+// whether a day read hit network or fell back to cache. Remove once offline
+// caching is verified end-to-end.
+function bundleInfo() {
+  return {
+    updateId: Updates.updateId,            // null if running the embedded/old bundle in some cases
+    channel: Updates.channel,              // should be 'preview'
+    runtimeVersion: Updates.runtimeVersion,
+    embedded: Updates.isEmbeddedLaunch,    // true = no OTA applied, running the build's baked-in JS
+  };
+}
+async function logDiag(message: string, data?: any) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/app_logs`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({ level: 'info', message, data }),
+    });
+  } catch {}
+}
+// ─────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────
 // TYPES
@@ -178,10 +208,13 @@ export async function fetchLatestWeatherForDay(
     const byStop: Record<string, WeatherRow> = {};
     for (const row of data as WeatherRow[]) byStop[row.stop_id] = row;
     await cacheWeatherForDay(dayId, byStop); // refresh the offline copy
+    void logDiag('weather day: network → cached', { dayId, stops: Object.keys(byStop).length, ...bundleInfo() });
     return byStop;
   } catch {
     // Offline / read failed → serve the last cached copy if we have one.
-    return (await getCachedWeatherForDay(dayId)) ?? {};
+    const cached = await getCachedWeatherForDay(dayId);
+    void logDiag('weather day: offline → cache', { dayId, found: cached ? Object.keys(cached).length : 0, ...bundleInfo() });
+    return cached ?? {};
   }
 }
 
