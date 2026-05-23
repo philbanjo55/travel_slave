@@ -148,9 +148,13 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           sub={`gusts ${windText(row.wind_gusts_kmh)}${dir ? ` · ${dir}` : ''}`} />
         <Metric icon="eye-outline" label="VISIBILITY" value={visibilityText(row.visibility_m)}
           sub={row.relative_humidity_pct != null ? `${row.relative_humidity_pct}% humidity` : ' '} />
-        <Metric icon="sunny-outline" label="SUNRISE" value={clockFromISO(row.sunrise)}
+        {/* Sun times: the sunrise/sunset columns are timestamptz and serialize
+            in UTC, so clockFromISO would render an hour off in BST/IST etc.
+            raw.sunrise/sunset hold the location's local wall-clock (Open-Meteo
+            timezone=auto) — correct everywhere regardless of device timezone. */}
+        <Metric icon="sunny-outline" label="SUNRISE" value={clockFromISO(row.raw?.sunrise ?? row.sunrise)}
           sub={row.uv_index != null ? `UV ${Math.round(row.uv_index)}` : ' '} />
-        <Metric icon="moon-outline" label="SUNSET" value={clockFromISO(row.sunset)}
+        <Metric icon="moon-outline" label="SUNSET" value={clockFromISO(row.raw?.sunset ?? row.sunset)}
           sub={row.surface_pressure_hpa != null ? `${Math.round(row.surface_pressure_hpa)} hPa` : ' '} />
       </View>
 
