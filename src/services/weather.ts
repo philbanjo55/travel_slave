@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Updates from 'expo-updates';
 import { supabase } from './supabase';
 
 const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
@@ -9,52 +8,6 @@ const SUPABASE_ANON_KEY = 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2';
 // services/database.ts (pf_ prefix, JSON values).
 const WEATHER_DAY_PREFIX = 'pf_weather_day_';
 const WEATHER_STOP_PREFIX = 'pf_weather_stop_';
-
-// ── TEMP DIAGNOSTIC ──────────────────────────────────────────────
-// Posts to app_logs (same channel photoCache uses) so we can confirm from the
-// DB which JS bundle the device is actually running, its EAS channel, and
-// whether a day read hit network or fell back to cache. Remove once offline
-// caching is verified end-to-end.
-function bundleInfo() {
-  return {
-    updateId: Updates.updateId,            // null if running the embedded/old bundle in some cases
-    channel: Updates.channel,              // should be 'preview'
-    runtimeVersion: Updates.runtimeVersion,
-    embedded: Updates.isEmbeddedLaunch,    // true = no OTA applied, running the build's baked-in JS
-  };
-}
-const DIAG_KEY = 'pf_weather_diag';
-// Offline-surviving diagnostic: append events to AsyncStorage (works with no
-// network) and flush the queue to app_logs whenever we're next online. This is
-// how we observe what the OFFLINE read branch actually did.
-async function diagRecord(ev: any) {
-  try {
-    const raw = await AsyncStorage.getItem(DIAG_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
-    arr.push({ ts: new Date().toISOString(), ...ev });
-    await AsyncStorage.setItem(DIAG_KEY, JSON.stringify(arr.slice(-25)));
-  } catch {}
-}
-async function diagFlush() {
-  try {
-    const raw = await AsyncStorage.getItem(DIAG_KEY);
-    if (!raw) return;
-    const arr = JSON.parse(raw);
-    if (!arr.length) return;
-    await fetch(`${SUPABASE_URL}/rest/v1/app_logs`, {
-      method: 'POST',
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=minimal',
-      },
-      body: JSON.stringify(arr.map((e: any) => ({ level: 'info', message: 'weather diag', data: e }))),
-    });
-    await AsyncStorage.removeItem(DIAG_KEY); // only runs if the POST succeeded (online)
-  } catch {}
-}
-// ─────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────
 // TYPES
@@ -216,7 +169,6 @@ export async function pullWeather(
 export async function fetchLatestWeatherForDay(
   dayId: string
 ): Promise<Record<string, WeatherRow>> {
-  await diagFlush(); // ship any events recorded while offline
   try {
     const { data, error } = await supabase
       .from('latest_weather_per_stop')
@@ -228,18 +180,15 @@ export async function fetchLatestWeatherForDay(
       const byStop: Record<string, WeatherRow> = {};
       for (const row of rows) byStop[row.stop_id] = row;
       await cacheWeatherForDay(dayId, byStop); // refresh the offline copy
-      await diagRecord({ branch: 'network', dayId, stops: rows.length, ...bundleInfo() });
       return byStop;
     }
     // Empty result. An offline/failed read can surface as empty-without-error
     // too, so NEVER let empty clobber or shadow a populated cache — prefer it.
     const cachedOnEmpty = await getCachedWeatherForDay(dayId);
-    await diagRecord({ branch: 'empty', dayId, cachedStops: cachedOnEmpty ? Object.keys(cachedOnEmpty).length : 0, ...bundleInfo() });
     return (cachedOnEmpty && Object.keys(cachedOnEmpty).length) ? cachedOnEmpty : {};
   } catch (e: any) {
     // Read threw (offline / network error) → serve the last cached copy.
     const cached = await getCachedWeatherForDay(dayId);
-    await diagRecord({ branch: 'offline', dayId, err: String(e?.message ?? e), cachedStops: cached ? Object.keys(cached).length : 0, ...bundleInfo() });
     return cached ?? {};
   }
 }
