@@ -5,6 +5,20 @@ import { getCachedFullTrip, getCachedTrips, cacheFullTrip, cacheTrips } from '..
 import { calculateDriveTimesForTrip } from '../services/driveTimes';
 import { downloadAllPhotos } from '../services/photoCache';
 
+// Fetch the full trip AND fold each stop's weather into it, so weather always
+// travels + caches with the trip (every load/sync path uses this). Best-effort
+// on weather so it never blocks or fails the trip load.
+async function fetchTripWithWeather(tripId: string) {
+  const fresh = await fetchFullTrip(tripId);
+  try {
+    const wx = await fetchWeatherForTrip(tripId);
+    for (const d of fresh.days) {
+      for (const s of (d.stops || [])) s.weather = wx[s.id] ?? null;
+    }
+  } catch {}
+  return fresh;
+}
+
 interface TripState {
   trips: any[];
   currentTrip: any | null;
@@ -72,17 +86,8 @@ export const useTripStore = create<TripState>((set, get) => ({
         await calculateDriveTimesForTrip(tripId).catch((e) => console.error("Drive times failed:", e));
       }
 
-      // NOW fetch fresh data (with drive times) and cache
-      const fresh = await fetchFullTrip(tripId);
-      // Fold weather into the trip data itself so it caches with the trip
-      // (cacheFullTrip) and renders straight off each stop — same offline path
-      // as the itinerary text. Best-effort: never let it block the trip load.
-      try {
-        const wx = await fetchWeatherForTrip(tripId);
-        for (const d of fresh.days) {
-          for (const s of (d.stops || [])) s.weather = wx[s.id] ?? null;
-        }
-      } catch {}
+      // Fetch fresh trip WITH weather folded into each stop, then cache it all.
+      const fresh = await fetchTripWithWeather(tripId);
       await cacheFullTrip(tripId, fresh);
       set({
         currentTripData: fresh,
@@ -102,7 +107,7 @@ export const useTripStore = create<TripState>((set, get) => ({
   syncTrip: async (tripId: string) => {
     try {
       set({ isSyncing: true });
-      const fresh = await fetchFullTrip(tripId);
+      const fresh = await fetchTripWithWeather(tripId);
       await cacheFullTrip(tripId, fresh);
       set({ currentTripData: fresh, isSyncing: false });
     } catch {
