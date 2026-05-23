@@ -111,7 +111,7 @@ export default function TripScreen() {
                 `Pulled ${res.ok} of ${res.days} days${res.failed ? ` (${res.failed} failed)` : ''}.`
               );
               const d = useTripStore.getState().currentTripData?.days[activeDay];
-              if (d) setDayWeather(await fetchLatestWeatherForDay(d.id));
+              if (d) await loadTrip(tripId); // re-fold fresh weather into trip data
             } catch (e) {
               Alert.alert('Error', 'Failed to update trip weather.');
             } finally {
@@ -124,15 +124,14 @@ export default function TripScreen() {
     );
   }, [tripId, activeDay]);
 
-  // Load stored weather for the active day so per-stop chips show as you tab.
+  // Weather now travels inside the trip data (folded in at load, cached with
+  // it), so read it straight off the active day's stops — synchronous and
+  // offline-safe, with no separate fetch to race or blank out.
   useEffect(() => {
     const d = currentTripData?.days[activeDay];
-    if (!d) return;
-    let cancelled = false;
-    fetchLatestWeatherForDay(d.id)
-      .then(w => { if (!cancelled) setDayWeather(w); })
-      .catch(() => {});
-    return () => { cancelled = true; };
+    const m: Record<string, WeatherRow> = {};
+    if (d) for (const s of (d.stops || [])) if (s.weather) m[s.id] = s.weather as WeatherRow;
+    setDayWeather(m);
   }, [activeDay, currentTripData]);
 
   if (!currentTripData) {

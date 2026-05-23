@@ -264,6 +264,28 @@ export async function fetchLatestWeatherForStop(
   }
 }
 
+// One-shot weather load for an entire trip, keyed by stop_id. Used by the trip
+// store to FOLD weather into the trip data itself — so it gets cached with the
+// trip (cacheFullTrip) and rendered straight off each stop, exactly like the
+// itinerary text and photos. No per-screen async fetch, so nothing to race or
+// blank out offline.
+export async function fetchWeatherForTrip(
+  tripId: string
+): Promise<Record<string, WeatherRow>> {
+  try {
+    const { data, error } = await supabase
+      .from('latest_weather_per_stop')
+      .select('*')
+      .eq('trip_id', tripId);
+    if (error || !data) return {};
+    const byStop: Record<string, WeatherRow> = {};
+    for (const r of data as WeatherRow[]) byStop[r.stop_id] = r;
+    return byStop;
+  } catch {
+    return {};
+  }
+}
+
 // Open-Meteo forecasts ~16 days out. If the target date is beyond that horizon
 // (or missing), fall back to test mode (today+2) so we still get real,
 // sanity-checkable data. Within range, use the real trip date. This lets the

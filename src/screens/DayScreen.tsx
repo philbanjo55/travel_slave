@@ -154,7 +154,7 @@ export default function DayScreen() {
                     <Text style={styles.stopDur}>{item.duration_minutes} min</Text>
                   ) : null}
                   {(() => {
-                    const w = weather[item.id];
+                    const w = (item.weather as WeatherRow) ?? weather[item.id];
                     if (!w || w.temperature_c == null) return null;
                     const sc = scoreConditions(item.shot_type, w);
                     return (

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { fetchFullTrip } from '../services/supabase';
+import { fetchWeatherForTrip } from '../services/weather';
 import { getCachedFullTrip, getCachedTrips, cacheFullTrip, cacheTrips } from '../services/database';
 import { calculateDriveTimesForTrip } from '../services/driveTimes';
 import { downloadAllPhotos } from '../services/photoCache';
@@ -73,6 +74,15 @@ export const useTripStore = create<TripState>((set, get) => ({
 
       // NOW fetch fresh data (with drive times) and cache
       const fresh = await fetchFullTrip(tripId);
+      // Fold weather into the trip data itself so it caches with the trip
+      // (cacheFullTrip) and renders straight off each stop — same offline path
+      // as the itinerary text. Best-effort: never let it block the trip load.
+      try {
+        const wx = await fetchWeatherForTrip(tripId);
+        for (const d of fresh.days) {
+          for (const s of (d.stops || [])) s.weather = wx[s.id] ?? null;
+        }
+      } catch {}
       await cacheFullTrip(tripId, fresh);
       set({
         currentTripData: fresh,
