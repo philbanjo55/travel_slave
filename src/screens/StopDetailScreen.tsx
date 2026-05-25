@@ -11,6 +11,7 @@ import { getPhotoUri } from '../services/photoCache';
 import { usePhotoUpload } from '../hooks/usePhotoUpload';
 import { useTripStore } from '../store/tripStore';
 import StopWeatherCard from '../components/StopWeatherCard';
+import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 
@@ -43,6 +44,7 @@ export default function StopDetailScreen() {
   const { currentTripData } = useTripStore();
   const [photoIndex, setPhotoIndex] = useState(0);
   const [fieldPhotoIndex, setFieldPhotoIndex] = useState(0);
+  const [viewerPhoto, setViewerPhoto] = useState<any | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const day = currentTripData?.days.find((d: any) => d.id === dayId);
@@ -163,6 +165,7 @@ export default function StopDetailScreen() {
                 {refPhotos.map((photo: any) => (
                   <TouchableOpacity
                     key={photo.id}
+                    onPress={() => setViewerPhoto(photo)}
                     onLongPress={() => handlePhotoLongPress(photo.id, 'reference')}
                     activeOpacity={0.9}
                   >
@@ -344,6 +347,7 @@ export default function StopDetailScreen() {
                 {fieldPhotos.map((photo: any) => (
                   <TouchableOpacity
                     key={photo.id}
+                    onPress={() => setViewerPhoto(photo)}
                     onLongPress={() => handlePhotoLongPress(photo.id, 'field')}
                     activeOpacity={0.9}
                   >
@@ -382,6 +386,11 @@ export default function StopDetailScreen() {
 
         <View style={{ height: 80 }} />
       </ScrollView>
+      <FullScreenPhotoViewer
+        photo={viewerPhoto}
+        visible={!!viewerPhoto}
+        onClose={() => setViewerPhoto(null)}
+      />
     </SafeAreaView>
   );
 }
