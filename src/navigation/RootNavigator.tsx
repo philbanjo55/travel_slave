@@ -6,6 +6,7 @@ import TripScreen from '../screens/TripScreen';
 import DayScreen from '../screens/DayScreen';
 import StopDetailScreen from '../screens/StopDetailScreen';
 import ReciprocityScreen from '../screens/ReciprocityScreen';
+import FocusSpreadScreen from '../screens/FocusSpreadScreen';
 import { colors } from '../theme';
 
 export type RootStackParamList = {
@@ -14,6 +15,7 @@ export type RootStackParamList = {
   Day: { tripId: string; dayIndex: number };
   StopDetail: { stopId: string; dayId: string };
   Reciprocity: undefined;
+  FocusSpread: undefined;
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -55,6 +57,7 @@ export default function RootNavigator() {
         <Stack.Screen name="Day" component={DayScreen} />
         <Stack.Screen name="StopDetail" component={StopDetailScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Reciprocity" component={ReciprocityScreen} />
+        <Stack.Screen name="FocusSpread" component={FocusSpreadScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

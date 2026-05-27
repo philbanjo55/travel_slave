@@ -114,6 +114,12 @@ export default function TripsScreen() {
           >
             <Ionicons name="calculator-outline" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('FocusSpread')}
+            style={{ padding: spacing.xs }}
+          >
+            <Ionicons name="aperture-outline" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
         </View>
       </View>
 
