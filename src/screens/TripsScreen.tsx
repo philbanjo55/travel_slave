@@ -120,6 +120,12 @@ export default function TripsScreen() {
           >
             <Ionicons name="aperture-outline" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Exposures')}
+            style={{ padding: spacing.xs }}
+          >
+            <Ionicons name="film-outline" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
         </View>
       </View>
 
