@@ -518,8 +518,17 @@ export function summarizeDay(
     + (foggy ? ` Fog ${foggy > 1 ? 'risk at several stops' : 'risk at one stop'}.` : '')
     + (golden ? ` ${golden} stop${golden > 1 ? 's' : ''} near golden hour.` : '');
 
-  const forecastDate = ok[0].forecast_valid_for ? ok[0].forecast_valid_for.slice(0, 10) : null;
-  const preview = !dayDate || (forecastDate != null && forecastDate !== dayDate);
+  // Resolve live vs preview from the PHOTOGRAPHIC stops (score_label set).
+  // Logistics stops never get real-mode rows, so they'd falsely flag a live
+  // day as preview. If any photo stop's forecast date mismatches the trip
+  // date, stay conservative and call the day preview.
+  const scored = ok.filter(r => (r as any).score_label != null);
+  const base = scored.length ? scored : ok;
+  const dates = base
+    .map(r => (r.forecast_valid_for ? r.forecast_valid_for.slice(0, 10) : null))
+    .filter((x): x is string => x != null);
+  const forecastDate = dates[0] ?? null;
+  const preview = !dayDate || dates.length === 0 || dates.some(fd => fd !== dayDate);
 
   return { count: ok.length, tempMin, tempMax, avgCloud, maxPrecip, maxGust, foggy, golden, code, summary, preview, forecastDate };
 }
