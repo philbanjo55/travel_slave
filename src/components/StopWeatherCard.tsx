@@ -5,7 +5,7 @@ import { colors, typography, spacing, radius } from '../theme';
 import {
   WeatherRow, fetchLatestWeatherForStop,
   conditionsText, tempText, windText, windDir, visibilityText, clockFromISO, fogBadge,
-  conditionIcon, scoreConditions, forecastMode, shortDate,
+  conditionIcon, scoreConditions, forecastMode, forecastConfidence, shortDate,
   verifyStopWeather, VerifyResult, verificationStatus,
 } from '../services/weather';
 
@@ -47,6 +47,9 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
   const dir = windDir(row.wind_direction_deg);
   const score = scoreConditions(shotType ?? null, row);
   const mode = forecastMode(row, dayDate);
+  const conf = forecastConfidence(dayDate);
+  const confColor = conf?.level === 'HIGH' ? colors.signalOk
+    : conf?.level === 'MEDIUM' ? colors.signalWarning : colors.accent;
   const vstatus = verificationStatus(row);
   const prov = row.raw?.provenance;
 
@@ -68,9 +71,16 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
               color={mode.preview ? colors.signalWarning : colors.signalOk}
             />
             <Text style={[styles.flagText, { color: mode.preview ? colors.signalWarning : colors.signalOk }]}>
-              {mode.preview ? `PREVIEW · ${shortDate(mode.forecastDate)}` : `TRIP DATE · ${shortDate(mode.forecastDate)}`}
+              {mode.preview ? `PREVIEW · ${shortDate(mode.forecastDate)}` : `LIVE · ${shortDate(mode.forecastDate)}`}
             </Text>
           </View>
+          {conf ? (
+            <View style={[styles.flag, { borderColor: confColor }]}>
+              <Text style={[styles.flagText, { color: confColor }]}>
+                {conf.level} · {conf.daysOut}d
+              </Text>
+            </View>
+          ) : null}
         </View>
         <View style={styles.badges}>
           <TouchableOpacity
