@@ -56,7 +56,7 @@ export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, 
                 color={ov.preview ? colors.signalWarning : colors.signalOk}
               />
               <Text style={[styles.flagText, { color: ov.preview ? colors.signalWarning : colors.signalOk }]}>
-                {ov.preview ? `PREVIEW · ${shortDate(ov.forecastDate)}` : `TRIP DATE · ${shortDate(ov.forecastDate)}`}
+                {ov.preview ? `PREVIEW · ${shortDate(ov.forecastDate)}` : `LIVE · ${shortDate(ov.forecastDate)}`}
               </Text>
             </View>
           ) : null}
