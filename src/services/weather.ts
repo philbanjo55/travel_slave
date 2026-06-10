@@ -429,7 +429,10 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
   if (shotType === 'reflection') {
     windPen = gust < 6 ? 0 : gust < 10 ? 0.5 : gust < 16 ? 1.5 : gust < 25 ? 2.5 : 4;
   } else if (shotType === 'seascape') {
-    windPen = gust > 60 ? 4 : gust > 45 ? 2 : gust > 30 ? 1 : gust > 20 ? 0.5 : 0;
+    // Capped at 2: heavy seas are dramatic subject matter (big-wave headlands
+    // like Mullaghmore are often BEST in a blow) — wind hurts execution, not
+    // the shot itself, so a gale bottoms out at Fair unless rain stacks on.
+    windPen = gust > 45 ? 2 : gust > 30 ? 1 : gust > 20 ? 0.5 : 0;
   } else if (shotType === 'waterfall' || shotType === 'canyon') {
     windPen = gust > 45 ? 2 : gust > 30 ? 1 : gust > 18 ? 0.5 : 0;
   } else if (shotType === 'mountain' || shotType === 'castle') {
@@ -455,7 +458,7 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
       : 'Haze / low visibility'],
     [windPen,
       shotType === 'reflection' ? 'Wind breaking the reflection'
-      : shotType === 'seascape' ? 'Heavy swell / wind'
+      : shotType === 'seascape' ? 'Big swell — dramatic seas, hard to hold steady'
       : 'Windy — motion in long exposures'],
     [lightPen, (shotType === 'waterfall' || shotType === 'canyon') ? 'Harsh sun on the water' : 'Flat, featureless light'],
   ];
