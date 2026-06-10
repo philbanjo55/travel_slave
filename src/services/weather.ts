@@ -537,6 +537,24 @@ export function summarizeDay(
 }
 
 // Per-row preview/real resolution (for the stop card flag).
+// Forecast confidence from lead time alone. Forecast skill decays with how far
+// out the target date is: <=3 days is reliable, 4-7 directional, 8+ is noise.
+// The hourly cron keeps rows freshly pulled, so "days until the stop's date"
+// is the honest measure of how settled the numbers are. Past/missing dates
+// return null (no chip).
+export type ForecastConfidence = { level: 'HIGH' | 'MEDIUM' | 'LOW'; daysOut: number };
+export function forecastConfidence(dateStr?: string | null): ForecastConfidence | null {
+  if (!dateStr) return null;
+  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const target = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysOut = Math.round((target - today) / 86400000);
+  if (daysOut < 0) return null;
+  return { level: daysOut <= 3 ? 'HIGH' : daysOut <= 7 ? 'MEDIUM' : 'LOW', daysOut };
+}
+
 export function forecastMode(
   row: WeatherRow,
   dayDate?: string | null
