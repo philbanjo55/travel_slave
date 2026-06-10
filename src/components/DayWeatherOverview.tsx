@@ -18,6 +18,9 @@ interface Props {
 
 export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, error }: Props) {
   const ov = summarizeDay(rows, dayDate);
+  // Lead-time confidence: HIGH <=3 days out, MEDIUM 4-7, LOW 8+. Rendered as
+  // a chip beside LIVE/PREVIEW so a green LIVE badge on a 12-day forecast
+  // can't be mistaken for a settled one.
   const conf = forecastConfidence(dayDate);
   const confColor = conf?.level === 'HIGH' ? colors.signalOk
     : conf?.level === 'MEDIUM' ? colors.signalWarning : colors.accent;
