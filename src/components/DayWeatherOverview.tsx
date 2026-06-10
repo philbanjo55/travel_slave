@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 import {
   WeatherRow, summarizeDay, conditionIcon, conditionsText, shortDate, cToF, kmhToMph,
-  verificationStatus,
+  verificationStatus, forecastConfidence,
 } from '../services/weather';
 
 interface Props {
@@ -18,6 +18,9 @@ interface Props {
 
 export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, error }: Props) {
   const ov = summarizeDay(rows, dayDate);
+  const conf = forecastConfidence(dayDate);
+  const confColor = conf?.level === 'HIGH' ? colors.signalOk
+    : conf?.level === 'MEDIUM' ? colors.signalWarning : colors.accent;
   const [showVerify, setShowVerify] = useState(false);
 
   // Aggregate verification across the day's stops (derived from provenance).
@@ -57,6 +60,13 @@ export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, 
               />
               <Text style={[styles.flagText, { color: ov.preview ? colors.signalWarning : colors.signalOk }]}>
                 {ov.preview ? `PREVIEW · ${shortDate(ov.forecastDate)}` : `LIVE · ${shortDate(ov.forecastDate)}`}
+              </Text>
+            </View>
+          ) : null}
+          {conf ? (
+            <View style={[styles.flag, { borderColor: confColor }]}>
+              <Text style={[styles.flagText, { color: confColor }]}>
+                {conf.level} · {conf.daysOut}d
               </Text>
             </View>
           ) : null}
