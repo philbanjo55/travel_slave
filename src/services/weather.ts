@@ -242,10 +242,17 @@ export async function fetchWeatherForTrip(
 // as each day comes within range — no manual toggle.
 export function useTestModeFor(dateStr: string | null | undefined): boolean {
   if (!dateStr) return true;
-  const target = new Date(`${dateStr}T12:00:00`).getTime();
-  if (isNaN(target)) return true;
-  const days = (target - Date.now()) / 86400000;
-  return days < 0 || days > 15;
+  // Compare CALENDAR dates (not ms deltas) so the result doesn't flip with the
+  // time of day. Open-Meteo serves today + 15 full days (16-day horizon), so a
+  // trip date is "in range" when it's 0..15 calendar days ahead. Outside that
+  // (past, or >15 days out) we fall back to preview/test mode.
+  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return true;
+  const target = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.round((target - today) / 86400000);
+  return diffDays < 0 || diffDays > 15;
 }
 
 // Pull weather for every day in a trip (the "whole trip" update). Calls
