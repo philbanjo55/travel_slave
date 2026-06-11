@@ -5,7 +5,7 @@ import { colors, typography, spacing, radius } from '../theme';
 import {
   WeatherRow, fetchLatestWeatherForStop,
   conditionsText, tempText, windText, windDir, visibilityText, clockFromISO, fogBadge,
-  conditionIcon, scoreConditions, forecastMode, forecastConfidence, shortDate,
+  conditionIcon, scoreConditions, forecastMode, forecastConfidence, shortDate, updatedAgoText,
   verifyStopWeather, VerifyResult, verificationStatus,
 } from '../services/weather';
 
@@ -63,7 +63,12 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
     <View style={styles.section}>
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
-          <Text style={styles.label}>WEATHER</Text>
+          <View>
+            <Text style={styles.label}>WEATHER</Text>
+            {updatedAgoText(row?.fetched_at) ? (
+              <Text style={styles.updatedText}>{updatedAgoText(row?.fetched_at)}</Text>
+            ) : null}
+          </View>
           <View style={[styles.flag, mode.preview ? styles.flagPreview : styles.flagReal]}>
             <Ionicons
               name={mode.preview ? 'flask-outline' : 'calendar-outline'}
@@ -268,6 +273,7 @@ const styles = StyleSheet.create({
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 1 },
   label: { ...typography.labelLarge, color: colors.textTertiary },
+  updatedText: { color: colors.textTertiary, fontSize: 10, letterSpacing: 0.4, marginTop: 2 },
   flag: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     borderWidth: 1, borderRadius: radius.sm,
