@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 import {
   WeatherRow, summarizeDay, conditionIcon, conditionsText, shortDate, cToF, kmhToMph,
-  verificationStatus, forecastConfidence,
+  verificationStatus, forecastConfidence, lastFetchedISO, updatedAgoText,
 } from '../services/weather';
 
 interface Props {
@@ -34,7 +34,12 @@ export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, 
   return (
     <View style={styles.card}>
       <View style={styles.headerRow}>
-        <Text style={styles.label}>DAY WEATHER</Text>
+        <View>
+          <Text style={styles.label}>DAY WEATHER</Text>
+          {updatedAgoText(lastFetchedISO(rows)) ? (
+            <Text style={styles.updatedText}>{updatedAgoText(lastFetchedISO(rows))}</Text>
+          ) : null}
+        </View>
         <View style={styles.headerRight}>
           {statuses.length ? (
             <TouchableOpacity
@@ -154,6 +159,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  updatedText: { color: colors.textTertiary, fontSize: 10, letterSpacing: 0.4, marginTop: 2 },
   label: { ...typography.labelMedium, color: colors.textTertiary },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   flag: {
