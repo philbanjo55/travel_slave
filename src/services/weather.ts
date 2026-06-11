@@ -542,6 +542,25 @@ export function summarizeDay(
 // The hourly cron keeps rows freshly pulled, so "days until the stop's date"
 // is the honest measure of how settled the numbers are. Past/missing dates
 // return null (no chip).
+// When was this weather actually fetched? Lets the user distinguish the hourly
+// async refresh from a manual pull at a glance.
+export function lastFetchedISO(rows: WeatherRow[]): string | null {
+  let best: string | null = null;
+  for (const r of rows) if (r.fetched_at && (!best || r.fetched_at > best)) best = r.fetched_at;
+  return best;
+}
+export function updatedAgoText(iso?: string | null): string | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return null;
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (mins < 1) return 'Updated just now';
+  if (mins < 60) return `Updated ${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `Updated ${hrs}h ago`;
+  return `Updated ${Math.round(hrs / 24)}d ago`;
+}
+
 export type ForecastConfidence = { level: 'HIGH' | 'MEDIUM' | 'LOW'; daysOut: number };
 export function forecastConfidence(dateStr?: string | null): ForecastConfidence | null {
   if (!dateStr) return null;
