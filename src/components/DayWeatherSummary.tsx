@@ -30,10 +30,18 @@ export default function DayWeatherSummary({ dayId, date, onLoaded }: Props) {
   // the app shows whatever was loaded at mount ("Updated 4h ago") even though
   // the database is at most ~1h old.
   useEffect(() => {
+    let timers: ReturnType<typeof setTimeout>[] = [];
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') loadCached();
+      if (state === 'active') {
+        // Immediate attempt + staggered retries: the first read on resume can
+        // hit a dead socket (now fails fast via timeout, serving cache); the
+        // retries land after the network stack has settled and bring fresh rows.
+        loadCached();
+        timers.forEach(clearTimeout);
+        timers = [setTimeout(loadCached, 3000), setTimeout(loadCached, 10000)];
+      }
     });
-    return () => sub.remove();
+    return () => { sub.remove(); timers.forEach(clearTimeout); };
   }, [loadCached]);
 
   const refresh = async () => {
