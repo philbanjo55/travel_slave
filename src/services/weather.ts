@@ -166,14 +166,26 @@ export async function pullWeather(
 // latest_weather_per_stop view (distinct on stop_id, newest fetched_at).
 // Returned keyed by stop_id for easy per-stop lookup.
 // ─────────────────────────────────────────
+// A read fired at the instant the app resumes can land on a TCP socket that
+// died in the background; the OS takes 1-2 MINUTES to declare it dead, and the
+// UI sits on stale rows the whole time. Racing a short timeout makes a dead
+// socket fail fast (cache shows instantly) and the foreground retries land on
+// a live connection seconds later.
+function withTimeout<T>(p: Promise<T> | PromiseLike<T>, ms: number): Promise<T> {
+  return Promise.race([
+    Promise.resolve(p),
+    new Promise<T>((_, rej) => setTimeout(() => rej(new Error('read timeout')), ms)),
+  ]);
+}
+
 export async function fetchLatestWeatherForDay(
   dayId: string
 ): Promise<Record<string, WeatherRow>> {
   try {
-    const { data, error } = await supabase
-      .from('latest_weather_per_stop')
-      .select('*')
-      .eq('day_id', dayId);
+    const { data, error } = await withTimeout(
+      supabase.from('latest_weather_per_stop').select('*').eq('day_id', dayId),
+      6000
+    );
     if (error) throw error;
     const rows = (data ?? []) as WeatherRow[];
     if (rows.length > 0) {
