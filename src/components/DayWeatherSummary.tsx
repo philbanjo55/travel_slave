@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { AppState } from 'react-native';
 import { pullWeather, fetchLatestWeatherForDay, useTestModeFor, WeatherRow } from '../services/weather';
 import DayWeatherOverview from './DayWeatherOverview';
 
@@ -23,6 +24,17 @@ export default function DayWeatherSummary({ dayId, date, onLoaded }: Props) {
   }, [dayId, onLoaded]);
 
   useEffect(() => { loadCached(); }, [loadCached]);
+
+  // The server refreshes weather hourly on its own; the app just needs to
+  // re-read rows when it comes back to the foreground. Without this, resuming
+  // the app shows whatever was loaded at mount ("Updated 4h ago") even though
+  // the database is at most ~1h old.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') loadCached();
+    });
+    return () => sub.remove();
+  }, [loadCached]);
 
   const refresh = async () => {
     setLoading(true);
