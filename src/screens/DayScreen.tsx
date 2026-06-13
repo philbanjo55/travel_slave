@@ -1,10 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   FlatList, Dimensions, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
@@ -20,10 +20,19 @@ export default function DayScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { tripId, dayIndex } = route.params;
-  const { currentTripData } = useTripStore();
+  const { currentTripData, syncIfStale } = useTripStore();
   const mapRef = useRef<MapView>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [weather, setWeather] = useState<Record<string, WeatherRow>>({});
+
+  // On focus, re-sync the trip (re-folds latest DB weather into each stop and
+  // re-caches) only if the cache is stale (>10 min). Keeps weather current when
+  // you land on a day without a network hit on every navigation.
+  useFocusEffect(
+    useCallback(() => {
+      if (tripId) syncIfStale(tripId);
+    }, [tripId, syncIfStale])
+  );
 
   const day = currentTripData?.days[dayIndex];
   if (!day) return null;
