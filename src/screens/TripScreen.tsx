@@ -9,7 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import { supabase } from '../services/supabase';
 import { calculateDriveTimesForTrip, recalculateTimeLabels } from '../services/driveTimes';
-import { pullWeatherForTrip, fetchLatestWeatherForDay, WeatherRow, conditionIcon, scoreConditions, cToF } from '../services/weather';
+import { pullWeatherForTrip, WeatherRow, conditionIcon, scoreConditions, cToF } from '../services/weather';
 import DaySummary from '../components/DaySummary';
 import DayWeatherOverview from '../components/DayWeatherOverview';
 import { colors, typography, spacing, radius } from '../theme';
