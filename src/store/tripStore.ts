@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { fetchFullTrip } from '../services/supabase';
 import { fetchWeatherForTrip } from '../services/weather';
-import { getCachedFullTrip, getCachedTrips, cacheFullTrip, cacheTrips, getLastSynced } from '../services/database';
+import { getCachedFullTrip, getCachedTrips, cacheFullTrip, cacheTrips } from '../services/database';
 import { calculateDriveTimesForTrip } from '../services/driveTimes';
 import { downloadAllPhotos } from '../services/photoCache';
 
@@ -34,7 +34,6 @@ interface TripState {
   setOffline: (offline: boolean) => void;
   syncTrip: (tripId: string) => Promise<void>;
   refreshCurrentTrip: () => Promise<void>;
-  syncIfStale: (tripId: string, maxAgeMs?: number) => Promise<void>;
 }
 
 export const useTripStore = create<TripState>((set, get) => ({
@@ -121,17 +120,6 @@ export const useTripStore = create<TripState>((set, get) => ({
     if (currentTrip) {
       await get().syncTrip(currentTrip.id);
     }
-  },
-
-  // Re-sync only if the cached trip is older than maxAgeMs (default 10 min).
-  // Called on screen focus so weather/itinerary refresh from the latest DB
-  // run automatically when you land on a day, without a network hit on every
-  // navigation. Fresh cache (< maxAge) is trusted and rendered as-is.
-  syncIfStale: async (tripId: string, maxAgeMs = 10 * 60 * 1000) => {
-    if (get().isSyncing) return;
-    const last = await getLastSynced(tripId);
-    if (last != null && Date.now() - last < maxAgeMs) return; // cache still fresh
-    await get().syncTrip(tripId);
   },
 
   setCurrentDay: (index: number) => set({ currentDayIndex: index }),
