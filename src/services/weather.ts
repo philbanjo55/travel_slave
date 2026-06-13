@@ -9,6 +9,24 @@ const SUPABASE_ANON_KEY = 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2';
 const WEATHER_DAY_PREFIX = 'pf_weather_day_';
 const WEATHER_STOP_PREFIX = 'pf_weather_stop_';
 
+// On resume from background, Android may have killed the idle TCP socket; a
+// bare fetch reuses it and sits for 1-2 MINUTES before the OS declares it dead.
+// An AbortController makes any HTTP call fail fast instead of hanging. Exported
+// so other resume-path callers (e.g. the network-sync ping) share one timeout.
+export async function fetchWithTimeout(
+  input: string,
+  init: RequestInit = {},
+  ms = 12000
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const killer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(input, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(killer);
+  }
+}
+
 // ─────────────────────────────────────────
 // TYPES
 // ─────────────────────────────────────────
@@ -140,7 +158,7 @@ export async function pullWeather(
   dayId: string,
   opts: { test?: boolean } = {}
 ): Promise<PullWeatherResult> {
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/weather-pull`, {
+  const res = await fetchWithTimeout(`${SUPABASE_URL}/functions/v1/weather-pull`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
