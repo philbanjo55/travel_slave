@@ -20,18 +20,21 @@ export default function DayScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { tripId, dayIndex } = route.params;
-  const { currentTripData, syncIfStale } = useTripStore();
+  const { currentTripData, syncTrip } = useTripStore();
   const mapRef = useRef<MapView>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [weather, setWeather] = useState<Record<string, WeatherRow>>({});
 
-  // On focus, re-sync the trip (re-folds latest DB weather into each stop and
-  // re-caches) only if the cache is stale (>10 min). Keeps weather current when
-  // you land on a day without a network hit on every navigation.
+  // On focus, re-read the latest weather (and stop data) from the DB and
+  // re-fold it into the trip. This is a plain SELECT of the rows the hourly
+  // cron already wrote — NOT a recompute. The edge-function recompute only
+  // runs when you tap the explicit update button. Reading unconditionally
+  // (no staleness gate) means the cron's freshest rows always win, so weather
+  // can't get stuck on a stale cache-first snapshot.
   useFocusEffect(
     useCallback(() => {
-      if (tripId) syncIfStale(tripId);
-    }, [tripId, syncIfStale])
+      if (tripId) syncTrip(tripId);
+    }, [tripId, syncTrip])
   );
 
   const day = currentTripData?.days[dayIndex];
