@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { AppState } from 'react-native';
-import { pullWeather, fetchLatestWeatherForDay, useTestModeFor, WeatherRow } from '../services/weather';
+import React, { useState, useMemo } from 'react';
+import { pullWeatherForTrip, WeatherRow } from '../services/weather';
+import { useTripStore } from '../store/tripStore';
 import DayWeatherOverview from './DayWeatherOverview';
 
 interface Props {
@@ -10,52 +10,47 @@ interface Props {
   onLoaded?: (byStop: Record<string, WeatherRow>) => void;
 }
 
-// Stateful container for the day view: owns the pull + cached load, lifts
-// per-stop weather to the screen, and renders the DayWeatherOverview card.
+// Presentational wrapper for the day view. Weather is NOT fetched here — it's
+// already folded into each stop (stop.weather) when the trip loads/syncs
+// (tripStore.fetchTripWithWeather) and cached with the trip, exactly like the
+// itinerary text and photos. So we just read it off the cached trip in the
+// store. No per-screen fetch, no socket to die on resume, nothing to race or
+// blank out offline. Resume-freshness comes from useNetworkSync, which already
+// re-syncs the whole trip (weather included) on foreground.
 export default function DayWeatherSummary({ dayId, date, onLoaded }: Props) {
-  const [rows, setRows] = useState<WeatherRow[]>([]);
+  const { currentTripData, refreshCurrentTrip } = useTripStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadCached = useCallback(async () => {
-    const byStop = await fetchLatestWeatherForDay(dayId);
-    setRows(Object.values(byStop));
-    if (Object.keys(byStop).length) onLoaded?.(byStop);
-  }, [dayId, onLoaded]);
-
-  useEffect(() => { loadCached(); }, [loadCached]);
-
-  // The server refreshes weather hourly on its own; the app just needs to
-  // re-read rows when it comes back to the foreground. Without this, resuming
-  // the app shows whatever was loaded at mount ("Updated 4h ago") even though
-  // the database is at most ~1h old.
-  useEffect(() => {
-    let timers: ReturnType<typeof setTimeout>[] = [];
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        // Immediate attempt + staggered retries: the first read on resume can
-        // hit a dead socket (now fails fast via timeout, serving cache); the
-        // retries land after the network stack has settled and bring fresh rows.
-        loadCached();
-        timers.forEach(clearTimeout);
-        timers = [setTimeout(loadCached, 3000), setTimeout(loadCached, 10000)];
+  // Pull this day's stops out of the already-loaded trip and read each stop's
+  // folded-in weather row. Recomputed whenever the cached trip changes (e.g.
+  // after a refresh re-folds fresh rows), so the card updates with no fetch.
+  const rows = useMemo<WeatherRow[]>(() => {
+    const day = currentTripData?.days?.find((d: any) => d.id === dayId);
+    const stops = day?.stops ?? [];
+    const out: WeatherRow[] = [];
+    const byStop: Record<string, WeatherRow> = {};
+    for (const s of stops) {
+      if (s.weather) {
+        out.push(s.weather as WeatherRow);
+        byStop[s.id] = s.weather as WeatherRow;
       }
-    });
-    return () => { sub.remove(); timers.forEach(clearTimeout); };
-  }, [loadCached]);
+    }
+    if (out.length) onLoaded?.(byStop);
+    return out;
+  }, [currentTripData, dayId, onLoaded]);
 
+  // Refresh button: force a live server pull for the WHOLE trip (every day's
+  // weather), then re-sync the trip — the same path trip text refreshes
+  // through — which re-folds the fresh rows into every stop and re-caches.
   const refresh = async () => {
+    const tripId = currentTripData?.trip?.id;
+    if (!tripId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await pullWeather(dayId, { test: useTestModeFor(date) });
-      if (!res.ok) {
-        setError(res.error || 'Pull failed');
-      } else {
-        const byStop = await fetchLatestWeatherForDay(dayId);
-        setRows(Object.values(byStop));
-        onLoaded?.(byStop);
-      }
+      await pullWeatherForTrip(tripId);
+      await refreshCurrentTrip();
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
