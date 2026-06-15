@@ -439,6 +439,10 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
   else if (code === 61 || code === 63 || code === 81 || code === 73 || rainAmt > 2) rainPen = 2;                          // steady rain
   else if ((code != null && code >= 51 && code <= 57) || code === 80 || code === 71 || rainAmt > 0.2 || snow > 0) rainPen = 1; // drizzle / light
   if (rainPen === 0 && pop >= 55) rainPen = 1;  // likely-but-light: a nudge, not a hammer
+  // Seascapes shrug off light rain: wet rock and a moody sky are the look, not a
+  // washout, and you're close to the subject with a rain cover. Trace drizzle
+  // (the rainPen===1 tier) is waived; steady/heavy rain (2–3) still bites.
+  if (shotType === 'seascape' && rainPen === 1) rainPen = 0;
 
   // #2 VISIBILITY — scaled up for long-distance landscapes, capped for close subjects.
   let visBase = 0;
@@ -474,9 +478,11 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
   if (shotType === 'waterfall' || shotType === 'canyon') {
     if (cloud < 25) lightPen = 1;        // harsh sun blows out moving water
     else if (cloud < 45) lightPen = 0.5;
-  } else if (shotType === 'seascape' || shotType === 'castle') {
-    if (cloud > 92) lightPen = 0.5;      // flat, featureless sky (mountains handled via obscuration)
+  } else if (shotType === 'castle') {
+    if (cloud > 92) lightPen = 0.5;      // featureless white sky behind a castle reads dull
   }
+  // Seascapes intentionally get NO flat-light penalty: 100% overcast is the
+  // softbox that makes moody long-exposure B&W seas — it's an asset, not a ding.
 
   const s = clamp(Math.round(4 - rainPen - visPen - windPen - lightPen));
 
@@ -493,7 +499,12 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
     [lightPen, (shotType === 'waterfall' || shotType === 'canyon') ? 'Harsh sun on the water' : 'Flat, featureless light'],
   ];
   const top = factors.reduce((m, f) => (f[0] > m[0] ? f : m), [0, ''] as [number, string]);
-  const reason = top[0] >= 0.5 ? top[1] : 'Clear window — dry, open, calm';
+  // Only headline a problem if it's actually meaningful (>=1 point) OR the day
+  // isn't already Excellent. A lone 0.5 trim on a 4-star day shouldn't print a
+  // warning like "Windy" — that contradicts the verdict. Otherwise affirm it.
+  const reason = (top[0] >= 1 || (top[0] >= 0.5 && s < 4))
+    ? top[1]
+    : (s >= 4 ? 'Excellent window — soft light, calm, clear' : 'Clear window — dry, open, calm');
 
   return { stars: s, label: LABELS[s], reason };
 }
