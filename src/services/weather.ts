@@ -644,6 +644,33 @@ export interface VerifyCheck { field: string; stored: number | null; source: num
 // Open-Meteo response and all core fields landed. This recomputes automatically
 // whenever the row changes (i.e. when a day is re-pulled).
 export interface VerifyStatus { verified: boolean; reason: string; }
+
+// Cross-source agreement on the raw readings BOTH sources actually report
+// (temp, cloud, rain chance, mean wind). Deliberately NOT the star scores and
+// NOT gusts — MET Norway has no gust data at many locations, so comparing those
+// would fail spuriously. Returns null when there's no second source to compare.
+function crossSourceAgreement(row: WeatherRow | null | undefined): { ok: boolean; detail: string } | null {
+  const mn: any = (row as any)?.raw?.metno;
+  if (!mn || mn.error || mn.temperature_c == null) return null;
+  const om: any = row;
+  const checks: { label: string; a: number | null; b: number | null; tol: number; unit: string }[] = [
+    { label: 'temp', a: om?.temperature_c ?? null, b: mn.temperature_c ?? null, tol: 3, unit: '°' },
+    { label: 'cloud', a: om?.cloud_cover_pct ?? null, b: mn.cloud_cover_pct ?? null, tol: 30, unit: '%' },
+    { label: 'rain%', a: om?.precip_probability_pct ?? null, b: mn.precip_probability_pct ?? null, tol: 35, unit: '%' },
+    { label: 'wind', a: om?.wind_speed_kmh ?? null, b: mn.wind_speed_kmh ?? null, tol: 18, unit: ' km/h' },
+  ];
+  let worst: string | null = null; let worstOver = 0;
+  for (const c of checks) {
+    if (c.a == null || c.b == null) continue;
+    const diff = Math.abs(c.a - c.b);
+    if (diff > c.tol) {
+      const over = diff - c.tol;
+      if (over > worstOver) { worstOver = over; worst = `${c.label} ${Math.round(c.a)}${c.unit} vs ${Math.round(c.b)}${c.unit}`; }
+    }
+  }
+  return worst ? { ok: false, detail: worst } : { ok: true, detail: 'both sources agree' };
+}
+
 export function verificationStatus(row: WeatherRow | null | undefined): VerifyStatus {
   const p = row?.raw?.provenance;
   if (!p) return { verified: false, reason: 'No provenance — re-pull this day to verify' };
@@ -651,6 +678,12 @@ export function verificationStatus(row: WeatherRow | null | undefined): VerifySt
   if (!p.matched_time_local) return { verified: false, reason: 'No matched timestamp recorded' };
   const core = [row?.temperature_c, row?.cloud_cover_pct, row?.wind_gusts_kmh, row?.weather_code];
   if (core.some(v => v == null)) return { verified: false, reason: 'One or more core fields missing' };
+  // Cross-source check: when a second source (MET Norway) is present, VERIFIED
+  // means the two models reasonably agree on the shared readings. When there's
+  // no second source yet (e.g. far out), fall back to provenance-only verify.
+  const agree = crossSourceAgreement(row);
+  if (agree && !agree.ok) return { verified: false, reason: `Sources differ — ${agree.detail}` };
+  if (agree && agree.ok) return { verified: true, reason: 'Cross-checked · two sources agree' };
   return { verified: true, reason: 'Exact hour match · data complete' };
 }
 
