@@ -153,6 +153,15 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
         </View>
       ) : null}
 
+      {/* SECOND SOURCE — MET Norway shown beside Open-Meteo for your own
+          comparison. Read-only; renders only when stored (raw.metno present).
+          MET Norway lacks wind gusts at many coastal points, so its wind-driven
+          rating can read higher than Open-Meteo on gusty seascapes — seeing both
+          side by side is the point. */}
+      {row.raw?.metno && !row.raw.metno.error && row.raw.metno.temperature_c != null ? (
+        <SecondSource om={row} mn={row.raw.metno} omScore={score} shotType={shotType ?? null} />
+      ) : null}
+
       {/* Detail grid */}
       <View style={styles.grid}>
         <Metric icon="cloud-outline" label="CLOUD" value={row.cloud_cover_pct != null ? `${row.cloud_cover_pct}%` : '—'}
@@ -244,6 +253,49 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
 
 function n(v: number | null): string { return v == null ? '–' : `${v}%`; }
 
+// Read-only side-by-side of the two forecast sources for a stop. MET Norway
+// (primary, listed first) and Open-Meteo. Each shows its own stars + the key
+// shared readings. You compare; the app doesn't judge agreement.
+function SecondSource({ om, mn, omScore, shotType }: { om: WeatherRow; mn: any; omScore: any; shotType: string | null }) {
+  const mnScore = scoreConditions(shotType, mn as WeatherRow);
+  const res = mn.provenance?.resolution;
+  const gustEst = mn.gust_is_estimated;
+
+  const Row = ({ name, score, cloud, rainPct, wind, gust, temp, tag }: {
+    name: string; score: any; cloud: any; rainPct: any; wind: any; gust: any; temp: any; tag?: string;
+  }) => (
+    <View style={ss.row}>
+      <View style={ss.rowHead}>
+        <Text style={ss.srcName}>{name}</Text>
+        {tag ? <Text style={ss.srcTag}>{tag}</Text> : null}
+        <View style={ss.srcStars}>
+          {[0, 1, 2, 3].map(i => (
+            <Ionicons key={i} name={score && i < score.stars ? 'star' : 'star-outline'} size={10}
+              color={score && i < score.stars ? colors.textPrimary : colors.textTertiary} />
+          ))}
+        </View>
+      </View>
+      <Text style={ss.srcVals} numberOfLines={1}>
+        {temp != null ? `${Math.round(temp)}°` : '–'} · {cloud != null ? `${Math.round(cloud)}% cloud` : '–'} · {rainPct != null ? `${Math.round(rainPct)}% rain` : '–'} · {wind != null ? `${Math.round(wind)}` : '–'}{gust != null ? `/${Math.round(gust)}` : ''} km/h
+      </Text>
+    </View>
+  );
+
+  return (
+    <View style={ss.box}>
+      <Text style={ss.boxHead}>TWO SOURCES · compare</Text>
+      <Row name="MET Norway" score={mnScore}
+        temp={mn.temperature_c} cloud={mn.cloud_cover_pct} rainPct={mn.precip_probability_pct}
+        wind={mn.wind_speed_kmh} gust={gustEst ? null : mn.wind_gusts_kmh}
+        tag={res === '6h-block' ? '6-hr' : gustEst ? 'no gust' : undefined} />
+      <Row name="Open-Meteo" score={omScore}
+        temp={om.temperature_c} cloud={om.cloud_cover_pct} rainPct={om.precip_probability_pct}
+        wind={om.wind_speed_kmh} gust={om.wind_gusts_kmh} />
+    </View>
+  );
+}
+
+
 function Metric({ icon, label, value, sub }: { icon: any; label: string; value: string; sub?: string }) {
   return (
     <View style={styles.metric}>
@@ -327,4 +379,20 @@ const styles = StyleSheet.create({
   verifyField: { fontSize: 11, color: colors.textSecondary, width: 80 },
   verifyVals: { fontSize: 11, color: colors.textPrimary, flex: 1 },
   verifyMuted: { fontSize: 10, color: colors.textTertiary, fontStyle: 'italic', marginTop: 2 },
+});
+
+const ss = StyleSheet.create({
+  box: {
+    marginBottom: spacing.md, padding: spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.sm,
+    gap: 6,
+  },
+  boxHead: { fontSize: 8, fontWeight: '700', letterSpacing: 1, color: colors.textTertiary },
+  row: { gap: 2 },
+  rowHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  srcName: { fontSize: 11, fontWeight: '600', color: colors.textPrimary },
+  srcTag: { fontSize: 8, fontWeight: '700', letterSpacing: 0.5, color: colors.textTertiary,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1 },
+  srcStars: { flexDirection: 'row', gap: 1, marginLeft: 'auto' },
+  srcVals: { fontSize: 10, color: colors.textSecondary, fontVariant: ['tabular-nums'] },
 });
