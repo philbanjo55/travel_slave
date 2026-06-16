@@ -14,9 +14,11 @@ interface Props {
   onRefresh?: () => void;
   loading?: boolean;
   error?: string | null;
+  // Optional MET Norway cross-source comparison, keyed by stop id (test wiring).
+  comparison?: Record<string, { metnoStars: number | null; openMeteoStars: number | null; combinedStars: number | null; agreement: string; note: string }>;
 }
 
-export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, error }: Props) {
+export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, error, comparison }: Props) {
   const ov = summarizeDay(rows, dayDate);
   // Lead-time confidence: HIGH <=3 days out, MEDIUM 4-7, LOW 8+. Rendered as
   // a chip beside LIVE/PREVIEW so a green LIVE badge on a 12-day forecast
@@ -136,6 +138,26 @@ export default function DayWeatherOverview({ rows, dayDate, onRefresh, loading, 
           })}
         </View>
       ) : null}
+
+      {comparison && Object.keys(comparison).length ? (
+        <View style={styles.cmpBox}>
+          <Text style={styles.cmpHeader}>SECOND SOURCE · MET Norway vs Open-Meteo</Text>
+          {rows.map((r) => {
+            const c = comparison[(r as any).stop_id];
+            if (!c) return null;
+            const col = c.agreement === 'TIGHT' ? colors.signalOk
+              : c.agreement === 'LOOSE' ? colors.signalWarning : colors.accent;
+            return (
+              <View key={(r as any).stop_id} style={styles.cmpRow}>
+                <Text style={styles.cmpStars}>
+                  OM {c.openMeteoStars ?? '–'}★ / MN {c.metnoStars ?? '–'}★ → {c.combinedStars ?? '–'}★
+                </Text>
+                <Text style={[styles.cmpRating, { color: col }]}>{c.agreement}</Text>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -194,4 +216,12 @@ const styles = StyleSheet.create({
   verifyItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   verifyItemLabel: { fontSize: 11, color: colors.textSecondary, flex: 1, fontVariant: ['tabular-nums'] },
   verifyItemCoord: { fontSize: 10, color: colors.textTertiary, fontVariant: ['tabular-nums'] },
+  cmpBox: {
+    marginTop: spacing.sm, paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, gap: 4,
+  },
+  cmpHeader: { fontSize: 10, color: colors.textTertiary, letterSpacing: 0.5, marginBottom: 2 },
+  cmpRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  cmpStars: { fontSize: 11, color: colors.textSecondary, fontVariant: ['tabular-nums'] },
+  cmpRating: { fontSize: 11, fontWeight: '700' },
 });
