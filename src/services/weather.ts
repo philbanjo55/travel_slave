@@ -343,6 +343,21 @@ export function conditionsText(code: number | null): string {
 export const cToF = (c: number) => (c * 9) / 5 + 32;
 export const kmhToMph = (k: number) => k * 0.621371;
 
+// Rain cell for the comparison table. Probability is essentially Open-Meteo-only;
+// the other sources emit precipitation AMOUNT instead. Show whichever exists so
+// the column is comparable across sources rather than mostly dashes.
+// Returns the display string plus a flag indicating which kind it is.
+export function rainCell(
+  probPct: number | null, amountMm: number | null
+): { text: string; kind: 'prob' | 'amount' | 'none' } {
+  if (probPct != null) return { text: `${Math.round(probPct)}%`, kind: 'prob' };
+  if (amountMm != null) {
+    if (amountMm <= 0) return { text: '0mm', kind: 'amount' };
+    return { text: amountMm < 0.1 ? '<0.1mm' : `${amountMm.toFixed(amountMm < 1 ? 1 : 0)}mm`, kind: 'amount' };
+  }
+  return { text: '—', kind: 'none' };
+}
+
 export function tempText(c: number | null): string {
   return c == null ? '—' : `${Math.round(cToF(c))}°F`;
 }
