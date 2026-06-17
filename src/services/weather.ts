@@ -698,3 +698,143 @@ export async function verifyStopWeather(row: WeatherRow): Promise<VerifyResult> 
       error: String(e?.message ?? e) };
   }
 }
+
+// ─────────────────────────────────────────
+// MULTI-SOURCE COMPARISON (read-only)
+// Open-Meteo is the primary (flat columns). MET Norway, Met Éireann, and UKMO
+// are pulled by the edge function and stored verbatim under row.raw.{metno,
+// met_eireann,ukmo}. This builds a normalized side-by-side from whatever is
+// present — no network. Sources with no usable data are returned with
+// present:false so the UI can show "—" rather than hide them.
+// ─────────────────────────────────────────
+export type SourceKey = 'open_meteo' | 'metno' | 'met_eireann' | 'ukmo';
+
+export interface SourceReading {
+  key: SourceKey;
+  name: string;
+  present: boolean;
+  isLocalModel: boolean;     // home-team high-res for this region
+  gustMeasured: boolean;     // true only when real gusts (UKMO/OM), not estimated
+  note?: string;             // e.g. "out of range", "parse miss"
+  temperature_c: number | null;
+  cloud_cover_pct: number | null;
+  precip_probability_pct: number | null;
+  rain_mm: number | null;
+  wind_speed_kmh: number | null;
+  wind_gusts_kmh: number | null;
+  visibility_m: number | null;
+  relative_humidity_pct: number | null;
+  surface_pressure_hpa: number | null;
+  weather_code: number | null;
+  stars: number | null;
+}
+
+// Ireland bounding box (rough) → Met Éireann is the local model there;
+// elsewhere in this trip (Scotland) UKMO is the local model.
+function isIrelandCoord(lat: number | null, lng: number | null): boolean {
+  if (lat == null || lng == null) return false;
+  return lat >= 51.2 && lat <= 55.5 && lng >= -10.7 && lng <= -5.9;
+}
+
+function readSub(sub: any): Partial<SourceReading> {
+  if (!sub || sub.error) return {};
+  return {
+    temperature_c: sub.temperature_c ?? null,
+    cloud_cover_pct: sub.cloud_cover_pct ?? null,
+    precip_probability_pct: sub.precip_probability_pct ?? null,
+    rain_mm: sub.rain_mm ?? null,
+    wind_speed_kmh: sub.wind_speed_kmh ?? null,
+    wind_gusts_kmh: sub.wind_gusts_kmh ?? null,
+    visibility_m: sub.visibility_m ?? null,
+    relative_humidity_pct: sub.relative_humidity_pct ?? null,
+    surface_pressure_hpa: sub.surface_pressure_hpa ?? null,
+    weather_code: sub.weather_code ?? null,
+    stars: sub.score?.stars ?? null,
+  };
+}
+
+const EMPTY: Omit<SourceReading, 'key' | 'name' | 'present' | 'isLocalModel' | 'gustMeasured' | 'note'> = {
+  temperature_c: null, cloud_cover_pct: null, precip_probability_pct: null, rain_mm: null,
+  wind_speed_kmh: null, wind_gusts_kmh: null, visibility_m: null, relative_humidity_pct: null,
+  surface_pressure_hpa: null, weather_code: null, stars: null,
+};
+
+export interface SourceComparison {
+  sources: SourceReading[];
+  hasMulti: boolean;          // at least 2 present
+  cloudConsensus: number | null;
+  cloudOutlier: SourceKey | null;
+  cloudOutlierDelta: number | null;
+  verdict: string;            // one-line human read
+}
+
+export function buildSourceComparison(row: WeatherRow): SourceComparison {
+  const lat = row.raw?.provenance?.source_lat ?? null;
+  const lng = row.raw?.provenance?.source_lng ?? null;
+  const ireland = isIrelandCoord(lat, lng);
+
+  const om: SourceReading = {
+    key: 'open_meteo', name: 'Open-Meteo', present: row.temperature_c != null,
+    isLocalModel: false, gustMeasured: true, ...EMPTY,
+    temperature_c: row.temperature_c, cloud_cover_pct: row.cloud_cover_pct,
+    precip_probability_pct: row.precip_probability_pct, rain_mm: row.rain_mm,
+    wind_speed_kmh: row.wind_speed_kmh, wind_gusts_kmh: row.wind_gusts_kmh,
+    visibility_m: row.visibility_m, relative_humidity_pct: row.relative_humidity_pct,
+    surface_pressure_hpa: row.surface_pressure_hpa, weather_code: row.weather_code,
+    stars: scoreConditions(null, row)?.stars ?? row.raw?.score?.stars ?? null,
+  };
+
+  const mkSub = (key: SourceKey, name: string, sub: any, local: boolean, gustReal: boolean): SourceReading => {
+    const present = !!sub && !sub.error && (sub.temperature_c != null || sub.cloud_cover_pct != null);
+    const parseMiss = sub?.provenance?.parse_miss === true;
+    let note: string | undefined;
+    if (sub?.error) note = 'unavailable';
+    else if (parseMiss) note = 'out of range';
+    return {
+      key, name, present, isLocalModel: local,
+      gustMeasured: gustReal && !(sub?.gust_is_estimated),
+      note, ...EMPTY, ...readSub(sub),
+    };
+  };
+
+  const mn = mkSub('metno', 'MET Norway', row.raw?.metno, false, false);
+  const me = mkSub('met_eireann', 'Met Éireann', row.raw?.met_eireann, ireland, false);
+  const uk = mkSub('ukmo', 'UK Met Office', row.raw?.ukmo, !ireland, true);
+
+  const sources = [om, mn, me, uk];
+  const present = sources.filter(s => s.present);
+
+  // Cloud consensus + outlier (the variable that's driven the real decisions).
+  let cloudConsensus: number | null = null, cloudOutlier: SourceKey | null = null, cloudOutlierDelta: number | null = null;
+  const clouds = present.filter(s => s.cloud_cover_pct != null);
+  if (clouds.length >= 2) {
+    const vals = clouds.map(s => s.cloud_cover_pct as number);
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    cloudConsensus = Math.round(mean);
+    // outlier = source furthest from the mean of the others
+    let worst = 0;
+    for (const s of clouds) {
+      const others = clouds.filter(o => o.key !== s.key).map(o => o.cloud_cover_pct as number);
+      const om2 = others.reduce((a, b) => a + b, 0) / others.length;
+      const d = Math.abs((s.cloud_cover_pct as number) - om2);
+      if (d > worst) { worst = d; cloudOutlier = s.key; cloudOutlierDelta = Math.round(d); }
+    }
+    if (worst < 20) { cloudOutlier = null; cloudOutlierDelta = null; }  // no meaningful outlier
+  }
+
+  let verdict: string;
+  if (present.length < 2) {
+    verdict = 'Only one source available.';
+  } else if (cloudOutlier) {
+    const out = sources.find(s => s.key === cloudOutlier)!;
+    const agree = clouds.filter(s => s.key !== cloudOutlier).map(s => s.cloud_cover_pct as number);
+    const agreeMean = Math.round(agree.reduce((a, b) => a + b, 0) / agree.length);
+    verdict = `${agree.length} sources ~${agreeMean}% cloud · ${out.name} differs at ${out.cloud_cover_pct}%`;
+  } else if (cloudConsensus != null) {
+    verdict = `${present.length} sources agree ~${cloudConsensus}% cloud`;
+  } else {
+    verdict = `${present.length} sources available`;
+  }
+
+  return { sources, hasMulti: present.length >= 2, cloudConsensus, cloudOutlier, cloudOutlierDelta, verdict };
+}
