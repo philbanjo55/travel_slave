@@ -6,6 +6,7 @@ import {
   WeatherRow, fetchLatestWeatherForStop,
   conditionsText, tempText, windText, windDir, visibilityText, clockFromISO, fogBadge,
   conditionIcon, scoreConditions, forecastMode, forecastConfidence, shortDate, updatedAgoText,
+  buildSourceComparison, cToF, kmhToMph,
   verifyStopWeather, VerifyResult, verificationStatus,
 } from '../services/weather';
 
@@ -27,6 +28,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
   const [verifying, setVerifying] = useState(false);
   const [verify, setVerify] = useState<VerifyResult | null>(null);
   const [showVerify, setShowVerify] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
 
   useEffect(() => {
     if (weather !== undefined) { setRow(weather ?? null); setLoaded(true); return; }
@@ -52,6 +54,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
     : conf?.level === 'MEDIUM' ? colors.signalWarning : colors.accent;
   const vstatus = verificationStatus(row);
   const prov = row.raw?.provenance;
+  const cmp = buildSourceComparison(row);
 
   // Precip split — only show parts that are non-zero.
   const precipParts: string[] = [];
@@ -88,6 +91,21 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           ) : null}
         </View>
         <View style={styles.badges}>
+          {cmp.hasMulti ? (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => setShowCompare(v => !v)}
+              style={[styles.badge, styles.vBadge, { borderColor: cmp.cloudOutlier ? colors.signalWarning : colors.textTertiary }]}
+            >
+              <Ionicons name="git-compare-outline" size={9}
+                color={cmp.cloudOutlier ? colors.signalWarning : colors.textSecondary} />
+              <Text style={[styles.badgeText, { color: cmp.cloudOutlier ? colors.signalWarning : colors.textSecondary }]}>
+                {cmp.sources.filter(s => s.present).length} SOURCES
+              </Text>
+              <Ionicons name={showCompare ? 'chevron-up' : 'chevron-down'} size={9}
+                color={cmp.cloudOutlier ? colors.signalWarning : colors.textSecondary} />
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             activeOpacity={0.7}
             onPress={() => setShowVerify(v => !v)}
@@ -172,6 +190,85 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
         <Metric icon="moon-outline" label="SUNSET" value={clockFromISO(row.raw?.sunset ?? row.sunset)}
           sub={row.surface_pressure_hpa != null ? `${Math.round(row.surface_pressure_hpa)} hPa` : ' '} />
       </View>
+
+      {/* Source comparison dropdown — toggled by the SOURCES badge */}
+      {showCompare && cmp.hasMulti ? (
+        <View style={styles.compareWrap}>
+          <View style={styles.compareVerdict}>
+            <Ionicons
+              name={cmp.cloudOutlier ? 'alert-circle-outline' : 'checkmark-circle-outline'}
+              size={14}
+              color={cmp.cloudOutlier ? colors.signalWarning : colors.signalOk} />
+            <Text style={[styles.compareVerdictText, { color: cmp.cloudOutlier ? colors.signalWarning : colors.signalOk }]}>
+              {cmp.verdict}
+            </Text>
+          </View>
+
+          {/* Column header */}
+          <View style={styles.cmpHeadRow}>
+            <Text style={[styles.cmpCellSource, styles.cmpHeadText]}>SOURCE</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>TEMP</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>CLOUD</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>RAIN</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>WIND</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>GUST</Text>
+          </View>
+
+          {cmp.sources.map(s => {
+            const isOutlier = s.key === cmp.cloudOutlier;
+            const dim = !s.present;
+            const f = (c: number | null) => c == null ? '—' : `${Math.round(cToF(c))}°`;
+            const mph = (k: number | null) => k == null ? '—' : `${Math.round(kmhToMph(k))}`;
+            const pct = (v: number | null) => v == null ? '—' : `${Math.round(v)}%`;
+            return (
+              <View key={s.key} style={[styles.cmpRow, isOutlier ? styles.cmpRowOutlier : null]}>
+                <View style={styles.cmpCellSource}>
+                  <Text style={[styles.cmpSourceName, dim ? styles.cmpDim : null]} numberOfLines={1}>{s.name}</Text>
+                  <View style={styles.cmpTags}>
+                    {s.isLocalModel ? <Text style={styles.cmpTagLocal}>LOCAL</Text> : null}
+                    {s.note ? <Text style={styles.cmpTagNote}>{s.note}</Text> : null}
+                  </View>
+                </View>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{f(s.temperature_c)}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null, isOutlier ? styles.cmpOutlierVal : null]}>{pct(s.cloud_cover_pct)}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{pct(s.precip_probability_pct)}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{mph(s.wind_speed_kmh)}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>
+                  {mph(s.wind_gusts_kmh)}{s.wind_gusts_kmh != null && !s.gustMeasured ? '*' : ''}
+                </Text>
+              </View>
+            );
+          })}
+
+          {/* Secondary detail row: visibility / humidity / pressure / stars */}
+          <View style={styles.cmpHeadRow}>
+            <Text style={[styles.cmpCellSource, styles.cmpHeadText]}> </Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>VIS</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>HUM</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>hPa</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>★</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}> </Text>
+          </View>
+          {cmp.sources.map(s => {
+            const dim = !s.present;
+            const km = (m: number | null) => m == null ? '—' : m >= 1000 ? `${Math.round(m / 1000)}k` : `${m}`;
+            return (
+              <View key={`${s.key}-2`} style={styles.cmpRow}>
+                <Text style={[styles.cmpCellSource, styles.cmpSourceName, dim ? styles.cmpDim : null]} numberOfLines={1}>{s.name}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{km(s.visibility_m)}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{s.relative_humidity_pct == null ? '—' : `${Math.round(s.relative_humidity_pct)}%`}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{s.surface_pressure_hpa == null ? '—' : Math.round(s.surface_pressure_hpa)}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{s.stars == null ? '—' : s.stars}</Text>
+                <Text style={[styles.cmpCell]}> </Text>
+              </View>
+            );
+          })}
+
+          <Text style={styles.cmpFootnote}>
+            * gust estimated from mean wind (source lacks measured gusts). LOCAL = home-team high-res model for this region.
+          </Text>
+        </View>
+      ) : null}
 
       {/* Verification dropdown — toggled by the header badge */}
       {showVerify ? (
@@ -327,4 +424,21 @@ const styles = StyleSheet.create({
   verifyField: { fontSize: 11, color: colors.textSecondary, width: 80 },
   verifyVals: { fontSize: 11, color: colors.textPrimary, flex: 1 },
   verifyMuted: { fontSize: 10, color: colors.textTertiary, fontStyle: 'italic', marginTop: 2 },
+
+  compareWrap: { marginTop: spacing.sm, gap: 3 },
+  compareVerdict: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 },
+  compareVerdictText: { fontSize: 12, fontWeight: '600', flex: 1 },
+  cmpHeadRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 1 },
+  cmpHeadText: { fontSize: 8, fontWeight: '700', letterSpacing: 0.5, color: colors.textTertiary },
+  cmpRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 2 },
+  cmpRowOutlier: { backgroundColor: 'rgba(170,170,170,0.08)', borderRadius: radius.sm },
+  cmpCellSource: { width: 96, paddingLeft: 2 },
+  cmpCell: { flex: 1, textAlign: 'center', fontSize: 11, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+  cmpSourceName: { fontSize: 11, color: colors.textPrimary, fontWeight: '600' },
+  cmpDim: { color: colors.textTertiary },
+  cmpOutlierVal: { color: colors.signalWarning, fontWeight: '700' },
+  cmpTags: { flexDirection: 'row', gap: 3, marginTop: 1 },
+  cmpTagLocal: { fontSize: 7, fontWeight: '700', letterSpacing: 0.4, color: colors.signalOk },
+  cmpTagNote: { fontSize: 7, fontWeight: '700', letterSpacing: 0.4, color: colors.textTertiary, fontStyle: 'italic' },
+  cmpFootnote: { fontSize: 9, color: colors.textTertiary, fontStyle: 'italic', marginTop: 6 },
 });
