@@ -75,6 +75,15 @@ export default function DayScreen() {
             <Text style={styles.routeBtnText}>ROUTE</Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity
+          style={styles.routeBtn}
+          onPress={() => navigation.navigate('DayCompare', {
+            dayTitle: day.title, dayNumber: day.day_number, stops, weather,
+          })}
+        >
+          <Ionicons name="git-compare-outline" size={14} color={colors.textPrimary} />
+          <Text style={styles.routeBtnText}>COMPARE</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Weather — pinned to the top so it's the first thing seen */}
