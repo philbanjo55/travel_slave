@@ -6,7 +6,7 @@ import {
   WeatherRow, fetchLatestWeatherForStop,
   conditionsText, tempText, windText, windDir, visibilityText, clockFromISO, fogBadge,
   conditionIcon, scoreConditions, forecastMode, forecastConfidence, shortDate, updatedAgoText,
-  buildSourceComparison, cToF, kmhToMph,
+  buildSourceComparison, cToF, kmhToMph, rainCell,
   verifyStopWeather, VerifyResult, verificationStatus,
 } from '../services/weather';
 
@@ -229,7 +229,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
                 </View>
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{f(s.temperature_c)}</Text>
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null, isOutlier ? styles.cmpOutlierVal : null]}>{pct(s.cloud_cover_pct)}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{pct(s.precip_probability_pct)}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{rainCell(s.precip_probability_pct, s.rain_mm).text}</Text>
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{mph(s.wind_speed_kmh)}</Text>
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>
                   {mph(s.wind_gusts_kmh)}{s.wind_gusts_kmh != null && !s.gustMeasured ? '*' : ''}
@@ -263,7 +263,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           })}
 
           <Text style={styles.cmpFootnote}>
-            * gust estimated from mean wind (source lacks measured gusts). LOCAL = home-team high-res model for this region.
+            * gust estimated from mean wind (source lacks measured gusts). LOCAL = home-team high-res model for this region. RAIN shows % chance where given, else amount in mm.
           </Text>
         </View>
       ) : null}
