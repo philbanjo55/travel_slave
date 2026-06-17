@@ -10,6 +10,7 @@ import FocusSpreadScreen from '../screens/FocusSpreadScreen';
 import ExposuresScreen from '../screens/ExposuresScreen';
 import ExposureDetailScreen from '../screens/ExposureDetailScreen';
 import ExposureImportScreen from '../screens/ExposureImportScreen';
+import DayCompareScreen from '../screens/DayCompareScreen';
 import { colors } from '../theme';
 
 export type RootStackParamList = {
@@ -67,6 +68,7 @@ export default function RootNavigator() {
         <Stack.Screen name="Exposures" component={ExposuresScreen} />
         <Stack.Screen name="ExposureDetail" component={ExposureDetailScreen} />
         <Stack.Screen name="ExposureImport" component={ExposureImportScreen} />
+        <Stack.Screen name="DayCompare" component={DayCompareScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
