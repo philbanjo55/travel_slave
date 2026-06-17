@@ -5,7 +5,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 import {
-  WeatherRow, buildSourceComparison, cToF, kmhToMph, SourceKey,
+  WeatherRow, buildSourceComparison, cToF, kmhToMph, SourceKey, rainCell,
 } from '../services/weather';
 
 // Read-only per-day comparison across all four weather sources. Receives the
@@ -142,7 +142,7 @@ export default function DayCompareScreen() {
                     </View>
                     <Text style={[styles.cell, dim ? styles.dim : null]}>{f(s.temperature_c)}</Text>
                     <Text style={[styles.cell, dim ? styles.dim : null, isOutlier ? styles.outlierVal : null]}>{pct(s.cloud_cover_pct)}</Text>
-                    <Text style={[styles.cell, dim ? styles.dim : null]}>{pct(s.precip_probability_pct)}</Text>
+                    <Text style={[styles.cell, dim ? styles.dim : null]}>{rainCell(s.precip_probability_pct, s.rain_mm).text}</Text>
                     <Text style={[styles.cell, dim ? styles.dim : null]}>{mph(s.wind_speed_kmh)}</Text>
                     <Text style={[styles.cell, dim ? styles.dim : null]}>
                       {mph(s.wind_gusts_kmh)}{s.wind_gusts_kmh != null && !s.gustMeasured ? '*' : ''}
@@ -156,7 +156,7 @@ export default function DayCompareScreen() {
         })}
 
         <Text style={styles.footnote}>
-          * gust estimated from mean wind. LOCAL = home-team high-res model for this region
+          * gust estimated from mean wind. RAIN shows % chance where given, else amount in mm. LOCAL = home-team high-res model for this region
           (Met Éireann in Ireland, UK Met Office in Scotland). "Out of range" means that model
           doesn't forecast this far ahead yet — it'll fill in as the date approaches.
         </Text>
