@@ -64,14 +64,14 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
 
   return (
     <View style={styles.section}>
-      <View style={styles.headerRow}>
-        <View style={styles.headerLeft}>
-          <View>
-            <Text style={styles.label}>WEATHER</Text>
-            {updatedAgoText(row?.fetched_at) ? (
-              <Text style={styles.updatedText}>{updatedAgoText(row?.fetched_at)}</Text>
-            ) : null}
-          </View>
+      <View style={styles.headerCol}>
+        <View style={styles.titleRow}>
+          <Text style={styles.label}>WEATHER</Text>
+          {updatedAgoText(row?.fetched_at) ? (
+            <Text style={styles.updatedText}>· {updatedAgoText(row?.fetched_at)}</Text>
+          ) : null}
+        </View>
+        <View style={styles.badgeFlow}>
           <View style={[styles.flag, mode.preview ? styles.flagPreview : styles.flagReal]}>
             <Ionicons
               name={mode.preview ? 'flask-outline' : 'calendar-outline'}
@@ -89,8 +89,6 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
               </Text>
             </View>
           ) : null}
-        </View>
-        <View style={styles.badges}>
           {cmp.hasMulti ? (
             <TouchableOpacity
               activeOpacity={0.7}
@@ -362,15 +360,15 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
   },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  headerCol: {
+    flexDirection: 'column',
+    gap: spacing.xs,
     marginBottom: spacing.md,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 1 },
+  titleRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' },
+  badgeFlow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap', rowGap: spacing.xs },
   label: { ...typography.labelLarge, color: colors.textTertiary },
-  updatedText: { color: colors.textTertiary, fontSize: 10, letterSpacing: 0.4, marginTop: 2 },
+  updatedText: { color: colors.textTertiary, fontSize: 10, letterSpacing: 0.4 },
   flag: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     borderWidth: 1, borderRadius: radius.sm,
@@ -379,7 +377,6 @@ const styles = StyleSheet.create({
   flagPreview: { borderColor: colors.signalWarning },
   flagReal: { borderColor: colors.signalOk },
   flagText: { fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
-  badges: { flexDirection: 'row', gap: spacing.xs, flexShrink: 1, flexWrap: 'wrap', justifyContent: 'flex-end' },
   badge: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     borderWidth: 1, borderRadius: radius.sm,
