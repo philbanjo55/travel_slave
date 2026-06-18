@@ -263,6 +263,11 @@ export default function TripScreen() {
                   const w = dayWeather[item.id];
                   if (!w || w.temperature_c == null) return null;
                   const sc = scoreConditions(item.shot_type, w);
+                  // temp, stars, then conditions detail: rain %, rain amount, wind/gusts.
+                  const pop = w.precip_probability_pct;
+                  const rainAmt = (w.rain_mm ?? 0) + (w.showers_mm ?? 0);
+                  const windMph = w.wind_speed_kmh != null ? Math.round(w.wind_speed_kmh / 1.609) : null;
+                  const gustMph = w.wind_gusts_kmh != null ? Math.round(w.wind_gusts_kmh / 1.609) : null;
                   return (
                     <View style={styles.stopWx}>
                       <Ionicons name={conditionIcon(w.weather_code) as any} size={11} color={colors.textSecondary} />
@@ -278,6 +283,17 @@ export default function TripScreen() {
                             />
                           ))}
                         </View>
+                      ) : null}
+                      {pop != null ? (
+                        <Text style={styles.stopWxDetail}>💧 {Math.round(pop)}%</Text>
+                      ) : null}
+                      {rainAmt > 0 ? (
+                        <Text style={styles.stopWxDetail}>{rainAmt.toFixed(1)}mm</Text>
+                      ) : null}
+                      {windMph != null || gustMph != null ? (
+                        <Text style={styles.stopWxDetail}>
+                          💨 {windMph != null ? windMph : '–'}{gustMph != null ? ` / ${gustMph}` : ''} mph
+                        </Text>
                       ) : null}
                     </View>
                   );
@@ -356,9 +372,10 @@ const styles = StyleSheet.create({
   stopMeta: { flex: 1 },
   stopName: { fontSize: 14, fontWeight: '500', color: colors.textPrimary },
   stopDur: { fontSize: 11, color: colors.textTertiary, marginTop: 2 },
-  stopWx: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  stopWx: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   stopWxTemp: { fontSize: 11, color: colors.textSecondary, fontWeight: '500' },
   stopWxStars: { flexDirection: 'row', gap: 1, marginLeft: 2 },
+  stopWxDetail: { fontSize: 11, color: colors.textSecondary, marginLeft: 4 },
   headerBtn: { minWidth: 28, alignItems: 'center', justifyContent: 'center' },
   wxProgress: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   stopRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
