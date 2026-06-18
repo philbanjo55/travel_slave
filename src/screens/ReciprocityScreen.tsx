@@ -122,6 +122,7 @@ export default function ReciprocityScreen() {
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [deltaP, setDeltaP] = useState<1.26 | 1.20>(1.26);
   const [customP, setCustomP] = useState(1.26);
+  const [showBrackets, setShowBrackets] = useState(false);
 
   type FilterDef = { name: string; stops: number; note?: string };
   const FILTERS: FilterDef[] = [
@@ -250,6 +251,34 @@ export default function ReciprocityScreen() {
       stops: stopsCorrection(metered, adjusted),
       meteredFormatted: formatTime(metered),
     };
+  }, [stock, metered]);
+
+  // BRACKETING: shift the METERED exposure by +/- stops, THEN apply reciprocity
+  // to each rung independently. This is the correct order — reciprocity is
+  // nonlinear, so a +1-stop over-bracket needs MORE correction than the base,
+  // and a -1-stop under-bracket needs less. Doubling the final adjusted time
+  // would under-correct the long end (exactly where it matters for seascapes).
+  const brackets = useMemo(() => {
+    if (metered <= 0) return null;
+    const rungs = [
+      { stop: -1,   label: '−1' },
+      { stop: -0.5, label: '−½' },
+      { stop: 0,    label: '0 · base' },
+      { stop: 0.5,  label: '+½' },
+      { stop: 1,    label: '+1' },
+    ];
+    return rungs.map(r => {
+      const meteredRung = metered * Math.pow(2, r.stop);
+      const adjusted = calculate(stock, meteredRung);
+      return {
+        stop: r.stop,
+        label: r.label,
+        meteredFormatted: formatTime(meteredRung),
+        adjusted,
+        formatted: formatTime(adjusted),
+        isBase: r.stop === 0,
+      };
+    });
   }, [stock, metered]);
 
   // Aperture adjustment calculation
@@ -445,6 +474,43 @@ export default function ReciprocityScreen() {
                 Start Timer{apertureAdj ? ` (${formatTime(apertureAdj.targetSeconds)})` : ''}
               </Text>
             </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Bracketing */}
+        {result && brackets && (
+          <View style={styles.bracketCard}>
+            <TouchableOpacity
+              style={styles.bracketHeader}
+              onPress={() => setShowBrackets(v => !v)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.bracketTitle}>BRACKET · ½-stop steps</Text>
+              <Ionicons
+                name={showBrackets ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color={colors.textSecondary}
+              />
+            </TouchableOpacity>
+            {showBrackets && (
+              <View style={styles.bracketBody}>
+                {brackets.map(b => (
+                  <TouchableOpacity
+                    key={b.stop}
+                    style={[styles.bracketRow, b.isBase && styles.bracketRowBase]}
+                    onPress={() => startTimer(b.adjusted)}
+                    activeOpacity={0.6}
+                  >
+                    <Text style={[styles.bracketStop, b.isBase && styles.bracketStopBase]}>{b.label}</Text>
+                    <Text style={[styles.bracketTime, b.isBase && styles.bracketTimeBase]}>{b.formatted}</Text>
+                    <Ionicons name="timer-outline" size={15} color={b.isBase ? colors.accent : colors.textSecondary} />
+                  </TouchableOpacity>
+                ))}
+                <Text style={styles.bracketNote}>
+                  Each step shifts the metered reading, then re-applies reciprocity. Tap a row to start its timer.
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -699,6 +765,34 @@ const styles = StyleSheet.create({
   resultMeta: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.sm },
   resultStops: { fontSize: 12, color: colors.accent, fontWeight: '500' },
   resultOriginal: { fontSize: 12, color: colors.textTertiary },
+
+  // Bracketing
+  bracketCard: {
+    marginHorizontal: spacing.xl, marginTop: spacing.lg,
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  bracketHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+  },
+  bracketTitle: { ...typography.labelMedium, color: colors.textSecondary },
+  bracketBody: {
+    paddingHorizontal: spacing.lg, paddingBottom: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+  },
+  bracketRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 9, paddingHorizontal: spacing.md,
+    borderRadius: radius.sm, marginTop: 4,
+  },
+  bracketRowBase: { backgroundColor: '#1a1a2e' },
+  bracketStop: { fontSize: 14, fontWeight: '600', color: colors.textTertiary, width: 64 },
+  bracketStopBase: { color: colors.accent },
+  bracketTime: { flex: 1, fontSize: 15, color: colors.textSecondary, textAlign: 'right', marginRight: spacing.md, fontVariant: ['tabular-nums'] },
+  bracketTimeBase: { color: colors.textPrimary, fontWeight: '700' },
+  bracketNote: { fontSize: 11, color: colors.textTertiary, marginTop: spacing.md, lineHeight: 15 },
 
   tableSection: {
     marginHorizontal: spacing.xl, marginTop: spacing.xl,
