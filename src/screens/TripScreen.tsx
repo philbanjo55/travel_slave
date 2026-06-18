@@ -261,39 +261,39 @@ export default function TripScreen() {
                 ) : null}
                 {(() => {
                   const w = dayWeather[item.id];
-                  if (!w || w.temperature_c == null) return null;
                   const sc = scoreConditions(item.shot_type, w);
-                  // temp, stars, then conditions detail: rain %, rain amount, wind/gusts.
+                  // Only rated shoot stops get a weather row. scoreConditions returns
+                  // null for logistics / non-shoot stops, so those show nothing.
+                  if (!w || w.temperature_c == null || !sc) return null;
+                  // Rating first, then conditions: rain %, rain amount, wind/gusts.
+                  // All-monochrome (Ionicons), no temperature, kept compact.
                   const pop = w.precip_probability_pct;
                   const rainAmt = (w.rain_mm ?? 0) + (w.showers_mm ?? 0);
                   const windMph = w.wind_speed_kmh != null ? Math.round(w.wind_speed_kmh / 1.609) : null;
                   const gustMph = w.wind_gusts_kmh != null ? Math.round(w.wind_gusts_kmh / 1.609) : null;
                   return (
                     <View style={styles.stopWx}>
-                      <Ionicons name={conditionIcon(w.weather_code) as any} size={11} color={colors.textSecondary} />
-                      <Text style={styles.stopWxTemp}>{Math.round(cToF(w.temperature_c))}°</Text>
-                      {sc ? (
-                        <View style={styles.stopWxStars}>
-                          {[0, 1, 2, 3].map(i => (
-                            <Ionicons
-                              key={i}
-                              name={i < sc.stars ? 'star' : 'star-outline'}
-                              size={8}
-                              color={i < sc.stars ? colors.textSecondary : colors.textTertiary}
-                            />
-                          ))}
+                      <View style={styles.stopWxStars}>
+                        {[0, 1, 2, 3].map(i => (
+                          <Ionicons
+                            key={i}
+                            name={i < sc.stars ? 'star' : 'star-outline'}
+                            size={9}
+                            color={i < sc.stars ? colors.textSecondary : colors.textTertiary}
+                          />
+                        ))}
+                      </View>
+                      {pop != null ? (
+                        <View style={styles.stopWxItem}>
+                          <Ionicons name="water-outline" size={11} color={colors.textTertiary} />
+                          <Text style={styles.stopWxDetail} numberOfLines={1}>{Math.round(pop)}%{rainAmt > 0 ? ` ${rainAmt.toFixed(1)}mm` : ''}</Text>
                         </View>
                       ) : null}
-                      {pop != null ? (
-                        <Text style={styles.stopWxDetail}>💧 {Math.round(pop)}%</Text>
-                      ) : null}
-                      {rainAmt > 0 ? (
-                        <Text style={styles.stopWxDetail}>{rainAmt.toFixed(1)}mm</Text>
-                      ) : null}
                       {windMph != null || gustMph != null ? (
-                        <Text style={styles.stopWxDetail}>
-                          💨 {windMph != null ? windMph : '–'}{gustMph != null ? ` / ${gustMph}` : ''} mph
-                        </Text>
+                        <View style={styles.stopWxItem}>
+                          <Ionicons name="navigate-outline" size={11} color={colors.textTertiary} />
+                          <Text style={styles.stopWxDetail} numberOfLines={1}>{windMph != null ? windMph : '–'}{gustMph != null ? `/${gustMph}` : ''} mph</Text>
+                        </View>
                       ) : null}
                     </View>
                   );
@@ -372,10 +372,11 @@ const styles = StyleSheet.create({
   stopMeta: { flex: 1 },
   stopName: { fontSize: 14, fontWeight: '500', color: colors.textPrimary },
   stopDur: { fontSize: 11, color: colors.textTertiary, marginTop: 2 },
-  stopWx: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  stopWx: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
   stopWxTemp: { fontSize: 11, color: colors.textSecondary, fontWeight: '500' },
-  stopWxStars: { flexDirection: 'row', gap: 1, marginLeft: 2 },
-  stopWxDetail: { fontSize: 11, color: colors.textSecondary, marginLeft: 4 },
+  stopWxStars: { flexDirection: 'row', gap: 1 },
+  stopWxItem: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 },
+  stopWxDetail: { fontSize: 11, color: colors.textSecondary },
   headerBtn: { minWidth: 28, alignItems: 'center', justifyContent: 'center' },
   wxProgress: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   stopRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
