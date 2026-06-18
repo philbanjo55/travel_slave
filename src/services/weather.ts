@@ -447,11 +447,19 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
   const closeSubject = shotType === 'waterfall' || shotType === 'canyon' || shotType === 'urban';
 
   // RAIN — amount-led (mm dominates), probability secondary.
+  // A weather CODE only counts toward a given penalty tier when measured precip (or, for the
+  // milder tiers, probability) actually backs it up. Open-Meteo occasionally returns a spurious
+  // convective code (e.g. 95 thunderstorm) on a dry hour — near-0 mm, low probability, and
+  // contradicted by the other models. Without this guard a phantom code-95 forces "Heavy rain"
+  // on a clear day. Higher tiers demand more precip evidence: a real thunderstorm/heavy-rain
+  // hour is not 0.2 mm. Amount alone can still drive any tier (mm is ground truth).
+  const heavyCode = (rainAmt > 1.0 || pop >= 55);   // backs codes 63/65/73/75/81/82/95+
+  const lightCode = (rainAmt > 0.1 || pop >= 35);   // backs codes 51-57/61/71/80
   let rainPen = 0;
-  if (rainAmt > 4 || code === 65 || code === 82 || code === 75 || (code != null && code >= 95)) rainPen = 4;
-  else if (rainAmt > 2 || code === 63 || code === 81 || code === 73) rainPen = 3;
-  else if (rainAmt > 0.7 || code === 61) rainPen = 2;
-  else if (rainAmt > 0.1 || (code != null && code >= 51 && code <= 57) || code === 80 || code === 71 || snow > 0) rainPen = 1;
+  if (rainAmt > 4 || ((code === 65 || code === 82 || code === 75 || (code != null && code >= 95)) && heavyCode)) rainPen = 4;
+  else if (rainAmt > 2 || ((code === 63 || code === 81 || code === 73) && heavyCode)) rainPen = 3;
+  else if (rainAmt > 0.7 || (code === 61 && lightCode)) rainPen = 2;
+  else if (rainAmt > 0.1 || (((code != null && code >= 51 && code <= 57) || code === 80 || code === 71) && lightCode) || snow > 0) rainPen = 1;
   if (rainPen <= 1 && pop >= 60) rainPen += 1;
   else if (rainPen === 0 && pop >= 40) rainPen += 0.5;
   if (shotType === 'seascape' && rainPen > 0 && rainAmt <= 0.7) rainPen = Math.max(0, rainPen - 0.5);
