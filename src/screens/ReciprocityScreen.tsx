@@ -122,7 +122,7 @@ export default function ReciprocityScreen() {
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [deltaP, setDeltaP] = useState<1.26 | 1.20>(1.26);
   const [customP, setCustomP] = useState(1.26);
-  const [showBrackets, setShowBrackets] = useState(false);
+  const [stopAdjust, setStopAdjust] = useState(0); // dial: +/- stops applied to metered base
 
   type FilterDef = { name: string; stops: number; note?: string };
   const FILTERS: FilterDef[] = [
@@ -158,7 +158,11 @@ export default function ReciprocityScreen() {
     : rawStock.name === 'Custom'
       ? { ...rawStock, p: customP, source: `User defined (P=${customP.toFixed(2)})` }
       : rawStock;
-  const metered = parseFloat(inputTime) || 0;
+  const meteredBase = parseFloat(inputTime) || 0;
+  // The dial shifts the METERED reading by +/- stops, and reciprocity is then
+  // computed on the shifted value. Adjusting the *input* (not the corrected time)
+  // is the physically correct order — the result below is always valid.
+  const metered = meteredBase > 0 ? meteredBase * Math.pow(2, stopAdjust) : 0;
 
   // Timer state
   const [timerActive, setTimerActive] = useState(false);
@@ -253,33 +257,6 @@ export default function ReciprocityScreen() {
     };
   }, [stock, metered]);
 
-  // BRACKETING: shift the METERED exposure by +/- stops, THEN apply reciprocity
-  // to each rung independently. This is the correct order — reciprocity is
-  // nonlinear, so a +1-stop over-bracket needs MORE correction than the base,
-  // and a -1-stop under-bracket needs less. Doubling the final adjusted time
-  // would under-correct the long end (exactly where it matters for seascapes).
-  const brackets = useMemo(() => {
-    if (metered <= 0) return null;
-    const rungs = [
-      { stop: -1,   label: '−1' },
-      { stop: -0.5, label: '−½' },
-      { stop: 0,    label: '0 · base' },
-      { stop: 0.5,  label: '+½' },
-      { stop: 1,    label: '+1' },
-    ];
-    return rungs.map(r => {
-      const meteredRung = metered * Math.pow(2, r.stop);
-      const adjusted = calculate(stock, meteredRung);
-      return {
-        stop: r.stop,
-        label: r.label,
-        meteredFormatted: formatTime(meteredRung),
-        adjusted,
-        formatted: formatTime(adjusted),
-        isBase: r.stop === 0,
-      };
-    });
-  }, [stock, metered]);
 
   // Aperture adjustment calculation
   const apertureAdj = useMemo(() => {
@@ -433,7 +410,7 @@ export default function ReciprocityScreen() {
           <TextInput
             style={styles.input}
             value={inputTime}
-            onChangeText={setInputTime}
+            onChangeText={(v) => { setInputTime(v); setStopAdjust(0); }}
             keyboardType="decimal-pad"
             placeholder="Enter seconds..."
             placeholderTextColor={colors.textTertiary}
@@ -447,7 +424,7 @@ export default function ReciprocityScreen() {
             <TouchableOpacity
               key={t}
               style={[styles.quickBtn, inputTime === String(t) && styles.quickBtnActive]}
-              onPress={() => setInputTime(String(t))}
+              onPress={() => { setInputTime(String(t)); setStopAdjust(0); }}
             >
               <Text style={[styles.quickText, inputTime === String(t) && styles.quickTextActive]}>
                 {t}s
@@ -456,6 +433,43 @@ export default function ReciprocityScreen() {
           ))}
         </View>
 
+        {/* Exposure adjust dial */}
+        {meteredBase > 0 && (
+          <View style={styles.dialSection}>
+            <View style={styles.dialLabelRow}>
+              <Text style={styles.dialLabel}>ADJUST</Text>
+              <Text style={styles.dialValue}>
+                {stopAdjust === 0
+                  ? 'metered'
+                  : `${stopAdjust > 0 ? '+' : '−'}${Math.abs(stopAdjust).toString().replace('0.5', '½').replace('1.5', '1½').replace('2.5', '2½')} stop · ${formatTime(metered)}`}
+              </Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.dialTrack}
+            >
+              {[-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2].map(s => {
+                const active = stopAdjust === s;
+                const lbl = s === 0 ? '0' : `${s > 0 ? '+' : '−'}${Math.abs(s).toString().replace('0.5', '½').replace('1.5', '1½').replace('2.5', '2½')}`;
+                return (
+                  <TouchableOpacity
+                    key={s}
+                    style={[styles.dialDetent, active && styles.dialDetentActive, s === 0 && styles.dialDetentZero]}
+                    onPress={() => setStopAdjust(s)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.dialDetentText, active && styles.dialDetentTextActive]}>{lbl}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <Text style={styles.dialNote}>
+              Shifts the metered reading; reciprocity recalculates below.
+            </Text>
+          </View>
+        )}
+
         {/* Result */}
         {result && (
           <View style={styles.resultCard}>
@@ -463,7 +477,7 @@ export default function ReciprocityScreen() {
             <Text style={styles.resultTime}>{result.formatted}</Text>
             <View style={styles.resultMeta}>
               <Text style={styles.resultStops}>{result.stops} stops correction</Text>
-              <Text style={styles.resultOriginal}>from {result.meteredFormatted} metered</Text>
+              <Text style={styles.resultOriginal}>from {result.meteredFormatted} metered{stopAdjust !== 0 ? ` (${stopAdjust > 0 ? '+' : '−'}${Math.abs(stopAdjust).toString().replace('0.5','½').replace('1.5','1½').replace('2.5','2½')} stop)` : ''}</Text>
             </View>
             <TouchableOpacity
               style={styles.timerBtn}
@@ -474,43 +488,6 @@ export default function ReciprocityScreen() {
                 Start Timer{apertureAdj ? ` (${formatTime(apertureAdj.targetSeconds)})` : ''}
               </Text>
             </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Bracketing */}
-        {result && brackets && (
-          <View style={styles.bracketCard}>
-            <TouchableOpacity
-              style={styles.bracketHeader}
-              onPress={() => setShowBrackets(v => !v)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.bracketTitle}>BRACKET · ½-stop steps</Text>
-              <Ionicons
-                name={showBrackets ? 'chevron-up' : 'chevron-down'}
-                size={18}
-                color={colors.textSecondary}
-              />
-            </TouchableOpacity>
-            {showBrackets && (
-              <View style={styles.bracketBody}>
-                {brackets.map(b => (
-                  <TouchableOpacity
-                    key={b.stop}
-                    style={[styles.bracketRow, b.isBase && styles.bracketRowBase]}
-                    onPress={() => startTimer(b.adjusted)}
-                    activeOpacity={0.6}
-                  >
-                    <Text style={[styles.bracketStop, b.isBase && styles.bracketStopBase]}>{b.label}</Text>
-                    <Text style={[styles.bracketTime, b.isBase && styles.bracketTimeBase]}>{b.formatted}</Text>
-                    <Ionicons name="timer-outline" size={15} color={b.isBase ? colors.accent : colors.textSecondary} />
-                  </TouchableOpacity>
-                ))}
-                <Text style={styles.bracketNote}>
-                  Each step shifts the metered reading, then re-applies reciprocity. Tap a row to start its timer.
-                </Text>
-              </View>
-            )}
           </View>
         )}
 
@@ -766,33 +743,30 @@ const styles = StyleSheet.create({
   resultStops: { fontSize: 12, color: colors.accent, fontWeight: '500' },
   resultOriginal: { fontSize: 12, color: colors.textTertiary },
 
-  // Bracketing
-  bracketCard: {
-    marginHorizontal: spacing.xl, marginTop: spacing.lg,
-    backgroundColor: colors.surface, borderRadius: radius.md,
+  // Exposure adjust dial
+  dialSection: {
+    marginHorizontal: spacing.xl, marginTop: spacing.md,
+  },
+  dialLabelRow: {
+    flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  dialLabel: { ...typography.labelMedium, color: colors.textTertiary },
+  dialValue: { fontSize: 12, color: colors.accent, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  dialTrack: {
+    flexDirection: 'row', gap: spacing.sm, paddingVertical: 2, paddingRight: spacing.xl,
+  },
+  dialDetent: {
+    minWidth: 46, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderRadius: radius.sm, backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-    overflow: 'hidden',
+    alignItems: 'center', justifyContent: 'center',
   },
-  bracketHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
-  },
-  bracketTitle: { ...typography.labelMedium, color: colors.textSecondary },
-  bracketBody: {
-    paddingHorizontal: spacing.lg, paddingBottom: spacing.md,
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
-  },
-  bracketRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: 9, paddingHorizontal: spacing.md,
-    borderRadius: radius.sm, marginTop: 4,
-  },
-  bracketRowBase: { backgroundColor: '#1a1a2e' },
-  bracketStop: { fontSize: 14, fontWeight: '600', color: colors.textTertiary, width: 64 },
-  bracketStopBase: { color: colors.accent },
-  bracketTime: { flex: 1, fontSize: 15, color: colors.textSecondary, textAlign: 'right', marginRight: spacing.md, fontVariant: ['tabular-nums'] },
-  bracketTimeBase: { color: colors.textPrimary, fontWeight: '700' },
-  bracketNote: { fontSize: 11, color: colors.textTertiary, marginTop: spacing.md, lineHeight: 15 },
+  dialDetentZero: { borderColor: colors.textTertiary },
+  dialDetentActive: { backgroundColor: '#1a1a2e', borderColor: colors.accent },
+  dialDetentText: { fontSize: 15, fontWeight: '600', color: colors.textSecondary, fontVariant: ['tabular-nums'] },
+  dialDetentTextActive: { color: colors.accent },
+  dialNote: { fontSize: 11, color: colors.textTertiary, marginTop: spacing.sm, lineHeight: 15 },
 
   tableSection: {
     marginHorizontal: spacing.xl, marginTop: spacing.xl,
