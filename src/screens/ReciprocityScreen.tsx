@@ -92,6 +92,20 @@ function calculate(stock: FilmStock, metered: number): number {
   }
 }
 
+// Inverse of calculate(): given a desired CORRECTED (actual) exposure, find the
+// METERED time that produces it. Verified against brute-force simulation and
+// Ilford's published power-law method. calculate() is monotonic increasing, so
+// bisection inverts it for any film model (power, lookup, or special-case).
+function invertReciprocity(stock: FilmStock, targetCorrected: number): number {
+  if (targetCorrected <= 1) return targetCorrected; // identity domain (<1s, no correction)
+  let lo = 0.001, hi = targetCorrected; // metered is always <= corrected
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (calculate(stock, mid) < targetCorrected) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 function formatTime(seconds: number): string {
   if (seconds < 1) return `${seconds.toFixed(1)}s`;
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -258,21 +272,27 @@ export default function ReciprocityScreen() {
   }, [stock, metered]);
 
 
-  // Aperture adjustment calculation
+  // Aperture solver — keep the metered SCENE fixed (metered at f/22) and find the
+  // aperture whose reciprocity-CORRECTED exposure lands on the target.
+  // Correct order (verified vs brute-force simulation): an aperture change scales
+  // the METERED time by (f/22)^2, and reciprocity then acts on THAT. So invert
+  // reciprocity to get the metered time the target needs, derive the stop change
+  // from the current metered base, round to a real f-stop, then report the TRUE
+  // actual exposure for that rounded stop (forward reciprocity) — never the wish.
   const apertureAdj = useMemo(() => {
     const target = parseFloat(targetTime);
-    if (!result || !target || target <= 0) return null;
-    if (Math.abs(result.adjusted - target) < 0.5) return null; // no adjustment needed
+    if (!result || !target || target <= 0 || metered <= 0) return null;
+    if (Math.abs(result.adjusted - target) < 0.5) return null; // already on target
 
-    // How many stops between the reciprocity result and the target?
-    const stopsDiff = Math.log2(result.adjusted / target);
-
-    // Calculate new f-stop: each stop = sqrt(2) change in f-number
-    // Opening up = smaller f-number, closing down = larger f-number
     const baseF = 22;
-    const newF = baseF / Math.pow(2, stopsDiff / 2);
+    // Metered time (via aperture) that reciprocity will correct to the target.
+    const neededMetered = invertReciprocity(stock, target);
+    // Stops of aperture change: metered base -> neededMetered.
+    // Longer metered = close down (larger f); shorter = open up (smaller f).
+    const stopsDiff = Math.log2(neededMetered / metered);
+    // f-number scales as sqrt(2) per stop.
+    const newF = baseF * Math.pow(2, stopsDiff / 2);
 
-    // Find nearest standard f-stop (third stops)
     const thirdStops = [
       1, 1.1, 1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3.2, 3.5,
       4, 4.5, 5, 5.6, 6.3, 7.1, 8, 9, 10, 11, 13, 14, 16, 18, 20,
@@ -282,16 +302,26 @@ export default function ReciprocityScreen() {
       Math.abs(curr - newF) < Math.abs(prev - newF) ? curr : prev
     );
 
-    const direction = stopsDiff > 0 ? 'Open' : 'Close';
+    // TRUE actual exposure at the ROUNDED f-stop: rounding moves the metered time,
+    // which gets its own reciprocity correction. Report this, not the target.
+    const roundedStops = 2 * Math.log2(nearestF / baseF);
+    const actualMetered = metered * Math.pow(2, roundedStops);
+    const actualExposure = calculate(stock, actualMetered);
+    const offsetSeconds = actualExposure - target;
+    const onTarget = Math.abs(offsetSeconds) < Math.max(1, target * 0.05);
 
     return {
       stopsDiff: Math.abs(stopsDiff),
-      direction,
+      direction: stopsDiff >= 0 ? 'Close' : 'Open',
       newF,
       nearestF,
-      targetSeconds: target,
+      targetSeconds: actualExposure,   // timer fires the honest actual
+      targetRequested: target,
+      actualExposure,
+      offsetSeconds,
+      onTarget,
     };
-  }, [result, targetTime]);
+  }, [result, targetTime, stock, metered]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -513,7 +543,9 @@ export default function ReciprocityScreen() {
                   f/{apertureAdj.nearestF}
                 </Text>
                 <Text style={styles.apertureSub}>
-                  Shoot at f/{apertureAdj.nearestF} for ~{formatTime(apertureAdj.targetSeconds)} actual exposure
+                  {apertureAdj.onTarget
+                    ? `Shoot f/${apertureAdj.nearestF} — lands ~${formatTime(apertureAdj.actualExposure)} actual`
+                    : `Shoot f/${apertureAdj.nearestF} — lands ${formatTime(apertureAdj.actualExposure)} (${apertureAdj.offsetSeconds > 0 ? '+' : '−'}${formatTime(Math.abs(apertureAdj.offsetSeconds))} vs ${formatTime(apertureAdj.targetRequested)} target)`}
                 </Text>
               </View>
             )}
