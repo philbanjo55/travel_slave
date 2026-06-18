@@ -104,7 +104,7 @@ export default function TripsScreen() {
       <StatusBar barStyle="light-content" backgroundColor="#000" />
 
       <View style={styles.header}>
-        <Text style={styles.brand}>PHILM+FRAME</Text>
+        <Text style={styles.brand}>PHILM+FRAME ✦</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
           {migrating && <ActivityIndicator size="small" color={colors.accentDim} />}
           {isOffline && <Text style={styles.offline}>OFFLINE</Text>}
