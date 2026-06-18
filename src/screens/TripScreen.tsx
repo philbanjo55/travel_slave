@@ -289,7 +289,7 @@ export default function TripScreen() {
                       {pop != null ? (
                         <View style={styles.stopWxItem}>
                           <Ionicons name="water-outline" size={11} color={colors.textTertiary} />
-                          <Text style={styles.stopWxDetail} numberOfLines={1}>{Math.round(pop)}%{rainAmt > 0 ? ` ${rainAmt.toFixed(1)}mm` : ''}</Text>
+                          <Text style={styles.stopWxDetail} numberOfLines={1}>{Math.round(pop)}%{rainAmt > 0 ? `/${rainAmt.toFixed(1)}mm` : ''}</Text>
                         </View>
                       ) : null}
                       {windMph != null || gustMph != null ? (
