@@ -183,7 +183,6 @@ export default function DayScreen() {
                     const rainAmt = (w.rain_mm ?? 0) + (w.showers_mm ?? 0);
                     const windMph = w.wind_speed_kmh != null ? Math.round(w.wind_speed_kmh / 1.609) : null;
                     const gustMph = w.wind_gusts_kmh != null ? Math.round(w.wind_gusts_kmh / 1.609) : null;
-                    const __dbg = `DBG pop=${String(w.precip_probability_pct)} r=${String(w.rain_mm)} sh=${String(w.showers_mm)} ws=${String(w.wind_speed_kmh)} g=${String(w.wind_gusts_kmh)}`;
                     return (
                       <View style={styles.stopWx}>
                         <Ionicons name={conditionIcon(w.weather_code) as any} size={11} color={colors.textSecondary} />
@@ -200,7 +199,6 @@ export default function DayScreen() {
                             ))}
                           </View>
                         ) : null}
-                        <Text style={{ fontSize: 9, color: '#ff5577' }}>{__dbg}</Text>
                         {pop != null ? (
                           <Text style={styles.stopWxDetail}>💧 {Math.round(pop)}%</Text>
                         ) : null}
