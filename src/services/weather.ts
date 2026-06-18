@@ -156,8 +156,12 @@ async function getCachedWeatherForStop(stopId: string): Promise<WeatherRow | nul
 // ─────────────────────────────────────────
 export async function pullWeather(
   dayId: string,
-  opts: { test?: boolean } = {}
+  opts: { test?: boolean; timeoutMs?: number } = {}
 ): Promise<PullWeatherResult> {
+  // A single day fans out to 4 weather sources per stop; a stop-heavy day
+  // (e.g. a 9-stop arrival day) can legitimately take 30s+. The default 12s
+  // is right for snappy single-day/resume reads, but the whole-trip update
+  // passes a generous timeout so heavy days don't false-fail mid-run.
   const res = await fetchWithTimeout(`${SUPABASE_URL}/functions/v1/weather-pull`, {
     method: 'POST',
     headers: {
@@ -165,7 +169,7 @@ export async function pullWeather(
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
     },
     body: JSON.stringify({ day_id: dayId, test: opts.test === true }),
-  });
+  }, opts.timeoutMs ?? 12000);
   const result: PullWeatherResult = await res.json();
   // Make a fresh pull immediately offline-ready. The edge function's `stops`
   // payload is a DIFFERENT shape from the stored row (it carries `provenance`
@@ -307,13 +311,16 @@ export async function pullWeatherForTrip(
   for (let i = 0; i < days.length; i++) {
     const d = days[i] as { id: string; date: string | null };
     try {
-      const res = await pullWeather(d.id, { test: useTestModeFor(d.date) });
+      // 40s per-day ceiling: comfortably above the worst observed heavy-day
+      // pull (~33s) so stop-heavy days don't abort mid-flight, while still
+      // bounding a genuinely hung request.
+      const res = await pullWeather(d.id, { test: useTestModeFor(d.date), timeoutMs: 40000 });
       if (res.ok) ok++; else failed++;
     } catch {
       failed++;
     }
     onProgress?.(i + 1, days.length);
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise(r => setTimeout(r, 250));
   }
   return { days: days.length, ok, failed };
 }
