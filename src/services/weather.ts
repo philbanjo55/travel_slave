@@ -432,7 +432,10 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
   if (!shotType || shotType === 'logistics') return null;
   if (r.is_dark) return { stars: 0, label: 'Poor', reason: 'After dark' };
 
-  const cloud = r.cloud_cover_pct ?? 50;
+  // SCORING: wind + rain (probability AND amount + day persistence) + fog visibility ONLY.
+  // Cloud/light deliberately NOT scored — Phil shoots B&W large-format and works in flat
+  // overcast by design. What matters: hold the camera (wind), keep water off the film (rain),
+  // see the subject (fog). Mirrors the weather-pull edge function exactly.
   const gust = r.wind_gusts_kmh ?? r.wind_speed_kmh ?? 0;
   const pop = r.precip_probability_pct ?? 0;
   const rainAmt = (r.rain_mm ?? 0) + (r.showers_mm ?? 0);
@@ -440,68 +443,53 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
   const code = r.weather_code;
   const vis = r.visibility_m;
   const fog = r.fog_risk;
-
-  // How much the subject depends on seeing distance.
   const longDistance = shotType === 'mountain' || shotType === 'seascape';
   const closeSubject = shotType === 'waterfall' || shotType === 'canyon' || shotType === 'urban';
 
-  // Start from a perfect window and subtract weighted penalties.
-  // Priority (Phil): rain > visibility > wind > light/other.
-
-  // #1 RAIN — the largest lever (0..3). Intensity-led; probability only nudges.
+  // RAIN — amount-led (mm dominates), probability secondary.
   let rainPen = 0;
-  if (code === 65 || code === 82 || code === 75 || (code != null && code >= 95) || rainAmt > 6) rainPen = 3;            // heavy / storm
-  else if (code === 61 || code === 63 || code === 81 || code === 73 || rainAmt > 2) rainPen = 2;                          // steady rain
-  else if ((code != null && code >= 51 && code <= 57) || code === 80 || code === 71 || rainAmt > 0.2 || snow > 0) rainPen = 1; // drizzle / light
-  if (rainPen === 0 && pop >= 55) rainPen = 1;  // likely-but-light: a nudge, not a hammer
-  // Seascapes shrug off light rain: wet rock and a moody sky are the look, not a
-  // washout, and you're close to the subject with a rain cover. Trace drizzle
-  // (the rainPen===1 tier) is waived; steady/heavy rain (2–3) still bites.
-  if (shotType === 'seascape' && rainPen === 1) rainPen = 0;
+  if (rainAmt > 4 || code === 65 || code === 82 || code === 75 || (code != null && code >= 95)) rainPen = 4;
+  else if (rainAmt > 2 || code === 63 || code === 81 || code === 73) rainPen = 3;
+  else if (rainAmt > 0.7 || code === 61) rainPen = 2;
+  else if (rainAmt > 0.1 || (code != null && code >= 51 && code <= 57) || code === 80 || code === 71 || snow > 0) rainPen = 1;
+  if (rainPen <= 1 && pop >= 60) rainPen += 1;
+  else if (rainPen === 0 && pop >= 40) rainPen += 0.5;
+  if (shotType === 'seascape' && rainPen > 0 && rainAmt <= 0.7) rainPen = Math.max(0, rainPen - 0.5);
 
-  // #2 VISIBILITY — scaled up for long-distance landscapes, capped for close subjects.
+  // RAIN PERSISTENCE: judge the whole day, not just the matched hour. Daily TOTAL mm
+  // separates a soaking day from trace drizzle. Stored by the edge function under raw.
+  const dayTotal = (r as any).precip_total_mm ?? r.raw?.precip_total_mm ?? null;
+  if (dayTotal != null) {
+    let persistFloor = 0;
+    if (dayTotal >= 10) persistFloor = 3;
+    else if (dayTotal >= 5) persistFloor = 2;
+    else if (dayTotal >= 2.5) persistFloor = 1;
+    if (shotType === 'seascape') persistFloor = Math.max(0, persistFloor - 0.5);
+    rainPen = Math.max(rainPen, persistFloor);
+  }
+
+  // FOG / VISIBILITY — kept: whether the subject is even visible.
   let visBase = 0;
   if (fog === 'likely' || (vis != null && vis < 1000)) visBase = 2;
   else if (fog === 'possible' || (vis != null && vis < 4000)) visBase = 1;
   else if (vis != null && vis < 8000) visBase = 0.5;
-  // For mountains, low cloud sitting on the summit is itself a visibility problem.
   let obscure = 0;
   if (shotType === 'mountain') {
-    const lowCloud = r.cloud_cover_low_pct ?? cloud;
+    const lowCloud = r.cloud_cover_low_pct ?? r.cloud_cover_pct ?? 0;
     if (lowCloud >= 90) obscure = 2;
     else if (lowCloud >= 70) obscure = 1;
   }
   const visPen = (longDistance ? visBase * 1.5 : closeSubject ? Math.min(visBase, 1) : visBase) + obscure;
 
-  // #3 WIND — type-specific. Reflection is the special case where it gates everything.
+  // WIND — by subject sensitivity (gusts km/h).
   let windPen = 0;
-  if (shotType === 'reflection') {
-    windPen = gust < 6 ? 0 : gust < 10 ? 0.5 : gust < 16 ? 1.5 : gust < 25 ? 2.5 : 4;
-  } else if (shotType === 'seascape') {
-    // Capped at 2: heavy seas are dramatic subject matter (big-wave headlands
-    // like Mullaghmore are often BEST in a blow) — wind hurts execution, not
-    // the shot itself, so a gale bottoms out at Fair unless rain stacks on.
-    windPen = gust > 45 ? 2 : gust > 30 ? 1 : gust > 20 ? 0.5 : 0;
-  } else if (shotType === 'waterfall' || shotType === 'canyon') {
-    windPen = gust > 45 ? 2 : gust > 30 ? 1 : gust > 18 ? 0.5 : 0;
-  } else if (shotType === 'mountain' || shotType === 'castle') {
-    windPen = gust > 70 ? 1 : gust > 50 ? 0.5 : 0;
-  }
+  if (shotType === 'reflection') windPen = gust < 10 ? 0 : gust < 16 ? 1 : gust < 26 ? 2.5 : 4;
+  else if (shotType === 'seascape') windPen = gust > 70 ? 3 : gust > 50 ? 2 : gust > 36 ? 1 : gust > 26 ? 0.5 : 0;
+  else if (shotType === 'waterfall' || shotType === 'canyon') windPen = gust > 60 ? 3 : gust > 45 ? 2 : gust > 30 ? 1 : gust > 20 ? 0.5 : 0;
+  else windPen = gust > 80 ? 2 : gust > 60 ? 1 : gust > 45 ? 0.5 : 0;
 
-  // #4 LIGHT — minor trim only ("the other shit").
-  let lightPen = 0;
-  if (shotType === 'waterfall' || shotType === 'canyon') {
-    if (cloud < 25) lightPen = 1;        // harsh sun blows out moving water
-    else if (cloud < 45) lightPen = 0.5;
-  } else if (shotType === 'castle') {
-    if (cloud > 92) lightPen = 0.5;      // featureless white sky behind a castle reads dull
-  }
-  // Seascapes intentionally get NO flat-light penalty: 100% overcast is the
-  // softbox that makes moody long-exposure B&W seas — it's an asset, not a ding.
+  const s = clamp(Math.round(4 - rainPen - visPen - windPen));
 
-  const s = clamp(Math.round(4 - rainPen - visPen - windPen - lightPen));
-
-  // Surface the dominant factor as the reason.
   const factors: [number, string][] = [
     [rainPen, rainPen >= 3 ? 'Heavy rain' : rainPen >= 2 ? 'Rain likely' : 'Some rain risk'],
     [visPen, fog === 'likely' ? 'Fog — poor visibility'
@@ -509,21 +497,16 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
       : 'Haze / low visibility'],
     [windPen,
       shotType === 'reflection' ? 'Wind breaking the reflection'
-      : shotType === 'seascape' ? 'Big swell — dramatic seas, hard to hold steady'
+      : shotType === 'seascape' ? 'Big swell — hard to hold steady'
       : 'Windy — motion in long exposures'],
-    [lightPen, (shotType === 'waterfall' || shotType === 'canyon') ? 'Harsh sun on the water' : 'Flat, featureless light'],
   ];
   const top = factors.reduce((m, f) => (f[0] > m[0] ? f : m), [0, ''] as [number, string]);
-  // Only headline a problem if it's actually meaningful (>=1 point) OR the day
-  // isn't already Excellent. A lone 0.5 trim on a 4-star day shouldn't print a
-  // warning like "Windy" — that contradicts the verdict. Otherwise affirm it.
   const reason = (top[0] >= 1 || (top[0] >= 0.5 && s < 4))
     ? top[1]
-    : (s >= 4 ? 'Excellent window — soft light, calm, clear' : 'Clear window — dry, open, calm');
+    : (s >= 4 ? 'Dry, calm, clear — go' : 'Workable — dry and open');
 
   return { stars: s, label: LABELS[s], reason };
 }
-
 // ─────────────────────────────────────────
 // DAY-LEVEL OVERVIEW
 // Aggregates a day's stored stop forecasts into one overview, mirroring the
