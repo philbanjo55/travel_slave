@@ -299,17 +299,33 @@ export async function pullWeatherForTrip(
   tripId: string,
   onProgress?: (done: number, total: number) => void
 ): Promise<{ days: number; ok: number; failed: number }> {
+  // Pull stops alongside days so we can skip days with nothing to forecast.
   const { data: days, error } = await supabase
     .from('days')
-    .select('id, date')
+    .select('id, date, stops(lat, lng, shot_type)')
     .eq('trip_id', tripId)
     .order('day_number', { ascending: true });
   if (error || !days) throw new Error('Failed to fetch days');
 
+  // Two kinds of day produce no forecast and shouldn't count as failures:
+  //  1. Past days — Open-Meteo's forecast endpoint returns no data for dates
+  //     before today, so the pull comes back empty.
+  //  2. Stopless logistics days (e.g. "Wheels Up", "Safe Home") — no mappable
+  //     stop means nothing to score.
+  // Filtering them here keeps the "Pulled X of Y" count honest and the run fast.
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const pullable = (days as any[]).filter((d) => {
+    const notPast = !d.date || new Date(d.date + 'T00:00:00') >= today;
+    const hasStop = Array.isArray(d.stops) && d.stops.some(
+      (s: any) => s.lat != null && s.lng != null && s.shot_type !== 'logistics'
+    );
+    return notPast && hasStop;
+  });
+
   let ok = 0;
   let failed = 0;
-  for (let i = 0; i < days.length; i++) {
-    const d = days[i] as { id: string; date: string | null };
+  for (let i = 0; i < pullable.length; i++) {
+    const d = pullable[i] as { id: string; date: string | null };
     try {
       // 40s per-day ceiling: comfortably above the worst observed heavy-day
       // pull (~33s) so stop-heavy days don't abort mid-flight, while still
@@ -319,10 +335,10 @@ export async function pullWeatherForTrip(
     } catch {
       failed++;
     }
-    onProgress?.(i + 1, days.length);
+    onProgress?.(i + 1, pullable.length);
     await new Promise(r => setTimeout(r, 250));
   }
-  return { days: days.length, ok, failed };
+  return { days: pullable.length, ok, failed };
 }
 
 // ─────────────────────────────────────────
