@@ -205,6 +205,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           {/* Column header */}
           <View style={styles.cmpHeadRow}>
             <Text style={[styles.cmpCellSource, styles.cmpHeadText]}>SOURCE</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>★</Text>
             <Text style={[styles.cmpCell, styles.cmpHeadText]}>TEMP</Text>
             <Text style={[styles.cmpCell, styles.cmpHeadText]}>CLOUD</Text>
             <Text style={[styles.cmpCell, styles.cmpHeadText]}>RAIN</Text>
@@ -227,6 +228,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
                     {s.note ? <Text style={styles.cmpTagNote}>{s.note}</Text> : null}
                   </View>
                 </View>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{s.stars == null ? '—' : s.stars}</Text>
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{f(s.temperature_c)}</Text>
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null, isOutlier ? styles.cmpOutlierVal : null]}>{pct(s.cloud_cover_pct)}</Text>
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{rainCell(s.precip_probability_pct, s.rain_mm).text}</Text>
@@ -244,7 +246,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
             <Text style={[styles.cmpCell, styles.cmpHeadText]}>VIS</Text>
             <Text style={[styles.cmpCell, styles.cmpHeadText]}>HUM</Text>
             <Text style={[styles.cmpCell, styles.cmpHeadText]}>hPa</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>★</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}> </Text>
             <Text style={[styles.cmpCell, styles.cmpHeadText]}> </Text>
           </View>
           {cmp.sources.map(s => {
@@ -256,7 +258,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{km(s.visibility_m)}</Text>
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{s.relative_humidity_pct == null ? '—' : `${Math.round(s.relative_humidity_pct)}%`}</Text>
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{s.surface_pressure_hpa == null ? '—' : Math.round(s.surface_pressure_hpa)}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{s.stars == null ? '—' : s.stars}</Text>
+                <Text style={[styles.cmpCell]}> </Text>
                 <Text style={[styles.cmpCell]}> </Text>
               </View>
             );
