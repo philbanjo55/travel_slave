@@ -274,6 +274,9 @@ export default function TripScreen() {
                   const rainAmt = (w.rain_mm ?? 0) + (w.showers_mm ?? 0);
                   const windMph = w.wind_speed_kmh != null ? Math.round(w.wind_speed_kmh / 1.609) : null;
                   const gustMph = w.wind_gusts_kmh != null ? Math.round(w.wind_gusts_kmh / 1.609) : null;
+                  // Divergence flag: Open-Meteo vs MET Norway disagree materially.
+                  // SPLIT only (LOOSE is minor) — tells you the displayed score is contested.
+                  const isSplit = w.raw?.comparison?.agreement === 'SPLIT';
                   return (
                     <View style={styles.stopWx}>
                       <View style={styles.stopWxStars}>
@@ -297,6 +300,9 @@ export default function TripScreen() {
                           <Ionicons name="navigate-outline" size={11} color={colors.textTertiary} />
                           <Text style={styles.stopWxDetail} numberOfLines={1}>{windMph != null ? windMph : '–'}{gustMph != null ? `/${gustMph}` : ''} mph</Text>
                         </View>
+                      ) : null}
+                      {isSplit ? (
+                        <Ionicons name="warning-outline" size={11} color={colors.textTertiary} />
                       ) : null}
                     </View>
                   );
