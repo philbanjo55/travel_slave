@@ -279,6 +279,9 @@ export default function TripScreen() {
                   const isSplit = w.raw?.comparison?.agreement === 'SPLIT';
                   return (
                     <View style={styles.stopWx}>
+                      {isSplit ? (
+                        <Ionicons name="warning" size={12} color="#e0a82e" />
+                      ) : null}
                       <View style={styles.stopWxStars}>
                         {[0, 1, 2, 3].map(i => (
                           <Ionicons
@@ -300,9 +303,6 @@ export default function TripScreen() {
                           <Ionicons name="navigate-outline" size={11} color={colors.textTertiary} />
                           <Text style={styles.stopWxDetail} numberOfLines={1}>{windMph != null ? windMph : '–'}{gustMph != null ? `/${gustMph}` : ''} mph</Text>
                         </View>
-                      ) : null}
-                      {isSplit ? (
-                        <Ionicons name="warning-outline" size={11} color={colors.textTertiary} />
                       ) : null}
                     </View>
                   );
