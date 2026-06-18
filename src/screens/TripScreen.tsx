@@ -261,10 +261,13 @@ export default function TripScreen() {
                 ) : null}
                 {(() => {
                   const w = dayWeather[item.id];
-                  const sc = scoreConditions(item.shot_type, w);
+                  // Guard w BEFORE scoring — scoreConditions reads w.is_dark and
+                  // would crash on a stop that has no weather row yet (w undefined).
+                  if (!w || w.temperature_c == null) return null;
                   // Only rated shoot stops get a weather row. scoreConditions returns
                   // null for logistics / non-shoot stops, so those show nothing.
-                  if (!w || w.temperature_c == null || !sc) return null;
+                  const sc = scoreConditions(item.shot_type, w);
+                  if (!sc) return null;
                   // Rating first, then conditions: rain %, rain amount, wind/gusts.
                   // All-monochrome (Ionicons), no temperature, kept compact.
                   const pop = w.precip_probability_pct;
