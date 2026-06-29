@@ -490,7 +490,10 @@ export function scoreConditions(shotType: string | null, r: WeatherRow): Conditi
   // RAIN PERSISTENCE: judge the whole day, not just the matched hour. Daily TOTAL mm
   // separates a soaking day from trace drizzle. Stored by the edge function under raw.
   const dayTotal = (r as any).precip_total_mm ?? r.raw?.precip_total_mm ?? null;
-  if (dayTotal != null) {
+  // GATED on the matched HOUR being wet-ish: a genuinely dry window (dawn before a wet
+  // afternoon, gap between fronts) must not inherit the day's later rain. Mirrors edge fn v24.
+  const hourWet = (pop >= 30) || (rainAmt > 0.1);
+  if (dayTotal != null && hourWet) {
     let persistFloor = 0;
     if (dayTotal >= 10) persistFloor = 3;
     else if (dayTotal >= 5) persistFloor = 2;
