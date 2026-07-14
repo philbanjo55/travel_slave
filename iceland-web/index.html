@@ -288,6 +288,62 @@ body::before {
   transform: translateY(-0.05em);
 }
 
+/* ── WEATHER ── */
+.wx {
+  margin: 0.6rem 0 0.2rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.02);
+  font-family: var(--mono, monospace);
+}
+.wx-day {
+  margin: 0.9rem 0 0;
+  display: inline-block;
+}
+.wx-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+}
+.wx-detail, .wx-sun-row {
+  margin-top: 0.35rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft, #9aa3af);
+}
+.wx-badge {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.wx-preview { background: rgba(180,150,90,0.18); color: #d8b877; border: 1px solid rgba(180,150,90,0.35); }
+.wx-live    { background: rgba(90,170,120,0.18); color: #7fd6a0; border: 1px solid rgba(90,170,120,0.4); }
+.wx-temp { font-weight: 600; color: var(--ink, #e8e6e0); }
+.wx-stars { color: #e0c060; letter-spacing: 0.05em; }
+.wx-score-label { font-size: 0.68rem; color: var(--ink-soft, #9aa3af); }
+.wx-tag {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+}
+.wx-golden { background: rgba(224,192,96,0.16); color: #e0c060; }
+.wx-dark   { background: rgba(120,130,160,0.16); color: #97a0bf; }
+.wx-sun { color: var(--ink-soft, #9aa3af); }
+.wx-day-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft, #9aa3af);
+}
+
 /* ========== STOPS ========== */
 .stops {
   max-width: 720px;
@@ -593,7 +649,7 @@ const HEADERS = {
 
 async function fetchTrip() {
   // Single embedded query: trip → days → stops → stop_photos
-  const url = `${SUPABASE_URL}/rest/v1/trips?id=eq.${TRIP_ID}&select=*,days(*,stops(*,stop_photos(id,storage_url,caption,position,photo_type)))`;
+  const url = `${SUPABASE_URL}/rest/v1/trips?id=eq.${TRIP_ID}&select=*,days(*,stops(*,stop_photos(id,storage_url,caption,position,photo_type),weather_forecasts(score_stars,score_label,score_reason,temperature_c,cloud_cover_pct,precip_probability_pct,wind_gusts_kmh,fog_risk,is_dark,is_golden_hour,sunrise,sunset,raw)))`;
   const res = await fetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
   const [trip] = await res.json();
@@ -679,6 +735,90 @@ function dayRouteLink(day) {
   return url;
 }
 
+// ── WEATHER ─────────────────────────────────────────────
+// Each stop may carry a weather_forecasts row (embedded as an array of 0..1).
+function stopWeather(stop) {
+  const w = Array.isArray(stop.weather_forecasts) ? stop.weather_forecasts[0] : null;
+  return w || null;
+}
+function isLiveForecast(w) {
+  // date_mode 'trip-date' = real forecast for the actual trip day; 'preview' = July stand-in
+  const mode = w && w.raw && w.raw.provenance ? w.raw.provenance.date_mode : null;
+  return mode === 'trip-date';
+}
+function starString(n) {
+  if (n == null) return '';
+  const full = '★'.repeat(n);
+  const empty = '☆'.repeat(Math.max(0, 4 - n));
+  return full + empty;
+}
+function clockFromISO(iso) {
+  if (!iso) return null;
+  const m = String(iso).match(/T(\d{2}):(\d{2})/);
+  if (!m) return null;
+  let h = parseInt(m[1], 10); const min = m[2];
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12; if (h === 0) h = 12;
+  return `${h}:${min} ${ap}`;
+}
+function renderStopWeather(stop) {
+  const w = stopWeather(stop);
+  if (!w) return '';
+  const live = isLiveForecast(w);
+  const badge = live
+    ? '<span class="wx-badge wx-live">Live</span>'
+    : '<span class="wx-badge wx-preview">Preview</span>';
+  const temp = w.temperature_c != null ? `${Math.round(w.temperature_c)}°C` : '';
+  const bits = [];
+  if (w.cloud_cover_pct != null) bits.push(`${w.cloud_cover_pct}% cloud`);
+  if (w.precip_probability_pct != null) bits.push(`${w.precip_probability_pct}% rain`);
+  if (w.wind_gusts_kmh != null) bits.push(`${Math.round(w.wind_gusts_kmh)} km/h gust`);
+  if (w.fog_risk && w.fog_risk !== 'none') bits.push(`fog ${w.fog_risk}`);
+  // Star rating only where the stop was actually scored (shoot stops, not logistics)
+  const hasScore = w.score_stars != null;
+  const stars = hasScore
+    ? `<span class="wx-stars" title="${escape(w.score_reason || '')}">${starString(w.score_stars)}</span>
+       <span class="wx-score-label">${escape(w.score_label || '')}${w.score_reason ? ' · ' + escape(w.score_reason) : ''}</span>`
+    : '';
+  const golden = w.is_golden_hour ? '<span class="wx-tag wx-golden">Golden hour</span>' : '';
+  const dark = w.is_dark ? '<span class="wx-tag wx-dark">After dark</span>' : '';
+  const sun = (w.sunrise || w.sunset)
+    ? `<span class="wx-sun">↑ ${clockFromISO(w.sunrise) || '—'} · ↓ ${clockFromISO(w.sunset) || '—'}</span>`
+    : '';
+  return `
+    <div class="wx">
+      <div class="wx-top">${badge}${temp ? `<span class="wx-temp">${temp}</span>` : ''}${stars}${golden}${dark}</div>
+      ${bits.length ? `<div class="wx-detail">${bits.join(' · ')}</div>` : ''}
+      ${sun ? `<div class="wx-sun-row">${sun}</div>` : ''}
+    </div>`;
+}
+function renderDayWeather(day) {
+  const ws = (day.stops || []).map(stopWeather).filter(Boolean);
+  if (!ws.length) return '';
+  const anyLive = ws.some(isLiveForecast);
+  const scored = ws.filter(w => w.score_stars != null);
+  const avgStars = scored.length
+    ? Math.round(scored.reduce((a, w) => a + w.score_stars, 0) / scored.length)
+    : null;
+  const maxRain = Math.max(...ws.map(w => w.precip_probability_pct ?? 0));
+  const maxGust = Math.max(...ws.map(w => w.wind_gusts_kmh ?? 0));
+  const temps = ws.map(w => w.temperature_c).filter(t => t != null).map(Number);
+  const tRange = temps.length ? `${Math.round(Math.min(...temps))}–${Math.round(Math.max(...temps))}°C` : '';
+  const badge = anyLive
+    ? '<span class="wx-badge wx-live">Live</span>'
+    : '<span class="wx-badge wx-preview">Preview</span>';
+  const starBlock = avgStars != null ? `<span class="wx-stars">${starString(avgStars)}</span>` : '';
+  const parts = [];
+  if (tRange) parts.push(tRange);
+  parts.push(`${maxRain}% rain`);
+  parts.push(`gusts ${Math.round(maxGust)} km/h`);
+  return `
+    <div class="wx wx-day">
+      <div class="wx-top">${badge}${starBlock}<span class="wx-day-label">Day weather</span></div>
+      <div class="wx-detail">${parts.join(' · ')}</div>
+    </div>`;
+}
+
 function renderPhotos(stop) {
   const photos = Array.isArray(stop.stop_photos) ? stop.stop_photos.filter(p => p && p.storage_url) : [];
   if (!photos.length) return '';
@@ -718,6 +858,8 @@ function renderStop(stop, idx) {
 
   const info = stop.info ? `<div class="stop-info">${escape(stop.info)}</div>` : '';
 
+  const weather = renderStopWeather(stop);
+
   const link = mapsLink(stop);
   const linkBlock = link ? `<a class="stop-link" href="${link}" target="_blank" rel="noopener">Open in Maps</a>` : '';
 
@@ -729,6 +871,7 @@ function renderStop(stop, idx) {
       <div class="stop-body">
         <div class="stop-name ${warning ? 'warn' : ''}">${emoji}<span class="stop-name-text">${name}</span>${warnBadge}</div>
         ${meta}
+        ${weather}
         ${info}
         ${photos}
         ${linkBlock}
@@ -751,6 +894,7 @@ function renderDay(day) {
         <h2 class="day-title">${escape(day.title || '')}</h2>
         <p class="day-subtitle">${escape(day.subtitle || '')}</p>
         ${(() => { const r = dayRouteLink(day); return r ? `<a class="day-route-btn" href="${r}" target="_blank" rel="noopener"><span class="route-icon">▶</span> View entire day's route</a>` : ''; })()}
+        ${renderDayWeather(day)}
       </header>
       <div class="stops">${stopsHtml}</div>
     </section>`;
