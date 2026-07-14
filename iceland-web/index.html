@@ -746,6 +746,8 @@ function isLiveForecast(w) {
   const mode = w && w.raw && w.raw.provenance ? w.raw.provenance.date_mode : null;
   return mode === 'trip-date';
 }
+function cToF(c) { return c == null ? null : Math.round(c * 9 / 5 + 32); }
+function kmhToMph(k) { return k == null ? null : Math.round(k * 0.621371); }
 function starString(n) {
   if (n == null) return '';
   const full = '★'.repeat(n);
@@ -768,11 +770,11 @@ function renderStopWeather(stop) {
   const badge = live
     ? '<span class="wx-badge wx-live">Live</span>'
     : '<span class="wx-badge wx-preview">Preview</span>';
-  const temp = w.temperature_c != null ? `${Math.round(w.temperature_c)}°C` : '';
+  const temp = w.temperature_c != null ? `${cToF(w.temperature_c)}°F` : '';
   const bits = [];
   if (w.cloud_cover_pct != null) bits.push(`${w.cloud_cover_pct}% cloud`);
   if (w.precip_probability_pct != null) bits.push(`${w.precip_probability_pct}% rain`);
-  if (w.wind_gusts_kmh != null) bits.push(`${Math.round(w.wind_gusts_kmh)} km/h gust`);
+  if (w.wind_gusts_kmh != null) bits.push(`${kmhToMph(w.wind_gusts_kmh)} mph gust`);
   if (w.fog_risk && w.fog_risk !== 'none') bits.push(`fog ${w.fog_risk}`);
   // Star rating only where the stop was actually scored (shoot stops, not logistics)
   const hasScore = w.score_stars != null;
@@ -803,7 +805,7 @@ function renderDayWeather(day) {
   const maxRain = Math.max(...ws.map(w => w.precip_probability_pct ?? 0));
   const maxGust = Math.max(...ws.map(w => w.wind_gusts_kmh ?? 0));
   const temps = ws.map(w => w.temperature_c).filter(t => t != null).map(Number);
-  const tRange = temps.length ? `${Math.round(Math.min(...temps))}–${Math.round(Math.max(...temps))}°C` : '';
+  const tRange = temps.length ? `${cToF(Math.min(...temps))}–${cToF(Math.max(...temps))}°F` : '';
   const badge = anyLive
     ? '<span class="wx-badge wx-live">Live</span>'
     : '<span class="wx-badge wx-preview">Preview</span>';
@@ -811,7 +813,7 @@ function renderDayWeather(day) {
   const parts = [];
   if (tRange) parts.push(tRange);
   parts.push(`${maxRain}% rain`);
-  parts.push(`gusts ${Math.round(maxGust)} km/h`);
+  parts.push(`gusts ${kmhToMph(maxGust)} mph`);
   return `
     <div class="wx wx-day">
       <div class="wx-top">${badge}${starBlock}<span class="wx-day-label">Day weather</span></div>
