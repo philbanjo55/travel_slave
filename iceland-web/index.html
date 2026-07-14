@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1814">
+<title>Iceland 2026 · Philm+Frame</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=Hanken+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f4ede1;
+  --bg-soft: #ece4d4;
+  --paper: #fffaf0;
+  --ink: #1a1814;
+  --ink-soft: #4a443c;
+  --ink-mute: #8a8378;
+  --rule: #d4ccbb;
+  --rule-soft: #e2dac9;
+  --accent: #6b7a8f;
+  --accent-deep: #3d4a5c;
+  --warn: #a17a3d;
+  --warn-bg: #efe5cf;
+  --serif: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+  --sans: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--ink);
+  font-weight: 400;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Subtle paper grain */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.09 0 0 0 0 0.07 0 0 0 0.06 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0.6;
+  mix-blend-mode: multiply;
+}
+
+/* ========== HERO ========== */
+.hero {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 5vh 6vw 10vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--rule);
+  position: relative;
+}
+
+.hero-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--ink-mute);
+  font-weight: 500;
+}
+.hero-meta .brand { color: var(--ink); }
+
+.hero-title {
+  font-family: var(--serif);
+  font-size: clamp(4rem, 22vw, 16rem);
+  font-weight: 300;
+  line-height: 0.85;
+  letter-spacing: -0.04em;
+  font-variation-settings: 'opsz' 144, 'SOFT' 30;
+  margin: 8vh 0 4vh;
+  font-style: italic;
+}
+.hero-title .year {
+  font-style: normal;
+  font-weight: 200;
+  display: block;
+  font-size: 0.55em;
+  letter-spacing: 0.04em;
+  margin-top: -0.1em;
+  color: var(--accent);
+}
+
+.hero-subtitle {
+  font-family: var(--serif);
+  font-size: clamp(1.05rem, 2.2vw, 1.4rem);
+  font-weight: 400;
+  font-style: italic;
+  color: var(--ink-soft);
+  max-width: 32ch;
+  line-height: 1.4;
+  margin-bottom: auto;
+}
+
+.hero-foot {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  margin-top: 4vh;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
+}
+
+.hero-foot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1.5rem 2rem;
+}
+
+.foot-block .label {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--ink-mute);
+  margin-bottom: 0.4rem;
+  display: block;
+}
+.foot-block .value {
+  font-family: var(--serif);
+  font-size: 1.1rem;
+  font-weight: 400;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.foot-block .value.serif-italic { font-style: italic; }
+
+.scroll-hint {
+  position: absolute;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  color: var(--ink-mute);
+  animation: bob 2.4s ease-in-out infinite;
+}
+@keyframes bob {
+  0%, 100% { transform: translateX(-50%) translateY(0); opacity: 0.7; }
+  50% { transform: translateX(-50%) translateY(4px); opacity: 1; }
+}
+
+/* ========== STICKY NAV ========== */
+.day-nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(244, 237, 225, 0.92);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border-bottom: 1px solid var(--rule);
+  padding: 0.7rem 0;
+}
+
+.day-nav-inner {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 0 6vw;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.day-nav-inner::-webkit-scrollbar { display: none; }
+
+.day-pill {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 0.55rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-soft);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: all 0.18s ease;
+  cursor: pointer;
+}
+.day-pill:hover, .day-pill.active {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.day-pill .num { color: var(--accent); margin-right: 0.35em; }
+.day-pill:hover .num, .day-pill.active .num { color: var(--bg-soft); }
+
+/* ========== DAY SECTION ========== */
+.day {
+  padding: 6rem 6vw 4rem;
+  border-bottom: 1px solid var(--rule);
+  position: relative;
+}
+.day:last-of-type { border-bottom: none; }
+
+.day-header {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1.5rem 2rem;
+  margin-bottom: 3rem;
+  align-items: end;
+}
+
+.day-numeral {
+  font-family: var(--serif);
+  font-size: clamp(8rem, 28vw, 22rem);
+  font-weight: 200;
+  line-height: 0.78;
+  letter-spacing: -0.05em;
+  color: var(--ink);
+  font-variation-settings: 'opsz' 144, 'SOFT' 50;
+  font-style: italic;
+  grid-row: span 3;
+}
+
+.day-eyebrow {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--accent);
+  font-weight: 500;
+}
+.day-title {
+  font-family: var(--serif);
+  font-size: clamp(1.8rem, 5.5vw, 2.8rem);
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.day-subtitle {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: clamp(0.95rem, 2vw, 1.1rem);
+  color: var(--ink-soft);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/* ========== STOPS ========== */
+.stops {
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.stop {
+  display: grid;
+  grid-template-columns: minmax(80px, 90px) 1fr;
+  gap: 1rem 1.5rem;
+  padding: 1.5rem 0;
+  border-top: 1px solid var(--rule-soft);
+  align-items: start;
+}
+.stop:first-child { border-top: none; padding-top: 0; }
+
+.stop-time {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  padding-top: 0.15rem;
+}
+
+.stop-body { min-width: 0; }
+
+.stop-name {
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--ink);
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+.stop-emoji {
+  font-size: 1rem;
+  flex-shrink: 0;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+}
+.stop-name.warn .stop-name-text {
+  color: var(--ink);
+}
+.warn-badge {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  background: var(--warn-bg);
+  color: var(--warn);
+  padding: 0.2em 0.55em;
+  border-radius: 3px;
+  vertical-align: middle;
+  font-weight: 600;
+  margin-left: 0.3em;
+  position: relative;
+  top: -0.15em;
+}
+
+.stop-meta {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-mute);
+  margin-bottom: 0.7rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+}
+.stop-meta .sep { color: var(--rule); }
+
+.stop-info {
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+}
+.stop-info strong, .stop-info b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ========== PHOTO STRIP ========== */
+.photo-strip {
+  margin-top: 1rem;
+  margin-left: -6vw;
+  margin-right: -6vw;
+  padding-left: 6vw;
+  padding-right: 6vw;
+}
+.photo-strip-label {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--ink-mute);
+  margin-bottom: 0.6rem;
+  font-weight: 500;
+}
+.photo-strip-track {
+  display: flex;
+  gap: 0.7rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-bottom: 0.3rem;
+}
+.photo-strip-track::-webkit-scrollbar { display: none; }
+.photo {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  margin: 0;
+  width: min(72vw, 280px);
+}
+.photo a {
+  display: block;
+  background: var(--paper);
+  padding: 6px;
+  border: 1px solid var(--rule);
+  box-shadow: 0 1px 2px rgba(26,24,20,0.04);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.photo a:hover, .photo a:focus {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(26,24,20,0.08);
+}
+.photo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--bg-soft);
+}
+.photo-cap {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  margin-top: 0.45rem;
+  line-height: 1.35;
+}
+
+@media (min-width: 720px) {
+  .photo-strip { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; }
+  .photo { width: 240px; }
+}
+
+.drive-marker {
+  display: grid;
+  grid-template-columns: minmax(80px, 90px) 1fr;
+  gap: 1rem 1.5rem;
+  align-items: center;
+  padding: 0.6rem 0;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--ink-mute);
+}
+.drive-marker .dots {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+}
+.drive-marker .dots span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--rule);
+}
+.drive-marker .label::before {
+  content: '↓';
+  margin-right: 0.5em;
+  color: var(--accent);
+  font-size: 0.85rem;
+  display: inline-block;
+  transform: translateY(0.1em);
+}
+
+.stop-link {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 1px;
+  margin-top: 0.7rem;
+  display: inline-block;
+  transition: color 0.15s ease;
+}
+.stop-link:hover { color: var(--accent-deep); }
+.stop-link::after {
+  content: '↗';
+  margin-left: 0.3em;
+  display: inline-block;
+}
+
+/* ========== FOOTER ========== */
+.foot {
+  padding: 4rem 6vw 3rem;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--ink-mute);
+  border-top: 1px solid var(--rule);
+}
+.foot .updated { margin-top: 0.5rem; opacity: 0.7; }
+
+/* ========== STATES ========== */
+.loading, .error {
+  min-height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 4rem 6vw;
+  flex-direction: column;
+  gap: 1rem;
+}
+.loading-text {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  color: var(--ink-mute);
+}
+.error-title {
+  font-family: var(--serif);
+  font-size: 1.5rem;
+  font-style: italic;
+  color: var(--warn);
+}
+
+/* ========== RESPONSIVE ========== */
+@media (min-width: 720px) {
+  .hero { padding: 6vh 8vw; }
+  .day { padding: 8rem 8vw 5rem; }
+  .stops { padding-left: 0; }
+  .day-header {
+    grid-template-columns: auto 1fr;
+    align-items: end;
+  }
+}
+
+@media (min-width: 1024px) {
+  .day-header {
+    margin-bottom: 4rem;
+  }
+  .stop {
+    grid-template-columns: 110px 1fr;
+  }
+  .drive-marker {
+    grid-template-columns: 110px 1fr;
+  }
+}
+
+/* Reveal animation on load */
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.day { animation: reveal 0.6s ease-out backwards; }
+.day:nth-child(1) { animation-delay: 0.05s; }
+.day:nth-child(2) { animation-delay: 0.1s; }
+.day:nth-child(3) { animation-delay: 0.15s; }
+
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="loading">
+    <div class="loading-text">Loading the trip…</div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oc2hyemx2dnh5b3Zjam1kYWpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTU5MzQsImV4cCI6MjA5MDU3MTkzNH0.9pXc7sekND4D5Bhf7tDbltzzkAW51-vKvcryYfK_ya8';
+const TRIP_ID = 'a7ed8985-c440-499a-93d3-db574925ebac';
+
+const HEADERS = {
+  apikey: SUPABASE_ANON_KEY,
+  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+};
+
+async function fetchTrip() {
+  // Single embedded query: trip → days → stops → stop_photos
+  const url = `${SUPABASE_URL}/rest/v1/trips?id=eq.${TRIP_ID}&select=*,days(*,stops(*,stop_photos(id,storage_url,caption,position,photo_type)))`;
+  const res = await fetch(url, { headers: HEADERS });
+  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+  const [trip] = await res.json();
+  if (!trip) throw new Error('Trip not found');
+  // Sort days and stops, and sort photos within each stop by position
+  trip.days.sort((a, b) => a.day_number - b.day_number);
+  trip.days.forEach(d => {
+    d.stops.sort((a, b) => a.position - b.position);
+    d.stops.forEach(s => {
+      if (Array.isArray(s.stop_photos)) {
+        s.stop_photos.sort((a, b) => (a.position || 0) - (b.position || 0));
+      }
+    });
+  });
+  return trip;
+}
+
+function escape(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatDuration(mins) {
+  if (mins == null) return null;
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h} hr` : `${h} hr ${m} min`;
+}
+
+function cleanName(name) {
+  // Remove the leading ⚠️ emoji from display since we use a badge for it
+  return name.replace(/^⚠️\s*/, '').trim();
+}
+
+function isWarning(stop) {
+  return stop.signal_status === 'warning' || /^⚠️/.test(stop.name || '');
+}
+
+function mapsLink(stop) {
+  if (stop.place_id) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(stop.name)}&query_place_id=${stop.place_id}`;
+  }
+  if (stop.lat != null && stop.lng != null) {
+    return `https://www.google.com/maps/search/?api=1&query=${stop.lat},${stop.lng}`;
+  }
+  return null;
+}
+
+function renderPhotos(stop) {
+  const photos = Array.isArray(stop.stop_photos) ? stop.stop_photos.filter(p => p && p.storage_url) : [];
+  if (!photos.length) return '';
+  const items = photos.map(p => {
+    const cap = p.caption ? `<figcaption class="photo-cap">${escape(p.caption)}</figcaption>` : '';
+    return `<figure class="photo">
+      <a href="${escape(p.storage_url)}" target="_blank" rel="noopener">
+        <img src="${escape(p.storage_url)}" alt="${escape(p.caption || '')}" loading="lazy" decoding="async">
+      </a>
+      ${cap}
+    </figure>`;
+  }).join('');
+  const label = `<div class="photo-strip-label">Reference ${photos.length === 1 ? 'photo' : 'photos'} · ${photos.length}</div>`;
+  return `<div class="photo-strip">${label}<div class="photo-strip-track">${items}</div></div>`;
+}
+
+function renderStop(stop, idx) {
+  const drive = stop.drive_override_minutes;
+  const driveBlock = (drive != null && drive > 0 && idx > 0)
+    ? `<div class="drive-marker">
+         <div class="dots"><span></span><span></span><span></span></div>
+         <div class="label">${formatDuration(drive)} drive</div>
+       </div>`
+    : '';
+
+  const time = stop.time_label ? escape(stop.time_label) : '—';
+  const emoji = stop.emoji ? `<span class="stop-emoji">${escape(stop.emoji)}</span>` : '';
+  const name = escape(cleanName(stop.name || ''));
+  const warning = isWarning(stop);
+  const warnBadge = warning ? `<span class="warn-badge">Unbooked</span>` : '';
+
+  const metaParts = [];
+  if (stop.duration_minutes != null) metaParts.push(`${formatDuration(stop.duration_minutes)} stop`);
+  const meta = metaParts.length
+    ? `<div class="stop-meta">${metaParts.map(p => `<span>${escape(p)}</span>`).join('<span class="sep">·</span>')}</div>`
+    : '';
+
+  const info = stop.info ? `<div class="stop-info">${escape(stop.info)}</div>` : '';
+
+  const link = mapsLink(stop);
+  const linkBlock = link ? `<a class="stop-link" href="${link}" target="_blank" rel="noopener">Open in Maps</a>` : '';
+
+  const photos = renderPhotos(stop);
+
+  return `${driveBlock}
+    <div class="stop">
+      <div class="stop-time">${time}</div>
+      <div class="stop-body">
+        <div class="stop-name ${warning ? 'warn' : ''}">${emoji}<span class="stop-name-text">${name}</span>${warnBadge}</div>
+        ${meta}
+        ${info}
+        ${photos}
+        ${linkBlock}
+      </div>
+    </div>`;
+}
+
+function renderDay(day) {
+  const stopsHtml = day.stops.map((s, i) => renderStop(s, i)).join('');
+  const dayDate = day.date ? new Date(day.date + 'T00:00:00') : null;
+  const dateStr = dayDate
+    ? dayDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+    : '';
+
+  return `
+    <section class="day" id="day-${day.day_number}">
+      <header class="day-header">
+        <div class="day-numeral">${String(day.day_number).padStart(2, '0')}</div>
+        <div class="day-eyebrow">${escape(dateStr || `Day ${day.day_number}`)}</div>
+        <h2 class="day-title">${escape(day.title || '')}</h2>
+        <p class="day-subtitle">${escape(day.subtitle || '')}</p>
+      </header>
+      <div class="stops">${stopsHtml}</div>
+    </section>`;
+}
+
+function renderHero(trip) {
+  const start = trip.start_date ? new Date(trip.start_date + 'T00:00:00') : null;
+  const end = trip.end_date ? new Date(trip.end_date + 'T00:00:00') : null;
+  const year = start ? start.getFullYear() : new Date().getFullYear();
+  const dateRange = start && end
+    ? `${start.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${end.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`
+    : '';
+  const dayCount = trip.days.length;
+  const stopCount = trip.days.reduce((acc, d) => acc + d.stops.length, 0);
+
+  // Apply trip-defined accent color if present
+  if (trip.accent_color) {
+    document.documentElement.style.setProperty('--accent', trip.accent_color);
+  }
+
+  // Parse the trip title — strip the year if present, since we display it separately
+  const tripTitle = (trip.title || 'Iceland').replace(/\s*\d{4}\s*$/, '').trim() || 'Iceland';
+
+  return `
+    <section class="hero">
+      <div class="hero-meta">
+        <span class="brand">Philm+Frame</span>
+        <span>${year}</span>
+      </div>
+      <h1 class="hero-title">${escape(tripTitle)}<span class="year">${year}</span></h1>
+      <p class="hero-subtitle">${escape(trip.subtitle || 'Ring Road · Large Format')}</p>
+      <div class="hero-foot">
+        <div class="hero-foot-grid">
+          <div class="foot-block">
+            <span class="label">Dates</span>
+            <span class="value serif-italic">${escape(dateRange)}</span>
+          </div>
+          <div class="foot-block">
+            <span class="label">Days</span>
+            <span class="value">${dayCount}</span>
+          </div>
+          <div class="foot-block">
+            <span class="label">Stops</span>
+            <span class="value">${stopCount}</span>
+          </div>
+          <div class="foot-block">
+            <span class="label">Travelers</span>
+            <span class="value serif-italic">Phil · Holly · Julia · Zack</span>
+          </div>
+        </div>
+      </div>
+      <div class="scroll-hint">Scroll · Day by Day</div>
+    </section>`;
+}
+
+function renderDayNav(trip) {
+  const pills = trip.days.map(d => {
+    const label = d.title || `Day ${d.day_number}`;
+    return `<a class="day-pill" href="#day-${d.day_number}" data-day="${d.day_number}"><span class="num">${String(d.day_number).padStart(2, '0')}</span>${escape(label)}</a>`;
+  }).join('');
+  return `<nav class="day-nav"><div class="day-nav-inner">${pills}</div></nav>`;
+}
+
+function renderFooter() {
+  return `
+    <footer class="foot">
+      <div>Iceland 2026 · Philm+Frame</div>
+      <div class="updated">Updated ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
+    </footer>`;
+}
+
+function setupNavObserver() {
+  const pills = document.querySelectorAll('.day-pill');
+  const days = document.querySelectorAll('.day');
+  if (!days.length) return;
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const id = entry.target.id;
+        const dayNum = id.replace('day-', '');
+        pills.forEach(p => p.classList.toggle('active', p.dataset.day === dayNum));
+        // Scroll the active pill into view in the nav
+        const active = document.querySelector('.day-pill.active');
+        if (active) {
+          active.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+      }
+    });
+  }, { rootMargin: '-30% 0px -55% 0px', threshold: 0 });
+
+  days.forEach(d => observer.observe(d));
+}
+
+async function init() {
+  const root = document.getElementById('app');
+  try {
+    const trip = await fetchTrip();
+    const html = renderHero(trip)
+      + renderDayNav(trip)
+      + trip.days.map(renderDay).join('')
+      + renderFooter();
+    root.innerHTML = html;
+    setupNavObserver();
+  } catch (err) {
+    console.error(err);
+    root.innerHTML = `
+      <div class="error">
+        <div class="error-title">Couldn't load the trip</div>
+        <div class="loading-text">${escape(err.message)}</div>
+        <div class="loading-text">Try refreshing.</div>
+      </div>`;
+  }
+}
+
+init();
+</script>
+
+</body>
+</html>
