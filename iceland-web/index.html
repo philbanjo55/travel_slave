@@ -262,6 +262,31 @@ body::before {
   font-weight: 400;
   line-height: 1.4;
 }
+.day-route-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-top: 0.9rem;
+  padding: 0.5rem 0.95rem;
+  font-family: var(--mono, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent, #6b7a8f);
+  text-decoration: none;
+  border: 1px solid var(--accent, #6b7a8f);
+  border-radius: 999px;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.day-route-btn:hover,
+.day-route-btn:active {
+  background: var(--accent, #6b7a8f);
+  color: var(--bg, #14161a);
+}
+.day-route-btn .route-icon {
+  font-size: 0.65em;
+  transform: translateY(-0.05em);
+}
 
 /* ========== STOPS ========== */
 .stops {
@@ -622,6 +647,38 @@ function mapsLink(stop) {
   return null;
 }
 
+// Build a Google Maps driving-directions URL that chains ALL of a day's
+// stops in order: origin -> waypoints -> destination. Opens the Maps app on
+// mobile. Uses lat,lng for reliability. Google's directions URL API supports
+// origin + destination + up to ~9 intermediate waypoints; days here stay under
+// that, but we cap waypoints defensively just in case.
+function dayRouteLink(day) {
+  const pts = (day.stops || [])
+    .slice()
+    .sort((a, b) => a.position - b.position)
+    .filter(s => s.lat != null && s.lng != null)
+    .map(s => `${s.lat},${s.lng}`);
+  if (pts.length < 2) return null; // need at least an origin + destination
+  const origin = pts[0];
+  const destination = pts[pts.length - 1];
+  let waypoints = pts.slice(1, -1);
+  if (waypoints.length > 9) {
+    // Keep first few + last few if a day ever exceeds the limit
+    waypoints = waypoints.slice(0, 9);
+  }
+  const params = new URLSearchParams({
+    api: '1',
+    origin,
+    destination,
+    travelmode: 'driving',
+  });
+  let url = `https://www.google.com/maps/dir/?${params.toString()}`;
+  if (waypoints.length) {
+    url += `&waypoints=${waypoints.map(encodeURIComponent).join('|')}`;
+  }
+  return url;
+}
+
 function renderPhotos(stop) {
   const photos = Array.isArray(stop.stop_photos) ? stop.stop_photos.filter(p => p && p.storage_url) : [];
   if (!photos.length) return '';
@@ -693,6 +750,7 @@ function renderDay(day) {
         <div class="day-eyebrow">${escape(dateStr || `Day ${day.day_number}`)}</div>
         <h2 class="day-title">${escape(day.title || '')}</h2>
         <p class="day-subtitle">${escape(day.subtitle || '')}</p>
+        ${(() => { const r = dayRouteLink(day); return r ? `<a class="day-route-btn" href="${r}" target="_blank" rel="noopener"><span class="route-icon">▶</span> View entire day's route</a>` : ''; })()}
       </header>
       <div class="stops">${stopsHtml}</div>
     </section>`;
@@ -760,7 +818,7 @@ function renderFooter() {
   return `
     <footer class="foot">
       <div>Iceland 2026 · Philm+Frame</div>
-      <div class="updated">Updated ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · build auto-1</div>
+      <div class="updated">Updated ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
     </footer>`;
 }
 
