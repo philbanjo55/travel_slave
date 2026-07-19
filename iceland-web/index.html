@@ -370,6 +370,7 @@ body::before {
   color: var(--ink);
   padding-top: 0.15rem;
 }
+.time-lock { font-size: 0.7em; opacity: 0.75; }
 
 .stop-body { min-width: 0; }
 
@@ -847,6 +848,7 @@ function renderStop(stop, idx) {
     : '';
 
   const time = stop.time_label ? escape(stop.time_label) : '—';
+  const lockIcon = stop.time_locked ? ' <span class="time-lock" title="Fixed time — booking / tide / flight">🔒</span>' : '';
   const emoji = stop.emoji ? `<span class="stop-emoji">${escape(stop.emoji)}</span>` : '';
   const name = escape(cleanName(stop.name || ''));
   const warning = isWarning(stop);
@@ -869,7 +871,7 @@ function renderStop(stop, idx) {
 
   return `${driveBlock}
     <div class="stop">
-      <div class="stop-time">${time}</div>
+      <div class="stop-time">${time}${lockIcon}</div>
       <div class="stop-body">
         <div class="stop-name ${warning ? 'warn' : ''}">${emoji}<span class="stop-name-text">${name}</span>${warnBadge}</div>
         ${meta}
