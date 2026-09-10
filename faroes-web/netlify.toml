@@ -1,0 +1,5 @@
+# Netlify config for the Faroe Islands 2027 web viewer.
+# Static single-file HTML that fetches live from Supabase — no build step.
+[build]
+  publish = "."
+  command = ""
