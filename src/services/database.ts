@@ -14,6 +14,19 @@ export async function cacheTrips(trips: any[]): Promise<void> {
   } catch {}
 }
 
+// The render contract in `display` already carries every model, the ensemble
+// distribution, the spread across centres and the run-to-run drift. `raw`
+// holds a second copy of all four, and the app reads none of them from there —
+// it reads `display` for those, and `raw` only for provenance, comparison,
+// score, sea, sunrise/sunset and the legacy per-source keys. On the Faroes
+// trip those four duplicates are 1.1 MB of a 2.7 MB write, so they are dropped
+// on the way to disk. Nothing in memory is touched.
+function slimCachedWeather(w: any): any {
+  if (!w || typeof w !== 'object' || !w.raw || typeof w.raw !== 'object') return w ?? null;
+  const { models, ensemble, consensus, convergence, ...keep } = w.raw;
+  return { ...w, raw: keep };
+}
+
 export async function cacheFullTrip(tripId: string, tripData: any): Promise<void> {
   try {
     // Cache photos separately — metadata only, no base64
@@ -29,11 +42,11 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<void
             position: p.position,
           }));
         }
-        return { ...stop, stop_photos: [] };
+        return { ...stop, stop_photos: [], weather: slimCachedWeather(stop.weather) };
       }),
     }));
 
-    // Cache main trip data (no photos — stays well under 6MB)
+    // Cache main trip data (no photos, no duplicated weather blobs)
     await AsyncStorage.setItem(
       `${TRIP_PREFIX}${tripId}`,
       JSON.stringify({ ...tripData, days: strippedDays, cachedAt: Date.now() })

@@ -88,12 +88,16 @@ export const useTripStore = create<TripState>((set, get) => ({
 
       // Fetch fresh trip WITH weather folded into each stop, then cache it all.
       const fresh = await fetchTripWithWeather(tripId);
-      await cacheFullTrip(tripId, fresh);
+      // Render first, persist second. The cached trip now carries every stop's
+      // weather, which is megabytes; awaiting that write before updating state
+      // meant a slow or failed write left the screen on the previous copy —
+      // silently, because cacheFullTrip swallows its own errors.
       set({
         currentTripData: fresh,
         currentTrip: fresh.trip,
         isSyncing: false,
       });
+      await cacheFullTrip(tripId, fresh);
 
       // Download all photos to device filesystem for offline use
       setTimeout(() => {
@@ -108,8 +112,8 @@ export const useTripStore = create<TripState>((set, get) => ({
     try {
       set({ isSyncing: true });
       const fresh = await fetchTripWithWeather(tripId);
+      set({ currentTripData: fresh, isSyncing: false });   // render before persisting
       await cacheFullTrip(tripId, fresh);
-      set({ currentTripData: fresh, isSyncing: false });
     } catch {
       set({ isSyncing: false });
     }
