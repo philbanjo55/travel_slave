@@ -91,4 +91,4 @@ begin
        and not exists (select 1 from model_grid_points g
                        where g.model = m.model and g.stop_id = s.id
                          and g.requested_lat = s.lat and g.requested_lng = s.lng));
-end $$;;
+end $$;

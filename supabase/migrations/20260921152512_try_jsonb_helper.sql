@@ -7,4 +7,4 @@ begin
   return t::jsonb;
 exception when others then
   return null;
-end $$;;
+end $$;

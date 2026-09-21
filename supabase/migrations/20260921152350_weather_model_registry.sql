@@ -59,4 +59,4 @@ values
   ('jma_seamless','JMA','JMA',55,'global',true,null,false,90,
    'Coarse, but a genuinely independent centre. Serves no gusts.'),
   ('cma_grapes_global','CMA','CMA GRAPES',15,'global',false,null,true,95,null)
-on conflict (model) do nothing;;
+on conflict (model) do nothing;

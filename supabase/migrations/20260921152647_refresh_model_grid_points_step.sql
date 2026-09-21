@@ -92,4 +92,4 @@ select cron.schedule(
   'model-grid-refresh',
   '*/5 * * * *',
   $$select public.refresh_model_grid_points_step();$$
-);;
+);

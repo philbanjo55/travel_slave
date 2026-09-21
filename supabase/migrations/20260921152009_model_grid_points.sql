@@ -49,4 +49,4 @@ create table if not exists public.model_grid_probe (
   req_id  bigint primary key,
   model   text not null,
   stop_id uuid not null
-);;
+);

@@ -94,4 +94,4 @@ begin
   -- Anything that errored stays queued; clear it so a later call retries.
   delete from model_grid_probe p using net._http_response r
   where r.id = p.req_id and r.status_code <> 200;
-end $$;;
+end $$;
