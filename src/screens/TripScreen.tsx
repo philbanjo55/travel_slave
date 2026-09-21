@@ -9,7 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import { supabase } from '../services/supabase';
 import { calculateDriveTimesForTrip, recalculateTimeLabels } from '../services/driveTimes';
-import { pullWeatherForTrip, WeatherRow, conditionIcon, scoreConditions, cToF } from '../services/weather';
+import { pullWeatherForTrip, WeatherRow, conditionIcon, readScore, cToF } from '../services/weather';
 import DaySummary from '../components/DaySummary';
 import DayWeatherOverview from '../components/DayWeatherOverview';
 import { colors, typography, spacing, radius } from '../theme';
@@ -261,12 +261,12 @@ export default function TripScreen() {
                 ) : null}
                 {(() => {
                   const w = dayWeather[item.id];
-                  // Guard w BEFORE scoring — scoreConditions reads w.is_dark and
+                  // Guard w BEFORE scoring — readScore reads w.is_dark and
                   // would crash on a stop that has no weather row yet (w undefined).
                   if (!w || w.temperature_c == null) return null;
-                  // Only rated shoot stops get a weather row. scoreConditions returns
+                  // Only rated shoot stops get a weather row. readScore returns
                   // null for logistics / non-shoot stops, so those show nothing.
-                  const sc = scoreConditions(item.shot_type, w);
+                  const sc = readScore(item.shot_type, w);
                   if (!sc) return null;
                   // Rating first, then conditions: rain %, rain amount, wind/gusts.
                   // All-monochrome (Ionicons), no temperature, kept compact.

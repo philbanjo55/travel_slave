@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import DaySummary from '../components/DaySummary';
 import DayWeatherSummary from '../components/DayWeatherSummary';
-import { WeatherRow, conditionIcon, scoreConditions, cToF } from '../services/weather';
+import { WeatherRow, conditionIcon, readScore, cToF } from '../services/weather';
 import { colors, typography, spacing, radius } from '../theme';
 
 const { height } = Dimensions.get('window');
@@ -177,7 +177,7 @@ export default function DayScreen() {
                   {(() => {
                     const w = (item.weather as WeatherRow) ?? weather[item.id];
                     if (!w || w.temperature_c == null) return null;
-                    const sc = scoreConditions(item.shot_type, w);
+                    const sc = readScore(item.shot_type, w);
                     // temp, stars, then conditions detail: rain %, rain amount, wind/gusts.
                     const pop = w.precip_probability_pct;
                     const rainAmt = (w.rain_mm ?? 0) + (w.showers_mm ?? 0);

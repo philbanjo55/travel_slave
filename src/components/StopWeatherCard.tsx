@@ -5,7 +5,7 @@ import { colors, typography, spacing, radius } from '../theme';
 import {
   WeatherRow, fetchLatestWeatherForStop,
   conditionsText, tempText, windText, windDir, visibilityText, clockFromISO, fogBadge,
-  conditionIcon, scoreConditions, forecastMode, forecastConfidence, shortDate, updatedAgoText,
+  conditionIcon, readScore, forecastMode, forecastConfidence, shortDate, updatedAgoText,
   buildSourceComparison, cToF, kmhToMph, rainCell, inchesText, kmToMiles,
   verifyStopWeather, VerifyResult, verificationStatus,
   allFields, fieldLabel, fieldValueText, SourceReading,
@@ -133,7 +133,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
   const feels = row.apparent_temperature_c;
   const showFeels = feels != null && Math.abs((feels ?? 0) - (row.temperature_c ?? 0)) >= 2;
   const dir = windDir(row.wind_direction_deg);
-  const score = scoreConditions(shotType ?? null, row);
+  const score = readScore(shotType ?? null, row);
   const mode = forecastMode(row, dayDate);
   const conf = forecastConfidence(dayDate);
   const confColor = conf?.level === 'HIGH' ? colors.signalOk

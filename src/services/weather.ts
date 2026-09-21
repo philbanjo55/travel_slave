@@ -35,6 +35,10 @@ export interface WeatherRow {
   // Backend render contract, added by the latest_weather_per_stop view.
   // Absent on rows cached before it existed — see buildSourceComparison.
   display?: any;
+  // Condition score, computed by weather_score() in the same view against the
+  // stop's current shot_type. Absent on rows cached before it existed —
+  // see readScore, which falls back to the stored score_* columns.
+  score?: any;
   stop_id: string;
   day_id: string;
   trip_id: string;
@@ -90,7 +94,7 @@ export interface PullWeatherResult {
 // Weather is small JSON (a few KB/day), so it lives in AsyncStorage — the same
 // mechanism services/database.ts uses for trips + photo metadata. Rows are
 // cached VERBATIM (including `raw` provenance and the score_* columns) so
-// scoreConditions, the verification badges, and the day overview all keep
+// readScore, the verification badges, and the day overview all keep
 // working from cached rows without change.
 // ─────────────────────────────────────────
 interface CachedDay { cachedAt: number; byStop: Record<string, WeatherRow>; }
@@ -618,97 +622,38 @@ export interface ConditionScore {
 }
 
 const LABELS = ['Poor', 'Poor', 'Fair', 'Good', 'Excellent'];
-const clamp = (n: number) => Math.max(0, Math.min(4, n));
 
-export function scoreConditions(shotType: string | null, r: WeatherRow): ConditionScore | null {
+// The maths now lives in ONE place: weather_score() in the database, exposed
+// by latest_weather_per_stop as `score`. Editing that function changes every
+// stop immediately — no edge deploy, no app release, no re-pull — and applies
+// to rows already stored.
+//
+// The app used to carry its own copy so the stars could follow a stop's
+// CURRENT shot_type rather than whatever it was at pull time. The view keeps
+// that property by joining stops live, so the copy is gone.
+//
+// Two sources, in order:
+//   1. row.score — computed by the view against the stop's current type.
+//   2. the score_* columns the edge function wrote at pull time, for rows
+//      cached before the view exposed `score`. Those reflect the shot_type as
+//      it was at that pull, so they can lag a type change until the next sync.
+export function readScore(shotType: string | null, r: WeatherRow): ConditionScore | null {
   if (!shotType || shotType === 'logistics') return null;
-  if (r.is_dark) return { stars: 0, label: 'Poor', reason: 'After dark' };
 
-  // SCORING: wind + rain (probability AND amount + day persistence) + fog visibility ONLY.
-  // Cloud/light deliberately NOT scored — Phil shoots B&W large-format and works in flat
-  // overcast by design. What matters: hold the camera (wind), keep water off the film (rain),
-  // see the subject (fog). Mirrors the weather-pull edge function exactly.
-  const gust = r.wind_gusts_kmh ?? r.wind_speed_kmh ?? 0;
-  const pop = r.precip_probability_pct ?? 0;
-  const rainAmt = (r.rain_mm ?? 0) + (r.showers_mm ?? 0);
-  const snow = r.snowfall_cm ?? 0;
-  const code = r.weather_code;
-  const vis = r.visibility_m;
-  const fog = r.fog_risk;
-  const longDistance = shotType === 'mountain' || shotType === 'seascape';
-  const closeSubject = shotType === 'waterfall' || shotType === 'canyon' || shotType === 'urban';
-
-  // RAIN — amount-led (mm dominates), probability secondary.
-  // A weather CODE only counts toward a given penalty tier when measured precip (or, for the
-  // milder tiers, probability) actually backs it up. Open-Meteo occasionally returns a spurious
-  // convective code (e.g. 95 thunderstorm) on a dry hour — near-0 mm, low probability, and
-  // contradicted by the other models. Without this guard a phantom code-95 forces "Heavy rain"
-  // on a clear day. Higher tiers demand more precip evidence: a real thunderstorm/heavy-rain
-  // hour is not 0.2 mm. Amount alone can still drive any tier (mm is ground truth).
-  const heavyCode = (rainAmt > 1.0 || pop >= 55);   // backs codes 63/65/73/75/81/82/95+
-  const lightCode = (rainAmt > 0.1 || pop >= 35);   // backs codes 51-57/61/71/80
-  let rainPen = 0;
-  if (rainAmt > 4 || ((code === 65 || code === 82 || code === 75 || (code != null && code >= 95)) && heavyCode)) rainPen = 4;
-  else if (rainAmt > 2 || ((code === 63 || code === 81 || code === 73) && heavyCode)) rainPen = 3;
-  else if (rainAmt > 0.7 || (code === 61 && lightCode)) rainPen = 2;
-  else if (rainAmt > 0.1 || (((code != null && code >= 51 && code <= 57) || code === 80 || code === 71) && lightCode) || snow > 0) rainPen = 1;
-  if (rainPen <= 1 && pop >= 60) rainPen += 1;
-  else if (rainPen === 0 && pop >= 40) rainPen += 0.5;
-  if (shotType === 'seascape' && rainPen > 0 && rainAmt <= 0.7) rainPen = Math.max(0, rainPen - 0.5);
-
-  // RAIN PERSISTENCE: judge the whole day, not just the matched hour. Daily TOTAL mm
-  // separates a soaking day from trace drizzle. Stored by the edge function under raw.
-  const dayTotal = (r as any).precip_total_mm ?? r.raw?.precip_total_mm ?? null;
-  // GATED on the matched HOUR being wet-ish: a genuinely dry window (dawn before a wet
-  // afternoon, gap between fronts) must not inherit the day's later rain. Mirrors edge fn v24.
-  const hourWet = (pop >= 30) || (rainAmt > 0.1);
-  if (dayTotal != null && hourWet) {
-    let persistFloor = 0;
-    if (dayTotal >= 10) persistFloor = 3;
-    else if (dayTotal >= 5) persistFloor = 2;
-    else if (dayTotal >= 2.5) persistFloor = 1;
-    if (shotType === 'seascape') persistFloor = Math.max(0, persistFloor - 0.5);
-    rainPen = Math.max(rainPen, persistFloor);
+  const live = (r as any)?.score;
+  if (live && typeof live === 'object' && live.stars != null) {
+    return { stars: live.stars, label: live.label, reason: live.reason };
   }
 
-  // FOG / VISIBILITY — kept: whether the subject is even visible.
-  let visBase = 0;
-  if (fog === 'likely' || (vis != null && vis < 1000)) visBase = 2;
-  else if (fog === 'possible' || (vis != null && vis < 4000)) visBase = 1;
-  else if (vis != null && vis < 8000) visBase = 0.5;
-  let obscure = 0;
-  if (shotType === 'mountain') {
-    const lowCloud = r.cloud_cover_low_pct ?? r.cloud_cover_pct ?? 0;
-    if (lowCloud >= 90) obscure = 2;
-    else if (lowCloud >= 70) obscure = 1;
+  const stars = (r as any)?.score_stars;
+  if (stars != null) {
+    return {
+      stars,
+      label: (r as any).score_label ?? LABELS[stars] ?? '',
+      reason: (r as any).score_reason ?? '',
+    };
   }
-  const visPen = (longDistance ? visBase * 1.5 : closeSubject ? Math.min(visBase, 1) : visBase) + obscure;
-
-  // WIND — by subject sensitivity (gusts km/h).
-  let windPen = 0;
-  if (shotType === 'reflection') windPen = gust < 10 ? 0 : gust < 16 ? 1 : gust < 26 ? 2.5 : 4;
-  else if (shotType === 'seascape') windPen = gust > 70 ? 3 : gust > 50 ? 2 : gust > 36 ? 1 : gust > 26 ? 0.5 : 0;
-  else if (shotType === 'waterfall' || shotType === 'canyon') windPen = gust > 60 ? 3 : gust > 45 ? 2 : gust > 30 ? 1 : gust > 20 ? 0.5 : 0;
-  else windPen = gust > 80 ? 2 : gust > 60 ? 1 : gust > 45 ? 0.5 : 0;
-
-  const s = clamp(Math.round(4 - rainPen - visPen - windPen));
-
-  const factors: [number, string][] = [
-    [rainPen, rainPen >= 3 ? 'Heavy rain' : rainPen >= 2 ? 'Rain likely' : 'Some rain risk'],
-    [visPen, fog === 'likely' ? 'Fog — poor visibility'
-      : (shotType === 'mountain' && obscure > 0) ? 'Summit likely in cloud'
-      : 'Haze / low visibility'],
-    [windPen,
-      shotType === 'reflection' ? 'Wind breaking the reflection'
-      : shotType === 'seascape' ? 'Big swell — hard to hold steady'
-      : 'Windy — motion in long exposures'],
-  ];
-  const top = factors.reduce((m, f) => (f[0] > m[0] ? f : m), [0, ''] as [number, string]);
-  const reason = (top[0] >= 1 || (top[0] >= 0.5 && s < 4))
-    ? top[1]
-    : (s >= 4 ? 'Dry, calm, clear — go' : 'Workable — dry and open');
-
-  return { stars: s, label: LABELS[s], reason };
+  return null;
 }
 // ─────────────────────────────────────────
 // DAY-LEVEL OVERVIEW
