@@ -347,10 +347,24 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
               <Ionicons name="eye-outline" size={11} color={colors.signalOk} />
               <Text style={styles.truthText} numberOfLines={2}>
                 {cmp.groundTruth.station} observed
-                {cmp.groundTruth.ceilingFt != null ? ` · ceiling ${cmp.groundTruth.ceilingFt} ft` : ''}
-                {cmp.groundTruth.visibilityM != null ? ` · vis ${Math.round(cmp.groundTruth.visibilityM / 1000)} km` : ''}
+                {cmp.groundTruth.observedAt ? ` ${clockFromISO(cmp.groundTruth.observedAt)}` : ''}
                 {cmp.groundTruth.flightCategory ? ` · ${cmp.groundTruth.flightCategory}` : ''}
               </Text>
+            </View>
+          ) : null}
+
+          {/* The rest of the observation, rendered the same way a model's
+              fields are. Observed temperature next to observed dew point is
+              the one thing eighteen forecasts cannot give you: when they meet,
+              the airfield is already in fog. */}
+          {cmp.groundTruth ? (
+            <View style={styles.cmpDetailGrid}>
+              {allFields(cmp.groundTruth.values, { skipNonValues: true }).map((f: any) => (
+                <View key={f.key} style={styles.cmpDetailItem}>
+                  <Text style={styles.cmpDetailLabel} numberOfLines={1}>{f.label}</Text>
+                  <Text style={styles.cmpDetailValue} numberOfLines={1}>{f.text}</Text>
+                </View>
+              ))}
             </View>
           ) : null}
 

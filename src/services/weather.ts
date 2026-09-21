@@ -429,10 +429,27 @@ const FIELD_LABELS: Record<string, string> = {
   swell_wave_period_s: 'Swell period',
   wind_wave_height_m: 'Wind wave',
   sea_surface_temp_c: 'Sea temp',
+  // Observed at the airfield, not forecast. Units differ from the models on
+  // purpose — a METAR reports wind in knots and ceiling in feet, and it is
+  // converted on display rather than rewritten at ingest.
+  ceiling_ft: 'Ceiling',
+  wind_speed_kt: 'Wind',
+  wind_gust_kt: 'Gusts',
+  wind_dir_deg: 'Wind from',
+  cover: 'Sky cover',
+  wx_string: 'Present weather',
+  flight_category: 'Flight category',
+  station: 'Station',
 };
 
 // Fields already shown as their own column in the comparison table. Hidden
 // from the expanded detail so it does not just repeat the row above it.
+// Ground-truth keys that are either shown in the summary line above the
+// detail, or are not a measurement at all.
+export const FIELD_NOT_A_VALUE = new Set([
+  'station', 'observed_at', 'raw_metar', 'raw_taf',
+]);
+
 export const FIELD_IN_TABLE = new Set([
   'cloud_cover_pct', 'cloud_cover_low_pct', 'cloud_base_m', 'visibility_m',
   'precip_mm', 'precip_probability_pct', 'wind_gusts_kmh', 'wind_speed_kmh',
@@ -460,6 +477,10 @@ export function fieldValueText(key: string, v: any): string | null {
   if (key === 'uv_index') return v.toFixed(1);
   if (key.endsWith('_pct')) return `${Math.round(v)}%`;
   if (key.endsWith('_kmh')) return `${Math.round(kmhToMph(v))} mph`;
+  // The METAR's own units. Knots to mph so observed wind can be read against
+  // the models' forecast wind without doing arithmetic on a clifftop.
+  if (key.endsWith('_kt')) return `${Math.round(v * 1.15078)} mph`;
+  if (key.endsWith('_ft')) return `${Math.round(v).toLocaleString()} ft`;
   if (key.endsWith('_deg')) return `${windDir(v)} (${Math.round(v)}°)`;
   if (key.endsWith('_hpa')) return `${Math.round(v)} hPa`;
   if (key.endsWith('_mm')) return v <= 0 ? '0 mm' : v < 0.1 ? '<0.1 mm' : `${v.toFixed(v < 1 ? 1 : 0)} mm`;
@@ -481,7 +502,8 @@ export function fieldValueText(key: string, v: any): string | null {
 // precipitation, then wind), then anything new the backend has started
 // sending, alphabetically.
 export function allFields(
-  values: Record<string, any>, opts?: { skipTableFields?: boolean }
+  values: Record<string, any>,
+  opts?: { skipTableFields?: boolean; skipNonValues?: boolean }
 ): { key: string; label: string; text: string }[] {
   const known = Object.keys(FIELD_LABELS);
   const order = (k: string) => {
@@ -490,6 +512,7 @@ export function allFields(
   };
   return Object.keys(values ?? {})
     .filter(k => !(opts?.skipTableFields && FIELD_IN_TABLE.has(k)))
+    .filter(k => !(opts?.skipNonValues && FIELD_NOT_A_VALUE.has(k)))
     .map(k => ({ key: k, label: fieldLabel(k), text: fieldValueText(k, values[k]) }))
     .filter(f => f.text != null)
     .sort((a, b) => {
@@ -959,6 +982,10 @@ export interface GroundTruth {
   flightCategory: string | null;
   rawMetar: string | null;
   rawTaf: string | null;        // the forecast the airfield itself is flying on
+  // Everything else the observation carries — observed temperature and dew
+  // point, wind, sky cover, present weather. Same principle as a model's
+  // values: passed through whole, rendered generically.
+  values: Record<string, any>;
 }
 
 export interface SourceComparison {
@@ -1080,6 +1107,7 @@ function fromContract(display: any, row: WeatherRow): SourceComparison {
       flightCategory: g.flight_category ?? null,
       rawMetar: g.raw_metar ?? null,
       rawTaf: g.raw_taf ?? null,
+      values: g,
     } : null,
     verdict,
     contractVersion: n(display.version) ?? 1,
