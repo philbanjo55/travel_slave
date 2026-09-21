@@ -102,6 +102,16 @@ const COLUMNS: Col[] = [
 const COL_W = 46, COL_W_WIDE = 58, SRC_W = 132;
 const TABLE_W = SRC_W + COLUMNS.reduce((w, c) => w + (c.wide ? COL_W_WIDE : COL_W), 0);
 
+// How the centre vote reads on the face of the card. CONTESTED is a warning
+// about the stars beside it — the centres do not agree this is shootable.
+// AGREED is deliberately NOT green: eleven centres agreeing conditions are
+// awful is still agreement, so it reads neutral and lets the stars speak.
+function voteTone(level: string | null | undefined) {
+  if (level === 'CONTESTED') return { icon: 'alert-circle-outline', color: colors.signalWarning };
+  if (level === 'MIXED')     return { icon: 'help-circle-outline',  color: colors.textSecondary };
+  return { icon: 'checkmark-circle-outline', color: colors.textTertiary };
+}
+
 export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: Props) {
   const [row, setRow] = useState<WeatherRow | null>(weather ?? null);
   const [loaded, setLoaded] = useState(weather !== undefined);
@@ -255,6 +265,22 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
         </View>
       ) : null}
 
+      {/* How far the centres agree with the stars above. This qualifies the
+          rating directly, so it belongs beside it rather than buried in the
+          sources dropdown — the score is one model's verdict, and this says
+          how alone that model is. Absent on unrated stops, where there is no
+          verdict to qualify. */}
+      {score && cmp.agreement ? (
+        <View style={styles.voteRow}>
+          <Ionicons name={voteTone(cmp.agreement).icon as any} size={11}
+            color={voteTone(cmp.agreement).color} />
+          <Text style={[styles.voteLevel, { color: voteTone(cmp.agreement).color }]}>
+            {cmp.agreement}
+          </Text>
+          <Text style={styles.voteNote} numberOfLines={1}>· {cmp.verdict}</Text>
+        </View>
+      ) : null}
+
       {/* Detail grid */}
       <View style={styles.grid}>
         <Metric icon="cloud-outline" label="CLOUD" value={row.cloud_cover_pct != null ? `${row.cloud_cover_pct}%` : '—'}
@@ -281,18 +307,20 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           in this file. */}
       {showCompare && cmp.hasMulti ? (
         <View style={styles.compareWrap}>
-          <View style={styles.compareVerdict}>
-            {/* The icon has to agree with the sentence beside it. That sentence
-                is now the centre vote, so a contested verdict warns too — not
-                just a cloud-cover outlier. */}
-            <Ionicons
-              name={(cmp.cloudOutlier || cmp.agreement === 'CONTESTED') ? 'alert-circle-outline' : 'checkmark-circle-outline'}
-              size={14}
-              color={(cmp.cloudOutlier || cmp.agreement === 'CONTESTED') ? colors.signalWarning : colors.signalOk} />
-            <Text style={[styles.compareVerdictText, { color: (cmp.cloudOutlier || cmp.agreement === 'CONTESTED') ? colors.signalWarning : colors.signalOk }]}>
-              {cmp.verdict}
-            </Text>
-          </View>
+          {/* The centre vote now reads on the face of the card, so it is not
+              repeated here. What is left is the one thing this dropdown knows
+              and the face does not: a single source sitting far off the others
+              on cloud, which is why the SOURCES badge is tinted. */}
+          {cmp.cloudOutlier ? (
+            <View style={styles.compareVerdict}>
+              <Ionicons name="alert-circle-outline" size={14} color={colors.signalWarning} />
+              <Text style={[styles.compareVerdictText, { color: colors.signalWarning }]}>
+                {`${cmp.sources.find(s => s.key === cmp.cloudOutlier)?.name ?? 'One source'}`
+                 + ` is${cmp.cloudOutlierDelta != null ? ` ${cmp.cloudOutlierDelta} points` : ''}`
+                 + ` off the others on cloud`}
+              </Text>
+            </View>
+          ) : null}
 
           {/* Ensemble probabilities. Rain and wind uncertainty are measurable;
               fog uncertainty is not, because no ensemble serves visibility. */}
@@ -686,6 +714,10 @@ const styles = StyleSheet.create({
   verifyMuted: { fontSize: 10, color: colors.textTertiary, fontStyle: 'italic', marginTop: 2 },
 
   compareWrap: { marginTop: spacing.sm, gap: 3 },
+  voteRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: -spacing.sm, marginBottom: spacing.md },
+  voteLevel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.8 },
+  voteNote: { ...typography.bodySmall, color: colors.textTertiary, flex: 1 },
+
   compareVerdict: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 },
   compareVerdictText: { fontSize: 12, fontWeight: '600', flex: 1 },
   cmpHeadRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 1 },
