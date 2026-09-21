@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { slimCachedWeather } from './database';
 import { supabase } from './supabase';
 
 const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
@@ -100,7 +101,14 @@ export async function cacheWeatherForDay(
   byStop: Record<string, WeatherRow>
 ): Promise<void> {
   try {
-    const payload: CachedDay = { cachedAt: Date.now(), byStop };
+    // Slimmed on the way to disk. Android's AsyncStorage is one SQLite
+    // database with a fixed total budget, and this trip's weather is held in
+    // three places — here, the per-stop entries, and the trip's own per-day
+    // entries. Three full copies of every model, ensemble and centre spread
+    // exhausted it, which made writes start failing silently.
+    const slim: Record<string, WeatherRow> = {};
+    for (const [k, v] of Object.entries(byStop)) slim[k] = slimCachedWeather(v);
+    const payload: CachedDay = { cachedAt: Date.now(), byStop: slim };
     await AsyncStorage.setItem(`${WEATHER_DAY_PREFIX}${dayId}`, JSON.stringify(payload));
   } catch (e) {
     console.warn('weather cache write failed (day):', e);
@@ -119,12 +127,20 @@ export async function getCachedWeatherForDay(
   }
 }
 
-async function cacheWeatherForStop(stopId: string, row: WeatherRow): Promise<void> {
+// Reclaim. Earlier builds wrote a full weather row per stop, each carrying
+// every model, the ensemble and the centre spread. Those entries are only
+// ever overwritten if that same stop is opened again, so they accumulate and
+// crowd out the writes that matter — on Android this is one SQLite database
+// with a fixed total budget, and once it is full, writes fail silently.
+// The per-day entries and the trip's own copy both already cover every stop.
+export async function pruneStopWeatherCache(): Promise<number> {
   try {
-    const payload: CachedStop = { cachedAt: Date.now(), row };
-    await AsyncStorage.setItem(`${WEATHER_STOP_PREFIX}${stopId}`, JSON.stringify(payload));
-  } catch (e) {
-    console.warn('weather cache write failed (stop):', e);
+    const keys = await AsyncStorage.getAllKeys();
+    const stale = keys.filter(k => k.startsWith(WEATHER_STOP_PREFIX));
+    if (stale.length) await AsyncStorage.multiRemove(stale);
+    return stale.length;
+  } catch {
+    return 0;
   }
 }
 
@@ -242,7 +258,9 @@ export async function fetchLatestWeatherForStop(
     if (error) throw error;
     if (!data) return (await getCachedWeatherForStop(stopId)); // empty → prefer cache over blank
     const row = data as WeatherRow;
-    await cacheWeatherForStop(stopId, row); // refresh the offline copy
+    // No per-stop write: the per-day entry and the trip's own copy both cover
+    // this stop, and a third copy is what exhausted the storage budget.
+    // getCachedWeatherForStop still READS legacy per-stop entries.
     return row;
   } catch {
     // Offline / read failed → per-stop cache, then any day cache holding it.

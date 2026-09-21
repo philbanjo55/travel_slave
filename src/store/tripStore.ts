@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { fetchFullTrip } from '../services/supabase';
-import { fetchWeatherForTrip } from '../services/weather';
+import { fetchWeatherForTrip, pruneStopWeatherCache } from '../services/weather';
 import { getCachedFullTrip, getCachedTrips, cacheFullTrip, cacheTrips } from '../services/database';
 import { calculateDriveTimesForTrip } from '../services/driveTimes';
 import { downloadAllPhotos } from '../services/photoCache';
@@ -63,6 +63,12 @@ export const useTripStore = create<TripState>((set, get) => ({
   },
 
   loadTrip: async (tripId: string) => {
+    // Reclaim space from the superseded per-stop weather entries before any
+    // write is attempted. Harmless once they are gone; returns 0 thereafter.
+    pruneStopWeatherCache()
+      .then(n => { if (n) console.log(`[trip] reclaimed ${n} stale weather entries`); })
+      .catch(() => {});
+
     // Try cache first for instant load
     const cached = await getCachedFullTrip(tripId);
     if (cached) {

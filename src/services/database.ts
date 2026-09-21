@@ -27,7 +27,7 @@ export async function cacheTrips(trips: any[]): Promise<void> {
 // score, sea, sunrise/sunset and the legacy per-source keys. On the Faroes
 // trip those four duplicates are 1.1 MB of a 2.7 MB write, so they are dropped
 // on the way to disk. Nothing in memory is touched.
-function slimCachedWeather(w: any): any {
+export function slimCachedWeather(w: any): any {
   if (!w || typeof w !== 'object' || !w.raw || typeof w.raw !== 'object') return w ?? null;
   const { models, ensemble, consensus, convergence, ...keep } = w.raw;
   return { ...w, raw: keep };
@@ -58,6 +58,22 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<bool
       return { ...day, stops };
     });
 
+    // Weather FIRST, before the trip blob. The blob no longer carries weather,
+    // so writing it first and then failing here leaves a trip with no weather
+    // at all — worse than the stale copy it replaced. Written per day, and
+    // per key rather than in one multiSet, so one oversized day cannot take
+    // the rest down with it.
+    let wroteWeather = 0;
+    for (const [k, v] of weatherEntries) {
+      try { await AsyncStorage.setItem(k, v); wroteWeather++; }
+      catch (e) { console.warn(`Weather cache write failed for ${k}:`, e); }
+    }
+    if (weatherEntries.length && wroteWeather === 0) {
+      // Nothing landed — keep the previous cache rather than replacing it
+      // with an itinerary that has no weather attached.
+      return false;
+    }
+
     // Itinerary only — no photos, no weather.
     await AsyncStorage.setItem(
       `${TRIP_PREFIX}${tripId}`,
@@ -69,9 +85,6 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<bool
       `${PHOTOS_PREFIX}${tripId}`,
       JSON.stringify(photoMap)
     );
-
-    // One entry per day, so no single value is large enough to be refused.
-    if (weatherEntries.length) await AsyncStorage.multiSet(weatherEntries);
 
     // Update trips list cache
     const existing = await getCachedTrips();
