@@ -373,14 +373,13 @@ export const kmhToMph = (k: number) => k * 0.621371;
 // the other sources emit precipitation AMOUNT instead. Show whichever exists so
 // the column is comparable across sources rather than mostly dashes.
 // Returns the display string plus a flag indicating which kind it is.
+export const kmToMiles = (km: number) => km * 0.621371;
+
 export function rainCell(
   probPct: number | null, amountMm: number | null
 ): { text: string; kind: 'prob' | 'amount' | 'none' } {
   if (probPct != null) return { text: `${Math.round(probPct)}%`, kind: 'prob' };
-  if (amountMm != null) {
-    if (amountMm <= 0) return { text: '0mm', kind: 'amount' };
-    return { text: amountMm < 0.1 ? '<0.1mm' : `${amountMm.toFixed(amountMm < 1 ? 1 : 0)}mm`, kind: 'amount' };
-  }
+  if (amountMm != null) return { text: inchesText(amountMm / 25.4), kind: 'amount' };
   return { text: '—', kind: 'none' };
 }
 
@@ -456,6 +455,14 @@ export const FIELD_IN_TABLE = new Set([
   'temperature_c',
 ]);
 
+// Hourly precipitation in inches is a small number: 0.5 mm is 0.02 in. Two
+// decimals, and an explicit "<.01" rather than rounding real rain to zero.
+export function inchesText(inches: number): string {
+  if (inches <= 0) return '0 in';
+  if (inches < 0.01) return '<.01 in';
+  return `${inches.toFixed(2)} in`;
+}
+
 export function fieldLabel(key: string): string {
   const known = FIELD_LABELS[key];
   if (known) return known;
@@ -482,9 +489,12 @@ export function fieldValueText(key: string, v: any): string | null {
   if (key.endsWith('_kt')) return `${Math.round(v * 1.15078)} mph`;
   if (key.endsWith('_ft')) return `${Math.round(v).toLocaleString()} ft`;
   if (key.endsWith('_deg')) return `${windDir(v)} (${Math.round(v)}°)`;
-  if (key.endsWith('_hpa')) return `${Math.round(v)} hPa`;
-  if (key.endsWith('_mm')) return v <= 0 ? '0 mm' : v < 0.1 ? '<0.1 mm' : `${v.toFixed(v < 1 ? 1 : 0)} mm`;
-  if (key.endsWith('_cm')) return v <= 0 ? '0 cm' : `${v.toFixed(1)} cm`;
+  // Everything imperial. Open-Meteo answers in metric and we convert on
+  // display rather than at ingest, so the stored numbers stay comparable with
+  // the source and only this function decides what you read.
+  if (key.endsWith('_hpa')) return `${(v * 0.02953).toFixed(2)} inHg`;
+  if (key.endsWith('_mm')) return inchesText(v / 25.4);
+  if (key.endsWith('_cm')) return inchesText(v / 2.54);
   if (key.endsWith('_c')) return `${Math.round(cToF(v))}°F`;
   if (key.endsWith('_s')) return `${v.toFixed(1)} s`;
   if (key === 'visibility_m') return visibilityText(v);

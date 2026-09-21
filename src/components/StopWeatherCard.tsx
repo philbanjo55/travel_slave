@@ -6,7 +6,7 @@ import {
   WeatherRow, fetchLatestWeatherForStop,
   conditionsText, tempText, windText, windDir, visibilityText, clockFromISO, fogBadge,
   conditionIcon, scoreConditions, forecastMode, forecastConfidence, shortDate, updatedAgoText,
-  buildSourceComparison, cToF, kmhToMph, rainCell,
+  buildSourceComparison, cToF, kmhToMph, rainCell, inchesText, kmToMiles,
   verifyStopWeather, VerifyResult, verificationStatus,
   allFields, fieldLabel, fieldValueText, SourceReading,
 } from '../services/weather';
@@ -28,9 +28,13 @@ interface Props {
 // not given a column still appear — tap a source to expand the rest.
 const mph = (k: number | null) => k == null ? '—' : `${Math.round(kmhToMph(k))}`;
 const pct = (v: number | null) => v == null ? '—' : `${Math.round(v)}%`;
-const kmT = (v: number | null) => v == null ? '—' : v < 10 ? `${v.toFixed(1)}` : `${Math.round(v)}`;
+const miT = (km: number | null) => {
+  if (km == null) return '—';
+  const mi = kmToMiles(km);
+  return mi < 10 ? `${mi.toFixed(1)}` : `${Math.round(mi)}`;
+};
 const ft  = (m: number | null) => m == null ? '—' : `${Math.round(m * 3.28084 / 100) * 100}`;
-const mm  = (v: number | null) => v == null ? '—' : v <= 0 ? '0' : v < 0.1 ? '<.1' : v.toFixed(v < 1 ? 1 : 0);
+const inch = (v: number | null) => v == null ? '—' : inchesText(v / 25.4).replace(' in', '');
 const num = (v: any) => v == null ? '—' : typeof v === 'number' ? `${Math.round(v)}` : String(v);
 
 // Ensemble and consensus name their variables the way Open-Meteo does
@@ -60,39 +64,40 @@ const memberCount = (u: any): number | null => {
   return counts.length ? Math.max(...counts) : null;
 };
 
-type Col = { key: string; head: string; hint: string; get: (s: SourceReading) => string; wide?: boolean };
+type Col = { key: string; head: string; unit: string; hint: string; get: (s: SourceReading) => string; wide?: boolean };
 
 const COLUMNS: Col[] = [
-  { key: 'grid',  head: 'GRID',  hint: 'model resolution in km — the smallest thing it can resolve',
+  { key: 'grid',  head: 'GRID', unit: 'km',  hint: 'model resolution in km — the smallest thing it can resolve',
     get: s => s.resolutionKm == null ? '—' : `${s.resolutionKm}k` },
-  { key: 'away',  head: 'AWAY',  hint: 'km from this stop to the grid point the model actually sampled',
-    get: s => kmT(s.distanceKm) },
-  { key: 'cloud', head: 'CLOUD', hint: 'total cloud cover', get: s => pct(s.cloud_cover_pct) },
-  { key: 'low',   head: 'LOW',   hint: 'low cloud — the layer that hides a summit',
+  { key: 'away',  head: 'AWAY', unit: 'mi',  hint: 'km from this stop to the grid point the model actually sampled',
+    get: s => miT(s.distanceKm) },
+  { key: 'cloud', head: 'CLOUD', unit: '%', hint: 'total cloud cover', get: s => pct(s.cloud_cover_pct) },
+  { key: 'low',   head: 'LOW', unit: '%',   hint: 'low cloud — the layer that hides a summit',
     get: s => pct(s.cloud_cover_low_pct) },
-  { key: 'base',  head: 'BASE',  hint: 'cloud base in feet — compare to the height of your subject',
+  { key: 'base',  head: 'BASE', unit: 'ft',  hint: 'cloud base in feet — compare to the height of your subject',
     get: s => ft(s.cloud_base_m) },
-  { key: 'top',   head: 'TOP',   hint: 'cloud top in feet — thin deck or deep overcast',
+  { key: 'top',   head: 'TOP', unit: 'ft',   hint: 'cloud top in feet — thin deck or deep overcast',
     get: s => ft(s.values?.cloud_top_m ?? null) },
-  { key: 'vis',   head: 'VIS',   hint: 'visibility in miles', get: s => s.visibility_m == null ? '—'
+  { key: 'vis',   head: 'VIS', unit: 'mi',   hint: 'visibility in miles', get: s => s.visibility_m == null ? '—'
     : s.visibility_m < 1609 ? `${(s.visibility_m / 1609.34).toFixed(1)}` : `${Math.round(s.visibility_m / 1609.34)}` },
-  { key: 'fog',   head: 'FOG',   hint: 'cloud sitting at 2 m — the native fog field, DMI only',
+  { key: 'fog',   head: 'FOG', unit: '%',   hint: 'cloud sitting at 2 m — the native fog field, DMI only',
     get: s => pct(s.values?.cloud_cover_2m_pct ?? null) },
-  { key: 'rain',  head: 'RAIN',  hint: 'precipitation in mm for the hour', get: s => mm(s.rain_mm) },
-  { key: 'pop',   head: 'POP',   hint: 'chance of precipitation — only some models report it',
+  { key: 'rain',  head: 'RAIN', unit: 'in',  hint: 'precipitation in mm for the hour', get: s => inch(s.rain_mm) },
+  { key: 'pop',   head: 'POP', unit: '%',   hint: 'chance of precipitation — only some models report it',
     get: s => pct(s.precip_probability_pct) },
-  { key: 'gust',  head: 'GUST',  hint: 'gusts in mph', get: s =>
+  { key: 'gust',  head: 'GUST', unit: 'mph',  hint: 'gusts in mph', get: s =>
     `${mph(s.wind_gusts_kmh)}${s.wind_gusts_kmh != null && !s.gustMeasured ? '*' : ''}` },
-  { key: 'wind',  head: 'WIND',  hint: 'mean wind in mph', get: s => mph(s.wind_speed_kmh) },
-  { key: 'dir',   head: 'DIR',   hint: 'wind direction', get: s => {
+  { key: 'wind',  head: 'WIND', unit: 'mph',  hint: 'mean wind in mph', get: s => mph(s.wind_speed_kmh) },
+  { key: 'dir',   head: 'DIR', unit: '',   hint: 'wind direction', get: s => {
     const d = s.values?.wind_direction_deg; return d == null ? '—' : windDir(d); }, wide: true },
-  { key: 'temp',  head: 'TEMP',  hint: 'temperature in °F',
+  { key: 'temp',  head: 'TEMP', unit: '°F',  hint: 'temperature in °F',
     get: s => s.temperature_c == null ? '—' : `${Math.round(cToF(s.temperature_c))}` },
-  { key: 'dew',   head: 'DEW',   hint: 'dew point — within 2°F of temp means fog',
+  { key: 'dew',   head: 'DEW', unit: '°F',   hint: 'dew point — within 2°F of temp means fog',
     get: s => s.values?.dew_point_c == null ? '—' : `${Math.round(cToF(s.values.dew_point_c))}` },
-  { key: 'hum',   head: 'HUM',   hint: 'relative humidity', get: s => pct(s.relative_humidity_pct) },
-  { key: 'pres',  head: 'PRES',  hint: 'surface pressure in hPa',
-    get: s => num(s.surface_pressure_hpa), wide: true },
+  { key: 'hum',   head: 'HUM', unit: '%',   hint: 'relative humidity', get: s => pct(s.relative_humidity_pct) },
+  { key: 'pres',  head: 'PRES', unit: 'inHg',  hint: 'surface pressure, altimeter setting',
+    get: s => s.surface_pressure_hpa == null ? '—'
+      : (s.surface_pressure_hpa * 0.02953).toFixed(2), wide: true },
 ];
 const COL_W = 46, COL_W_WIDE = 58, SRC_W = 132;
 const TABLE_W = SRC_W + COLUMNS.reduce((w, c) => w + (c.wide ? COL_W_WIDE : COL_W), 0);
@@ -329,11 +334,12 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
               <View style={styles.cmpHeadRow}>
                 <Text style={[styles.cmpCellSource, styles.cmpHeadText]}>SOURCE</Text>
                 {COLUMNS.map(c => (
-                  <Text key={c.key}
-                        style={[styles.cmpCell, styles.cmpHeadText,
-                                { width: c.wide ? COL_W_WIDE : COL_W }]}>
-                    {c.head}
-                  </Text>
+                  <View key={c.key} style={{ width: c.wide ? COL_W_WIDE : COL_W }}>
+                    <Text style={[styles.cmpHeadText, styles.cmpHeadCell]}>{c.head}</Text>
+                    {c.unit ? (
+                      <Text style={[styles.cmpHeadUnit, styles.cmpHeadCell]}>{c.unit}</Text>
+                    ) : null}
+                  </View>
                 ))}
               </View>
 
@@ -507,16 +513,16 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           ) : null}
 
           <Text style={styles.cmpFootnote}>
-            Scroll the table sideways for the rest of the columns; tap a source for
-            every field it reported. Sorted by grid size, then distance. GRID = model
-            resolution in km, the smallest thing it can resolve; AWAY = how far its
-            sampled grid point actually is from this stop — a coarse model whose point
-            lands nearby is still averaging over its whole cell. BASE and TOP are cloud
-            base and top in feet: compare BASE to the height of what you are shooting.
-            FOG is cloud at 2 m, which only DMI reports. RAIN is mm for the hour, POP is
-            the chance of any precipitation — most models report one or the other, not
-            both. DEW within a couple of degrees of TEMP means fog. * gust estimated
-            from mean wind.
+            Units are in the header. Everything is imperial except GRID, which stays
+            in km because that is how every forecast centre names its models — the
+            2 km one really is called the 2 km model. Scroll sideways for the rest of
+            the columns; tap a source for every field it reported. Sorted by grid
+            size, then distance: a coarse model whose sampled point happens to land
+            nearby is still averaging over its whole cell. Compare BASE to the height
+            of what you are shooting. FOG is cloud at 2 m, which only DMI reports.
+            RAIN is fall for the hour, POP the chance of any — most models report one
+            or the other, not both. DEW within a couple of degrees of TEMP means fog.
+            * gust estimated from mean wind.
             {cmp.fromContract ? '' : ' (Cached before source detail existed — pull to refresh.)'}
           </Text>
         </View>
@@ -688,6 +694,11 @@ const styles = StyleSheet.create({
   // columns have to be sized rather than sharing whatever is left.
   cmpCell: { width: COL_W, textAlign: 'center', fontSize: 11, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
   cmpScroll: { marginHorizontal: -2 },
+  cmpHeadCell: { textAlign: 'center' },
+  cmpHeadUnit: {
+    fontSize: 7, fontWeight: '600', letterSpacing: 0.3,
+    color: colors.textTertiary, marginTop: -1,
+  },
   detailToggle: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     marginTop: 8, paddingVertical: 4,
