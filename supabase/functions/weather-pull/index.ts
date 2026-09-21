@@ -13,7 +13,7 @@ const corsHeaders = {
 // contains its own raw model (and ECMWF past ~day 3). Spread is computed
 // across centres, one representative each, so six ECMWF derivatives
 // cannot vote six times and report false confidence.
-const CENTRES: Record<string, string[]> = {
+const FALLBACK_CENTRES: Record<string, string[]> = {
   'DMI/KNMI HARMONIE': ['dmi_harmonie_arome_europe', 'dmi_seamless', 'knmi_harmonie_arome_europe'],
   'MET Norway':        ['metno_seamless'],
   'UK Met Office':     ['ukmo_seamless', 'ukmo_global_deterministic_10km'],
@@ -26,18 +26,44 @@ const CENTRES: Record<string, string[]> = {
   'JMA':               ['jma_seamless'],
   'CMA':               ['cma_grapes_global'],
 };
-const ALL_MODELS: string[] = Object.values(CENTRES).flat();
-const MODEL_CENTRE: Record<string, string> = {};
-for (const [centre, models] of Object.entries(CENTRES)) for (const m of models) MODEL_CENTRE[m] = centre;
+// Resolved per invocation from the weather_models table; these are only the
+// fallback if that table is empty or unreachable.
+type Registry = {
+  centres: Record<string, string[]>;
+  models: string[];
+  centreOf: Record<string, string>;
+  resolutionOf: Record<string, number>;
+};
+function registryFrom(centres: Record<string, string[]>, res?: Record<string, number>): Registry {
+  const centreOf: Record<string, string> = {};
+  for (const [c, ms] of Object.entries(centres)) for (const m of ms) centreOf[m] = c;
+  return { centres, models: Object.values(centres).flat(), centreOf, resolutionOf: res ?? {} };
+}
+const FALLBACK_REGISTRY = registryFrom(FALLBACK_CENTRES);
 
 // Which model fills the real columns, best first. DMI HARMONIE is 2 km and
 // the only one here carrying cloud base/top and a native 2 m fog field,
 // but it only reaches ~70 h - past that it returns nulls and we fall
 // through to the next that actually has data for the target hour.
-const PRIMARY_ORDER = [
+const FALLBACK_PRIMARY_ORDER = [
   'dmi_harmonie_arome_europe', 'dmi_seamless', 'knmi_harmonie_arome_europe',
   'icon_eu', 'ecmwf_ifs025', 'ukmo_seamless', 'gfs_seamless', 'icon_global',
 ];
+
+// Ranking a model for a given stop. Resolution dominates and distance only
+// breaks ties, deliberately: a 25 km model whose grid point happens to fall
+// 1 km away is still reporting an average over 25 km. Being near is not the
+// same as being local.
+function rankModels(
+  reg: Registry, avail: string[], grid: Record<string, { km: number|null }>
+): string[] {
+  return [...avail].sort((a, b) => {
+    const ra = reg.resolutionOf[a] ?? 999, rb = reg.resolutionOf[b] ?? 999;
+    if (ra !== rb) return ra - rb;
+    const da = grid[a]?.km ?? 9999, db = grid[b]?.km ?? 9999;
+    return da - db;
+  });
+}
 
 // Run-to-run convergence must be measured on a LONG-horizon model. DMI keeps
 // only ~70 h, so its previous_day2/day3 runs no longer cover the target and
@@ -253,7 +279,7 @@ function scoreConditions(shotType: string | null, r: any) {
 // model name. Variables a model does not serve come back as nulls, not as
 // an error, so the union of variables can be requested unconditionally.
 
-function readModelRow(H: any, idx: number, model: string) {
+function readModelRow(H: any, idx: number, model: string, centreOf: Record<string,string>) {
   const at = (v: string) => {
     const arr = H[`${v}_${model}`] ?? H[v];
     return Array.isArray(arr) ? num(arr[idx]) : null;
@@ -291,17 +317,26 @@ function readModelRow(H: any, idx: number, model: string) {
     is_day: at('is_day') === 1,
     uv_index: at('uv_index'),
     fog_risk: fogRisk(vis, hum, temp, dew, code),
-    centre: MODEL_CENTRE[model] ?? null,
+    centre: centreOf[model] ?? null,
   };
 }
 
 // Spread across CENTRES, not across model strings. One representative per
 // centre: the first listed for it that returned data (listed best-resolution
 // first), so DMI's 2 km run speaks for HARMONIE rather than its own blend.
-function consensus(models: Record<string, any>) {
+function consensus(
+  models: Record<string, any>, reg: Registry, grid: Record<string, { km: number|null }>
+) {
+  // One representative per centre: the finest-resolution member that returned
+  // data, distance breaking ties. Previously this was a hardcoded order.
   const reps: Record<string, any> = {};
-  for (const [centre, list] of Object.entries(CENTRES)) {
-    for (const m of list) { if (models[m]) { reps[centre] = models[m]; break; } }
+  const repModel: Record<string, string> = {};
+  for (const [centre, list] of Object.entries(reg.centres)) {
+    const avail = list.filter(m => models[m]);
+    if (!avail.length) continue;
+    const best = rankModels(reg, avail, grid)[0];
+    reps[centre] = models[best];
+    repModel[centre] = best;
   }
   const centreNames = Object.keys(reps);
   const fieldOf: Record<string,string> = {
@@ -332,7 +367,11 @@ function consensus(models: Record<string, any>) {
       by_centre: per,
     };
   }
-  return { centres: centreNames, centre_count: centreNames.length, by_variable: byVar };
+  return {
+    centres: centreNames, centre_count: centreNames.length,
+    representatives: repModel,
+    by_variable: byVar,
+  };
 }
 
 // ENSEMBLE
@@ -429,6 +468,45 @@ Deno.serve(async (req) => {
     const usedDate = (test || !day.date) ? addDays(now, testOffset) : day.date as string;
     const dateShifted = (test || !day.date);
 
+    // The model list lives in the database, not in this file, so a trip in a
+    // new region needs a row rather than a redeploy. Falls back to the
+    // built-in list only if the table is empty or unreachable.
+    let reg = FALLBACK_REGISTRY;
+    let registrySource = 'fallback-constant';
+    {
+      const { data: rows } = await supabase
+        .from('weather_models')
+        .select('model,centre,resolution_km')
+        .eq('active', true);
+      if (rows && rows.length) {
+        const centres: Record<string, string[]> = {};
+        const res: Record<string, number> = {};
+        for (const r of rows as any[]) {
+          (centres[r.centre] ??= []).push(r.model);
+          if (r.resolution_km != null) res[r.model] = Number(r.resolution_km);
+        }
+        reg = registryFrom(centres, res);
+        registrySource = 'weather_models';
+      }
+    }
+
+    // Where each model actually samples each stop, measured once and cached.
+    // Two uses: skip models proven not to cover a stop (saves the call and
+    // the nulls), and record how far off every reported number really is.
+    const gridByStop = new Map<string, Record<string, { km: number|null; ok: boolean }>>();
+    {
+      const stopIds = stops.map((s: any) => s.id);
+      const { data: gp } = await supabase
+        .from('model_grid_points')
+        .select('model,stop_id,distance_km,has_data')
+        .in('stop_id', stopIds);
+      for (const g of (gp ?? []) as any[]) {
+        const m = gridByStop.get(g.stop_id) ?? {};
+        m[g.model] = { km: g.distance_km, ok: g.has_data };
+        gridByStop.set(g.stop_id, m);
+      }
+    }
+
     // Ground truth, once per invocation rather than once per stop.
     let metar: any = null, metarErr: string | null = null;
     {
@@ -465,9 +543,14 @@ Deno.serve(async (req) => {
       const base = `latitude=${s.lat}&longitude=${s.lng}&timezone=auto&wind_speed_unit=kmh`
         + `&start_date=${usedDate}&end_date=${usedDate}`;
 
+      // Skip models measured as not covering this stop. Unprobed models are
+      // requested anyway - absence of a measurement is not evidence.
+      const grid = gridByStop.get(s.id) ?? {};
+      const askModels = reg.models.filter(m => grid[m] === undefined || grid[m].ok);
+
       const [multi, marine] = await Promise.all([
         getJson(`https://api.open-meteo.com/v1/forecast?${base}`
-          + `&hourly=${HOURLY_VARS.join(',')}&daily=${DAILY_VARS.join(',')}&models=${ALL_MODELS.join(',')}`),
+          + `&hourly=${HOURLY_VARS.join(',')}&daily=${DAILY_VARS.join(',')}&models=${askModels.join(',')}`),
         getJson(`https://marine-api.open-meteo.com/v1/marine?${base}&hourly=${MARINE_VARS.join(',')}`),
       ]);
 
@@ -487,11 +570,20 @@ Deno.serve(async (req) => {
 
       // Every model that has something to say at this hour.
       const models: Record<string, any> = {};
-      for (const m of ALL_MODELS) {
-        const row = readModelRow(H, idx, m);
-        if (row) models[m] = row;
+      for (const m of askModels) {
+        const row = readModelRow(H, idx, m, reg.centreOf);
+        if (row) {
+          row.distance_km = grid[m]?.km ?? null;      // how far this number really is
+          row.resolution_km = reg.resolutionOf[m] ?? null;
+          models[m] = row;
+        }
       }
-      const primaryModel = PRIMARY_ORDER.find(m => models[m]) ?? Object.keys(models)[0] ?? null;
+      // Primary is now chosen per stop by resolution then distance, rather
+      // than from a fixed global order.
+      const ranked = rankModels(reg, Object.keys(models), grid);
+      const primaryModel = ranked[0]
+        ?? FALLBACK_PRIMARY_ORDER.find(m => models[m])
+        ?? Object.keys(models)[0] ?? null;
       if (!primaryModel) {
         results.push({ stop_id:s.id, name:s.name, error:'no model returned data for this hour' });
         continue;
@@ -503,7 +595,7 @@ Deno.serve(async (req) => {
       const D = w.daily ?? {};
       const daily = (v: string) => {
         if (Array.isArray(D[v])) return D[v][0] ?? null;
-        for (const m of [primaryModel, ...ALL_MODELS]) {
+        for (const m of [primaryModel, ...askModels]) {
           const a = D[`${v}_${m}`];
           if (Array.isArray(a) && a[0] != null) return a[0];
         }
@@ -574,7 +666,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      const cons = consensus(models);
+      const cons = consensus(models, reg, grid);
 
       const ex: any = {
         // Primary model, flattened - the shape v25 produced, so anything
@@ -629,11 +721,16 @@ Deno.serve(async (req) => {
           date_mode: dateShifted ? 'preview' : 'trip-date',
           source: `open-meteo /v1/forecast?models=${primaryModel}`,
           primary_model: primaryModel,
-          models_requested: ALL_MODELS.length,
+          registry_source: registrySource,
+          models_in_registry: reg.models.length,
+          models_requested: askModels.length,
           models_returned: Object.keys(models).length,
+          models_skipped_no_coverage: reg.models.length - askModels.length,
           centres_returned: cons.centre_count,
+          primary_distance_km: grid[primaryModel]?.km ?? null,
+          primary_resolution_km: reg.resolutionOf[primaryModel] ?? null,
           pulled_at: new Date().toISOString(),
-          version: 'v28-history',
+          version: 'v29-registry',
         },
       };
 
@@ -740,8 +837,9 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({
       ok:true, day_id:dayId, day_title:day.title, test, date_shifted:dateShifted,
       forecast_date_used:usedDate, real_trip_date:day.date, generated_at:new Date().toISOString(),
-      version:'v28-history',
-      models_requested: ALL_MODELS.length,
+      version:'v29-registry',
+      registry_source: registrySource,
+      models_in_registry: reg.models.length,
       ensemble_cells: ensembleByCell.size,
       rows_written: writeRows.length,
       metar: metar ? metar.raw_metar : (metarErr ? `error: ${metarErr}` : null),
