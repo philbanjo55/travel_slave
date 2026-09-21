@@ -189,7 +189,10 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           sub={row.surface_pressure_hpa != null ? `${Math.round(row.surface_pressure_hpa)} hPa` : ' '} />
       </View>
 
-      {/* Source comparison dropdown — toggled by the SOURCES badge */}
+      {/* Source comparison dropdown — toggled by the SOURCES badge.
+          Everything here comes from the backend render contract, already
+          ordered by grid size then distance. Adding a model changes nothing
+          in this file. */}
       {showCompare && cmp.hasMulti ? (
         <View style={styles.compareWrap}>
           <View style={styles.compareVerdict}>
@@ -202,37 +205,81 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
             </Text>
           </View>
 
-          {/* Column header */}
+          {/* Ensemble probabilities. Rain and wind uncertainty are measurable;
+              fog uncertainty is not, because no ensemble serves visibility. */}
+          {cmp.uncertainty ? (
+            <View style={styles.uncertaintyRow}>
+              <Text style={styles.uncertaintyLabel}>
+                {cmp.uncertainty.members ?? '?'} ENSEMBLE MEMBERS
+              </Text>
+              <View style={styles.uncertaintyChips}>
+                {cmp.uncertainty.probAnyRainPct != null ? (
+                  <Text style={styles.uncertaintyChip}>{cmp.uncertainty.probAnyRainPct}% rain</Text>
+                ) : null}
+                {cmp.uncertainty.probGustOver40Pct != null ? (
+                  <Text style={styles.uncertaintyChip}>{cmp.uncertainty.probGustOver40Pct}% gust&gt;25mph</Text>
+                ) : null}
+                {cmp.uncertainty.probBrokenSkyPct != null ? (
+                  <Text style={styles.uncertaintyChip}>{cmp.uncertainty.probBrokenSkyPct}% broken sky</Text>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
+          {/* Observed conditions at Vagar. The only real-time measured cloud
+              base in the Faroes — everything else above is a forecast. */}
+          {cmp.groundTruth ? (
+            <View style={styles.truthRow}>
+              <Ionicons name="eye-outline" size={11} color={colors.signalOk} />
+              <Text style={styles.truthText} numberOfLines={2}>
+                {cmp.groundTruth.station} observed
+                {cmp.groundTruth.ceilingFt != null ? ` · ceiling ${cmp.groundTruth.ceilingFt} ft` : ''}
+                {cmp.groundTruth.visibilityM != null ? ` · vis ${Math.round(cmp.groundTruth.visibilityM / 1000)} km` : ''}
+                {cmp.groundTruth.flightCategory ? ` · ${cmp.groundTruth.flightCategory}` : ''}
+              </Text>
+            </View>
+          ) : null}
+
           <View style={styles.cmpHeadRow}>
             <Text style={[styles.cmpCellSource, styles.cmpHeadText]}>SOURCE</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>★</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>TEMP</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>GRID</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>AWAY</Text>
             <Text style={[styles.cmpCell, styles.cmpHeadText]}>CLOUD</Text>
+            <Text style={[styles.cmpCell, styles.cmpHeadText]}>BASE</Text>
             <Text style={[styles.cmpCell, styles.cmpHeadText]}>RAIN</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>WIND</Text>
             <Text style={[styles.cmpCell, styles.cmpHeadText]}>GUST</Text>
           </View>
 
           {cmp.sources.map(s => {
             const isOutlier = s.key === cmp.cloudOutlier;
             const dim = !s.present;
-            const f = (c: number | null) => c == null ? '—' : `${Math.round(cToF(c))}°`;
             const mph = (k: number | null) => k == null ? '—' : `${Math.round(kmhToMph(k))}`;
             const pct = (v: number | null) => v == null ? '—' : `${Math.round(v)}%`;
+            const km  = (v: number | null) => v == null ? '—' : v < 10 ? `${v.toFixed(1)}` : `${Math.round(v)}`;
+            const ft  = (m: number | null) => m == null ? '—' : `${Math.round(m * 3.28084 / 100) * 100}`;
             return (
               <View key={s.key} style={[styles.cmpRow, isOutlier ? styles.cmpRowOutlier : null]}>
                 <View style={styles.cmpCellSource}>
-                  <Text style={[styles.cmpSourceName, dim ? styles.cmpDim : null]} numberOfLines={1}>{s.name}</Text>
+                  <Text style={[styles.cmpSourceName, dim ? styles.cmpDim : null]} numberOfLines={1}>
+                    {s.name}
+                  </Text>
                   <View style={styles.cmpTags}>
-                    {s.isLocalModel ? <Text style={styles.cmpTagLocal}>LOCAL</Text> : null}
+                    {s.isPrimary ? <Text style={styles.cmpTagLocal}>PRIMARY</Text> : null}
+                    {s.isBlend ? <Text style={styles.cmpTagNote}>blend</Text> : null}
                     {s.note ? <Text style={styles.cmpTagNote}>{s.note}</Text> : null}
                   </View>
                 </View>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{s.stars == null ? '—' : s.stars}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{f(s.temperature_c)}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null, isOutlier ? styles.cmpOutlierVal : null]}>{pct(s.cloud_cover_pct)}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{rainCell(s.precip_probability_pct, s.rain_mm).text}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{mph(s.wind_speed_kmh)}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>
+                  {s.resolutionKm == null ? '—' : `${s.resolutionKm}k`}
+                </Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{km(s.distanceKm)}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null, isOutlier ? styles.cmpOutlierVal : null]}>
+                  {pct(s.cloud_cover_pct)}
+                </Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{ft(s.cloud_base_m)}</Text>
+                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>
+                  {rainCell(s.precip_probability_pct, s.rain_mm).text}
+                </Text>
                 <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>
                   {mph(s.wind_gusts_kmh)}{s.wind_gusts_kmh != null && !s.gustMeasured ? '*' : ''}
                 </Text>
@@ -240,32 +287,14 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
             );
           })}
 
-          {/* Secondary detail row: visibility / humidity / pressure / stars */}
-          <View style={styles.cmpHeadRow}>
-            <Text style={[styles.cmpCellSource, styles.cmpHeadText]}> </Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>VIS</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>HUM</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>hPa</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}> </Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}> </Text>
-          </View>
-          {cmp.sources.map(s => {
-            const dim = !s.present;
-            const km = (m: number | null) => m == null ? '—' : m >= 1000 ? `${Math.round(m / 1000)}k` : `${m}`;
-            return (
-              <View key={`${s.key}-2`} style={styles.cmpRow}>
-                <Text style={[styles.cmpCellSource, styles.cmpSourceName, dim ? styles.cmpDim : null]} numberOfLines={1}>{s.name}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{km(s.visibility_m)}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{s.relative_humidity_pct == null ? '—' : `${Math.round(s.relative_humidity_pct)}%`}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{s.surface_pressure_hpa == null ? '—' : Math.round(s.surface_pressure_hpa)}</Text>
-                <Text style={[styles.cmpCell]}> </Text>
-                <Text style={[styles.cmpCell]}> </Text>
-              </View>
-            );
-          })}
-
           <Text style={styles.cmpFootnote}>
-            * gust estimated from mean wind (source lacks measured gusts). LOCAL = home-team high-res model for this region. RAIN shows % chance where given, else amount in mm.
+            GRID = model resolution in km, the smallest thing it can resolve. AWAY =
+            how far its sampled grid point actually is from this stop. Sorted by grid
+            size, then distance: a coarse model whose point lands nearby is still
+            averaging over its whole cell. BASE = cloud base in feet — compare it to
+            the height of what you are shooting. Blank means that model does not
+            report cloud base. * gust estimated from mean wind.
+            {cmp.fromContract ? '' : ' (Cached before source detail existed — pull to refresh.)'}
           </Text>
         </View>
       ) : null}
@@ -439,5 +468,24 @@ const styles = StyleSheet.create({
   cmpTags: { flexDirection: 'row', gap: 3, marginTop: 1 },
   cmpTagLocal: { fontSize: 7, fontWeight: '700', letterSpacing: 0.4, color: colors.signalOk },
   cmpTagNote: { fontSize: 7, fontWeight: '700', letterSpacing: 0.4, color: colors.textTertiary, fontStyle: 'italic' },
+  uncertaintyRow: {
+    flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap',
+    gap: spacing.xs, marginBottom: spacing.xs,
+  },
+  uncertaintyLabel: {
+    ...typography.caption, color: colors.textTertiary,
+    fontSize: 9, letterSpacing: 0.5,
+  },
+  uncertaintyChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, flex: 1 },
+  uncertaintyChip: {
+    ...typography.caption, fontSize: 10, color: colors.textSecondary,
+    backgroundColor: colors.surfaceRaised, borderRadius: radius.sm,
+    paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden',
+  },
+  truthRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  truthText: { ...typography.caption, fontSize: 10, color: colors.signalOk, flex: 1 },
   cmpFootnote: { fontSize: 9, color: colors.textTertiary, fontStyle: 'italic', marginTop: 6 },
 });

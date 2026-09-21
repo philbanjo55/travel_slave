@@ -5,11 +5,13 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 import {
-  WeatherRow, buildSourceComparison, cToF, kmhToMph, SourceKey, rainCell,
+  WeatherRow, buildSourceComparison, cToF, kmhToMph, rainCell,
 } from '../services/weather';
 
-// Read-only per-day comparison across all four weather sources. Receives the
-// day's stops and the already-loaded weather map via route params — no fetch.
+// Read-only per-day comparison across every weather source the backend
+// returned. Receives the day's stops and the already-loaded weather map via
+// route params — no fetch. The source list is whatever the render contract
+// contains, so it grows with the model registry rather than being listed here.
 export default function DayCompareScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -29,27 +31,49 @@ export default function DayCompareScreen() {
   // Day-level rollup: how often each source is the cloud outlier, and its mean
   // stars across stops. Surfaces which model is consistently the pessimist.
   const rollup = useMemo(() => {
-    const outlierCount: Record<string, number> = { open_meteo: 0, metno: 0, met_eireann: 0, ukmo: 0 };
-    const starSum: Record<string, number> = { open_meteo: 0, metno: 0, met_eireann: 0, ukmo: 0 };
-    const starN: Record<string, number> = { open_meteo: 0, metno: 0, met_eireann: 0, ukmo: 0 };
+    // Accumulated per model string, discovered from the data rather than
+    // declared, so a new model appears here the day it starts returning.
+    const outlierCount: Record<string, number> = {};
+    const starSum: Record<string, number> = {};
+    const starN: Record<string, number> = {};
+    const names: Record<string, string> = {};
+    const resKm: Record<string, number | null> = {};
+    const distSum: Record<string, number> = {};
+    const distN: Record<string, number> = {};
     let multiCount = 0;
     for (const { row } of stopsWithWx) {
       const cmp = buildSourceComparison(row);
       if (cmp.hasMulti) multiCount++;
-      if (cmp.cloudOutlier) outlierCount[cmp.cloudOutlier]++;
+      if (cmp.cloudOutlier) {
+        outlierCount[cmp.cloudOutlier] = (outlierCount[cmp.cloudOutlier] ?? 0) + 1;
+      }
       for (const s of cmp.sources) {
-        if (s.present && s.stars != null) { starSum[s.key] += s.stars; starN[s.key]++; }
+        names[s.key] = s.name;
+        if (s.resolutionKm != null) resKm[s.key] = s.resolutionKm;
+        if (s.distanceKm != null) {
+          distSum[s.key] = (distSum[s.key] ?? 0) + s.distanceKm;
+          distN[s.key] = (distN[s.key] ?? 0) + 1;
+        }
+        if (s.present && s.stars != null) {
+          starSum[s.key] = (starSum[s.key] ?? 0) + s.stars;
+          starN[s.key] = (starN[s.key] ?? 0) + 1;
+        }
       }
     }
-    const names: Record<SourceKey, string> = {
-      open_meteo: 'Open-Meteo', metno: 'MET Norway', met_eireann: 'Met Éireann', ukmo: 'UK Met Office',
-    };
-    const rows = (Object.keys(names) as SourceKey[]).map(k => ({
-      key: k, name: names[k],
-      outliers: outlierCount[k],
-      meanStars: starN[k] ? (starSum[k] / starN[k]) : null,
-      n: starN[k],
-    }));
+    // Same order as everywhere else: grid size, then mean distance.
+    const rows = Object.keys(names)
+      .map(k => ({
+        key: k,
+        name: names[k],
+        resolutionKm: resKm[k] ?? null,
+        meanDistanceKm: distN[k] ? distSum[k] / distN[k] : null,
+        outliers: outlierCount[k] ?? 0,
+        meanStars: starN[k] ? (starSum[k] / starN[k]) : null,
+        n: starN[k] ?? 0,
+      }))
+      .sort((a, b) =>
+        (a.resolutionKm ?? 999) - (b.resolutionKm ?? 999) ||
+        (a.meanDistanceKm ?? 9999) - (b.meanDistanceKm ?? 9999));
     return { rows, multiCount };
   }, [stopsWithWx]);
 
@@ -136,7 +160,12 @@ export default function DayCompareScreen() {
                     <View style={styles.cellSource}>
                       <Text style={[styles.sourceName, dim ? styles.dim : null]} numberOfLines={1}>{s.name}</Text>
                       <View style={styles.tags}>
-                        {s.isLocalModel ? <Text style={styles.tagLocal}>LOCAL</Text> : null}
+                        {s.isPrimary ? <Text style={styles.tagLocal}>PRIMARY</Text> : null}
+                        {s.resolutionKm != null ? (
+                          <Text style={styles.tagNote}>
+                            {s.resolutionKm}k{s.distanceKm != null ? ` · ${s.distanceKm < 10 ? s.distanceKm.toFixed(1) : Math.round(s.distanceKm)}km` : ''}
+                          </Text>
+                        ) : null}
                         {s.note ? <Text style={styles.tagNote}>{s.note}</Text> : null}
                       </View>
                     </View>

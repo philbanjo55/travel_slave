@@ -31,6 +31,9 @@ export async function fetchWithTimeout(
 // TYPES
 // ─────────────────────────────────────────
 export interface WeatherRow {
+  // Backend render contract, added by the latest_weather_per_stop view.
+  // Absent on rows cached before it existed — see buildSourceComparison.
+  display?: any;
   stop_id: string;
   day_id: string;
   trip_id: string;
@@ -733,23 +736,37 @@ export async function verifyStopWeather(row: WeatherRow): Promise<VerifyResult> 
 
 // ─────────────────────────────────────────
 // MULTI-SOURCE COMPARISON (read-only)
-// Open-Meteo is the primary (flat columns). MET Norway, Met Éireann, and UKMO
-// are pulled by the edge function and stored verbatim under row.raw.{metno,
-// met_eireann,ukmo}. This builds a normalized side-by-side from whatever is
-// present — no network. Sources with no usable data are returned with
-// present:false so the UI can show "—" rather than hide them.
+//
+// Driven entirely by the backend render contract at row.display, built by the
+// latest_weather_per_stop view. Adding a model, renaming one, or changing the
+// primary in another region needs no change here — the list is whatever the
+// contract hands us, already ordered.
+//
+// Ordering comes from the backend: grid size first, distance breaking ties. A
+// coarse model whose nearest grid point happens to land close is still
+// averaging over its whole cell, so resolution is the real signal.
+//
+// Older cached rows predate the contract, so a legacy fallback reconstructs
+// the four named sources from raw.{metno,ukmo,met_eireann}. That path can go
+// once no cached row is older than the contract.
 // ─────────────────────────────────────────
-export type SourceKey = 'open_meteo' | 'metno' | 'met_eireann' | 'ukmo';
+export type SourceKey = string;
 
 export interface SourceReading {
-  key: SourceKey;
+  key: SourceKey;            // the model string, e.g. dmi_harmonie_arome_europe
   name: string;
+  centre: string | null;
   present: boolean;
-  isLocalModel: boolean;     // home-team high-res for this region
-  gustMeasured: boolean;     // true only when real gusts (UKMO/OM), not estimated
-  note?: string;             // e.g. "out of range", "parse miss"
+  isPrimary: boolean;
+  resolutionKm: number | null;   // grid size — how local this number can be
+  distanceKm: number | null;     // how far the sampled grid point actually is
+  isBlend: boolean;
+  gustMeasured: boolean;
+  note?: string;
   temperature_c: number | null;
   cloud_cover_pct: number | null;
+  cloud_cover_low_pct: number | null;
+  cloud_base_m: number | null;
   precip_probability_pct: number | null;
   rain_mm: number | null;
   wind_speed_kmh: number | null;
@@ -758,115 +775,190 @@ export interface SourceReading {
   relative_humidity_pct: number | null;
   surface_pressure_hpa: number | null;
   weather_code: number | null;
+  fog_risk: string | null;
   stars: number | null;
 }
 
-// Ireland bounding box (rough) → Met Éireann is the local model there;
-// elsewhere in this trip (Scotland) UKMO is the local model.
-function isIrelandCoord(lat: number | null, lng: number | null): boolean {
-  if (lat == null || lng == null) return false;
-  return lat >= 51.2 && lat <= 55.5 && lng >= -10.7 && lng <= -5.9;
+export interface SourceUncertainty {
+  members: number | null;
+  probAnyRainPct: number | null;
+  probWetPct: number | null;
+  probGustOver40Pct: number | null;
+  probGustOver60Pct: number | null;
+  probBrokenSkyPct: number | null;
+  fogProbabilityAvailable: boolean;
 }
 
-function readSub(sub: any): Partial<SourceReading> {
-  if (!sub || sub.error) return {};
-  return {
-    temperature_c: sub.temperature_c ?? null,
-    cloud_cover_pct: sub.cloud_cover_pct ?? null,
-    precip_probability_pct: sub.precip_probability_pct ?? null,
-    rain_mm: sub.rain_mm ?? null,
-    wind_speed_kmh: sub.wind_speed_kmh ?? null,
-    wind_gusts_kmh: sub.wind_gusts_kmh ?? null,
-    visibility_m: sub.visibility_m ?? null,
-    relative_humidity_pct: sub.relative_humidity_pct ?? null,
-    surface_pressure_hpa: sub.surface_pressure_hpa ?? null,
-    weather_code: sub.weather_code ?? null,
-    stars: sub.score?.stars ?? null,
-  };
+export interface GroundTruth {
+  station: string | null;
+  observedAt: string | null;
+  ceilingFt: number | null;
+  visibilityM: number | null;
+  flightCategory: string | null;
+  rawMetar: string | null;
 }
-
-const EMPTY: Omit<SourceReading, 'key' | 'name' | 'present' | 'isLocalModel' | 'gustMeasured' | 'note'> = {
-  temperature_c: null, cloud_cover_pct: null, precip_probability_pct: null, rain_mm: null,
-  wind_speed_kmh: null, wind_gusts_kmh: null, visibility_m: null, relative_humidity_pct: null,
-  surface_pressure_hpa: null, weather_code: null, stars: null,
-};
 
 export interface SourceComparison {
   sources: SourceReading[];
-  hasMulti: boolean;          // at least 2 present
+  hasMulti: boolean;
+  fromContract: boolean;      // false = legacy cached row
+  centreCount: number | null;
+  agreement: string | null;   // TIGHT | LOOSE | SPLIT
   cloudConsensus: number | null;
   cloudOutlier: SourceKey | null;
   cloudOutlierDelta: number | null;
-  verdict: string;            // one-line human read
+  uncertainty: SourceUncertainty | null;
+  groundTruth: GroundTruth | null;
+  verdict: string;
 }
 
-export function buildSourceComparison(row: WeatherRow): SourceComparison {
-  const lat = row.raw?.provenance?.source_lat ?? null;
-  const lng = row.raw?.provenance?.source_lng ?? null;
-  const ireland = isIrelandCoord(lat, lng);
+const n = (v: any): number | null => {
+  if (v == null) return null;
+  const x = typeof v === 'number' ? v : parseFloat(v);
+  return Number.isFinite(x) ? x : null;
+};
 
-  const om: SourceReading = {
-    key: 'open_meteo', name: 'Open-Meteo', present: row.temperature_c != null,
-    isLocalModel: false, gustMeasured: true, ...EMPTY,
+function fromContract(display: any, row: WeatherRow): SourceComparison {
+  const sources: SourceReading[] = (display.sources ?? []).map((s: any) => {
+    const v = s.values ?? {};
+    return {
+      key: s.model,
+      name: s.label ?? s.model,
+      centre: s.centre ?? null,
+      present: v.temperature_c != null || v.cloud_cover_pct != null,
+      isPrimary: !!s.is_primary,
+      resolutionKm: n(s.resolution_km),
+      distanceKm: n(s.distance_km),
+      isBlend: !!s.is_blend,
+      gustMeasured: v.wind_gusts_kmh != null,
+      temperature_c: n(v.temperature_c),
+      cloud_cover_pct: n(v.cloud_cover_pct),
+      cloud_cover_low_pct: n(v.cloud_cover_low_pct),
+      cloud_base_m: n(v.cloud_base_m),
+      precip_probability_pct: n(v.precip_probability_pct),
+      rain_mm: n(v.precip_mm),
+      wind_speed_kmh: n(v.wind_speed_kmh),
+      wind_gusts_kmh: n(v.wind_gusts_kmh),
+      visibility_m: n(v.visibility_m),
+      relative_humidity_pct: null,
+      surface_pressure_hpa: null,
+      weather_code: n(v.weather_code),
+      fog_risk: v.fog_risk ?? null,
+      stars: null,
+    };
+  });
+
+  // Outlier on cloud, weighted to the models that can actually resolve this
+  // stop. A 55 km model disagreeing is not news; a 2 km one is.
+  const local = sources.filter(s => s.cloud_cover_pct != null && (s.resolutionKm ?? 99) <= 15);
+  const pool = local.length >= 2 ? local : sources.filter(s => s.cloud_cover_pct != null);
+  let cloudConsensus: number | null = null;
+  let cloudOutlier: SourceKey | null = null;
+  let cloudOutlierDelta: number | null = null;
+  if (pool.length >= 2) {
+    const vals = pool.map(s => s.cloud_cover_pct as number);
+    cloudConsensus = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+    let worst = 0;
+    for (const s of pool) {
+      const others = pool.filter(o => o.key !== s.key).map(o => o.cloud_cover_pct as number);
+      const mean = others.reduce((a, b) => a + b, 0) / others.length;
+      const d = Math.abs((s.cloud_cover_pct as number) - mean);
+      if (d > worst) { worst = d; cloudOutlier = s.key; cloudOutlierDelta = Math.round(d); }
+    }
+    if (worst < 25) { cloudOutlier = null; cloudOutlierDelta = null; }
+  }
+
+  const u = display.uncertainty;
+  const g = display.ground_truth;
+  const agreement = display.agreement?.level ?? null;
+  const centreCount = n(display.centre_count);
+
+  const verdict = display.agreement?.note
+    ?? (sources.length ? `${sources.length} sources` : 'No sources');
+
+  return {
+    sources,
+    hasMulti: sources.filter(s => s.present).length >= 2,
+    fromContract: true,
+    centreCount,
+    agreement,
+    cloudConsensus, cloudOutlier, cloudOutlierDelta,
+    uncertainty: u ? {
+      members: n(u.members),
+      probAnyRainPct: n(u.prob_any_rain_pct),
+      probWetPct: n(u.prob_wet_pct),
+      probGustOver40Pct: n(u.prob_gust_over_40_pct),
+      probGustOver60Pct: n(u.prob_gust_over_60_pct),
+      probBrokenSkyPct: n(u.prob_broken_sky_pct),
+      fogProbabilityAvailable: !!u.fog_probability_available,
+    } : null,
+    groundTruth: g ? {
+      station: g.station ?? null,
+      observedAt: g.observed_at ?? null,
+      ceilingFt: n(g.ceiling_ft),
+      visibilityM: n(g.visibility_m),
+      flightCategory: g.flight_category ?? null,
+      rawMetar: g.raw_metar ?? null,
+    } : null,
+    verdict,
+  };
+}
+
+// Legacy path for rows cached before the render contract existed.
+function fromLegacyRaw(row: WeatherRow): SourceComparison {
+  const mk = (key: string, name: string, sub: any): SourceReading => ({
+    key, name, centre: null,
+    present: !!sub && !sub.error && (sub.temperature_c != null || sub.cloud_cover_pct != null),
+    isPrimary: false, resolutionKm: null, distanceKm: null, isBlend: false,
+    gustMeasured: sub?.wind_gusts_kmh != null && !sub?.gust_is_estimated,
+    note: sub?.error ? 'unavailable' : undefined,
+    temperature_c: sub?.temperature_c ?? null,
+    cloud_cover_pct: sub?.cloud_cover_pct ?? null,
+    cloud_cover_low_pct: sub?.cloud_cover_low_pct ?? null,
+    cloud_base_m: sub?.cloud_base_m ?? null,
+    precip_probability_pct: sub?.precip_probability_pct ?? null,
+    rain_mm: sub?.rain_mm ?? null,
+    wind_speed_kmh: sub?.wind_speed_kmh ?? null,
+    wind_gusts_kmh: sub?.wind_gusts_kmh ?? null,
+    visibility_m: sub?.visibility_m ?? null,
+    relative_humidity_pct: sub?.relative_humidity_pct ?? null,
+    surface_pressure_hpa: sub?.surface_pressure_hpa ?? null,
+    weather_code: sub?.weather_code ?? null,
+    fog_risk: sub?.fog_risk ?? null,
+    stars: sub?.score?.stars ?? null,
+  });
+
+  const primary: SourceReading = {
+    ...mk('primary', row.raw?.primary_model ?? 'Primary', null),
+    present: row.temperature_c != null,
+    isPrimary: true,
     temperature_c: row.temperature_c, cloud_cover_pct: row.cloud_cover_pct,
     precip_probability_pct: row.precip_probability_pct, rain_mm: row.rain_mm,
     wind_speed_kmh: row.wind_speed_kmh, wind_gusts_kmh: row.wind_gusts_kmh,
     visibility_m: row.visibility_m, relative_humidity_pct: row.relative_humidity_pct,
     surface_pressure_hpa: row.surface_pressure_hpa, weather_code: row.weather_code,
-    stars: scoreConditions(null, row)?.stars ?? row.raw?.score?.stars ?? null,
+    stars: row.raw?.score?.stars ?? null, gustMeasured: true, note: undefined,
   };
 
-  const mkSub = (key: SourceKey, name: string, sub: any, local: boolean, gustReal: boolean): SourceReading => {
-    const present = !!sub && !sub.error && (sub.temperature_c != null || sub.cloud_cover_pct != null);
-    const parseMiss = sub?.provenance?.parse_miss === true;
-    let note: string | undefined;
-    if (sub?.error) note = 'unavailable';
-    else if (parseMiss) note = 'out of range';
-    return {
-      key, name, present, isLocalModel: local,
-      gustMeasured: gustReal && !(sub?.gust_is_estimated),
-      note, ...EMPTY, ...readSub(sub),
-    };
-  };
-
-  const mn = mkSub('metno', 'MET Norway', row.raw?.metno, false, false);
-  const me = mkSub('met_eireann', 'Met Éireann', row.raw?.met_eireann, ireland, false);
-  const uk = mkSub('ukmo', 'UK Met Office', row.raw?.ukmo, !ireland, true);
-
-  const sources = [om, mn, me, uk];
+  const sources = [
+    primary,
+    mk('metno', 'MET Norway', row.raw?.metno),
+    mk('ukmo', 'UK Met Office', row.raw?.ukmo),
+  ];
   const present = sources.filter(s => s.present);
+  return {
+    sources, hasMulti: present.length >= 2, fromContract: false,
+    centreCount: null, agreement: row.raw?.comparison?.agreement ?? null,
+    cloudConsensus: null, cloudOutlier: null, cloudOutlierDelta: null,
+    uncertainty: null, groundTruth: null,
+    verdict: `${present.length} sources (cached before source detail was added)`,
+  };
+}
 
-  // Cloud consensus + outlier (the variable that's driven the real decisions).
-  let cloudConsensus: number | null = null, cloudOutlier: SourceKey | null = null, cloudOutlierDelta: number | null = null;
-  const clouds = present.filter(s => s.cloud_cover_pct != null);
-  if (clouds.length >= 2) {
-    const vals = clouds.map(s => s.cloud_cover_pct as number);
-    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-    cloudConsensus = Math.round(mean);
-    // outlier = source furthest from the mean of the others
-    let worst = 0;
-    for (const s of clouds) {
-      const others = clouds.filter(o => o.key !== s.key).map(o => o.cloud_cover_pct as number);
-      const om2 = others.reduce((a, b) => a + b, 0) / others.length;
-      const d = Math.abs((s.cloud_cover_pct as number) - om2);
-      if (d > worst) { worst = d; cloudOutlier = s.key; cloudOutlierDelta = Math.round(d); }
-    }
-    if (worst < 20) { cloudOutlier = null; cloudOutlierDelta = null; }  // no meaningful outlier
+export function buildSourceComparison(row: WeatherRow): SourceComparison {
+  const display = (row as any)?.display;
+  if (display && Array.isArray(display.sources) && display.sources.length) {
+    return fromContract(display, row);
   }
-
-  let verdict: string;
-  if (present.length < 2) {
-    verdict = 'Only one source available.';
-  } else if (cloudOutlier) {
-    const out = sources.find(s => s.key === cloudOutlier)!;
-    const agree = clouds.filter(s => s.key !== cloudOutlier).map(s => s.cloud_cover_pct as number);
-    const agreeMean = Math.round(agree.reduce((a, b) => a + b, 0) / agree.length);
-    verdict = `${agree.length} sources ~${agreeMean}% cloud · ${out.name} differs at ${out.cloud_cover_pct}%`;
-  } else if (cloudConsensus != null) {
-    verdict = `${present.length} sources agree ~${cloudConsensus}% cloud`;
-  } else {
-    verdict = `${present.length} sources available`;
-  }
-
-  return { sources, hasMulti: present.length >= 2, cloudConsensus, cloudOutlier, cloudOutlierDelta, verdict };
+  return fromLegacyRaw(row);
 }
