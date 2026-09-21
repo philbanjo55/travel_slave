@@ -34,6 +34,7 @@ export function slimCachedWeather(w: any): any {
 }
 
 export async function cacheFullTrip(tripId: string, tripData: any): Promise<boolean> {
+  const startedAt = Date.now();
   try {
     // Photos and weather both come out of the trip blob and go into their own
     // entries. What is left is the itinerary, which is small and always writes.
@@ -92,6 +93,14 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<bool
     await AsyncStorage.setItem(
       TRIPS_KEY,
       JSON.stringify([...others, tripData.trip])
+    );
+    // Success is logged, not just failure: the screen now renders before this
+    // runs, so "the data appeared" says nothing about whether it was stored.
+    // This line is the only way to know the offline copy is actually safe.
+    const kb = Math.round(weatherEntries.reduce((n, [, v]) => n + v.length, 0) / 1024);
+    console.log(
+      `[trip] offline copy updated — ${wroteWeather}/${weatherEntries.length} days of weather, ` +
+      `${kb} kB, ${Date.now() - startedAt} ms`
     );
     return true;
   } catch (e) {
