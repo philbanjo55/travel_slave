@@ -33,11 +33,19 @@ type Registry = {
   models: string[];
   centreOf: Record<string, string>;
   resolutionOf: Record<string, number>;
+  sortOf: Record<string, number>;
 };
-function registryFrom(centres: Record<string, string[]>, res?: Record<string, number>): Registry {
+function registryFrom(
+  centres: Record<string, string[]>,
+  res?: Record<string, number>,
+  sort?: Record<string, number>,
+): Registry {
   const centreOf: Record<string, string> = {};
   for (const [c, ms] of Object.entries(centres)) for (const m of ms) centreOf[m] = c;
-  return { centres, models: Object.values(centres).flat(), centreOf, resolutionOf: res ?? {} };
+  return {
+    centres, models: Object.values(centres).flat(), centreOf,
+    resolutionOf: res ?? {}, sortOf: sort ?? {},
+  };
 }
 const FALLBACK_REGISTRY = registryFrom(FALLBACK_CENTRES);
 
@@ -61,7 +69,14 @@ function rankModels(
     const ra = reg.resolutionOf[a] ?? 999, rb = reg.resolutionOf[b] ?? 999;
     if (ra !== rb) return ra - rb;
     const da = grid[a]?.km ?? 9999, db = grid[b]?.km ?? 9999;
-    return da - db;
+    if (da !== db) return da - db;
+    // At 2 km, DMI HARMONIE and DMI seamless are the same run on the same
+    // grid point, so resolution and distance both tie and something has to
+    // decide. Without these two the winner was whatever order the registry
+    // query happened to return, which made primary_model unstable.
+    const sa = reg.sortOf[a] ?? 9999, sb = reg.sortOf[b] ?? 9999;
+    if (sa !== sb) return sa - sb;
+    return a < b ? -1 : a > b ? 1 : 0;
   });
 }
 
@@ -476,16 +491,20 @@ Deno.serve(async (req) => {
     {
       const { data: rows } = await supabase
         .from('weather_models')
-        .select('model,centre,resolution_km')
-        .eq('active', true);
+        .select('model,centre,resolution_km,sort_order')
+        .eq('active', true)
+        .order('sort_order', { ascending: true, nullsFirst: false })
+        .order('model', { ascending: true });
       if (rows && rows.length) {
         const centres: Record<string, string[]> = {};
         const res: Record<string, number> = {};
+        const sort: Record<string, number> = {};
         for (const r of rows as any[]) {
           (centres[r.centre] ??= []).push(r.model);
           if (r.resolution_km != null) res[r.model] = Number(r.resolution_km);
+          if (r.sort_order != null) sort[r.model] = Number(r.sort_order);
         }
-        reg = registryFrom(centres, res);
+        reg = registryFrom(centres, res, sort);
         registrySource = 'weather_models';
       }
     }
@@ -730,7 +749,7 @@ Deno.serve(async (req) => {
           primary_distance_km: grid[primaryModel]?.km ?? null,
           primary_resolution_km: reg.resolutionOf[primaryModel] ?? null,
           pulled_at: new Date().toISOString(),
-          version: 'v29-registry',
+          version: 'v30-tiebreak',
         },
       };
 
@@ -837,7 +856,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({
       ok:true, day_id:dayId, day_title:day.title, test, date_shifted:dateShifted,
       forecast_date_used:usedDate, real_trip_date:day.date, generated_at:new Date().toISOString(),
-      version:'v29-registry',
+      version:'v30-tiebreak',
       registry_source: registrySource,
       models_in_registry: reg.models.length,
       ensemble_cells: ensembleByCell.size,

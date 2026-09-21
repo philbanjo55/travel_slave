@@ -384,6 +384,121 @@ export function rainCell(
   return { text: '—', kind: 'none' };
 }
 
+// ─────────────────────────────────────────
+// GENERIC FIELD RENDERING
+// The contract hands over every field a model reported, and the set grows
+// whenever the edge function asks Open-Meteo for more. Rather than listing
+// fields here — which would mean an app release every time the backend learns
+// something — a field is rendered from the shape of its own name. A key ending
+// _pct is a percentage, _kmh is a wind speed, _m is a height. An unrecognised
+// key still renders: humanised label, raw value, no crash.
+// Known keys get a better label and a better unit; everything else falls
+// through to the suffix rules.
+// ─────────────────────────────────────────
+const FIELD_LABELS: Record<string, string> = {
+  temperature_c: 'Temperature',
+  apparent_temperature_c: 'Feels like',
+  dew_point_c: 'Dew point',
+  relative_humidity_pct: 'Humidity',
+  cloud_cover_pct: 'Cloud cover',
+  cloud_cover_low_pct: 'Low cloud',
+  cloud_cover_mid_pct: 'Mid cloud',
+  cloud_cover_high_pct: 'High cloud',
+  cloud_cover_2m_pct: 'Fog at ground',
+  cloud_base_m: 'Cloud base',
+  cloud_top_m: 'Cloud top',
+  visibility_m: 'Visibility',
+  precip_mm: 'Precipitation',
+  rain_mm: 'Rain',
+  showers_mm: 'Showers',
+  snowfall_cm: 'Snowfall',
+  precip_probability_pct: 'Chance of precip',
+  wind_speed_kmh: 'Wind',
+  wind_gusts_kmh: 'Gusts',
+  wind_direction_deg: 'Wind from',
+  surface_pressure_hpa: 'Pressure',
+  uv_index: 'UV index',
+  weather_code: 'WMO code',
+  conditions: 'Conditions',
+  fog_risk: 'Fog risk',
+  is_day: 'Daylight',
+  wave_height_m: 'Wave height',
+  wave_period_s: 'Wave period',
+  wave_direction_deg: 'Waves from',
+  swell_wave_height_m: 'Swell height',
+  swell_wave_period_s: 'Swell period',
+  wind_wave_height_m: 'Wind wave',
+  sea_surface_temp_c: 'Sea temp',
+};
+
+// Fields already shown as their own column in the comparison table. Hidden
+// from the expanded detail so it does not just repeat the row above it.
+export const FIELD_IN_TABLE = new Set([
+  'cloud_cover_pct', 'cloud_cover_low_pct', 'cloud_base_m', 'visibility_m',
+  'precip_mm', 'precip_probability_pct', 'wind_gusts_kmh', 'wind_speed_kmh',
+  'temperature_c',
+]);
+
+export function fieldLabel(key: string): string {
+  const known = FIELD_LABELS[key];
+  if (known) return known;
+  return key
+    .replace(/_(pct|kmh|mm|cm|hpa|deg|c|m|s)$/, '')
+    .replace(/_/g, ' ')
+    .replace(/^./, ch => ch.toUpperCase());
+}
+
+// Value → display string, in the units the rest of the app already uses:
+// °F, mph, feet, miles. Returns null for a value worth omitting entirely.
+export function fieldValueText(key: string, v: any): string | null {
+  if (v == null) return null;
+  if (typeof v === 'boolean') return v ? 'yes' : 'no';
+  if (typeof v === 'string') return v;
+  if (typeof v !== 'number' || !Number.isFinite(v)) return String(v);
+
+  if (key === 'weather_code') return String(v);
+  if (key === 'uv_index') return v.toFixed(1);
+  if (key.endsWith('_pct')) return `${Math.round(v)}%`;
+  if (key.endsWith('_kmh')) return `${Math.round(kmhToMph(v))} mph`;
+  if (key.endsWith('_deg')) return `${windDir(v)} (${Math.round(v)}°)`;
+  if (key.endsWith('_hpa')) return `${Math.round(v)} hPa`;
+  if (key.endsWith('_mm')) return v <= 0 ? '0 mm' : v < 0.1 ? '<0.1 mm' : `${v.toFixed(v < 1 ? 1 : 0)} mm`;
+  if (key.endsWith('_cm')) return v <= 0 ? '0 cm' : `${v.toFixed(1)} cm`;
+  if (key.endsWith('_c')) return `${Math.round(cToF(v))}°F`;
+  if (key.endsWith('_s')) return `${v.toFixed(1)} s`;
+  if (key === 'visibility_m') return visibilityText(v);
+  // Wave heights are small metres and read better as feet with a decimal;
+  // cloud base and top are large and round to the nearest hundred feet.
+  if (key.endsWith('_m')) {
+    const ft = v * 3.28084;
+    return ft < 100 ? `${ft.toFixed(1)} ft` : `${(Math.round(ft / 100) * 100).toLocaleString()} ft`;
+  }
+  return String(v);
+}
+
+// Every field of a source, ready to render, in a stable order: the ones we
+// have a label for first (in the order declared above, which groups sky, then
+// precipitation, then wind), then anything new the backend has started
+// sending, alphabetically.
+export function allFields(
+  values: Record<string, any>, opts?: { skipTableFields?: boolean }
+): { key: string; label: string; text: string }[] {
+  const known = Object.keys(FIELD_LABELS);
+  const order = (k: string) => {
+    const i = known.indexOf(k);
+    return i === -1 ? 1000 : i;
+  };
+  return Object.keys(values ?? {})
+    .filter(k => !(opts?.skipTableFields && FIELD_IN_TABLE.has(k)))
+    .map(k => ({ key: k, label: fieldLabel(k), text: fieldValueText(k, values[k]) }))
+    .filter(f => f.text != null)
+    .sort((a, b) => {
+      const oa = order(a.key), ob = order(b.key);
+      if (oa !== ob) return oa - ob;
+      return a.key < b.key ? -1 : 1;
+    }) as { key: string; label: string; text: string }[];
+}
+
 export function tempText(c: number | null): string {
   return c == null ? '—' : `${Math.round(cToF(c))}°F`;
 }
@@ -761,8 +876,14 @@ export interface SourceReading {
   resolutionKm: number | null;   // grid size — how local this number can be
   distanceKm: number | null;     // how far the sampled grid point actually is
   isBlend: boolean;
+  blendNote: string | null;
   gustMeasured: boolean;
   note?: string;
+  // Every field the backend collected for this model, untouched. The named
+  // fields below are convenience accessors onto the same data — anything the
+  // edge function starts collecting shows up here with no change in this file
+  // and no change in the view, which passes the model object through whole.
+  values: Record<string, any>;
   temperature_c: number | null;
   cloud_cover_pct: number | null;
   cloud_cover_low_pct: number | null;
@@ -779,14 +900,55 @@ export interface SourceReading {
   stars: number | null;
 }
 
+export interface EnsembleVar {
+  min: number | null; p10: number | null; median: number | null;
+  p90: number | null; max: number | null; stdev: number | null;
+  members: number | null;
+  // Threshold probabilities live alongside the percentiles, named per
+  // variable by the backend (prob_wet_pct, prob_gust_over_40_pct, ...).
+  probs: Record<string, number>;
+}
+
 export interface SourceUncertainty {
   members: number | null;
+  gridCell: string | null;
   probAnyRainPct: number | null;
   probWetPct: number | null;
   probGustOver40Pct: number | null;
   probGustOver60Pct: number | null;
   probBrokenSkyPct: number | null;
   fogProbabilityAvailable: boolean;
+  // The full spread per variable — p10/median/p90 says how wide the
+  // possibilities are, which a single probability cannot.
+  byVariable: Record<string, EnsembleVar>;
+}
+
+// How far one model's own forecast for this hour has moved between its last
+// four runs. Small drift means the model has settled; large drift means it is
+// still arguing with itself and the number on screen is soft.
+export interface ConvergenceVar {
+  runs: number[];
+  drift: number | null;
+  stdev: number | null;
+}
+
+// Spread across forecasting CENTRES (one representative each), not across
+// model strings — six ECMWF derivatives are not six opinions.
+export interface ConsensusVar {
+  min?: number | null; max?: number | null; mean?: number | null;
+  spread?: number | null; agreement?: string | null;
+  [k: string]: any;
+}
+
+export interface SeaState {
+  wave_height_m: number | null;
+  wave_period_s: number | null;
+  wave_direction_deg: number | null;
+  swell_wave_height_m: number | null;
+  swell_wave_period_s: number | null;
+  wind_wave_height_m: number | null;
+  sea_surface_temp_c: number | null;
+  [k: string]: any;
 }
 
 export interface GroundTruth {
@@ -796,6 +958,7 @@ export interface GroundTruth {
   visibilityM: number | null;
   flightCategory: string | null;
   rawMetar: string | null;
+  rawTaf: string | null;        // the forecast the airfield itself is flying on
 }
 
 export interface SourceComparison {
@@ -810,6 +973,17 @@ export interface SourceComparison {
   uncertainty: SourceUncertainty | null;
   groundTruth: GroundTruth | null;
   verdict: string;
+  // Contract v2. Null on older cached rows.
+  contractVersion: number;
+  primaryModel: string | null;
+  horizonHours: number | null;
+  fetchedAt: string | null;
+  forecastValidFor: string | null;
+  consensus: Record<string, ConsensusVar> | null;
+  convergence: { model: string | null; byVariable: Record<string, ConvergenceVar> } | null;
+  sea: SeaState | null;
+  score: any | null;
+  provenance: any | null;
 }
 
 const n = (v: any): number | null => {
@@ -830,7 +1004,9 @@ function fromContract(display: any, row: WeatherRow): SourceComparison {
       resolutionKm: n(s.resolution_km),
       distanceKm: n(s.distance_km),
       isBlend: !!s.is_blend,
+      blendNote: s.blend_note ?? null,
       gustMeasured: v.wind_gusts_kmh != null,
+      values: v,
       temperature_c: n(v.temperature_c),
       cloud_cover_pct: n(v.cloud_cover_pct),
       cloud_cover_low_pct: n(v.cloud_cover_low_pct),
@@ -840,8 +1016,8 @@ function fromContract(display: any, row: WeatherRow): SourceComparison {
       wind_speed_kmh: n(v.wind_speed_kmh),
       wind_gusts_kmh: n(v.wind_gusts_kmh),
       visibility_m: n(v.visibility_m),
-      relative_humidity_pct: null,
-      surface_pressure_hpa: null,
+      relative_humidity_pct: n(v.relative_humidity_pct),
+      surface_pressure_hpa: n(v.surface_pressure_hpa),
       weather_code: n(v.weather_code),
       fog_risk: v.fog_risk ?? null,
       stars: null,
@@ -885,12 +1061,16 @@ function fromContract(display: any, row: WeatherRow): SourceComparison {
     cloudConsensus, cloudOutlier, cloudOutlierDelta,
     uncertainty: u ? {
       members: n(u.members),
-      probAnyRainPct: n(u.prob_any_rain_pct),
-      probWetPct: n(u.prob_wet_pct),
-      probGustOver40Pct: n(u.prob_gust_over_40_pct),
-      probGustOver60Pct: n(u.prob_gust_over_60_pct),
-      probBrokenSkyPct: n(u.prob_broken_sky_pct),
+      gridCell: u.grid_cell ?? null,
+      // v1 kept the probabilities at the top level; v2 moved them under the
+      // variable they belong to. Read either.
+      probAnyRainPct: n(u.prob_any_rain_pct ?? uv(u, 'precipitation', 'prob_any_rain_pct')),
+      probWetPct: n(u.prob_wet_pct ?? uv(u, 'precipitation', 'prob_wet_pct')),
+      probGustOver40Pct: n(u.prob_gust_over_40_pct ?? uv(u, 'wind_gusts_10m', 'prob_gust_over_40_pct')),
+      probGustOver60Pct: n(u.prob_gust_over_60_pct ?? uv(u, 'wind_gusts_10m', 'prob_gust_over_60_pct')),
+      probBrokenSkyPct: n(u.prob_broken_sky_pct ?? uv(u, 'cloud_cover', 'prob_broken_sky_pct')),
       fogProbabilityAvailable: !!u.fog_probability_available,
+      byVariable: ensembleVars(u.by_variable),
     } : null,
     groundTruth: g ? {
       station: g.station ?? null,
@@ -899,9 +1079,49 @@ function fromContract(display: any, row: WeatherRow): SourceComparison {
       visibilityM: n(g.visibility_m),
       flightCategory: g.flight_category ?? null,
       rawMetar: g.raw_metar ?? null,
+      rawTaf: g.raw_taf ?? null,
     } : null,
     verdict,
+    contractVersion: n(display.version) ?? 1,
+    primaryModel: display.primary_model ?? null,
+    horizonHours: n(display.horizon_hours),
+    fetchedAt: display.fetched_at ?? null,
+    forecastValidFor: display.forecast_valid_for ?? null,
+    consensus: display.consensus ?? null,
+    convergence: display.convergence ? {
+      model: display.convergence.model ?? null,
+      byVariable: display.convergence.by_variable ?? {},
+    } : null,
+    sea: display.sea ?? null,
+    score: display.score ?? null,
+    provenance: display.provenance ?? null,
   };
+}
+
+// Pull one threshold probability out of the v2 by_variable shape.
+function uv(u: any, variable: string, key: string): any {
+  return u?.by_variable?.[variable]?.[key] ?? null;
+}
+
+// Split each ensemble variable into its distribution and whatever threshold
+// probabilities the backend attached to it. The probs are collected by shape
+// (any prob_*_pct key) rather than by name, so a new threshold needs no change
+// here.
+function ensembleVars(by: any): Record<string, EnsembleVar> {
+  const out: Record<string, EnsembleVar> = {};
+  for (const [k, raw] of Object.entries(by ?? {})) {
+    const v = raw as any;
+    const probs: Record<string, number> = {};
+    for (const [pk, pv] of Object.entries(v)) {
+      if (pk.startsWith('prob_') && typeof pv === 'number') probs[pk] = pv;
+    }
+    out[k] = {
+      min: n(v.min), p10: n(v.p10), median: n(v.median),
+      p90: n(v.p90), max: n(v.max), stdev: n(v.stdev),
+      members: n(v.members), probs,
+    };
+  }
+  return out;
 }
 
 // Legacy path for rows cached before the render contract existed.
@@ -910,8 +1130,10 @@ function fromLegacyRaw(row: WeatherRow): SourceComparison {
     key, name, centre: null,
     present: !!sub && !sub.error && (sub.temperature_c != null || sub.cloud_cover_pct != null),
     isPrimary: false, resolutionKm: null, distanceKm: null, isBlend: false,
+    blendNote: null,
     gustMeasured: sub?.wind_gusts_kmh != null && !sub?.gust_is_estimated,
     note: sub?.error ? 'unavailable' : undefined,
+    values: (sub && typeof sub === 'object') ? sub : {},
     temperature_c: sub?.temperature_c ?? null,
     cloud_cover_pct: sub?.cloud_cover_pct ?? null,
     cloud_cover_low_pct: sub?.cloud_cover_low_pct ?? null,
@@ -952,6 +1174,10 @@ function fromLegacyRaw(row: WeatherRow): SourceComparison {
     cloudConsensus: null, cloudOutlier: null, cloudOutlierDelta: null,
     uncertainty: null, groundTruth: null,
     verdict: `${present.length} sources (cached before source detail was added)`,
+    contractVersion: 0, primaryModel: row.raw?.primary_model ?? null,
+    horizonHours: null, fetchedAt: row.fetched_at ?? null,
+    forecastValidFor: null, consensus: null, convergence: null,
+    sea: row.raw?.sea ?? null, score: row.raw?.score ?? null, provenance: null,
   };
 }
 

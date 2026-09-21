@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 import {
@@ -8,6 +8,7 @@ import {
   conditionIcon, scoreConditions, forecastMode, forecastConfidence, shortDate, updatedAgoText,
   buildSourceComparison, cToF, kmhToMph, rainCell,
   verifyStopWeather, VerifyResult, verificationStatus,
+  allFields, fieldLabel, fieldValueText, SourceReading,
 } from '../services/weather';
 
 interface Props {
@@ -22,6 +23,72 @@ interface Props {
   weather?: WeatherRow | null;
 }
 
+// The comparison table, declared as data. Adding a column is one line here;
+// the header, every row and the horizontal width all follow from it. Fields
+// not given a column still appear — tap a source to expand the rest.
+const mph = (k: number | null) => k == null ? '—' : `${Math.round(kmhToMph(k))}`;
+const pct = (v: number | null) => v == null ? '—' : `${Math.round(v)}%`;
+const kmT = (v: number | null) => v == null ? '—' : v < 10 ? `${v.toFixed(1)}` : `${Math.round(v)}`;
+const ft  = (m: number | null) => m == null ? '—' : `${Math.round(m * 3.28084 / 100) * 100}`;
+const mm  = (v: number | null) => v == null ? '—' : v <= 0 ? '0' : v < 0.1 ? '<.1' : v.toFixed(v < 1 ? 1 : 0);
+const num = (v: any) => v == null ? '—' : typeof v === 'number' ? `${Math.round(v)}` : String(v);
+
+// Ensemble and consensus name their variables the way Open-Meteo does
+// (cloud_cover, wind_gusts_10m). Map them onto the unit-bearing field names so
+// the shared formatter knows a gust is mph and a temperature is °F. An
+// unmapped variable still renders — it just falls through to a bare number.
+const ENS_UNIT_KEY: Record<string, string> = {
+  cloud_cover: 'cloud_cover_pct',
+  cloud_cover_low: 'cloud_cover_low_pct',
+  cloud_base: 'cloud_base_m',
+  precipitation: 'precip_mm',
+  precipitation_probability: 'precip_probability_pct',
+  temperature_2m: 'temperature_c',
+  wind_gusts_10m: 'wind_gusts_kmh',
+  wind_speed_10m: 'wind_speed_kmh',
+  relative_humidity_2m: 'relative_humidity_pct',
+  surface_pressure: 'surface_pressure_hpa',
+  visibility: 'visibility_m',
+};
+const ensKey = (k: string) => ENS_UNIT_KEY[k] ?? k;
+
+type Col = { key: string; head: string; hint: string; get: (s: SourceReading) => string; wide?: boolean };
+
+const COLUMNS: Col[] = [
+  { key: 'grid',  head: 'GRID',  hint: 'model resolution in km — the smallest thing it can resolve',
+    get: s => s.resolutionKm == null ? '—' : `${s.resolutionKm}k` },
+  { key: 'away',  head: 'AWAY',  hint: 'km from this stop to the grid point the model actually sampled',
+    get: s => kmT(s.distanceKm) },
+  { key: 'cloud', head: 'CLOUD', hint: 'total cloud cover', get: s => pct(s.cloud_cover_pct) },
+  { key: 'low',   head: 'LOW',   hint: 'low cloud — the layer that hides a summit',
+    get: s => pct(s.cloud_cover_low_pct) },
+  { key: 'base',  head: 'BASE',  hint: 'cloud base in feet — compare to the height of your subject',
+    get: s => ft(s.cloud_base_m) },
+  { key: 'top',   head: 'TOP',   hint: 'cloud top in feet — thin deck or deep overcast',
+    get: s => ft(s.values?.cloud_top_m ?? null) },
+  { key: 'vis',   head: 'VIS',   hint: 'visibility in miles', get: s => s.visibility_m == null ? '—'
+    : s.visibility_m < 1609 ? `${(s.visibility_m / 1609.34).toFixed(1)}` : `${Math.round(s.visibility_m / 1609.34)}` },
+  { key: 'fog',   head: 'FOG',   hint: 'cloud sitting at 2 m — the native fog field, DMI only',
+    get: s => pct(s.values?.cloud_cover_2m_pct ?? null) },
+  { key: 'rain',  head: 'RAIN',  hint: 'precipitation in mm for the hour', get: s => mm(s.rain_mm) },
+  { key: 'pop',   head: 'POP',   hint: 'chance of precipitation — only some models report it',
+    get: s => pct(s.precip_probability_pct) },
+  { key: 'gust',  head: 'GUST',  hint: 'gusts in mph', get: s =>
+    `${mph(s.wind_gusts_kmh)}${s.wind_gusts_kmh != null && !s.gustMeasured ? '*' : ''}` },
+  { key: 'wind',  head: 'WIND',  hint: 'mean wind in mph', get: s => mph(s.wind_speed_kmh) },
+  { key: 'dir',   head: 'DIR',   hint: 'wind direction', get: s => {
+    const d = s.values?.wind_direction_deg; return d == null ? '—' : windDir(d); }, wide: true },
+  { key: 'temp',  head: 'TEMP',  hint: 'temperature in °F',
+    get: s => s.temperature_c == null ? '—' : `${Math.round(cToF(s.temperature_c))}` },
+  { key: 'dew',   head: 'DEW',   hint: 'dew point — within 2°F of temp means fog',
+    get: s => s.values?.dew_point_c == null ? '—' : `${Math.round(cToF(s.values.dew_point_c))}` },
+  { key: 'hum',   head: 'HUM',   hint: 'relative humidity', get: s => pct(s.relative_humidity_pct) },
+  { key: 'pres',  head: 'PRES',  hint: 'surface pressure in hPa',
+    get: s => num(s.surface_pressure_hpa), wide: true },
+];
+const COL_W = 46, COL_W_WIDE = 58, SRC_W = 132;
+const TABLE_W = SRC_W + COLUMNS.reduce((w, c) => w + (c.wide ? COL_W_WIDE : COL_W), 0);
+
 export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: Props) {
   const [row, setRow] = useState<WeatherRow | null>(weather ?? null);
   const [loaded, setLoaded] = useState(weather !== undefined);
@@ -29,6 +96,9 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
   const [verify, setVerify] = useState<VerifyResult | null>(null);
   const [showVerify, setShowVerify] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
+  // Which source's full field list is open. Only one at a time — eighteen
+  // sources times twenty-six fields is not a thing to scroll past.
+  const [openSource, setOpenSource] = useState<string | null>(null);
 
   useEffect(() => {
     if (weather !== undefined) { setRow(weather ?? null); setLoaded(true); return; }
@@ -208,21 +278,65 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           {/* Ensemble probabilities. Rain and wind uncertainty are measurable;
               fog uncertainty is not, because no ensemble serves visibility. */}
           {cmp.uncertainty ? (
-            <View style={styles.uncertaintyRow}>
-              <Text style={styles.uncertaintyLabel}>
-                {cmp.uncertainty.members ?? '?'} ENSEMBLE MEMBERS
-              </Text>
-              <View style={styles.uncertaintyChips}>
-                {cmp.uncertainty.probAnyRainPct != null ? (
-                  <Text style={styles.uncertaintyChip}>{cmp.uncertainty.probAnyRainPct}% rain</Text>
-                ) : null}
-                {cmp.uncertainty.probGustOver40Pct != null ? (
-                  <Text style={styles.uncertaintyChip}>{cmp.uncertainty.probGustOver40Pct}% gust&gt;25mph</Text>
-                ) : null}
-                {cmp.uncertainty.probBrokenSkyPct != null ? (
-                  <Text style={styles.uncertaintyChip}>{cmp.uncertainty.probBrokenSkyPct}% broken sky</Text>
-                ) : null}
+            <>
+              <View style={styles.uncertaintyRow}>
+                <Text style={styles.uncertaintyLabel}>
+                  {cmp.uncertainty.members ?? '?'} ENSEMBLE MEMBERS
+                </Text>
+                <View style={styles.uncertaintyChips}>
+                  {cmp.uncertainty.probAnyRainPct != null ? (
+                    <Text style={styles.uncertaintyChip}>{cmp.uncertainty.probAnyRainPct}% rain</Text>
+                  ) : null}
+                  {cmp.uncertainty.probGustOver40Pct != null ? (
+                    <Text style={styles.uncertaintyChip}>{cmp.uncertainty.probGustOver40Pct}% gust&gt;25mph</Text>
+                  ) : null}
+                  {cmp.uncertainty.probBrokenSkyPct != null ? (
+                    <Text style={styles.uncertaintyChip}>{cmp.uncertainty.probBrokenSkyPct}% broken sky</Text>
+                  ) : null}
+                </View>
               </View>
+
+              {/* The spread behind those probabilities. "60% chance of rain"
+                  hides whether the members disagree between a drizzle and a
+                  downpour; p10–p90 does not. Every ensemble variable is listed
+                  — a new one appears here on its own. */}
+              {Object.keys(cmp.uncertainty.byVariable).length ? (
+                <View style={styles.driftRow}>
+                  <Text style={styles.driftLabel}>SPREAD ACROSS MEMBERS (p10 · median · p90)</Text>
+                  {Object.entries(cmp.uncertainty.byVariable).map(([k, v]: [string, any]) => (
+                    <Text key={k} style={styles.driftText}>
+                      {fieldLabel(ensKey(k))}: {fieldValueText(ensKey(k), v.p10) ?? '—'} · {fieldValueText(ensKey(k), v.median) ?? '—'} · {fieldValueText(ensKey(k), v.p90) ?? '—'}
+                      {v.members != null ? `  (${v.members})` : ''}
+                    </Text>
+                  ))}
+                </View>
+              ) : null}
+            </>
+          ) : null}
+
+          {/* How much this model has changed its mind about this hour across
+              its last four runs. Drift near zero means it has settled. */}
+          {cmp.convergence && Object.keys(cmp.convergence.byVariable).length ? (
+            <View style={styles.driftRow}>
+              <Text style={styles.driftLabel}>
+                RUN-TO-RUN DRIFT{cmp.convergence.model ? ` · ${cmp.convergence.model}` : ''}
+              </Text>
+              {Object.entries(cmp.convergence.byVariable).map(([k, v]: [string, any]) => (
+                <Text key={k} style={styles.driftText}>
+                  {fieldLabel(ensKey(k))}: {v.runs.map((r: number) => fieldValueText(ensKey(k), r) ?? '—').join(' → ')}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+
+          {/* Sea state. It decides whether the ferry sails and whether a sea
+              stack is shootable from the water at all. */}
+          {cmp.sea ? (
+            <View style={styles.seaRow}>
+              <Ionicons name="water-outline" size={11} color={colors.textSecondary} />
+              <Text style={styles.seaText} numberOfLines={3}>
+                {allFields(cmp.sea as any).map((f: any) => `${f.label} ${f.text}`).join(' · ')}
+              </Text>
             </View>
           ) : null}
 
@@ -240,60 +354,127 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
             </View>
           ) : null}
 
-          <View style={styles.cmpHeadRow}>
-            <Text style={[styles.cmpCellSource, styles.cmpHeadText]}>SOURCE</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>GRID</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>AWAY</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>CLOUD</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>BASE</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>RAIN</Text>
-            <Text style={[styles.cmpCell, styles.cmpHeadText]}>GUST</Text>
-          </View>
+          {/* The raw strings, because they carry things no parse keeps: the
+              TAF's TEMPO groups, and remarks like the Skeið wind. */}
+          {cmp.groundTruth?.rawMetar || cmp.groundTruth?.rawTaf ? (
+            <View style={styles.rawRow}>
+              {cmp.groundTruth.rawMetar ? (
+                <Text style={styles.rawText} numberOfLines={3}>{cmp.groundTruth.rawMetar}</Text>
+              ) : null}
+              {cmp.groundTruth.rawTaf ? (
+                <Text style={styles.rawText} numberOfLines={4}>{cmp.groundTruth.rawTaf}</Text>
+              ) : null}
+            </View>
+          ) : null}
 
-          {cmp.sources.map(s => {
-            const isOutlier = s.key === cmp.cloudOutlier;
-            const dim = !s.present;
-            const mph = (k: number | null) => k == null ? '—' : `${Math.round(kmhToMph(k))}`;
-            const pct = (v: number | null) => v == null ? '—' : `${Math.round(v)}%`;
-            const km  = (v: number | null) => v == null ? '—' : v < 10 ? `${v.toFixed(1)}` : `${Math.round(v)}`;
-            const ft  = (m: number | null) => m == null ? '—' : `${Math.round(m * 3.28084 / 100) * 100}`;
-            return (
-              <View key={s.key} style={[styles.cmpRow, isOutlier ? styles.cmpRowOutlier : null]}>
-                <View style={styles.cmpCellSource}>
-                  <Text style={[styles.cmpSourceName, dim ? styles.cmpDim : null]} numberOfLines={1}>
-                    {s.name}
+          {/* Spread across forecasting CENTRES, one representative each, so
+              six ECMWF derivatives cannot vote six times. This is the real
+              disagreement — the table below shows who is saying what. */}
+          {cmp.consensus && Object.keys(cmp.consensus).length ? (
+            <View style={styles.driftRow}>
+              <Text style={styles.driftLabel}>
+                SPREAD ACROSS CENTRES (min · median · max)
+              </Text>
+              {Object.entries(cmp.consensus).map(([k, v]: [string, any]) => (
+                <Text key={k} style={styles.driftText}>
+                  {fieldLabel(ensKey(k))}: {fieldValueText(ensKey(k), v.min) ?? '—'} · {fieldValueText(ensKey(k), v.median) ?? '—'} · {fieldValueText(ensKey(k), v.max) ?? '—'}
+                  {v.centres_reporting != null ? `  (${v.centres_reporting} centres)` : ''}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+
+          {/* The table scrolls sideways because there are more real columns
+              than a phone is wide, and truncating them would be choosing for
+              you which measurements matter. Tap any source for the rest. */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={true}
+                      style={styles.cmpScroll} contentContainerStyle={{ width: TABLE_W }}>
+            <View>
+              <View style={styles.cmpHeadRow}>
+                <Text style={[styles.cmpCellSource, styles.cmpHeadText]}>SOURCE</Text>
+                {COLUMNS.map(c => (
+                  <Text key={c.key}
+                        style={[styles.cmpCell, styles.cmpHeadText,
+                                { width: c.wide ? COL_W_WIDE : COL_W }]}>
+                    {c.head}
                   </Text>
-                  <View style={styles.cmpTags}>
-                    {s.isPrimary ? <Text style={styles.cmpTagLocal}>PRIMARY</Text> : null}
-                    {s.isBlend ? <Text style={styles.cmpTagNote}>blend</Text> : null}
-                    {s.note ? <Text style={styles.cmpTagNote}>{s.note}</Text> : null}
-                  </View>
-                </View>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>
-                  {s.resolutionKm == null ? '—' : `${s.resolutionKm}k`}
-                </Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{km(s.distanceKm)}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null, isOutlier ? styles.cmpOutlierVal : null]}>
-                  {pct(s.cloud_cover_pct)}
-                </Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>{ft(s.cloud_base_m)}</Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>
-                  {rainCell(s.precip_probability_pct, s.rain_mm).text}
-                </Text>
-                <Text style={[styles.cmpCell, dim ? styles.cmpDim : null]}>
-                  {mph(s.wind_gusts_kmh)}{s.wind_gusts_kmh != null && !s.gustMeasured ? '*' : ''}
-                </Text>
+                ))}
               </View>
-            );
-          })}
+
+              {cmp.sources.map(s => {
+                const isOutlier = s.key === cmp.cloudOutlier;
+                const dim = !s.present;
+                const open = openSource === s.key;
+                const extra = open ? allFields(s.values, { skipTableFields: true }) : [];
+                return (
+                  <View key={s.key}>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => setOpenSource(open ? null : s.key)}
+                      style={[styles.cmpRow, isOutlier ? styles.cmpRowOutlier : null,
+                              open ? styles.cmpRowOpen : null]}>
+                      <View style={styles.cmpCellSource}>
+                        <Text style={[styles.cmpSourceName, dim ? styles.cmpDim : null]} numberOfLines={1}>
+                          {s.name}
+                        </Text>
+                        <View style={styles.cmpTags}>
+                          {s.isPrimary ? <Text style={styles.cmpTagLocal}>PRIMARY</Text> : null}
+                          {s.isBlend ? <Text style={styles.cmpTagNote}>blend</Text> : null}
+                          {s.note ? <Text style={styles.cmpTagNote}>{s.note}</Text> : null}
+                          <Ionicons name={open ? 'chevron-down' : 'chevron-forward'}
+                                    size={10} color={colors.textTertiary} />
+                        </View>
+                      </View>
+                      {COLUMNS.map(c => (
+                        <Text key={c.key}
+                              style={[styles.cmpCell, { width: c.wide ? COL_W_WIDE : COL_W },
+                                      dim ? styles.cmpDim : null,
+                                      isOutlier && c.key === 'cloud' ? styles.cmpOutlierVal : null]}>
+                          {c.get(s)}
+                        </Text>
+                      ))}
+                    </TouchableOpacity>
+
+                    {/* Everything this model reported that has no column of its
+                        own. Read straight off the contract, so a field the
+                        backend starts collecting appears here by itself. */}
+                    {open ? (
+                      <View style={[styles.cmpDetail, { width: TABLE_W }]}>
+                        {s.centre ? (
+                          <Text style={styles.cmpDetailCentre}>
+                            {s.centre}{s.blendNote ? ` · ${s.blendNote}` : ''}
+                          </Text>
+                        ) : null}
+                        <View style={styles.cmpDetailGrid}>
+                          {extra.map(f => (
+                            <View key={f.key} style={styles.cmpDetailItem}>
+                              <Text style={styles.cmpDetailLabel} numberOfLines={1}>{f.label}</Text>
+                              <Text style={styles.cmpDetailValue} numberOfLines={1}>{f.text}</Text>
+                            </View>
+                          ))}
+                        </View>
+                        {extra.length === 0 ? (
+                          <Text style={styles.cmpDetailLabel}>No further fields reported.</Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+          </ScrollView>
 
           <Text style={styles.cmpFootnote}>
-            GRID = model resolution in km, the smallest thing it can resolve. AWAY =
-            how far its sampled grid point actually is from this stop. Sorted by grid
-            size, then distance: a coarse model whose point lands nearby is still
-            averaging over its whole cell. BASE = cloud base in feet — compare it to
-            the height of what you are shooting. Blank means that model does not
-            report cloud base. * gust estimated from mean wind.
+            Scroll the table sideways for the rest of the columns; tap a source for
+            every field it reported. Sorted by grid size, then distance. GRID = model
+            resolution in km, the smallest thing it can resolve; AWAY = how far its
+            sampled grid point actually is from this stop — a coarse model whose point
+            lands nearby is still averaging over its whole cell. BASE and TOP are cloud
+            base and top in feet: compare BASE to the height of what you are shooting.
+            FOG is cloud at 2 m, which only DMI reports. RAIN is mm for the hour, POP is
+            the chance of any precipitation — most models report one or the other, not
+            both. DEW within a couple of degrees of TEMP means fog. * gust estimated
+            from mean wind.
             {cmp.fromContract ? '' : ' (Cached before source detail existed — pull to refresh.)'}
           </Text>
         </View>
@@ -460,8 +641,40 @@ const styles = StyleSheet.create({
   cmpHeadText: { fontSize: 8, fontWeight: '700', letterSpacing: 0.5, color: colors.textTertiary },
   cmpRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 2 },
   cmpRowOutlier: { backgroundColor: 'rgba(170,170,170,0.08)', borderRadius: radius.sm },
-  cmpCellSource: { width: 96, paddingLeft: 2 },
-  cmpCell: { flex: 1, textAlign: 'center', fontSize: 11, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+  cmpCellSource: { width: SRC_W, paddingLeft: 2 },
+  // Fixed width, not flex: the table is inside a horizontal scroll, so the
+  // columns have to be sized rather than sharing whatever is left.
+  cmpCell: { width: COL_W, textAlign: 'center', fontSize: 11, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+  cmpScroll: { marginHorizontal: -2 },
+  cmpRowOpen: { backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: radius.sm },
+  cmpDetail: {
+    paddingVertical: 6, paddingHorizontal: 8, marginBottom: 4,
+    backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: radius.sm,
+  },
+  cmpDetailCentre: {
+    fontSize: 9, fontWeight: '700', letterSpacing: 0.4,
+    color: colors.textTertiary, marginBottom: 4,
+  },
+  cmpDetailGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 4 },
+  cmpDetailItem: { width: 118, paddingRight: 6 },
+  cmpDetailLabel: { fontSize: 8, letterSpacing: 0.3, color: colors.textTertiary },
+  cmpDetailValue: { fontSize: 11, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+  seaRow: {
+    flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap',
+    gap: spacing.xs, marginBottom: spacing.xs,
+  },
+  seaText: { fontSize: 10, color: colors.textSecondary, flex: 1 },
+  driftRow: { marginBottom: spacing.xs },
+  driftLabel: {
+    fontSize: 8, fontWeight: '700', letterSpacing: 0.5,
+    color: colors.textTertiary, marginBottom: 2,
+  },
+  driftText: { fontSize: 10, color: colors.textSecondary },
+  rawRow: { marginTop: 6 },
+  rawText: {
+    fontSize: 9, color: colors.textTertiary, fontFamily: undefined,
+    fontVariant: ['tabular-nums'], marginTop: 2,
+  },
   cmpSourceName: { fontSize: 11, color: colors.textPrimary, fontWeight: '600' },
   cmpDim: { color: colors.textTertiary },
   cmpOutlierVal: { color: colors.signalWarning, fontWeight: '700' },
@@ -473,19 +686,19 @@ const styles = StyleSheet.create({
     gap: spacing.xs, marginBottom: spacing.xs,
   },
   uncertaintyLabel: {
-    ...typography.caption, color: colors.textTertiary,
+    color: colors.textTertiary,
     fontSize: 9, letterSpacing: 0.5,
   },
   uncertaintyChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, flex: 1 },
   uncertaintyChip: {
-    ...typography.caption, fontSize: 10, color: colors.textSecondary,
-    backgroundColor: colors.surfaceRaised, borderRadius: radius.sm,
+    fontSize: 10, color: colors.textSecondary,
+    backgroundColor: colors.surfaceElevated, borderRadius: radius.sm,
     paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden',
   },
   truthRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
     marginBottom: spacing.xs,
   },
-  truthText: { ...typography.caption, fontSize: 10, color: colors.signalOk, flex: 1 },
+  truthText: { fontSize: 10, color: colors.signalOk, flex: 1 },
   cmpFootnote: { fontSize: 9, color: colors.textTertiary, fontStyle: 'italic', marginTop: 6 },
 });
