@@ -213,81 +213,15 @@ function fogRisk(
   return 'none';
 }
 
-// SCORING
-// UNCHANGED from v25 on purpose. The source list changed in this version;
-// the scoring maths is a separate decision and is deliberately not touched
-// here, so any change in stars is attributable to the primary model
-// switching from Open-Meteo's unnamed `best_match` to a named 2 km model.
-// NOTE: the phone app carries its own copy of this function in
-// src/services/weather.ts. The two must be changed together.
-const LABELS = ['Poor','Poor','Fair','Good','Excellent'];
-const clampStars = (n:number) => Math.max(0, Math.min(4, n));
-
-function scoreConditions(shotType: string | null, r: any) {
-  if (!shotType || shotType === 'logistics') return null;
-  if (r.is_dark) return { stars: 0, label: 'Poor', reason: 'After dark', components: { rain:0, visibility:0, wind:0, dark:true } };
-  const gust = r.wind_gusts_kmh ?? r.wind_speed_kmh ?? 0;
-  const pop = r.precip_probability_pct ?? 0;
-  const rainAmt = (r.rain_mm ?? 0) + (r.showers_mm ?? 0);
-  const snow = r.snowfall_cm ?? 0;
-  const code = r.weather_code;
-  const vis = r.visibility_m;
-  const fog = r.fog_risk;
-  const longDistance = shotType === 'mountain' || shotType === 'seascape';
-  const closeSubject = shotType === 'waterfall' || shotType === 'canyon' || shotType === 'urban';
-
-  const heavyCode = (rainAmt > 1.0 || pop >= 55);
-  const lightCode = (rainAmt > 0.1 || pop >= 35);
-  let rainPen = 0;
-  if (rainAmt > 4 || ((code === 65 || code === 82 || code === 75 || (code != null && code >= 95)) && heavyCode)) rainPen = 4;
-  else if (rainAmt > 2 || ((code === 63 || code === 81 || code === 73) && heavyCode)) rainPen = 3;
-  else if (rainAmt > 0.7 || (code === 61 && lightCode)) rainPen = 2;
-  else if (rainAmt > 0.1 || (((code != null && code >= 51 && code <= 57) || code === 80 || code === 71) && lightCode) || snow > 0) rainPen = 1;
-  if (rainPen <= 1 && pop >= 60) rainPen += 1;
-  else if (rainPen === 0 && pop >= 40) rainPen += 0.5;
-  if (shotType === 'seascape' && rainPen > 0 && rainAmt <= 0.7) rainPen = Math.max(0, rainPen - 0.5);
-
-  const dayTotal = r.precip_total_mm;
-  const hourWet = (pop >= 30) || (rainAmt > 0.1);
-  if (dayTotal != null && hourWet) {
-    let persistFloor = 0;
-    if (dayTotal >= 10) persistFloor = 3;
-    else if (dayTotal >= 5) persistFloor = 2;
-    else if (dayTotal >= 2.5) persistFloor = 1;
-    if (shotType === 'seascape') persistFloor = Math.max(0, persistFloor - 0.5);
-    rainPen = Math.max(rainPen, persistFloor);
-  }
-
-  let visBase = 0;
-  if (fog === 'likely' || (vis != null && vis < 1000)) visBase = 2;
-  else if (fog === 'possible' || (vis != null && vis < 4000)) visBase = 1;
-  else if (vis != null && vis < 8000) visBase = 0.5;
-  let obscure = 0;
-  if (shotType === 'mountain') {
-    const lowCloud = r.cloud_cover_low_pct ?? r.cloud_cover_pct ?? 0;
-    if (lowCloud >= 90) obscure = 2;
-    else if (lowCloud >= 70) obscure = 1;
-  }
-  const visPen = (longDistance ? visBase * 1.5 : closeSubject ? Math.min(visBase, 1) : visBase) + obscure;
-
-  let windPen = 0;
-  if (shotType === 'reflection') windPen = gust < 10 ? 0 : gust < 16 ? 1 : gust < 26 ? 2.5 : 4;
-  else if (shotType === 'seascape') windPen = gust > 70 ? 3 : gust > 50 ? 2 : gust > 36 ? 1 : gust > 26 ? 0.5 : 0;
-  else if (shotType === 'waterfall' || shotType === 'canyon') windPen = gust > 60 ? 3 : gust > 45 ? 2 : gust > 30 ? 1 : gust > 20 ? 0.5 : 0;
-  else windPen = gust > 80 ? 2 : gust > 60 ? 1 : gust > 45 ? 0.5 : 0;
-
-  const stars = clampStars(Math.round(4 - rainPen - visPen - windPen));
-  const factors: [number, string][] = [
-    [rainPen, rainPen >= 3 ? 'Heavy rain' : rainPen >= 2 ? 'Rain likely' : 'Some rain risk'],
-    [visPen, fog === 'likely' ? 'Fog — poor visibility' : (shotType === 'mountain' && obscure > 0) ? 'Summit likely in cloud' : 'Haze / low visibility'],
-    [windPen, shotType === 'reflection' ? 'Wind breaking the reflection' : shotType === 'seascape' ? 'Big swell — hard to hold steady' : 'Windy — motion in long exposures'],
-  ];
-  const top = factors.reduce((m,f)=> f[0] > m[0] ? f : m, [0,''] as [number,string]);
-  const reason = (top[0] >= 1 || (top[0] >= 0.5 && stars < 4))
-    ? top[1]
-    : (stars >= 4 ? 'Dry, calm, clear — go' : 'Workable — dry and open');
-  return { stars, label: LABELS[stars], reason, components: { rain: rainPen, visibility: visPen, wind: windPen, dark: false } };
-}
+// SCORING lives in the database, not here.
+// public.weather_score() is called by latest_weather_per_stop for display and
+// by a BEFORE INSERT trigger to stamp score_stars/label/reason/components onto
+// every row this function writes. Keeping a second copy here meant the rules
+// were encoded twice and could drift the moment either changed; it also meant
+// a rule change needed a redeploy of this program.
+//
+// This function fetches and stores. It does not decide whether conditions are
+// good — that is photographic judgement, and it belongs in one editable place.
 
 // MULTI-MODEL PULL
 // One HTTP request returns all eighteen models, variables suffixed with the
@@ -715,12 +649,8 @@ Deno.serve(async (req) => {
         // Back-compat: the phone app reads raw.{metno,ukmo,met_eireann} by
         // name. Fed from the new model map so it keeps working unchanged.
         // Remove once the app loops raw.models generically.
-        metno: models['metno_seamless']
-          ? { ...models['metno_seamless'], score: scoreConditions(s.shot_type, models['metno_seamless']) }
-          : { error: 'no data at this hour' },
-        ukmo: models['ukmo_seamless']
-          ? { ...models['ukmo_seamless'], score: scoreConditions(s.shot_type, models['ukmo_seamless']) }
-          : { error: 'no data at this hour' },
+        metno: models['metno_seamless'] ?? { error: 'no data at this hour' },
+        ukmo:  models['ukmo_seamless']  ?? { error: 'no data at this hour' },
         met_eireann: { error: 'HARMONIE-Ireland domain does not reach 62N' },
         consensus: cons,
         ensemble,
@@ -749,12 +679,9 @@ Deno.serve(async (req) => {
           primary_distance_km: grid[primaryModel]?.km ?? null,
           primary_resolution_km: reg.resolutionOf[primaryModel] ?? null,
           pulled_at: new Date().toISOString(),
-          version: 'v30-tiebreak',
+          version: 'v32-db-scoring',
         },
       };
-
-      const sc = scoreConditions(s.shot_type, ex);
-      ex.score = sc;
 
       const cc = cons.by_variable['cloud_cover'];
       const gg = cons.by_variable['wind_gusts_10m'];
@@ -801,8 +728,8 @@ Deno.serve(async (req) => {
           swell_wave_period_s: sea?.swell_wave_period_s ?? null,
           wind_wave_height_m: sea?.wind_wave_height_m ?? null,
           sea_surface_temp_c: sea?.sea_surface_temp_c ?? null,
-          score_stars: sc?.stars ?? null, score_label: sc?.label ?? null,
-          score_reason: sc?.reason ?? null, score_components: sc?.components ?? null,
+          // score_* intentionally omitted: the BEFORE INSERT trigger stamps
+          // them using public.weather_score(), the same function the view uses.
           raw:ex,
         });
       } else {
@@ -856,7 +783,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({
       ok:true, day_id:dayId, day_title:day.title, test, date_shifted:dateShifted,
       forecast_date_used:usedDate, real_trip_date:day.date, generated_at:new Date().toISOString(),
-      version:'v30-tiebreak',
+      version:'v32-db-scoring',
       registry_source: registrySource,
       models_in_registry: reg.models.length,
       ensemble_cells: ensembleByCell.size,
