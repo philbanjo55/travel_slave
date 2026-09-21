@@ -97,7 +97,8 @@ export const useTripStore = create<TripState>((set, get) => ({
         currentTrip: fresh.trip,
         isSyncing: false,
       });
-      await cacheFullTrip(tripId, fresh);
+      const wrote = await cacheFullTrip(tripId, fresh);
+      if (!wrote) console.warn('[trip] offline copy NOT updated — cache write failed');
 
       // Download all photos to device filesystem for offline use
       setTimeout(() => {
@@ -113,7 +114,8 @@ export const useTripStore = create<TripState>((set, get) => ({
       set({ isSyncing: true });
       const fresh = await fetchTripWithWeather(tripId);
       set({ currentTripData: fresh, isSyncing: false });   // render before persisting
-      await cacheFullTrip(tripId, fresh);
+      const wrote = await cacheFullTrip(tripId, fresh);
+      if (!wrote) console.warn('[trip] offline copy NOT updated — cache write failed');
     } catch {
       set({ isSyncing: false });
     }

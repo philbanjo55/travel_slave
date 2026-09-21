@@ -3,6 +3,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const TRIPS_KEY = 'pf_trips';
 const TRIP_PREFIX = 'pf_trip_';
 const PHOTOS_PREFIX = 'pf_photos_';
+// Weather lives in its own entries, one per day, NOT inside the trip blob.
+// Folding it in made a single value of several megabytes, which AsyncStorage
+// would not write — and because the failure was swallowed, the previous copy
+// survived and every sync silently no-opped. Same treatment photos get.
+const WEATHER_PREFIX = 'pf_tripwx_';
+const weatherKey = (tripId: string, dayId: string) => `${WEATHER_PREFIX}${tripId}_${dayId}`;
 
 export async function initDatabase(): Promise<void> {
   return;
@@ -27,13 +33,16 @@ function slimCachedWeather(w: any): any {
   return { ...w, raw: keep };
 }
 
-export async function cacheFullTrip(tripId: string, tripData: any): Promise<void> {
+export async function cacheFullTrip(tripId: string, tripData: any): Promise<boolean> {
   try {
-    // Cache photos separately — metadata only, no base64
+    // Photos and weather both come out of the trip blob and go into their own
+    // entries. What is left is the itinerary, which is small and always writes.
     const photoMap: Record<string, any[]> = {};
-    const strippedDays = tripData.days.map((day: any) => ({
-      ...day,
-      stops: (day.stops || []).map((stop: any) => {
+    const weatherEntries: [string, string][] = [];
+
+    const strippedDays = (tripData.days || []).map((day: any) => {
+      const byStop: Record<string, any> = {};
+      const stops = (day.stops || []).map((stop: any) => {
         if (stop.stop_photos?.length) {
           photoMap[stop.id] = stop.stop_photos.map((p: any) => ({
             id: p.id,
@@ -42,11 +51,14 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<void
             position: p.position,
           }));
         }
-        return { ...stop, stop_photos: [], weather: slimCachedWeather(stop.weather) };
-      }),
-    }));
+        if (stop.weather) byStop[stop.id] = slimCachedWeather(stop.weather);
+        return { ...stop, stop_photos: [], weather: null };
+      });
+      weatherEntries.push([weatherKey(tripId, day.id), JSON.stringify(byStop)]);
+      return { ...day, stops };
+    });
 
-    // Cache main trip data (no photos, no duplicated weather blobs)
+    // Itinerary only — no photos, no weather.
     await AsyncStorage.setItem(
       `${TRIP_PREFIX}${tripId}`,
       JSON.stringify({ ...tripData, days: strippedDays, cachedAt: Date.now() })
@@ -58,6 +70,9 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<void
       JSON.stringify(photoMap)
     );
 
+    // One entry per day, so no single value is large enough to be refused.
+    if (weatherEntries.length) await AsyncStorage.multiSet(weatherEntries);
+
     // Update trips list cache
     const existing = await getCachedTrips();
     const others = existing.filter((t: any) => t.id !== tripData.trip.id);
@@ -65,8 +80,12 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<void
       TRIPS_KEY,
       JSON.stringify([...others, tripData.trip])
     );
+    return true;
   } catch (e) {
+    // Returned, not just logged: a failed write used to be indistinguishable
+    // from a successful one, which is how a stale trip survived for hours.
     console.warn('Cache write failed:', e);
+    return false;
   }
 }
 
@@ -100,6 +119,29 @@ export async function getCachedFullTrip(tripId: string): Promise<any | null> {
       }
     } catch {
       // Photos not cached — fine, load from network
+    }
+
+    // Reattach weather from its per-day entries.
+    try {
+      const days: any[] = tripData.days || [];
+      const pairs = await AsyncStorage.multiGet(days.map((d: any) => weatherKey(tripId, d.id)));
+      const byKey: Record<string, Record<string, any>> = {};
+      for (const [k, v] of pairs) {
+        if (!v) continue;
+        try { byKey[k] = JSON.parse(v); } catch {}
+      }
+      tripData.days = days.map((day: any) => {
+        const wx = byKey[weatherKey(tripId, day.id)] || {};
+        return {
+          ...day,
+          stops: (day.stops || []).map((stop: any) => ({
+            ...stop,
+            weather: wx[stop.id] ?? stop.weather ?? null,
+          })),
+        };
+      });
+    } catch {
+      // Weather not cached — the network read will fill it in.
     }
 
     return tripData;
