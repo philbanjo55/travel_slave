@@ -277,7 +277,11 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           <Text style={[styles.voteLevel, { color: voteTone(cmp.agreement).color }]}>
             {cmp.agreement}
           </Text>
-          <Text style={styles.voteNote} numberOfLines={1}>· {cmp.verdict}</Text>
+          <Text style={styles.voteNote} numberOfLines={1}>
+            {cmp.voteShootable != null && cmp.voteCentres != null
+              ? `· ${cmp.voteShootable} of ${cmp.voteCentres} shootable`
+              : `· ${cmp.verdict}`}
+          </Text>
         </View>
       ) : null}
 

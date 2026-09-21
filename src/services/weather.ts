@@ -966,8 +966,11 @@ export interface SourceComparison {
   hasMulti: boolean;
   fromContract: boolean;      // false = legacy cached row
   centreCount: number | null;
-  agreement: string | null;   // AGREED | MIXED | CONTESTED — or, on a legacy
-                              // cached row, the old TIGHT | LOOSE | SPLIT.
+  agreement: string | null;   // AGREED | MIXED | CONTESTED
+  // The vote's own numbers, so callers can phrase it themselves instead of
+  // re-splitting the sentence in `verdict`. Null when there is no vote.
+  voteShootable: number | null;   // centres rating it Fair or better
+  voteCentres: number | null;     // centres that returned a verdict at all
   cloudConsensus: number | null;
   cloudOutlier: SourceKey | null;
   cloudOutlierDelta: number | null;
@@ -1049,6 +1052,8 @@ function fromContract(display: any, row: WeatherRow): SourceComparison {
   const g = display.ground_truth;
   const agreement = display.agreement?.level ?? null;
   const centreCount = n(display.centre_count);
+  const voteShootable = n(display.agreement?.centres_fair_or_better);
+  const voteCentres = n(display.agreement?.centre_count);
 
   const verdict = display.agreement?.note
     ?? (sources.length ? `${sources.length} sources` : 'No sources');
@@ -1059,6 +1064,7 @@ function fromContract(display: any, row: WeatherRow): SourceComparison {
     fromContract: true,
     centreCount,
     agreement,
+    voteShootable, voteCentres,
     cloudConsensus, cloudOutlier, cloudOutlierDelta,
     uncertainty: u ? {
       members: n(u.members),
@@ -1172,7 +1178,11 @@ function fromLegacyRaw(row: WeatherRow): SourceComparison {
   const present = sources.filter(s => s.present);
   return {
     sources, hasMulti: present.length >= 2, fromContract: false,
-    centreCount: null, agreement: row.raw?.comparison?.agreement ?? null,
+    // agreement stays null: the only verdict a row this old carries is the
+    // retired variable-spread one, and v8 stopped showing that everywhere
+    // else. Letting it through here would put "Centres disagree - cloud:
+    // 43-100%" back on the card for anything cached before the vote existed.
+    centreCount: null, agreement: null, voteShootable: null, voteCentres: null,
     cloudConsensus: null, cloudOutlier: null, cloudOutlierDelta: null,
     uncertainty: null, groundTruth: null,
     verdict: `${present.length} sources (cached before source detail was added)`,
