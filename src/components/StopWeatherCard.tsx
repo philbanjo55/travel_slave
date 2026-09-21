@@ -52,6 +52,14 @@ const ENS_UNIT_KEY: Record<string, string> = {
 };
 const ensKey = (k: string) => ENS_UNIT_KEY[k] ?? k;
 
+// Contract v2 moved the ensemble member count under each variable, so the
+// top-level one reads null and the label rendered "? ENSEMBLE MEMBERS".
+const memberCount = (u: any): number | null => {
+  const counts = Object.values(u?.byVariable ?? {})
+    .map((v: any) => v?.members).filter((m: any) => typeof m === 'number');
+  return counts.length ? Math.max(...counts) : null;
+};
+
 type Col = { key: string; head: string; hint: string; get: (s: SourceReading) => string; wide?: boolean };
 
 const COLUMNS: Col[] = [
@@ -99,6 +107,9 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
   // Which source's full field list is open. Only one at a time — eighteen
   // sources times twenty-six fields is not a thing to scroll past.
   const [openSource, setOpenSource] = useState<string | null>(null);
+  // The analysis blocks below the table. Off by default: the dropdown exists
+  // to compare sources, and this used to sit in front of that.
+  const [showDetail, setShowDetail] = useState(false);
 
   useEffect(() => {
     if (weather !== undefined) { setRow(weather ?? null); setLoaded(true); return; }
@@ -278,10 +289,9 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           {/* Ensemble probabilities. Rain and wind uncertainty are measurable;
               fog uncertainty is not, because no ensemble serves visibility. */}
           {cmp.uncertainty ? (
-            <>
               <View style={styles.uncertaintyRow}>
                 <Text style={styles.uncertaintyLabel}>
-                  {cmp.uncertainty.members ?? '?'} ENSEMBLE MEMBERS
+                  {cmp.uncertainty.members ?? memberCount(cmp.uncertainty) ?? '?'} ENSEMBLE MEMBERS
                 </Text>
                 <View style={styles.uncertaintyChips}>
                   {cmp.uncertainty.probAnyRainPct != null ? (
@@ -295,49 +305,6 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
                   ) : null}
                 </View>
               </View>
-
-              {/* The spread behind those probabilities. "60% chance of rain"
-                  hides whether the members disagree between a drizzle and a
-                  downpour; p10–p90 does not. Every ensemble variable is listed
-                  — a new one appears here on its own. */}
-              {Object.keys(cmp.uncertainty.byVariable).length ? (
-                <View style={styles.driftRow}>
-                  <Text style={styles.driftLabel}>SPREAD ACROSS MEMBERS (p10 · median · p90)</Text>
-                  {Object.entries(cmp.uncertainty.byVariable).map(([k, v]: [string, any]) => (
-                    <Text key={k} style={styles.driftText}>
-                      {fieldLabel(ensKey(k))}: {fieldValueText(ensKey(k), v.p10) ?? '—'} · {fieldValueText(ensKey(k), v.median) ?? '—'} · {fieldValueText(ensKey(k), v.p90) ?? '—'}
-                      {v.members != null ? `  (${v.members})` : ''}
-                    </Text>
-                  ))}
-                </View>
-              ) : null}
-            </>
-          ) : null}
-
-          {/* How much this model has changed its mind about this hour across
-              its last four runs. Drift near zero means it has settled. */}
-          {cmp.convergence && Object.keys(cmp.convergence.byVariable).length ? (
-            <View style={styles.driftRow}>
-              <Text style={styles.driftLabel}>
-                RUN-TO-RUN DRIFT{cmp.convergence.model ? ` · ${cmp.convergence.model}` : ''}
-              </Text>
-              {Object.entries(cmp.convergence.byVariable).map(([k, v]: [string, any]) => (
-                <Text key={k} style={styles.driftText}>
-                  {fieldLabel(ensKey(k))}: {v.runs.map((r: number) => fieldValueText(ensKey(k), r) ?? '—').join(' → ')}
-                </Text>
-              ))}
-            </View>
-          ) : null}
-
-          {/* Sea state. It decides whether the ferry sails and whether a sea
-              stack is shootable from the water at all. */}
-          {cmp.sea ? (
-            <View style={styles.seaRow}>
-              <Ionicons name="water-outline" size={11} color={colors.textSecondary} />
-              <Text style={styles.seaText} numberOfLines={3}>
-                {allFields(cmp.sea as any).map((f: any) => `${f.label} ${f.text}`).join(' · ')}
-              </Text>
-            </View>
           ) : null}
 
           {/* Observed conditions at Vagar. The only real-time measured cloud
@@ -350,51 +317,6 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
                 {cmp.groundTruth.observedAt ? ` ${clockFromISO(cmp.groundTruth.observedAt)}` : ''}
                 {cmp.groundTruth.flightCategory ? ` · ${cmp.groundTruth.flightCategory}` : ''}
               </Text>
-            </View>
-          ) : null}
-
-          {/* The rest of the observation, rendered the same way a model's
-              fields are. Observed temperature next to observed dew point is
-              the one thing eighteen forecasts cannot give you: when they meet,
-              the airfield is already in fog. */}
-          {cmp.groundTruth ? (
-            <View style={styles.cmpDetailGrid}>
-              {allFields(cmp.groundTruth.values, { skipNonValues: true }).map((f: any) => (
-                <View key={f.key} style={styles.cmpDetailItem}>
-                  <Text style={styles.cmpDetailLabel} numberOfLines={1}>{f.label}</Text>
-                  <Text style={styles.cmpDetailValue} numberOfLines={1}>{f.text}</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-
-          {/* The raw strings, because they carry things no parse keeps: the
-              TAF's TEMPO groups, and remarks like the Skeið wind. */}
-          {cmp.groundTruth?.rawMetar || cmp.groundTruth?.rawTaf ? (
-            <View style={styles.rawRow}>
-              {cmp.groundTruth.rawMetar ? (
-                <Text style={styles.rawText} numberOfLines={3}>{cmp.groundTruth.rawMetar}</Text>
-              ) : null}
-              {cmp.groundTruth.rawTaf ? (
-                <Text style={styles.rawText} numberOfLines={4}>{cmp.groundTruth.rawTaf}</Text>
-              ) : null}
-            </View>
-          ) : null}
-
-          {/* Spread across forecasting CENTRES, one representative each, so
-              six ECMWF derivatives cannot vote six times. This is the real
-              disagreement — the table below shows who is saying what. */}
-          {cmp.consensus && Object.keys(cmp.consensus).length ? (
-            <View style={styles.driftRow}>
-              <Text style={styles.driftLabel}>
-                SPREAD ACROSS CENTRES (min · median · max)
-              </Text>
-              {Object.entries(cmp.consensus).map(([k, v]: [string, any]) => (
-                <Text key={k} style={styles.driftText}>
-                  {fieldLabel(ensKey(k))}: {fieldValueText(ensKey(k), v.min) ?? '—'} · {fieldValueText(ensKey(k), v.median) ?? '—'} · {fieldValueText(ensKey(k), v.max) ?? '—'}
-                  {v.centres_reporting != null ? `  (${v.centres_reporting} centres)` : ''}
-                </Text>
-              ))}
             </View>
           ) : null}
 
@@ -477,6 +399,112 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
               })}
             </View>
           </ScrollView>
+
+          {/* Everything below is analysis, not comparison. It used to sit
+              above the table, which meant scrolling past thirty lines of it to
+              reach the thing the dropdown is for. Collapsed by default. */}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => setShowDetail(d => !d)}
+            style={styles.detailToggle}>
+            <Ionicons name={showDetail ? 'chevron-down' : 'chevron-forward'}
+                      size={11} color={colors.textSecondary} />
+            <Text style={styles.detailToggleText}>
+              {showDetail ? 'HIDE' : 'SHOW'} SPREAD, DRIFT, SEA &amp; OBSERVED
+            </Text>
+          </TouchableOpacity>
+
+          {showDetail ? (
+            <View>
+              {/* The spread behind those probabilities. "60% chance of rain"
+                  hides whether the members disagree between a drizzle and a
+                  downpour; p10–p90 does not. Every ensemble variable is listed
+                  — a new one appears here on its own. */}
+              {cmp.uncertainty && Object.keys(cmp.uncertainty.byVariable).length ? (
+                <View style={styles.driftRow}>
+                  <Text style={styles.driftLabel}>SPREAD ACROSS MEMBERS (p10 · median · p90)</Text>
+                  {Object.entries(cmp.uncertainty.byVariable).map(([k, v]: [string, any]) => (
+                    <Text key={k} style={styles.driftText}>
+                      {fieldLabel(ensKey(k))}: {fieldValueText(ensKey(k), v.p10) ?? '—'} · {fieldValueText(ensKey(k), v.median) ?? '—'} · {fieldValueText(ensKey(k), v.p90) ?? '—'}
+                      {v.members != null ? `  (${v.members})` : ''}
+                    </Text>
+                  ))}
+                </View>
+              ) : null}
+
+          {/* How much this model has changed its mind about this hour across
+              its last four runs. Drift near zero means it has settled. */}
+          {cmp.convergence && Object.keys(cmp.convergence.byVariable).length ? (
+            <View style={styles.driftRow}>
+              <Text style={styles.driftLabel}>
+                RUN-TO-RUN DRIFT{cmp.convergence.model ? ` · ${cmp.convergence.model}` : ''}
+              </Text>
+              {Object.entries(cmp.convergence.byVariable).map(([k, v]: [string, any]) => (
+                <Text key={k} style={styles.driftText}>
+                  {fieldLabel(ensKey(k))}: {v.runs.map((r: number) => fieldValueText(ensKey(k), r) ?? '—').join(' → ')}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+
+          {/* Sea state. It decides whether the ferry sails and whether a sea
+              stack is shootable from the water at all. */}
+          {cmp.sea ? (
+            <View style={styles.seaRow}>
+              <Ionicons name="water-outline" size={11} color={colors.textSecondary} />
+              <Text style={styles.seaText} numberOfLines={3}>
+                {allFields(cmp.sea as any).map((f: any) => `${f.label} ${f.text}`).join(' · ')}
+              </Text>
+            </View>
+          ) : null}
+
+          {/* The rest of the observation, rendered the same way a model's
+              fields are. Observed temperature next to observed dew point is
+              the one thing eighteen forecasts cannot give you: when they meet,
+              the airfield is already in fog. */}
+          {cmp.groundTruth ? (
+            <View style={styles.cmpDetailGrid}>
+              {allFields(cmp.groundTruth.values, { skipNonValues: true }).map((f: any) => (
+                <View key={f.key} style={styles.cmpDetailItem}>
+                  <Text style={styles.cmpDetailLabel} numberOfLines={1}>{f.label}</Text>
+                  <Text style={styles.cmpDetailValue} numberOfLines={1}>{f.text}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {/* The raw strings, because they carry things no parse keeps: the
+              TAF's TEMPO groups, and remarks like the Skeið wind. */}
+          {cmp.groundTruth?.rawMetar || cmp.groundTruth?.rawTaf ? (
+            <View style={styles.rawRow}>
+              {cmp.groundTruth.rawMetar ? (
+                <Text style={styles.rawText} numberOfLines={3}>{cmp.groundTruth.rawMetar}</Text>
+              ) : null}
+              {cmp.groundTruth.rawTaf ? (
+                <Text style={styles.rawText} numberOfLines={4}>{cmp.groundTruth.rawTaf}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/* Spread across forecasting CENTRES, one representative each, so
+              six ECMWF derivatives cannot vote six times. This is the real
+              disagreement — the table below shows who is saying what. */}
+          {cmp.consensus && Object.keys(cmp.consensus).length ? (
+            <View style={styles.driftRow}>
+              <Text style={styles.driftLabel}>
+                SPREAD ACROSS CENTRES (min · median · max)
+              </Text>
+              {Object.entries(cmp.consensus).map(([k, v]: [string, any]) => (
+                <Text key={k} style={styles.driftText}>
+                  {fieldLabel(ensKey(k))}: {fieldValueText(ensKey(k), v.min) ?? '—'} · {fieldValueText(ensKey(k), v.median) ?? '—'} · {fieldValueText(ensKey(k), v.max) ?? '—'}
+                  {v.centres_reporting != null ? `  (${v.centres_reporting} centre${v.centres_reporting === 1 ? '' : 's'})` : ''}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+
+            </View>
+          ) : null}
 
           <Text style={styles.cmpFootnote}>
             Scroll the table sideways for the rest of the columns; tap a source for
@@ -660,6 +688,14 @@ const styles = StyleSheet.create({
   // columns have to be sized rather than sharing whatever is left.
   cmpCell: { width: COL_W, textAlign: 'center', fontSize: 11, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
   cmpScroll: { marginHorizontal: -2 },
+  detailToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    marginTop: 8, paddingVertical: 4,
+  },
+  detailToggleText: {
+    fontSize: 8, fontWeight: '700', letterSpacing: 0.5,
+    color: colors.textSecondary,
+  },
   cmpRowOpen: { backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: radius.sm },
   cmpDetail: {
     paddingVertical: 6, paddingHorizontal: 8, marginBottom: 4,
