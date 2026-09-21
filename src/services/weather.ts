@@ -966,7 +966,8 @@ export interface SourceComparison {
   hasMulti: boolean;
   fromContract: boolean;      // false = legacy cached row
   centreCount: number | null;
-  agreement: string | null;   // TIGHT | LOOSE | SPLIT
+  agreement: string | null;   // AGREED | MIXED | CONTESTED — or, on a legacy
+                              // cached row, the old TIGHT | LOOSE | SPLIT.
   cloudConsensus: number | null;
   cloudOutlier: SourceKey | null;
   cloudOutlierDelta: number | null;

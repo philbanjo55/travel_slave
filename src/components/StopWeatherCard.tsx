@@ -282,11 +282,14 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
       {showCompare && cmp.hasMulti ? (
         <View style={styles.compareWrap}>
           <View style={styles.compareVerdict}>
+            {/* The icon has to agree with the sentence beside it. That sentence
+                is now the centre vote, so a contested verdict warns too — not
+                just a cloud-cover outlier. */}
             <Ionicons
-              name={cmp.cloudOutlier ? 'alert-circle-outline' : 'checkmark-circle-outline'}
+              name={(cmp.cloudOutlier || cmp.agreement === 'CONTESTED') ? 'alert-circle-outline' : 'checkmark-circle-outline'}
               size={14}
-              color={cmp.cloudOutlier ? colors.signalWarning : colors.signalOk} />
-            <Text style={[styles.compareVerdictText, { color: cmp.cloudOutlier ? colors.signalWarning : colors.signalOk }]}>
+              color={(cmp.cloudOutlier || cmp.agreement === 'CONTESTED') ? colors.signalWarning : colors.signalOk} />
+            <Text style={[styles.compareVerdictText, { color: (cmp.cloudOutlier || cmp.agreement === 'CONTESTED') ? colors.signalWarning : colors.signalOk }]}>
               {cmp.verdict}
             </Text>
           </View>

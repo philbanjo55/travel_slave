@@ -274,12 +274,16 @@ export default function TripScreen() {
                   const rainAmt = (w.rain_mm ?? 0) + (w.showers_mm ?? 0);
                   const windMph = w.wind_speed_kmh != null ? Math.round(w.wind_speed_kmh / 1.609) : null;
                   const gustMph = w.wind_gusts_kmh != null ? Math.round(w.wind_gusts_kmh / 1.609) : null;
-                  // Divergence flag: Open-Meteo vs MET Norway disagree materially.
-                  // SPLIT only (LOOSE is minor) — tells you the displayed score is contested.
-                  const isSplit = w.raw?.comparison?.agreement === 'SPLIT';
+                  // Contested flag: the centres disagree about whether this is
+                  // SHOOTABLE, which is the thing worth warning about — not about
+                  // a raw number. Read from the render contract rather than
+                  // reaching into raw, so the rule stays in one place.
+                  // The old raw.comparison verdict read SPLIT on 68 of 72 stops,
+                  // so this triangle was lit on nearly every stop and said nothing.
+                  const isContested = w.display?.agreement?.level === 'CONTESTED';
                   return (
                     <View style={styles.stopWx}>
-                      {isSplit ? (
+                      {isContested ? (
                         <Ionicons name="warning" size={12} color="#e0a82e" />
                       ) : null}
                       <View style={styles.stopWxStars}>
