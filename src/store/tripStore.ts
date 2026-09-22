@@ -1,28 +1,51 @@
 import { create } from 'zustand';
-import { fetchFullTrip } from '../services/supabase';
-import { fetchWeatherForTrip, pruneStopWeatherCache } from '../services/weather';
+import { fetchFullTrip, supabase } from '../services/supabase';
+import { fetchWeatherForDays, pruneStopWeatherCache } from '../services/weather';
 import { getCachedFullTrip, getCachedTrips, cacheFullTrip, cacheTrips } from '../services/database';
 import { calculateDriveTimesForTrip } from '../services/driveTimes';
 import { downloadAllPhotos } from '../services/photoCache';
 
-// Fetch the full trip AND fold each stop's weather into it, so weather always
-// travels + caches with the trip (every load/sync path uses this). Best-effort
-// on weather so it never blocks or fails the trip load.
-async function fetchTripWithWeather(tripId: string) {
-  const fresh = await fetchFullTrip(tripId);
+type TripData = { trip: any; days: any[] };
+
+// Fold weather into a trip, stop by stop, returning a NEW structure so the
+// store sees a change. Stops with no fresh row keep whatever they had - the
+// cached copy's weather - rather than going blank while a read is in flight.
+function attachWeather(data: TripData, wx: Record<string, any>): TripData {
+  return {
+    ...data,
+    days: data.days.map(d => ({
+      ...d,
+      stops: (d.stops || []).map((s: any) => ({ ...s, weather: wx[s.id] ?? s.weather ?? null })),
+    })),
+  };
+}
+
+function weatherByStop(data: TripData | null | undefined): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const d of data?.days ?? []) for (const s of d.stops ?? []) if (s.weather) out[s.id] = s.weather;
+  return out;
+}
+
+// A swallowed failure, reported somewhere it can be read. loadTrip's catch used
+// to set isOffline and nothing else, so the one line it died on tonight left
+// no trace anywhere - not on screen, not in a log, not in a request. app_logs
+// is the same table the photo cache already writes to from the device.
+function reportSilently(where: string, e: any) {
+  const message = String(e?.message ?? e);
+  console.warn(`[trip] ${where} failed:`, message);
   try {
-    const wx = await fetchWeatherForTrip(tripId);
-    for (const d of fresh.days) {
-      for (const s of (d.stops || [])) s.weather = wx[s.id] ?? null;
-    }
+    supabase.from('app_logs').insert({
+      level: 'error',
+      message: `[trip] ${where} failed`,
+      data: { message, stack: String(e?.stack ?? '').slice(0, 800) },
+    }).then(() => {}, () => {});
   } catch {}
-  return fresh;
 }
 
 interface TripState {
   trips: any[];
   currentTrip: any | null;
-  currentTripData: { trip: any; days: any[] } | null;
+  currentTripData: TripData | null;
   currentDayIndex: number;
   isOffline: boolean;
   isSyncing: boolean;
@@ -69,62 +92,85 @@ export const useTripStore = create<TripState>((set, get) => ({
       .then(n => { if (n) console.log(`[trip] reclaimed ${n} stale weather entries`); })
       .catch(() => {});
 
-    // Try cache first for instant load
+    // Cache first, for an instant screen.
     const cached = await getCachedFullTrip(tripId);
     if (cached) {
-      set({
-        currentTripData: cached,
-        currentTrip: cached.trip,
-        currentDayIndex: 0,
-      });
+      set({ currentTripData: cached, currentTrip: cached.trip, currentDayIndex: 0 });
     }
 
-    // Network sync
+    // The itinerary. This is the part the screen actually needs to exist, so
+    // it is fetched, rendered and only THEN followed by weather. Previously
+    // everything waited on one combined step, and the weather read inside it
+    // could hang for minutes - with the cache cleared, that was a spinner
+    // with nothing behind it and no way out.
+    set({ isSyncing: true });
+    let fresh: TripData;
     try {
-      set({ isSyncing: true });
+      fresh = await fetchFullTrip(tripId);
 
-      // Check and calculate missing drive times FIRST before caching
-      const allStops = (await fetchFullTrip(tripId)).days.flatMap((d: any) => d.stops || []);
+      // Drive times, only when a stop is missing one. The calculation writes
+      // to the database, so the trip is re-read afterwards to pick the
+      // results up - in that case only, not as a matter of course.
+      const allStops = fresh.days.flatMap((d: any) => d.stops || []);
       const missingDriveTimes = allStops.some(
         (s: any, i: number) => i > 0 && s.lat && s.lng && s.drive_override_minutes == null
       );
       if (missingDriveTimes) {
-        await calculateDriveTimesForTrip(tripId).catch((e) => console.error("Drive times failed:", e));
+        await calculateDriveTimesForTrip(tripId).catch((e) => console.error('Drive times failed:', e));
+        fresh = await fetchFullTrip(tripId);
       }
 
-      // Fetch fresh trip WITH weather folded into each stop, then cache it all.
-      const fresh = await fetchTripWithWeather(tripId);
-      // Render first, persist second. The cached trip now carries every stop's
-      // weather, which is megabytes; awaiting that write before updating state
-      // meant a slow or failed write left the screen on the previous copy —
-      // silently, because cacheFullTrip swallows its own errors.
-      set({
-        currentTripData: fresh,
-        currentTrip: fresh.trip,
-        isSyncing: false,
-      });
-      const wrote = await cacheFullTrip(tripId, fresh);
-      if (!wrote) console.warn('[trip] offline copy NOT updated — cache write failed');
-
-      // Download all photos to device filesystem for offline use
-      setTimeout(() => {
-        downloadAllPhotos(fresh).catch(() => {});
-      }, 1000);
-    } catch {
+      // On screen now, carrying whatever weather the cache had for each stop.
+      fresh = attachWeather(fresh, weatherByStop(cached));
+      set({ currentTripData: fresh, currentTrip: fresh.trip });
+    } catch (e) {
+      reportSilently('loadTrip', e);
       set({ isOffline: true, isSyncing: false });
+      return;
     }
+
+    // Weather, per day, each read on its own timeout. Best effort: a day that
+    // does not come back leaves that day's cached weather in place.
+    try {
+      const wx = await fetchWeatherForDays(fresh.days.map((d: any) => d.id));
+      fresh = attachWeather(fresh, wx);
+      set({ currentTripData: fresh, isSyncing: false });
+    } catch (e) {
+      reportSilently('weather', e);
+      set({ isSyncing: false });
+    }
+
+    // Persist after rendering, never before. cacheFullTrip reports its own
+    // outcome; a failed write must not take the screen with it.
+    const wrote = await cacheFullTrip(tripId, fresh);
+    if (!wrote) console.warn('[trip] offline copy NOT updated — cache write failed');
+
+    // Photos to the device filesystem for offline use.
+    const snapshot = fresh;
+    setTimeout(() => { downloadAllPhotos(snapshot).catch(() => {}); }, 1000);
   },
 
   syncTrip: async (tripId: string) => {
+    set({ isSyncing: true });
+    let fresh: TripData;
     try {
-      set({ isSyncing: true });
-      const fresh = await fetchTripWithWeather(tripId);
-      set({ currentTripData: fresh, isSyncing: false });   // render before persisting
-      const wrote = await cacheFullTrip(tripId, fresh);
-      if (!wrote) console.warn('[trip] offline copy NOT updated — cache write failed');
-    } catch {
+      fresh = attachWeather(await fetchFullTrip(tripId), weatherByStop(get().currentTripData));
+      set({ currentTripData: fresh });                    // render before weather, before persisting
+    } catch (e) {
+      reportSilently('syncTrip', e);
+      set({ isSyncing: false });
+      return;
+    }
+    try {
+      const wx = await fetchWeatherForDays(fresh.days.map((d: any) => d.id));
+      fresh = attachWeather(fresh, wx);
+      set({ currentTripData: fresh, isSyncing: false });
+    } catch (e) {
+      reportSilently('weather', e);
       set({ isSyncing: false });
     }
+    const wrote = await cacheFullTrip(tripId, fresh);
+    if (!wrote) console.warn('[trip] offline copy NOT updated — cache write failed');
   },
 
   refreshCurrentTrip: async () => {

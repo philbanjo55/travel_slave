@@ -277,18 +277,56 @@ export async function fetchLatestWeatherForStop(
 // trip (cacheFullTrip) and rendered straight off each stop, exactly like the
 // itinerary text and photos. No per-screen async fetch, so nothing to race or
 // blank out offline.
+// Weather for a set of days: one request per day, a few at a time, each with
+// its own timeout. This replaces the single trip-wide read.
+//
+// That read was ~3 MB for 72 stops and had no timeout. Tonight the gateway
+// logged it as 200 after 1.1 s - that is time to first byte - and PostgREST
+// then killed the connection 59 seconds later because the phone was still
+// pulling the body. The client's await never resolved, loadTrip never
+// finished, and the trip screen sat on its spinner with nothing to draw.
+// PostgREST had been killing that same read on and off all day; it is what
+// "the offline copy is seven hours stale" actually was.
+//
+// A day is ~250 kB and completes in about half a second. A day that fails or
+// times out contributes nothing rather than sinking the trip: the itinerary
+// renders regardless, and the next sync fills the gap.
+export async function fetchWeatherForDays(
+  dayIds: string[]
+): Promise<Record<string, WeatherRow>> {
+  const byStop: Record<string, WeatherRow> = {};
+  let failed = 0;
+  const CONCURRENCY = 3;
+  for (let i = 0; i < dayIds.length; i += CONCURRENCY) {
+    const batch = dayIds.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(batch.map(dayId =>
+      withTimeout(
+        supabase.from('latest_weather_per_stop').select('*').eq('day_id', dayId),
+        8000
+      )
+    ));
+    for (const r of results) {
+      if (r.status === 'fulfilled' && !r.value.error && r.value.data) {
+        for (const row of r.value.data as WeatherRow[]) byStop[row.stop_id] = row;
+      } else {
+        failed++;
+      }
+    }
+  }
+  if (failed) console.warn(`[weather] ${failed}/${dayIds.length} day reads failed or timed out`);
+  return byStop;
+}
+
+// Kept for any caller that only has the trip id. Looks the days up, then
+// reads per day - never the whole trip in one response.
 export async function fetchWeatherForTrip(
   tripId: string
 ): Promise<Record<string, WeatherRow>> {
   try {
-    const { data, error } = await supabase
-      .from('latest_weather_per_stop')
-      .select('*')
-      .eq('trip_id', tripId);
-    if (error || !data) return {};
-    const byStop: Record<string, WeatherRow> = {};
-    for (const r of data as WeatherRow[]) byStop[r.stop_id] = r;
-    return byStop;
+    const { data } = await withTimeout(
+      supabase.from('days').select('id').eq('trip_id', tripId), 6000
+    );
+    return await fetchWeatherForDays(((data ?? []) as any[]).map(d => d.id));
   } catch {
     return {};
   }
