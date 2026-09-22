@@ -6,11 +6,6 @@ import TripScreen from '../screens/TripScreen';
 import DayScreen from '../screens/DayScreen';
 import StopDetailScreen from '../screens/StopDetailScreen';
 import ReciprocityScreen from '../screens/ReciprocityScreen';
-import FocusSpreadScreen from '../screens/FocusSpreadScreen';
-import ExposuresScreen from '../screens/ExposuresScreen';
-import ExposureDetailScreen from '../screens/ExposureDetailScreen';
-import ExposureImportScreen from '../screens/ExposureImportScreen';
-import DayCompareScreen from '../screens/DayCompareScreen';
 import { colors } from '../theme';
 
 export type RootStackParamList = {
@@ -19,10 +14,6 @@ export type RootStackParamList = {
   Day: { tripId: string; dayIndex: number };
   StopDetail: { stopId: string; dayId: string };
   Reciprocity: undefined;
-  FocusSpread: undefined;
-  Exposures: undefined;
-  ExposureDetail: { id: string };
-  ExposureImport: undefined;
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -64,11 +55,6 @@ export default function RootNavigator() {
         <Stack.Screen name="Day" component={DayScreen} />
         <Stack.Screen name="StopDetail" component={StopDetailScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Reciprocity" component={ReciprocityScreen} />
-        <Stack.Screen name="FocusSpread" component={FocusSpreadScreen} />
-        <Stack.Screen name="Exposures" component={ExposuresScreen} />
-        <Stack.Screen name="ExposureDetail" component={ExposureDetailScreen} />
-        <Stack.Screen name="ExposureImport" component={ExposureImportScreen} />
-        <Stack.Screen name="DayCompare" component={DayCompareScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

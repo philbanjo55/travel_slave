@@ -7,33 +7,31 @@ import { downloadPhoto } from '../services/photoCache';
 
 const STORAGE_BUCKET = 'photos';
 const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
-
-export type PhotoType = 'reference' | 'field';
+const SUPABASE_ANON_KEY = 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2';
 
 async function uploadToStorage(stopId: string, uri: string): Promise<{ id: string; storage_url: string }> {
+  // Read file as base64
+  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  
+  // Generate a unique ID
   const photoId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const filename = `${stopId}/${photoId}.jpg`;
 
-  const base64 = await FileSystem.readAsStringAsync(uri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
+  // Upload to Supabase Storage via REST
+  const uploadRes = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${STORAGE_BUCKET}/${filename}`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'image/jpeg',
+      },
+      body: bytes,
+    }
+  );
 
-  const binaryString = global.atob
-    ? global.atob(base64)
-    : Buffer.from(base64, 'base64').toString('binary');
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-
-  const { error: uploadError } = await supabase.storage
-    .from(STORAGE_BUCKET)
-    .upload(filename, bytes, {
-      contentType: 'image/jpeg',
-      upsert: true,
-    });
-
-  if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
+  if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
 
   const storage_url = `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}/${filename}`;
   return { id: photoId, storage_url };
@@ -41,102 +39,70 @@ async function uploadToStorage(stopId: string, uri: string): Promise<{ id: strin
 
 export function usePhotoUpload(stopId: string) {
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState('');
   const [error, setError] = useState<string | null>(null);
   const { refreshCurrentTrip } = useTripStore();
 
-  const uploadSinglePhoto = async (uri: string, photoType: PhotoType): Promise<void> => {
-    const { id: photoId, storage_url } = await uploadToStorage(stopId, uri);
+  const uploadPhoto = async (uri: string) => {
+    setUploading(true);
+    setError(null);
+    try {
+      // Upload to Supabase Storage
+      const { id: photoId, storage_url } = await uploadToStorage(stopId, uri);
 
-    const { data: existing } = await supabase
-      .from('stop_photos')
-      .select('position')
-      .eq('stop_id', stopId)
-      .eq('photo_type', photoType)
-      .order('position', { ascending: false })
-      .limit(1);
-    const nextPos = existing?.length ? (existing[0].position + 1) : 0;
+      // Get next position
+      const { data: existing } = await supabase
+        .from('stop_photos')
+        .select('position')
+        .eq('stop_id', stopId)
+        .order('position', { ascending: false })
+        .limit(1);
+      const nextPos = existing?.length ? (existing[0].position + 1) : 0;
 
-    const { data: inserted, error: insertError } = await supabase
-      .from('stop_photos')
-      .insert({ stop_id: stopId, storage_url, position: nextPos, photo_type: photoType })
-      .select('id')
-      .single();
+      // Save record with storage_url
+      const { error: insertError } = await supabase
+        .from('stop_photos')
+        .insert({ stop_id: stopId, storage_url, position: nextPos });
 
-    if (insertError) throw insertError;
+      if (insertError) throw insertError;
 
-    const dbId = inserted?.id || photoId;
-    await downloadPhoto(dbId, storage_url).catch(() => {});
+      // Cache locally immediately
+      await downloadPhoto(photoId, storage_url).catch(() => {});
+
+      await refreshCurrentTrip();
+    } catch (err: any) {
+      setError(err.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
   };
 
-  const pickAndUpload = async (photoType: PhotoType = 'reference') => {
+  const pickAndUpload = async () => {
     setError(null);
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') { setError('Camera roll permission required'); return; }
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsMultipleSelection: true,
+      allowsMultipleSelection: false,
       quality: 0.8,
-      orderedSelection: true,
-      selectionLimit: 10,
     });
 
-    if (result.canceled || !result.assets?.length) return;
-
-    setUploading(true);
-    const total = result.assets.length;
-    let uploaded = 0;
-
-    try {
-      for (const asset of result.assets) {
-        uploaded++;
-        setUploadProgress(total > 1 ? `${uploaded}/${total}` : '');
-        await uploadSinglePhoto(asset.uri, photoType);
-      }
-      await refreshCurrentTrip();
-    } catch (err: any) {
-      setError(err.message || 'Upload failed');
-    } finally {
-      setUploading(false);
-      setUploadProgress('');
-    }
+    if (result.canceled || !result.assets[0]) return;
+    await uploadPhoto(result.assets[0].uri);
   };
 
-  const takePhoto = async (photoType: PhotoType = 'field') => {
+  const takePhoto = async () => {
     setError(null);
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') { setError('Camera permission required'); return; }
 
     const result = await ImagePicker.launchCameraAsync({ quality: 0.8 });
     if (result.canceled || !result.assets[0]) return;
-
-    setUploading(true);
-    try {
-      await uploadSinglePhoto(result.assets[0].uri, photoType);
-      await refreshCurrentTrip();
-    } catch (err: any) {
-      setError(err.message || 'Upload failed');
-    } finally {
-      setUploading(false);
-    }
+    await uploadPhoto(result.assets[0].uri);
   };
 
   const deletePhoto = async (photoId: string) => {
     try {
-      const { data: photo } = await supabase
-        .from('stop_photos')
-        .select('storage_url')
-        .eq('id', photoId)
-        .single();
-
-      if (photo?.storage_url) {
-        const storagePath = photo.storage_url.split(`/public/${STORAGE_BUCKET}/`)[1];
-        if (storagePath) {
-          await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]);
-        }
-      }
-
       await supabase.from('stop_photos').delete().eq('id', photoId);
       await refreshCurrentTrip();
     } catch (err: any) {
@@ -144,5 +110,5 @@ export function usePhotoUpload(stopId: string) {
     }
   };
 
-  return { pickAndUpload, takePhoto, deletePhoto, uploading, uploadProgress, error };
+  return { pickAndUpload, takePhoto, deletePhoto, uploading, error };
 }

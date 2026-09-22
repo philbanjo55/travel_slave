@@ -1,17 +1,14 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Image, Linking, Dimensions, Alert, ActivityIndicator,
+  Image, Linking, Dimensions, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { getPhotoUri } from '../services/photoCache';
-import { usePhotoUpload } from '../hooks/usePhotoUpload';
 import { useTripStore } from '../store/tripStore';
-import StopWeatherCard from '../components/StopWeatherCard';
-import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 
@@ -34,7 +31,7 @@ function PhotoItem({ photo }: { photo: any }) {
   }, [photo.id]);
 
   if (!uri) return null;
-  return <Image source={{ uri }} style={styles.photo} resizeMode="contain" />;
+  return <Image source={{ uri }} style={styles.photo} resizeMode="cover" />;
 }
 
 export default function StopDetailScreen() {
@@ -43,8 +40,6 @@ export default function StopDetailScreen() {
   const { stopId, dayId } = route.params;
   const { currentTripData } = useTripStore();
   const [photoIndex, setPhotoIndex] = useState(0);
-  const [fieldPhotoIndex, setFieldPhotoIndex] = useState(0);
-  const [viewerPhoto, setViewerPhoto] = useState<any | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const day = currentTripData?.days.find((d: any) => d.id === dayId);
@@ -55,17 +50,7 @@ export default function StopDetailScreen() {
 
   if (!stop) return null;
 
-  const allPhotos = stop.stop_photos || [];
-  const refPhotos = allPhotos.filter((p: any) => !p.photo_type || p.photo_type === 'reference');
-  const fieldPhotos = allPhotos.filter((p: any) => p.photo_type === 'field');
-  const { pickAndUpload, takePhoto, deletePhoto, uploading, uploadProgress, error } = usePhotoUpload(stop.id);
-
-  const handlePhotoLongPress = (photoId: string, type: string) => {
-    Alert.alert('Delete Photo', `Remove this ${type} photo?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deletePhoto(photoId) },
-    ]);
-  };
+  const photos = stop.stop_photos || [];
 
   // Navigate from PREVIOUS stop to THIS stop (chained directions)
   const openNavigation = () => {
@@ -145,66 +130,32 @@ export default function StopDetailScreen() {
           )}
         </View>
 
-        {/* Weather — pinned near the top of the location */}
-        <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
-
-        {/* Reference Photos */}
-        <View style={[styles.photoSection, { overflow: "hidden" }]}>
-          {refPhotos.length > 0 && (
-            <>
-              <ScrollView
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                bounces={false}
-                overScrollMode="never"
-                onMomentumScrollEnd={(e) => {
-                  setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
-                }}
-              >
-                {refPhotos.map((photo: any) => (
-                  <TouchableOpacity
-                    key={photo.id}
-                    onPress={() => setViewerPhoto(photo)}
-                    onLongPress={() => handlePhotoLongPress(photo.id, 'reference')}
-                    activeOpacity={0.9}
-                  >
-                    <PhotoItem photo={photo} />
-                  </TouchableOpacity>
+        {/* Photos */}
+        {photos.length > 0 && (
+          <View style={[styles.photoSection, { overflow: "hidden" }]}>
+            <ScrollView
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              bounces={false}
+              overScrollMode="never"
+              onMomentumScrollEnd={(e) => {
+                setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
+              }}
+            >
+              {photos.map((photo: any) => (
+                <PhotoItem key={photo.id} photo={photo} />
+              ))}
+            </ScrollView>
+            {photos.length > 1 && (
+              <View style={styles.photoDots}>
+                {photos.map((_: any, i: number) => (
+                  <View key={i} style={[styles.dot, i === photoIndex && styles.dotActive]} />
                 ))}
-              </ScrollView>
-              {refPhotos.length > 1 && (
-                <View style={styles.photoDots}>
-                  {refPhotos.map((_: any, i: number) => (
-                    <View key={i} style={[styles.dot, i === photoIndex && styles.dotActive]} />
-                  ))}
-                </View>
-              )}
-            </>
-          )}
-          <TouchableOpacity
-            style={styles.addPhotoBtn}
-            onPress={() => pickAndUpload('reference')}
-            disabled={uploading}
-          >
-            {uploading ? (
-              <>
-                <ActivityIndicator size="small" color={colors.accent} />
-                <Text style={styles.addPhotoText}>Uploading{uploadProgress ? ` ${uploadProgress}` : ''}...</Text>
-              </>
-            ) : (
-              <>
-                <Ionicons name="images-outline" size={16} color={colors.accent} />
-                <Text style={styles.addPhotoText}>
-                  {refPhotos.length > 0 ? 'Add Reference Photos' : 'Add Reference Photos'}
-                </Text>
-              </>
+              </View>
             )}
-          </TouchableOpacity>
-          {error && (
-            <Text style={styles.uploadError}>Upload failed: {error}</Text>
-          )}
-        </View>
+          </View>
+        )}
 
         {/* Info */}
         {stop.info && (
@@ -329,68 +280,8 @@ export default function StopDetailScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Field Photos — taken on location */}
-        <View style={styles.fieldPhotoSection}>
-          <Text style={styles.fieldPhotoTitle}>FIELD PHOTOS</Text>
-          {fieldPhotos.length > 0 && (
-            <>
-              <ScrollView
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                bounces={false}
-                overScrollMode="never"
-                onMomentumScrollEnd={(e) => {
-                  setFieldPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
-                }}
-              >
-                {fieldPhotos.map((photo: any) => (
-                  <TouchableOpacity
-                    key={photo.id}
-                    onPress={() => setViewerPhoto(photo)}
-                    onLongPress={() => handlePhotoLongPress(photo.id, 'field')}
-                    activeOpacity={0.9}
-                  >
-                    <PhotoItem photo={photo} />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-              {fieldPhotos.length > 1 && (
-                <View style={styles.photoDots}>
-                  {fieldPhotos.map((_: any, i: number) => (
-                    <View key={i} style={[styles.dot, i === fieldPhotoIndex && styles.dotActive]} />
-                  ))}
-                </View>
-              )}
-            </>
-          )}
-          <View style={styles.fieldPhotoBtns}>
-            <TouchableOpacity
-              style={[styles.addPhotoBtn, { flex: 1 }]}
-              onPress={() => takePhoto('field')}
-              disabled={uploading}
-            >
-              <Ionicons name="camera-outline" size={16} color={colors.accent} />
-              <Text style={styles.addPhotoText}>Take Photo</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.addPhotoBtn, { flex: 1 }]}
-              onPress={() => pickAndUpload('field')}
-              disabled={uploading}
-            >
-              <Ionicons name="images-outline" size={16} color={colors.accent} />
-              <Text style={styles.addPhotoText}>From Roll</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
         <View style={{ height: 80 }} />
       </ScrollView>
-      <FullScreenPhotoViewer
-        photo={viewerPhoto}
-        visible={!!viewerPhoto}
-        onClose={() => setViewerPhoto(null)}
-      />
     </SafeAreaView>
   );
 }
@@ -443,27 +334,9 @@ const styles = StyleSheet.create({
   fromLabel: { fontSize: 11, color: colors.textTertiary, fontStyle: 'italic' },
 
   photoSection: { marginBottom: spacing.lg, overflow: 'hidden' },
-  photo: { width, height: 260, backgroundColor: '#111' },
+  photo: { width, height: 260 },
   photoDots: { flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.sm },
   dot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.border },
-  addPhotoBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
-    marginHorizontal: spacing.xl, marginTop: spacing.sm, paddingVertical: spacing.sm,
-    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, borderStyle: 'dashed',
-  },
-  addPhotoText: { fontSize: 12, fontWeight: '500', color: colors.accent },
-  uploadError: { fontSize: 11, color: '#e74c3c', textAlign: 'center', marginTop: spacing.xs, marginHorizontal: spacing.xl },
-  fieldPhotoSection: {
-    marginTop: spacing.xl, borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border, paddingTop: spacing.lg,
-  },
-  fieldPhotoTitle: {
-    ...typography.labelMedium, paddingHorizontal: spacing.xl, marginBottom: spacing.md,
-  },
-  fieldPhotoBtns: {
-    flexDirection: 'row', gap: spacing.sm,
-    marginHorizontal: spacing.xl, marginTop: spacing.sm,
-  },
   dotActive: { backgroundColor: colors.accent },
 
   infoCard: {

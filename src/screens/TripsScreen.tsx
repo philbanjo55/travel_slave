@@ -7,9 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
-import { supabase } from '../services/supabase';
 import { colors, typography, spacing, radius } from '../theme';
-import { format, parseISO, differenceInDays } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import * as Updates from 'expo-updates';
 import { migratePhotosToStorage } from '../services/migratePhotos';
 
@@ -18,7 +17,6 @@ export default function TripsScreen() {
   const { trips, loadTrips, isOffline } = useTripStore();
   const [migrating, setMigrating] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     try {
@@ -31,27 +29,11 @@ export default function TripsScreen() {
 
   useEffect(() => { loadTrips(); }, []);
 
-  const activeTrips = trips.filter((t: any) => !t.archived);
-  const archivedTrips = trips.filter((t: any) => t.archived);
-
-  const archiveTrip = async (item: any, archive: boolean) => {
-    try {
-      await supabase.from('trips').update({ archived: archive }).eq('id', item.id);
-      await loadTrips();
-    } catch (e) {
-      Alert.alert('Error', 'Could not update trip.');
-    }
-  };
-
   const handleLongPress = (item: any) => {
     Alert.alert(
       item.title,
       'Trip options',
       [
-        {
-          text: item.archived ? '📂 Unarchive Trip' : '📁 Archive Trip',
-          onPress: () => archiveTrip(item, !item.archived),
-        },
         {
           text: '📷 Migrate Photos to Storage',
           onPress: async () => {
@@ -72,10 +54,10 @@ export default function TripsScreen() {
   };
 
   const renderTrip = ({ item }: { item: any }) => {
-    const start = item.start_date ? format(parseISO(item.start_date), 'MMM d') : '';
-    const end = item.end_date ? format(parseISO(item.end_date), 'MMM d, yyyy') : '';
+    const start = item.start_date ? format(new Date(item.start_date), 'MMM d') : '';
+    const end = item.end_date ? format(new Date(item.end_date), 'MMM d, yyyy') : '';
     const days = item.start_date && item.end_date
-      ? differenceInDays(parseISO(item.end_date), parseISO(item.start_date))
+      ? differenceInDays(new Date(item.end_date), new Date(item.start_date))
       : null;
 
     return (
@@ -104,7 +86,7 @@ export default function TripsScreen() {
       <StatusBar barStyle="light-content" backgroundColor="#000" />
 
       <View style={styles.header}>
-        <Text style={styles.brand}>PHILM+FRAME ✦</Text>
+        <Text style={styles.brand}>PHILM+FRAME</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
           {migrating && <ActivityIndicator size="small" color={colors.accentDim} />}
           {isOffline && <Text style={styles.offline}>OFFLINE</Text>}
@@ -114,18 +96,6 @@ export default function TripsScreen() {
           >
             <Ionicons name="calculator-outline" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('FocusSpread')}
-            style={{ padding: spacing.xs }}
-          >
-            <Ionicons name="aperture-outline" size={20} color={colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('Exposures')}
-            style={{ padding: spacing.xs }}
-          >
-            <Ionicons name="film-outline" size={20} color={colors.textSecondary} />
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -134,34 +104,17 @@ export default function TripsScreen() {
         <Text style={styles.lastUpdate}>SYNCED {lastUpdate}</Text>
       )}
 
-      {activeTrips.length === 0 && !showArchived ? (
+      {trips.length === 0 ? (
         <View style={styles.loading}>
           <ActivityIndicator color={colors.accent} />
         </View>
       ) : (
         <FlatList
-          data={showArchived ? [...activeTrips, ...archivedTrips] : activeTrips}
+          data={trips}
           keyExtractor={item => item.id}
           renderItem={renderTrip}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.list}
-          ListFooterComponent={
-            archivedTrips.length > 0 ? (
-              <TouchableOpacity
-                style={styles.archivedBtn}
-                onPress={() => setShowArchived(!showArchived)}
-              >
-                <Ionicons
-                  name={showArchived ? 'chevron-up' : 'chevron-down'}
-                  size={13}
-                  color={colors.textTertiary}
-                />
-                <Text style={styles.archivedBtnText}>
-                  {showArchived ? 'Hide Archived' : `Show Archived (${archivedTrips.length})`}
-                </Text>
-              </TouchableOpacity>
-            ) : null
-          }
         />
       )}
     </SafeAreaView>
@@ -196,12 +149,4 @@ const styles = StyleSheet.create({
   tripMeta: { ...typography.labelMedium, color: colors.textTertiary },
   tripDivider: { height: 1, backgroundColor: colors.border },
   lastUpdate: { ...typography.labelMedium, color: colors.textTertiary, paddingHorizontal: spacing.xl, marginTop: -spacing.sm, paddingBottom: spacing.md },
-  archivedBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingVertical: spacing.xl,
-    justifyContent: 'center',
-  },
-  archivedBtnText: { ...typography.labelMedium, color: colors.textTertiary },
 });
