@@ -42,6 +42,18 @@ function reportSilently(where: string, e: any) {
   } catch {}
 }
 
+// Trips whose drive times were calculated this launch - see loadTrip.
+const driveTimesTried = new Set<string>();
+
+function hasMissingDriveTimes(data: TripData): boolean {
+  return data.days.some((d: any) => {
+    const stops = d.stops || [];
+    return stops.some((s: any, i: number) =>
+      i > 0 && s.lat && s.lng && stops[i - 1].lat && stops[i - 1].lng && s.drive_override_minutes == null
+    );
+  });
+}
+
 interface TripState {
   trips: any[];
   currentTrip: any | null;
@@ -99,27 +111,11 @@ export const useTripStore = create<TripState>((set, get) => ({
     }
 
     // The itinerary. This is the part the screen actually needs to exist, so
-    // it is fetched, rendered and only THEN followed by weather. Previously
-    // everything waited on one combined step, and the weather read inside it
-    // could hang for minutes - with the cache cleared, that was a spinner
-    // with nothing behind it and no way out.
+    // it is fetched and rendered before anything slower is attempted.
     set({ isSyncing: true });
     let fresh: TripData;
     try {
       fresh = await fetchFullTrip(tripId);
-
-      // Drive times, only when a stop is missing one. The calculation writes
-      // to the database, so the trip is re-read afterwards to pick the
-      // results up - in that case only, not as a matter of course.
-      const allStops = fresh.days.flatMap((d: any) => d.stops || []);
-      const missingDriveTimes = allStops.some(
-        (s: any, i: number) => i > 0 && s.lat && s.lng && s.drive_override_minutes == null
-      );
-      if (missingDriveTimes) {
-        await calculateDriveTimesForTrip(tripId).catch((e) => console.error('Drive times failed:', e));
-        fresh = await fetchFullTrip(tripId);
-      }
-
       // On screen now, carrying whatever weather the cache had for each stop.
       fresh = attachWeather(fresh, weatherByStop(cached));
       set({ currentTripData: fresh, currentTrip: fresh.trip });
@@ -127,6 +123,20 @@ export const useTripStore = create<TripState>((set, get) => ({
       reportSilently('loadTrip', e);
       set({ isOffline: true, isSyncing: false });
       return;
+    }
+
+    // Drive times, in the background and only when a leg is missing one. A
+    // leg is a stop with coordinates that follows a stop with coordinates in
+    // the same day - the first stop of a day has no leg and never gets a
+    // value, and the calculation skips a pair without coordinates. Tried once
+    // per launch: a leg Google cannot route (a ferry crossing) stays empty,
+    // and must not put the whole trip through the calculation on every open.
+    if (!driveTimesTried.has(tripId) && hasMissingDriveTimes(fresh)) {
+      driveTimesTried.add(tripId);
+      calculateDriveTimesForTrip(tripId)
+        .then(() => fetchFullTrip(tripId))
+        .then(t => set({ currentTripData: attachWeather(t, weatherByStop(get().currentTripData)) }))
+        .catch(e => console.error('Drive times failed:', e));
     }
 
     // Weather, per day, each read on its own timeout. Best effort: a day that
