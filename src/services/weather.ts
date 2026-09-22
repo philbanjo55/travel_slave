@@ -503,9 +503,13 @@ export const FIELD_IN_TABLE = new Set([
   'conditions',
   'cloud_cover_pct', 'cloud_cover_low_pct', 'cloud_cover_mid_pct', 'cloud_cover_high_pct',
   'cloud_base_m', 'cloud_top_m', 'cloud_cover_2m_pct', 'visibility_m',
-  'precip_mm', 'precip_probability_pct',
+  'precip_mm', 'rain_mm', 'precip_probability_pct',
   'wind_gusts_kmh', 'wind_speed_kmh', 'wind_direction_deg',
   'temperature_c',
+  // Grid metadata has its own columns (AWAY in miles, GRID in km). Left in,
+  // they reappear in the expanded detail as bare unitless numbers, because
+  // "distance_km" ends in "km" and matches none of the unit suffixes.
+  'distance_km', 'resolution_km',
   // dew_point_c, relative_humidity_pct and surface_pressure_hpa deliberately
   // stay OUT — they came off the table and now live in the expanded detail.
 ]);
