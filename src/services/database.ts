@@ -92,34 +92,7 @@ export async function storageReport(): Promise<{ totalKb: number; byPrefix: Reco
   return { totalKb, byPrefix, keys };
 }
 
-// Delete everything superseded that is still occupying the budget: the two
-// retired weather prefixes, and any other trip's cached blobs. Returns kB
-// freed. Called only when a write has actually failed for space — it is a
-// recovery step, not routine maintenance.
-async function reclaimStorage(keepTripId: string): Promise<number> {
-  let freed = 0;
-  try {
-    const keys = await AsyncStorage.getAllKeys();
-    const doomed = keys.filter(k =>
-      k.startsWith('pf_weather_stop_') ||
-      k.startsWith('pf_weather_day_') ||
-      ((k.startsWith(WEATHER_PREFIX) || k.startsWith(TRIP_PREFIX) || k.startsWith(PHOTOS_PREFIX))
-        && !k.includes(keepTripId))
-    );
-    if (!doomed.length) return 0;
-    for (let i = 0; i < doomed.length; i += 20) {
-      const pairs = await AsyncStorage.multiGet(doomed.slice(i, i + 20) as string[]);
-      for (const [, v] of pairs) freed += (v?.length ?? 0) / 1024;
-    }
-    await AsyncStorage.multiRemove(doomed as string[]);
-    console.log(`[storage] reclaimed ${Math.round(freed)} kB from ${doomed.length} superseded keys`);
-  } catch (e) {
-    console.warn('[storage] reclaim failed:', e);
-  }
-  return Math.round(freed);
-}
-
-export async function cacheFullTrip(tripId: string, tripData: any, retried = false): Promise<boolean> {
+export async function cacheFullTrip(tripId: string, tripData: any): Promise<boolean> {
   const startedAt = Date.now();
   try {
     // Photos and weather both come out of the trip blob and go into their own
@@ -223,27 +196,12 @@ export async function cacheFullTrip(tripId: string, tripData: any, retried = fal
     // Returned, not just logged: a failed write used to be indistinguishable
     // from a successful one, which is how a stale trip survived for hours.
     console.warn('Cache write failed:', e);
-    const msg = String(e?.message ?? e);
-
-    // A full database is recoverable: drop what is superseded and try once
-    // more. Without this the first run after an upgrade still fails, because
-    // the space is only freed by a prune that has not happened yet.
-    if (!retried && /full|SQLITE_FULL|code 13/i.test(msg)) {
-      const freed = await reclaimStorage(tripId);
-      if (freed > 0) {
-        console.log(`[trip] retrying cache write after reclaiming ${freed} kB`);
-        return cacheFullTrip(tripId, tripData, true);
-      }
-    }
-
     // Status recorded here too, or a failure on the trip/photo writes would
     // leave the previous run's "saved" showing and report a lie.
     const rep = await storageReport();
-    const biggest = Object.entries(rep.byPrefix).sort((a, b) => b[1] - a[1])[0];
     await putCacheStatus({
       ok: false, wroteDays: 0, totalDays: 0, kb: 0,
-      error: msg, at: Date.now(), storageKb: rep.totalKb,
-      biggest: biggest ? `${biggest[0]} ${Math.round(biggest[1])} kB` : undefined,
+      error: String(e?.message ?? e), at: Date.now(), storageKb: rep.totalKb,
     });
     return false;
   }

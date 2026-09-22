@@ -100,12 +100,53 @@ export interface PullWeatherResult {
 interface CachedDay { cachedAt: number; byStop: Record<string, WeatherRow>; }
 interface CachedStop { cachedAt: number; row: WeatherRow; }
 
-// cacheWeatherForDay was removed here. It wrote pf_weather_day_* — a second
-// full copy of every stop's weather, alongside the trip's own pf_tripwx_*.
-// Two copies of ~1.7 MB against a 6 MB SQLite budget is what filled it. The
-// trip copy is the one getCachedFullTrip reads; this one only ever backed a
-// per-stop fallback that the trip copy already covers. Nothing called it once
-// fetchLatestWeatherForDay stopped, so it is gone rather than left as a trap.
+export async function cacheWeatherForDay(
+  dayId: string,
+  byStop: Record<string, WeatherRow>
+): Promise<void> {
+  try {
+    // Slimmed on the way to disk. Android's AsyncStorage is one SQLite
+    // database with a fixed total budget, and this trip's weather is held in
+    // three places — here, the per-stop entries, and the trip's own per-day
+    // entries. Three full copies of every model, ensemble and centre spread
+    // exhausted it, which made writes start failing silently.
+    const slim: Record<string, WeatherRow> = {};
+    for (const [k, v] of Object.entries(byStop)) slim[k] = slimCachedWeather(v);
+    const payload: CachedDay = { cachedAt: Date.now(), byStop: slim };
+    await AsyncStorage.setItem(`${WEATHER_DAY_PREFIX}${dayId}`, JSON.stringify(payload));
+  } catch (e) {
+    console.warn('weather cache write failed (day):', e);
+  }
+}
+
+export async function getCachedWeatherForDay(
+  dayId: string
+): Promise<Record<string, WeatherRow> | null> {
+  try {
+    const raw = await AsyncStorage.getItem(`${WEATHER_DAY_PREFIX}${dayId}`);
+    if (!raw) return null;
+    return (JSON.parse(raw) as CachedDay).byStop ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Reclaim. Earlier builds wrote a full weather row per stop, each carrying
+// every model, the ensemble and the centre spread. Those entries are only
+// ever overwritten if that same stop is opened again, so they accumulate and
+// crowd out the writes that matter — on Android this is one SQLite database
+// with a fixed total budget, and once it is full, writes fail silently.
+// The per-day entries and the trip's own copy both already cover every stop.
+export async function pruneStopWeatherCache(): Promise<number> {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const stale = keys.filter(k => k.startsWith(WEATHER_STOP_PREFIX));
+    if (stale.length) await AsyncStorage.multiRemove(stale);
+    return stale.length;
+  } catch {
+    return 0;
+  }
+}
 
 async function getCachedWeatherForStop(stopId: string): Promise<WeatherRow | null> {
   // Prefer a dedicated per-stop entry; otherwise fall back to any cached day
@@ -195,13 +236,7 @@ export async function fetchLatestWeatherForDay(
     if (rows.length > 0) {
       const byStop: Record<string, WeatherRow> = {};
       for (const row of rows) byStop[row.stop_id] = row;
-      // NO second copy written here. This day cache held the whole trip's
-      // weather a second time — pf_weather_day_* alongside the trip's own
-      // pf_tripwx_*, ~1.7 MB each — and a pull wrote this one FIRST, filling
-      // the 6 MB SQLite budget so that cacheFullTrip then failed with
-      // SQLITE_FULL. The pull was causing the failure it could not recover
-      // from. getCachedFullTrip reads the trip copy; this one was read only as
-      // a per-stop fallback, which the trip copy already covers.
+      await cacheWeatherForDay(dayId, byStop); // refresh the offline copy
       return byStop;
     }
     // Empty result. An offline/failed read can surface as empty-without-error
