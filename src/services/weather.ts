@@ -880,6 +880,12 @@ export interface SourceReading {
   blendNote: string | null;
   gustMeasured: boolean;
   note?: string;
+  // This source's own rating — the same weather_score run against this model's
+  // numbers instead of the primary's, so a row can say whether IT thinks the
+  // hour is shootable. Null on rows stored before the contract carried it.
+  stars: number | null;
+  scoreLabel: string | null;
+  scoreReason: string | null;
   // Every field the backend collected for this model, untouched. The named
   // fields below are convenience accessors onto the same data — anything the
   // edge function starts collecting shows up here with no change in this file
@@ -898,7 +904,6 @@ export interface SourceReading {
   surface_pressure_hpa: number | null;
   weather_code: number | null;
   fog_risk: string | null;
-  stars: number | null;
 }
 
 export interface EnsembleVar {
@@ -1015,6 +1020,9 @@ function fromContract(display: any, row: WeatherRow): SourceComparison {
       isBlend: !!s.is_blend,
       blendNote: s.blend_note ?? null,
       gustMeasured: v.wind_gusts_kmh != null,
+      stars: n(s.score?.stars),
+      scoreLabel: s.score?.label ?? null,
+      scoreReason: s.score?.reason ?? null,
       values: v,
       temperature_c: n(v.temperature_c),
       cloud_cover_pct: n(v.cloud_cover_pct),
@@ -1029,7 +1037,6 @@ function fromContract(display: any, row: WeatherRow): SourceComparison {
       surface_pressure_hpa: n(v.surface_pressure_hpa),
       weather_code: n(v.weather_code),
       fog_risk: v.fog_risk ?? null,
-      stars: null,
     };
   });
 
@@ -1161,6 +1168,7 @@ function fromLegacyRaw(row: WeatherRow): SourceComparison {
     weather_code: sub?.weather_code ?? null,
     fog_risk: sub?.fog_risk ?? null,
     stars: sub?.score?.stars ?? null,
+    scoreLabel: null, scoreReason: null,
   });
 
   const primary: SourceReading = {
@@ -1172,7 +1180,8 @@ function fromLegacyRaw(row: WeatherRow): SourceComparison {
     wind_speed_kmh: row.wind_speed_kmh, wind_gusts_kmh: row.wind_gusts_kmh,
     visibility_m: row.visibility_m, relative_humidity_pct: row.relative_humidity_pct,
     surface_pressure_hpa: row.surface_pressure_hpa, weather_code: row.weather_code,
-    stars: row.raw?.score?.stars ?? null, gustMeasured: true, note: undefined,
+    stars: row.raw?.score?.stars ?? null, scoreLabel: null, scoreReason: null,
+    gustMeasured: true, note: undefined,
   };
 
   const sources = [

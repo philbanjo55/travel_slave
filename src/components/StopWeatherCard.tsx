@@ -67,6 +67,13 @@ const memberCount = (u: any): number | null => {
 type Col = { key: string; head: string; unit: string; hint: string; get: (s: SourceReading) => string; wide?: boolean };
 
 const COLUMNS: Col[] = [
+  // The same scorer the day page runs, but against THIS model's numbers
+  // instead of the primary's — so a row says whether it thinks the hour is
+  // shootable, not just what it measured. Blank on rows stored before the
+  // backend carried per-model scores.
+  { key: 'rate',  head: 'RATE', unit: '',   wide: true,
+    hint: "this model's own verdict — the day-page scorer run on its numbers",
+    get: s => s.stars == null ? '—' : '\u2605'.repeat(s.stars) + '\u2606'.repeat(Math.max(0, 4 - s.stars)) },
   { key: 'grid',  head: 'GRID', unit: 'km',  hint: 'model resolution in km — the smallest thing it can resolve',
     get: s => s.resolutionKm == null ? '—' : `${s.resolutionKm}k` },
   { key: 'away',  head: 'AWAY', unit: 'mi',  hint: 'km from this stop to the grid point the model actually sampled',
@@ -407,6 +414,8 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
                         <Text key={c.key}
                               style={[styles.cmpCell, { width: colW(c) },
                                       dim ? styles.cmpDim : null,
+                                      c.key === 'rate' ? styles.cmpRate : null,
+                                      c.key === 'rate' && (s.stars ?? 0) >= 3 ? styles.cmpRateGood : null,
                                       isOutlier && c.key === 'cloud' ? styles.cmpOutlierVal : null]}>
                           {c.get(s)}
                         </Text>
@@ -421,6 +430,11 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
                         {s.centre ? (
                           <Text style={styles.cmpDetailCentre}>
                             {s.centre}{s.blendNote ? ` · ${s.blendNote}` : ''}
+                          </Text>
+                        ) : null}
+                        {s.scoreLabel ? (
+                          <Text style={styles.cmpDetailVerdict}>
+                            {s.scoreLabel}{s.scoreReason ? ` — ${s.scoreReason}` : ''}
                           </Text>
                         ) : null}
                         <View style={styles.cmpDetailGrid}>
@@ -735,6 +749,10 @@ const styles = StyleSheet.create({
   // Fixed width, not flex: the table is inside a horizontal scroll, so the
   // columns have to be sized rather than sharing whatever is left.
   cmpCell: { width: COL_W, textAlign: 'center', fontSize: 11, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+  // Stars are glyphs, not digits — tabular-nums does nothing for them and the
+  // default size crowds four of them, so this cell sets its own.
+  cmpRate: { fontSize: 9, letterSpacing: -0.5, color: colors.textSecondary },
+  cmpRateGood: { color: colors.signalOk },
   cmpScroll: { marginHorizontal: -2 },
   cmpHeadCell: { textAlign: 'center' },
   cmpHeadUnit: {
@@ -758,6 +776,7 @@ const styles = StyleSheet.create({
     fontSize: 9, fontWeight: '700', letterSpacing: 0.4,
     color: colors.textTertiary, marginBottom: 4,
   },
+  cmpDetailVerdict: { fontSize: 11, color: colors.textSecondary, marginBottom: 6 },
   cmpDetailGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 4 },
   cmpDetailItem: { width: 118, paddingRight: 6 },
   cmpDetailLabel: { fontSize: 8, letterSpacing: 0.3, color: colors.textTertiary },
