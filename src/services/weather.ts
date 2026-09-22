@@ -472,9 +472,14 @@ export const FIELD_NOT_A_VALUE = new Set([
 ]);
 
 export const FIELD_IN_TABLE = new Set([
-  'cloud_cover_pct', 'cloud_cover_low_pct', 'cloud_base_m', 'visibility_m',
-  'precip_mm', 'precip_probability_pct', 'wind_gusts_kmh', 'wind_speed_kmh',
+  'conditions',
+  'cloud_cover_pct', 'cloud_cover_low_pct', 'cloud_cover_mid_pct', 'cloud_cover_high_pct',
+  'cloud_base_m', 'cloud_top_m', 'cloud_cover_2m_pct', 'visibility_m',
+  'precip_mm', 'precip_probability_pct',
+  'wind_gusts_kmh', 'wind_speed_kmh', 'wind_direction_deg',
   'temperature_c',
+  // dew_point_c, relative_humidity_pct and surface_pressure_hpa deliberately
+  // stay OUT — they came off the table and now live in the expanded detail.
 ]);
 
 // Hourly precipitation in inches is a small number: 0.5 mm is 0.02 in. Two

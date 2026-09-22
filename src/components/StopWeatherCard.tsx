@@ -71,9 +71,15 @@ const COLUMNS: Col[] = [
     get: s => s.resolutionKm == null ? '—' : `${s.resolutionKm}k` },
   { key: 'away',  head: 'AWAY', unit: 'mi',  hint: 'km from this stop to the grid point the model actually sampled',
     get: s => miT(s.distanceKm) },
-  { key: 'cloud', head: 'CLOUD', unit: '%', hint: 'total cloud cover', get: s => pct(s.cloud_cover_pct) },
-  { key: 'low',   head: 'LOW', unit: '%',   hint: 'low cloud — the layer that hides a summit',
+  { key: 'cond',  head: 'COND', unit: '',   hint: "the model's own word for the hour", wide: true,
+    get: s => (s.values?.conditions as string) ?? '—' },
+  { key: 'cloud', head: 'CLOUD', unit: '%', hint: 'total cloud cover, all layers stacked', get: s => pct(s.cloud_cover_pct) },
+  { key: 'low',   head: 'LOW', unit: '%',   hint: 'low cloud, below ~6,500 ft — the layer that hides a summit',
     get: s => pct(s.cloud_cover_low_pct) },
+  { key: 'mid',   head: 'MID', unit: '%',   hint: 'mid cloud, 6,500–20,000 ft — the grey lid that flattens light',
+    get: s => pct(s.values?.cloud_cover_mid_pct ?? null) },
+  { key: 'high',  head: 'HIGH', unit: '%',  hint: 'high cloud, above 20,000 ft — cirrus. Texture in the sky without losing the light',
+    get: s => pct(s.values?.cloud_cover_high_pct ?? null) },
   { key: 'base',  head: 'BASE', unit: 'ft',  hint: 'cloud base in feet — compare to the height of your subject',
     get: s => ft(s.cloud_base_m) },
   { key: 'top',   head: 'TOP', unit: 'ft',   hint: 'cloud top in feet — thin deck or deep overcast',
@@ -82,7 +88,7 @@ const COLUMNS: Col[] = [
     : s.visibility_m < 1609 ? `${(s.visibility_m / 1609.34).toFixed(1)}` : `${Math.round(s.visibility_m / 1609.34)}` },
   { key: 'fog',   head: 'FOG', unit: '%',   hint: 'cloud sitting at 2 m — the native fog field, DMI only',
     get: s => pct(s.values?.cloud_cover_2m_pct ?? null) },
-  { key: 'rain',  head: 'RAIN', unit: 'in',  hint: 'precipitation in mm for the hour', get: s => inch(s.rain_mm) },
+  { key: 'rain',  head: 'RAIN', unit: 'in',  hint: 'precipitation for the hour, in inches', get: s => inch(s.rain_mm) },
   { key: 'pop',   head: 'POP', unit: '%',   hint: 'chance of precipitation — only some models report it',
     get: s => pct(s.precip_probability_pct) },
   { key: 'gust',  head: 'GUST', unit: 'mph',  hint: 'gusts in mph', get: s =>
@@ -92,15 +98,10 @@ const COLUMNS: Col[] = [
     const d = s.values?.wind_direction_deg; return d == null ? '—' : windDir(d); }, wide: true },
   { key: 'temp',  head: 'TEMP', unit: '°F',  hint: 'temperature in °F',
     get: s => s.temperature_c == null ? '—' : `${Math.round(cToF(s.temperature_c))}` },
-  { key: 'dew',   head: 'DEW', unit: '°F',   hint: 'dew point — within 2°F of temp means fog',
-    get: s => s.values?.dew_point_c == null ? '—' : `${Math.round(cToF(s.values.dew_point_c))}` },
-  { key: 'hum',   head: 'HUM', unit: '%',   hint: 'relative humidity', get: s => pct(s.relative_humidity_pct) },
-  { key: 'pres',  head: 'PRES', unit: 'inHg',  hint: 'surface pressure, altimeter setting',
-    get: s => s.surface_pressure_hpa == null ? '—'
-      : (s.surface_pressure_hpa * 0.02953).toFixed(2), wide: true },
 ];
-const COL_W = 46, COL_W_WIDE = 58, SRC_W = 132;
-const TABLE_W = SRC_W + COLUMNS.reduce((w, c) => w + (c.wide ? COL_W_WIDE : COL_W), 0);
+const COL_W = 46, COL_W_WIDE = 58, COL_W_COND = 86, SRC_W = 132;
+const colW = (c: Col) => c.key === 'cond' ? COL_W_COND : c.wide ? COL_W_WIDE : COL_W;
+const TABLE_W = SRC_W + COLUMNS.reduce((w, c) => w + colW(c), 0);
 
 // How the centre vote reads on the face of the card. CONTESTED is a warning
 // about the stars beside it — the centres do not agree this is shootable.
@@ -369,7 +370,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
               <View style={styles.cmpHeadRow}>
                 <Text style={[styles.cmpCellSource, styles.cmpHeadText]}>SOURCE</Text>
                 {COLUMNS.map(c => (
-                  <View key={c.key} style={{ width: c.wide ? COL_W_WIDE : COL_W }}>
+                  <View key={c.key} style={{ width: colW(c) }}>
                     <Text style={[styles.cmpHeadText, styles.cmpHeadCell]}>{c.head}</Text>
                     {c.unit ? (
                       <Text style={[styles.cmpHeadUnit, styles.cmpHeadCell]}>{c.unit}</Text>
@@ -404,7 +405,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
                       </View>
                       {COLUMNS.map(c => (
                         <Text key={c.key}
-                              style={[styles.cmpCell, { width: c.wide ? COL_W_WIDE : COL_W },
+                              style={[styles.cmpCell, { width: colW(c) },
                                       dim ? styles.cmpDim : null,
                                       isOutlier && c.key === 'cloud' ? styles.cmpOutlierVal : null]}>
                           {c.get(s)}
@@ -556,8 +557,10 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
             nearby is still averaging over its whole cell. Compare BASE to the height
             of what you are shooting. FOG is cloud at 2 m, which only DMI reports.
             RAIN is fall for the hour, POP the chance of any — most models report one
-            or the other, not both. DEW within a couple of degrees of TEMP means fog.
-            * gust estimated from mean wind.
+            or the other, not both. CLOUD is every layer stacked; LOW is the one that
+            hides a summit, MID flattens the light, HIGH is cirrus and gives the sky
+            texture without taking the light away. Tap a source for dew point, humidity
+            and pressure. * gust estimated from mean wind.
             {cmp.fromContract ? '' : ' (Cached before source detail existed — pull to refresh.)'}
           </Text>
         </View>
