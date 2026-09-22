@@ -10,6 +10,7 @@ import { useTripStore } from '../store/tripStore';
 import { supabase } from '../services/supabase';
 import { calculateDriveTimesForTrip, recalculateTimeLabels } from '../services/driveTimes';
 import { pullWeatherForTrip, WeatherRow, conditionIcon, readScore, cToF } from '../services/weather';
+import { getCacheStatus } from '../services/database';
 import DaySummary from '../components/DaySummary';
 import DayWeatherOverview from '../components/DayWeatherOverview';
 import { colors, typography, spacing, radius } from '../theme';
@@ -106,12 +107,27 @@ export default function TripScreen() {
               const res = await pullWeatherForTrip(tripId, (done, total) =>
                 setWeatherProgress({ done, total })
               );
+              const d = useTripStore.getState().currentTripData?.days[activeDay];
+              if (d) await loadTrip(tripId); // re-fold fresh weather into trip data
+
+              // Pulling and SAVING are different things, and the difference is
+              // invisible until the app is closed — the screen shows fresh data
+              // either way, then replays the old copy on reopen. So the alert
+              // reports the write, not just the pull.
+              const st = await getCacheStatus();
+              const saved = st?.ok
+                ? `Offline copy saved (${st.wroteDays}/${st.totalDays} days, ${st.kb} kB).`
+                : st
+                  ? `OFFLINE COPY NOT SAVED — ${st.wroteDays}/${st.totalDays} days wrote, `
+                    + `wanted ${st.kb} kB.\n${st.storageKb != null ? `Storage now ${st.storageKb} kB` : ''}`
+                    + `${st.biggest ? `, biggest ${st.biggest}` : ''}.`
+                    + `\n${st.error ?? 'no error reported'}`
+                  : 'Offline copy: no result recorded.';
               Alert.alert(
                 'Weather Updated',
                 `Pulled ${res.ok} of ${res.days} days${res.failed ? ` (${res.failed} failed)` : ''}.`
+                + `\n\n${saved}`
               );
-              const d = useTripStore.getState().currentTripData?.days[activeDay];
-              if (d) await loadTrip(tripId); // re-fold fresh weather into trip data
             } catch (e) {
               Alert.alert('Error', 'Failed to update trip weather.');
             } finally {

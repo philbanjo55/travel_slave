@@ -16,6 +16,25 @@ export async function getCacheError(): Promise<string | null> {
   try { return await AsyncStorage.getItem(CACHE_ERROR_KEY); } catch { return null; }
 }
 
+// The outcome of the last write, persisted. The whole problem with this bug is
+// that the symptom only appears AFTER the app is closed, so anything held in
+// memory is gone by the time you notice. Written on success as well as
+// failure, because "it saved" is the claim actually in doubt.
+const CACHE_STATUS_KEY = 'pf_cache_status';
+export type CacheStatus = {
+  ok: boolean; wroteDays: number; totalDays: number; kb: number;
+  error: string | null; at: number; storageKb?: number; biggest?: string;
+};
+export async function getCacheStatus(): Promise<CacheStatus | null> {
+  try {
+    const raw = await AsyncStorage.getItem(CACHE_STATUS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+async function putCacheStatus(st: CacheStatus): Promise<void> {
+  try { await AsyncStorage.setItem(CACHE_STATUS_KEY, JSON.stringify(st)); } catch {}
+}
+
 export async function initDatabase(): Promise<void> {
   return;
 }
@@ -122,7 +141,14 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<bool
         `[trip] weather cache incomplete — ${wroteWeather}/${weatherEntries.length} days, ` +
         `wanted ${want} kB. First error: ${firstError ?? 'none'}`
       );
-      await storageReport();
+      const rep = await storageReport();
+      const biggest = Object.entries(rep.byPrefix).sort((a, b) => b[1] - a[1])[0];
+      await putCacheStatus({
+        ok: false, wroteDays: wroteWeather, totalDays: weatherEntries.length,
+        kb: want, error: firstError, at: Date.now(),
+        storageKb: rep.totalKb,
+        biggest: biggest ? `${biggest[0]} ${Math.round(biggest[1])} kB` : undefined,
+      });
     }
     if (weatherEntries.length && wroteWeather === 0) {
       // Nothing landed — keep the previous cache rather than replacing it
@@ -155,15 +181,28 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<bool
     // runs, so "the data appeared" says nothing about whether it was stored.
     // This line is the only way to know the offline copy is actually safe.
     const kb = Math.round(weatherEntries.reduce((n, [, v]) => n + v.length, 0) / 1024);
+    if (wroteWeather === weatherEntries.length) {
+      await putCacheStatus({
+        ok: true, wroteDays: wroteWeather, totalDays: weatherEntries.length,
+        kb, error: null, at: Date.now(),
+      });
+    }
     console.log(
       `[trip] offline copy updated — ${wroteWeather}/${weatherEntries.length} days of weather, ` +
       `${kb} kB, ${Date.now() - startedAt} ms`
     );
     return true;
-  } catch (e) {
+  } catch (e: any) {
     // Returned, not just logged: a failed write used to be indistinguishable
     // from a successful one, which is how a stale trip survived for hours.
     console.warn('Cache write failed:', e);
+    // Status recorded here too, or a failure on the trip/photo writes would
+    // leave the previous run's "saved" showing and report a lie.
+    const rep = await storageReport();
+    await putCacheStatus({
+      ok: false, wroteDays: 0, totalDays: 0, kb: 0,
+      error: String(e?.message ?? e), at: Date.now(), storageKb: rep.totalKb,
+    });
     return false;
   }
 }
