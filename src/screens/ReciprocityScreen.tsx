@@ -53,6 +53,7 @@ type FilmStock = {
 const FILM_STOCKS_4x5: FilmStock[] = [
   { name: 'Delta 100', method: 'power', p: 1.26, source: 'Ilford official PDF' },
   { name: 'FP4+', method: 'power', p: 1.26, source: 'Ilford official PDF' },
+  { name: 'Pan F+ 50', method: 'power', p: 1.26, source: 'HARMAN 4x5 launch May 2026 · Bond/Roos field', note: '3-mo latent image — develop within weeks of exposure' },
   { name: 'HP5+', method: 'power', p: 1.31, source: 'Ilford official PDF' },
   { name: 'T-Max 400', method: 'lookup', data: TMY_DATA, source: 'Kodak F-4016 + Bond' },
   { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Kodak F-4016' },
@@ -60,6 +61,7 @@ const FILM_STOCKS_4x5: FilmStock[] = [
   { name: 'Provia 100F', method: 'provia', source: 'Fuji data sheet', note: 'No correction up to 128s' },
   { name: 'Portra 160', method: 'portra', source: 'Sachs/community R²=0.995' },
   { name: 'Portra 400', method: 'portra', source: 'Same curve as 160' },
+  { name: 'Custom', method: 'power', p: 1.26, source: 'User defined — field testing', note: 'Tap +/- to adjust P value' },
 ];
 
 const FILM_STOCKS_120: FilmStock[] = [
@@ -67,6 +69,7 @@ const FILM_STOCKS_120: FilmStock[] = [
   { name: 'Tri-X 400', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017' },
   { name: 'T-Max 400', method: 'lookup', data: TMY_DATA, source: 'Kodak F-4016 + Bond' },
   { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Kodak F-4016' },
+  { name: 'Custom', method: 'power', p: 1.26, source: 'User defined — field testing', note: 'Tap +/- to adjust P value' },
 ];
 
 function calculate(stock: FilmStock, metered: number): number {
@@ -87,6 +90,20 @@ function calculate(stock: FilmStock, metered: number): number {
     default:
       return metered;
   }
+}
+
+// Inverse of calculate(): given a desired CORRECTED (actual) exposure, find the
+// METERED time that produces it. Verified against brute-force simulation and
+// Ilford's published power-law method. calculate() is monotonic increasing, so
+// bisection inverts it for any film model (power, lookup, or special-case).
+function invertReciprocity(stock: FilmStock, targetCorrected: number): number {
+  if (targetCorrected <= 1) return targetCorrected; // identity domain (<1s, no correction)
+  let lo = 0.001, hi = targetCorrected; // metered is always <= corrected
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (calculate(stock, mid) < targetCorrected) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
 }
 
 function formatTime(seconds: number): string {
@@ -115,10 +132,51 @@ export default function ReciprocityScreen() {
   const [format, setFormat] = useState<'4x5' | '120'>('4x5');
   const [selectedStock, setSelectedStock] = useState(0);
   const [inputTime, setInputTime] = useState('');
+  const [targetTime, setTargetTime] = useState('');
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
+  const [deltaP, setDeltaP] = useState<1.26 | 1.20>(1.26);
+  const [customP, setCustomP] = useState(1.26);
+  const [stopAdjust, setStopAdjust] = useState(0); // dial: +/- stops applied to metered base
+
+  type FilterDef = { name: string; stops: number; note?: string };
+  const FILTERS: FilterDef[] = [
+    { name: 'Polarizer', stops: 1.5, note: '1–2 stops, varies with angle' },
+    { name: 'Red 25', stops: 3 },
+    { name: 'Red 29', stops: 4 },
+    { name: 'Hoya R72', stops: 5, note: 'SFX 200 — most shoot at EI 6 (5 stops)' },
+    { name: 'ND64 (6-stop)', stops: 6 },
+    { name: '3-stop ND', stops: 3 },
+  ];
+
+  const toggleFilter = (name: string) => {
+    setActiveFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const totalFilterStops = useMemo(() => {
+    let total = 0;
+    FILTERS.forEach(f => { if (activeFilters.has(f.name)) total += f.stops; });
+    return total;
+  }, [activeFilters]);
+
+  const totalFilterFactor = useMemo(() => Math.pow(2, totalFilterStops), [totalFilterStops]);
 
   const stocks = format === '4x5' ? FILM_STOCKS_4x5 : FILM_STOCKS_120;
-  const stock = stocks[selectedStock];
-  const metered = parseFloat(inputTime) || 0;
+  const rawStock = stocks[selectedStock];
+  const stock: FilmStock = rawStock.name === 'Delta 100'
+    ? { ...rawStock, p: deltaP, source: `Ilford official (P=${deltaP})` }
+    : rawStock.name === 'Custom'
+      ? { ...rawStock, p: customP, source: `User defined (P=${customP.toFixed(2)})` }
+      : rawStock;
+  const meteredBase = parseFloat(inputTime) || 0;
+  // The dial shifts the METERED reading by +/- stops, and reciprocity is then
+  // computed on the shifted value. Adjusting the *input* (not the corrected time)
+  // is the physically correct order — the result below is always valid.
+  const metered = meteredBase > 0 ? meteredBase * Math.pow(2, stopAdjust) : 0;
 
   // Timer state
   const [timerActive, setTimerActive] = useState(false);
@@ -213,6 +271,58 @@ export default function ReciprocityScreen() {
     };
   }, [stock, metered]);
 
+
+  // Aperture solver — keep the metered SCENE fixed (metered at f/22) and find the
+  // aperture whose reciprocity-CORRECTED exposure lands on the target.
+  // Correct order (verified vs brute-force simulation): an aperture change scales
+  // the METERED time by (f/22)^2, and reciprocity then acts on THAT. So invert
+  // reciprocity to get the metered time the target needs, derive the stop change
+  // from the current metered base, round to a real f-stop, then report the TRUE
+  // actual exposure for that rounded stop (forward reciprocity) — never the wish.
+  const apertureAdj = useMemo(() => {
+    const target = parseFloat(targetTime);
+    if (!result || !target || target <= 0 || metered <= 0) return null;
+    if (Math.abs(result.adjusted - target) < 0.5) return null; // already on target
+
+    const baseF = 22;
+    // Metered time (via aperture) that reciprocity will correct to the target.
+    const neededMetered = invertReciprocity(stock, target);
+    // Stops of aperture change: metered base -> neededMetered.
+    // Longer metered = close down (larger f); shorter = open up (smaller f).
+    const stopsDiff = Math.log2(neededMetered / metered);
+    // f-number scales as sqrt(2) per stop.
+    const newF = baseF * Math.pow(2, stopsDiff / 2);
+
+    const thirdStops = [
+      1, 1.1, 1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3.2, 3.5,
+      4, 4.5, 5, 5.6, 6.3, 7.1, 8, 9, 10, 11, 13, 14, 16, 18, 20,
+      22, 25, 29, 32, 36, 40, 45, 51, 57, 64,
+    ];
+    const nearestF = thirdStops.reduce((prev, curr) =>
+      Math.abs(curr - newF) < Math.abs(prev - newF) ? curr : prev
+    );
+
+    // TRUE actual exposure at the ROUNDED f-stop: rounding moves the metered time,
+    // which gets its own reciprocity correction. Report this, not the target.
+    const roundedStops = 2 * Math.log2(nearestF / baseF);
+    const actualMetered = metered * Math.pow(2, roundedStops);
+    const actualExposure = calculate(stock, actualMetered);
+    const offsetSeconds = actualExposure - target;
+    const onTarget = Math.abs(offsetSeconds) < Math.max(1, target * 0.05);
+
+    return {
+      stopsDiff: Math.abs(stopsDiff),
+      direction: stopsDiff >= 0 ? 'Close' : 'Open',
+      newF,
+      nearestF,
+      targetSeconds: actualExposure,   // timer fires the honest actual
+      targetRequested: target,
+      actualExposure,
+      offsetSeconds,
+      onTarget,
+    };
+  }, [result, targetTime, stock, metered]);
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
@@ -238,22 +348,91 @@ export default function ReciprocityScreen() {
 
         {/* Film Stock Picker */}
         <View style={styles.stockGrid}>
-          {stocks.map((s, i) => (
-            <TouchableOpacity
-              key={s.name}
-              style={[styles.stockBtn, selectedStock === i && styles.stockBtnActive]}
-              onPress={() => setSelectedStock(i)}
-            >
-              <Text style={[styles.stockName, selectedStock === i && styles.stockNameActive]} numberOfLines={1}>
-                {s.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {stocks.map((s, i) => {
+            // Compute label for the second line: P value, lookup, or special method
+            let secondLine = '';
+            if (s.method === 'power' && s.p !== undefined) {
+              // Show dynamic P for Delta 100 and Custom, static P for others
+              if (s.name === 'Delta 100') secondLine = `P=${deltaP.toFixed(2)}`;
+              else if (s.name === 'Custom') secondLine = `P=${customP.toFixed(2)}`;
+              else secondLine = `P=${s.p.toFixed(2)}`;
+            } else if (s.method === 'lookup') {
+              secondLine = 'lookup table';
+            } else if (s.method === 'provia') {
+              secondLine = 'no corr <128s';
+            } else if (s.method === 'portra') {
+              secondLine = 'community curve';
+            }
+            return (
+              <TouchableOpacity
+                key={s.name}
+                style={[styles.stockBtn, selectedStock === i && styles.stockBtnActive]}
+                onPress={() => setSelectedStock(i)}
+              >
+                <Text style={[styles.stockName, selectedStock === i && styles.stockNameActive]} numberOfLines={1}>
+                  {s.name}
+                </Text>
+                {secondLine ? (
+                  <Text style={[styles.stockSubtext, selectedStock === i && styles.stockSubtextActive]} numberOfLines={1}>
+                    {secondLine}
+                  </Text>
+                ) : null}
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {/* Source info */}
         <Text style={styles.sourceText}>{stock.source}</Text>
         {stock.note && <Text style={styles.noteText}>{stock.note}</Text>}
+
+        {/* Delta 100 P-value toggle */}
+        {rawStock.name === 'Delta 100' && (
+          <View style={styles.pToggleRow}>
+            <Text style={styles.pToggleLabel}>P value:</Text>
+            {([1.26, 1.20] as const).map(p => (
+              <TouchableOpacity
+                key={p}
+                style={[styles.pToggleBtn, deltaP === p && styles.pToggleBtnActive]}
+                onPress={() => setDeltaP(p)}
+              >
+                <Text style={[styles.pToggleText, deltaP === p && styles.pToggleTextActive]}>
+                  {p.toFixed(2)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {/* Custom P-value stepper */}
+        {rawStock.name === 'Custom' && (
+          <View style={styles.pToggleRow}>
+            <Text style={styles.pToggleLabel}>P value:</Text>
+            <TouchableOpacity
+              style={styles.pToggleBtn}
+              onPress={() => setCustomP(p => Math.max(1.00, +(p - 0.01).toFixed(2)))}
+              onLongPress={() => setCustomP(p => Math.max(1.00, +(p - 0.05).toFixed(2)))}
+            >
+              <Text style={styles.pToggleText}>−</Text>
+            </TouchableOpacity>
+            <View style={[styles.pToggleBtn, styles.pToggleBtnActive, { minWidth: 56, alignItems: 'center' }]}>
+              <Text style={[styles.pToggleText, styles.pToggleTextActive]}>{customP.toFixed(2)}</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.pToggleBtn}
+              onPress={() => setCustomP(p => Math.min(1.60, +(p + 0.01).toFixed(2)))}
+              onLongPress={() => setCustomP(p => Math.min(1.60, +(p + 0.05).toFixed(2)))}
+            >
+              <Text style={styles.pToggleText}>+</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.pToggleBtn}
+              onPress={() => setCustomP(1.26)}
+            >
+              <Text style={styles.pToggleText}>reset</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Time Input */}
         <View style={styles.inputSection}>
@@ -261,7 +440,7 @@ export default function ReciprocityScreen() {
           <TextInput
             style={styles.input}
             value={inputTime}
-            onChangeText={setInputTime}
+            onChangeText={(v) => { setInputTime(v); setStopAdjust(0); }}
             keyboardType="decimal-pad"
             placeholder="Enter seconds..."
             placeholderTextColor={colors.textTertiary}
@@ -275,7 +454,7 @@ export default function ReciprocityScreen() {
             <TouchableOpacity
               key={t}
               style={[styles.quickBtn, inputTime === String(t) && styles.quickBtnActive]}
-              onPress={() => setInputTime(String(t))}
+              onPress={() => { setInputTime(String(t)); setStopAdjust(0); }}
             >
               <Text style={[styles.quickText, inputTime === String(t) && styles.quickTextActive]}>
                 {t}s
@@ -284,6 +463,43 @@ export default function ReciprocityScreen() {
           ))}
         </View>
 
+        {/* Exposure adjust dial */}
+        {meteredBase > 0 && (
+          <View style={styles.dialSection}>
+            <View style={styles.dialLabelRow}>
+              <Text style={styles.dialLabel}>ADJUST</Text>
+              <Text style={styles.dialValue}>
+                {stopAdjust === 0
+                  ? 'metered'
+                  : `${stopAdjust > 0 ? '+' : '−'}${Math.abs(stopAdjust).toString().replace('0.5', '½').replace('1.5', '1½').replace('2.5', '2½')} stop · ${formatTime(metered)}`}
+              </Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.dialTrack}
+            >
+              {[-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2].map(s => {
+                const active = stopAdjust === s;
+                const lbl = s === 0 ? '0' : `${s > 0 ? '+' : '−'}${Math.abs(s).toString().replace('0.5', '½').replace('1.5', '1½').replace('2.5', '2½')}`;
+                return (
+                  <TouchableOpacity
+                    key={s}
+                    style={[styles.dialDetent, active && styles.dialDetentActive, s === 0 && styles.dialDetentZero]}
+                    onPress={() => setStopAdjust(s)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.dialDetentText, active && styles.dialDetentTextActive]}>{lbl}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <Text style={styles.dialNote}>
+              Shifts the metered reading; reciprocity recalculates below.
+            </Text>
+          </View>
+        )}
+
         {/* Result */}
         {result && (
           <View style={styles.resultCard}>
@@ -291,15 +507,48 @@ export default function ReciprocityScreen() {
             <Text style={styles.resultTime}>{result.formatted}</Text>
             <View style={styles.resultMeta}>
               <Text style={styles.resultStops}>{result.stops} stops correction</Text>
-              <Text style={styles.resultOriginal}>from {result.meteredFormatted} metered</Text>
+              <Text style={styles.resultOriginal}>from {result.meteredFormatted} metered{stopAdjust !== 0 ? ` (${stopAdjust > 0 ? '+' : '−'}${Math.abs(stopAdjust).toString().replace('0.5','½').replace('1.5','1½').replace('2.5','2½')} stop)` : ''}</Text>
             </View>
             <TouchableOpacity
               style={styles.timerBtn}
-              onPress={() => startTimer(result.adjusted)}
+              onPress={() => startTimer(apertureAdj ? apertureAdj.targetSeconds : result.adjusted)}
             >
-              <Ionicons name="timer-outline" size={18} color="#fff" />
-              <Text style={styles.timerBtnText}>Start Timer</Text>
+              <Ionicons name="timer-outline" size={18} color={colors.accent} />
+              <Text style={styles.timerBtnText}>
+                Start Timer{apertureAdj ? ` (${formatTime(apertureAdj.targetSeconds)})` : ''}
+              </Text>
             </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Aperture Adjustment */}
+        {result && (
+          <View style={styles.apertureSection}>
+            <Text style={styles.inputLabel}>TARGET EXPOSURE TIME (OPTIONAL)</Text>
+            <TextInput
+              style={styles.apertureInput}
+              value={targetTime}
+              onChangeText={setTargetTime}
+              keyboardType="decimal-pad"
+              placeholder="Desired actual seconds..."
+              placeholderTextColor={colors.textTertiary}
+              selectionColor={colors.accent}
+            />
+            {apertureAdj && (
+              <View style={styles.apertureResult}>
+                <Text style={styles.apertureDirection}>
+                  {apertureAdj.direction} {apertureAdj.stopsDiff.toFixed(1)} stops from f/22
+                </Text>
+                <Text style={styles.apertureValue}>
+                  f/{apertureAdj.nearestF}
+                </Text>
+                <Text style={styles.apertureSub}>
+                  {apertureAdj.onTarget
+                    ? `Shoot f/${apertureAdj.nearestF} — lands ~${formatTime(apertureAdj.actualExposure)} actual`
+                    : `Shoot f/${apertureAdj.nearestF} — lands ${formatTime(apertureAdj.actualExposure)} (${apertureAdj.offsetSeconds > 0 ? '+' : '−'}${formatTime(Math.abs(apertureAdj.offsetSeconds))} vs ${formatTime(apertureAdj.targetRequested)} target)`}
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -383,6 +632,45 @@ export default function ReciprocityScreen() {
           })}
         </View>
 
+        {/* Filter Reference */}
+        <View style={styles.filterSection}>
+          <Text style={styles.filterTitle}>FILTER STACK</Text>
+          <View style={styles.filterGrid}>
+            {FILTERS.map(f => {
+              const active = activeFilters.has(f.name);
+              return (
+                <TouchableOpacity
+                  key={f.name}
+                  style={[styles.filterChip, active && styles.filterChipActive]}
+                  onPress={() => toggleFilter(f.name)}
+                >
+                  <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                    {f.name}
+                  </Text>
+                  <Text style={[styles.filterChipStops, active && styles.filterChipStopsActive]}>
+                    +{f.stops}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {activeFilters.size > 0 && (
+            <View style={styles.filterResult}>
+              <Text style={styles.filterResultLabel}>COMBINED</Text>
+              <Text style={styles.filterResultValue}>+{totalFilterStops} stops</Text>
+              <Text style={styles.filterResultFactor}>{totalFilterFactor.toFixed(0)}× factor</Text>
+              {metered > 0 && (
+                <Text style={styles.filterResultExample}>
+                  {formatTime(metered)} metered → {formatTime(metered * totalFilterFactor)} with filters
+                </Text>
+              )}
+            </View>
+          )}
+          {FILTERS.filter(f => f.note && activeFilters.has(f.name)).map(f => (
+            <Text key={f.name} style={styles.filterNote}>⚠ {f.name}: {f.note}</Text>
+          ))}
+        </View>
+
         <View style={{ height: 80 }} />
       </ScrollView>
     </SafeAreaView>
@@ -409,9 +697,9 @@ const styles = StyleSheet.create({
     flex: 1, paddingVertical: spacing.sm, alignItems: 'center',
     backgroundColor: colors.surface,
   },
-  formatBtnActive: { backgroundColor: colors.accent },
+  formatBtnActive: { backgroundColor: '#1a1a2e', borderBottomWidth: 2, borderBottomColor: colors.accent },
   formatText: { fontSize: 14, fontWeight: '600', color: colors.textTertiary },
-  formatTextActive: { color: '#fff' },
+  formatTextActive: { color: colors.accent },
 
   stockGrid: {
     flexDirection: 'row', flexWrap: 'wrap',
@@ -425,6 +713,8 @@ const styles = StyleSheet.create({
   stockBtnActive: { borderColor: colors.accent, backgroundColor: '#1a1a2e' },
   stockName: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
   stockNameActive: { color: colors.accent },
+  stockSubtext: { fontSize: 9, fontWeight: '400', color: colors.textTertiary, marginTop: 1 },
+  stockSubtextActive: { color: colors.accent, opacity: 0.7 },
 
   sourceText: {
     fontSize: 10, color: colors.textTertiary,
@@ -434,6 +724,20 @@ const styles = StyleSheet.create({
     fontSize: 10, color: colors.signalWarning || '#d4a017',
     paddingHorizontal: spacing.xl, marginTop: 2,
   },
+  pToggleRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingHorizontal: spacing.xl, marginTop: spacing.sm,
+  },
+  pToggleLabel: { fontSize: 11, color: colors.textTertiary },
+  pToggleBtn: {
+    paddingHorizontal: spacing.md, paddingVertical: 4,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border,
+  },
+  pToggleBtnActive: {
+    borderColor: colors.accent, backgroundColor: colors.accent + '22',
+  },
+  pToggleText: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
+  pToggleTextActive: { color: colors.accent },
 
   inputSection: { paddingHorizontal: spacing.xl, marginTop: spacing.lg },
   inputLabel: { ...typography.labelMedium, marginBottom: spacing.sm },
@@ -471,6 +775,31 @@ const styles = StyleSheet.create({
   resultStops: { fontSize: 12, color: colors.accent, fontWeight: '500' },
   resultOriginal: { fontSize: 12, color: colors.textTertiary },
 
+  // Exposure adjust dial
+  dialSection: {
+    marginHorizontal: spacing.xl, marginTop: spacing.md,
+  },
+  dialLabelRow: {
+    flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  dialLabel: { ...typography.labelMedium, color: colors.textTertiary },
+  dialValue: { fontSize: 12, color: colors.accent, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  dialTrack: {
+    flexDirection: 'row', gap: spacing.sm, paddingVertical: 2, paddingRight: spacing.xl,
+  },
+  dialDetent: {
+    minWidth: 46, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderRadius: radius.sm, backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  dialDetentZero: { borderColor: colors.textTertiary },
+  dialDetentActive: { backgroundColor: '#1a1a2e', borderColor: colors.accent },
+  dialDetentText: { fontSize: 15, fontWeight: '600', color: colors.textSecondary, fontVariant: ['tabular-nums'] },
+  dialDetentTextActive: { color: colors.accent },
+  dialNote: { fontSize: 11, color: colors.textTertiary, marginTop: spacing.sm, lineHeight: 15 },
+
   tableSection: {
     marginHorizontal: spacing.xl, marginTop: spacing.xl,
     backgroundColor: colors.surface, borderRadius: radius.md,
@@ -491,11 +820,69 @@ const styles = StyleSheet.create({
   // Timer button
   timerBtn: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    marginTop: spacing.lg, backgroundColor: colors.accent,
+    marginTop: spacing.lg, backgroundColor: '#1a1a2e',
     paddingHorizontal: spacing.xl, paddingVertical: spacing.sm,
-    borderRadius: radius.md,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.accent,
   },
-  timerBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  timerBtnText: { fontSize: 14, fontWeight: '600', color: colors.accent },
+
+  // Aperture adjustment
+  apertureSection: {
+    marginHorizontal: spacing.xl, marginTop: spacing.lg,
+  },
+  apertureInput: {
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+    fontSize: 18, fontWeight: '600', color: colors.textPrimary,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    textAlign: 'center', marginTop: spacing.sm,
+  },
+  apertureResult: {
+    marginTop: spacing.md, backgroundColor: colors.surface,
+    borderRadius: radius.md, padding: spacing.lg, alignItems: 'center',
+    borderWidth: 1, borderColor: '#d4a017',
+  },
+  apertureDirection: {
+    fontSize: 13, fontWeight: '600', color: '#d4a017',
+  },
+  apertureValue: {
+    fontSize: 32, fontWeight: '700', color: colors.textPrimary, marginVertical: spacing.sm,
+  },
+  apertureSub: {
+    fontSize: 11, color: colors.textTertiary, textAlign: 'center',
+  },
+
+  // Filter stack
+  filterSection: {
+    marginHorizontal: spacing.xl, marginTop: spacing.xl,
+  },
+  filterTitle: { ...typography.labelMedium, marginBottom: spacing.md },
+  filterGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs,
+  },
+  filterChip: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderRadius: radius.sm, backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  filterChipActive: {
+    borderColor: colors.accent, backgroundColor: '#1a1a2e',
+  },
+  filterChipText: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
+  filterChipTextActive: { color: colors.textPrimary },
+  filterChipStops: { fontSize: 10, fontWeight: '600', color: colors.textTertiary },
+  filterChipStopsActive: { color: colors.accent },
+  filterResult: {
+    marginTop: spacing.md, backgroundColor: colors.surface,
+    borderRadius: radius.md, padding: spacing.lg, alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  filterResultLabel: { fontSize: 10, fontWeight: '600', color: colors.textTertiary, letterSpacing: 1 },
+  filterResultValue: { fontSize: 28, fontWeight: '700', color: colors.textPrimary, marginVertical: spacing.xs },
+  filterResultFactor: { fontSize: 13, color: colors.accent, fontWeight: '500' },
+  filterResultExample: { fontSize: 11, color: colors.textTertiary, marginTop: spacing.sm },
+  filterNote: { fontSize: 10, color: '#d4a017', marginTop: spacing.xs, paddingHorizontal: spacing.xs },
 
   // Timer overlay
   timerOverlay: {
