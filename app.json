@@ -40,8 +40,7 @@
           "locationAlwaysAndWhenInUsePermission": "Allow Philm+Frame to use your location for navigation."
         }
       ],
-      "expo-updates",
-      "./plugins/withAsyncStorageDbSize"
+      "expo-updates"
     ],
     "extra": {
       "eas": {
