@@ -9,6 +9,12 @@ const PHOTOS_PREFIX = 'pf_photos_';
 // survived and every sync silently no-opped. Same treatment photos get.
 const WEATHER_PREFIX = 'pf_tripwx_';
 const weatherKey = (tripId: string, dayId: string) => `${WEATHER_PREFIX}${tripId}_${dayId}`;
+// Why the last cache write failed, if it did. Persisted so the reason survives
+// the app being closed — which is exactly when the symptom shows up.
+const CACHE_ERROR_KEY = 'pf_cache_error';
+export async function getCacheError(): Promise<string | null> {
+  try { return await AsyncStorage.getItem(CACHE_ERROR_KEY); } catch { return null; }
+}
 
 export async function initDatabase(): Promise<void> {
   return;
@@ -31,6 +37,40 @@ export function slimCachedWeather(w: any): any {
   if (!w || typeof w !== 'object' || !w.raw || typeof w.raw !== 'object') return w ?? null;
   const { models, ensemble, consensus, convergence, ...keep } = w.raw;
   return { ...w, raw: keep };
+}
+
+// What is actually on disk, by prefix. AsyncStorage on Android is one SQLite
+// database with a fixed ceiling (6 MB by default, and nothing in this managed
+// Expo project raises it), and setItem simply throws once it is full. That
+// failure has been invisible: it is caught per key, logged to a console nobody
+// is looking at, and the previous cache survives — so the app shows correct
+// data until it is closed, then silently replays the older copy.
+//
+// This measures rather than assumes. Called whenever a write fails, so the log
+// says which keys are holding the space instead of leaving it to guesswork.
+export async function storageReport(): Promise<{ totalKb: number; byPrefix: Record<string, number>; keys: number }> {
+  const byPrefix: Record<string, number> = {};
+  let totalKb = 0, keys = 0;
+  try {
+    const allKeys = await AsyncStorage.getAllKeys();
+    keys = allKeys.length;
+    // Chunked: multiGet of every key at once is itself a large read, and on a
+    // full database that is the operation most likely to fail.
+    for (let i = 0; i < allKeys.length; i += 20) {
+      const pairs = await AsyncStorage.multiGet(allKeys.slice(i, i + 20) as string[]);
+      for (const [k, v] of pairs) {
+        const kb = (v?.length ?? 0) / 1024;
+        totalKb += kb;
+        const prefix = k.replace(/[0-9a-f-]{8,}.*$/i, '*');
+        byPrefix[prefix] = Math.round(((byPrefix[prefix] ?? 0) + kb) * 10) / 10;
+      }
+    }
+  } catch (e) {
+    console.warn('[storage] report failed:', e);
+  }
+  totalKb = Math.round(totalKb);
+  console.log(`[storage] ${totalKb} kB across ${keys} keys`, byPrefix);
+  return { totalKb, byPrefix, keys };
 }
 
 export async function cacheFullTrip(tripId: string, tripData: any): Promise<boolean> {
@@ -65,15 +105,32 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<bool
     // per key rather than in one multiSet, so one oversized day cannot take
     // the rest down with it.
     let wroteWeather = 0;
+    let firstError: string | null = null;
     for (const [k, v] of weatherEntries) {
       try { await AsyncStorage.setItem(k, v); wroteWeather++; }
-      catch (e) { console.warn(`Weather cache write failed for ${k}:`, e); }
+      catch (e: any) {
+        if (!firstError) firstError = String(e?.message ?? e);
+        console.warn(`Weather cache write failed for ${k} (${Math.round(v.length/1024)} kB):`, e);
+      }
+    }
+    if (weatherEntries.length && wroteWeather < weatherEntries.length) {
+      // A PARTIAL write is the case that was being missed: the old guard only
+      // bailed when every day failed, so one day landing was enough to rewrite
+      // the itinerary and call it a success, leaving the rest stale forever.
+      const want = Math.round(weatherEntries.reduce((n, [, v]) => n + v.length, 0) / 1024);
+      console.warn(
+        `[trip] weather cache incomplete — ${wroteWeather}/${weatherEntries.length} days, ` +
+        `wanted ${want} kB. First error: ${firstError ?? 'none'}`
+      );
+      await storageReport();
     }
     if (weatherEntries.length && wroteWeather === 0) {
       // Nothing landed — keep the previous cache rather than replacing it
       // with an itinerary that has no weather attached.
+      try { await AsyncStorage.setItem(CACHE_ERROR_KEY, firstError ?? 'unknown'); } catch {}
       return false;
     }
+    try { await AsyncStorage.removeItem(CACHE_ERROR_KEY); } catch {}
 
     // Itinerary only — no photos, no weather.
     await AsyncStorage.setItem(
