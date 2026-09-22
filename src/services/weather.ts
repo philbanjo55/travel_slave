@@ -100,24 +100,10 @@ export interface PullWeatherResult {
 interface CachedDay { cachedAt: number; byStop: Record<string, WeatherRow>; }
 interface CachedStop { cachedAt: number; row: WeatherRow; }
 
-export async function cacheWeatherForDay(
-  dayId: string,
-  byStop: Record<string, WeatherRow>
-): Promise<void> {
-  try {
-    // Slimmed on the way to disk. Android's AsyncStorage is one SQLite
-    // database with a fixed total budget, and this trip's weather is held in
-    // three places — here, the per-stop entries, and the trip's own per-day
-    // entries. Three full copies of every model, ensemble and centre spread
-    // exhausted it, which made writes start failing silently.
-    const slim: Record<string, WeatherRow> = {};
-    for (const [k, v] of Object.entries(byStop)) slim[k] = slimCachedWeather(v);
-    const payload: CachedDay = { cachedAt: Date.now(), byStop: slim };
-    await AsyncStorage.setItem(`${WEATHER_DAY_PREFIX}${dayId}`, JSON.stringify(payload));
-  } catch (e) {
-    console.warn('weather cache write failed (day):', e);
-  }
-}
+// cacheWeatherForDay used to live here. It wrote pf_weather_day_* - a second
+// full copy of every stop's weather in AsyncStorage. The trip cache is files
+// now (database.ts); the reads below remain only so an entry left behind by
+// an older build is still usable until pruneStopWeatherCache removes it.
 
 export async function getCachedWeatherForDay(
   dayId: string
@@ -140,7 +126,9 @@ export async function getCachedWeatherForDay(
 export async function pruneStopWeatherCache(): Promise<number> {
   try {
     const keys = await AsyncStorage.getAllKeys();
-    const stale = keys.filter(k => k.startsWith(WEATHER_STOP_PREFIX));
+    const stale = keys.filter(
+      k => k.startsWith(WEATHER_STOP_PREFIX) || k.startsWith(WEATHER_DAY_PREFIX)
+    );
     if (stale.length) await AsyncStorage.multiRemove(stale);
     return stale.length;
   } catch {
@@ -236,7 +224,9 @@ export async function fetchLatestWeatherForDay(
     if (rows.length > 0) {
       const byStop: Record<string, WeatherRow> = {};
       for (const row of rows) byStop[row.stop_id] = row;
-      await cacheWeatherForDay(dayId, byStop); // refresh the offline copy
+      // No cache write here. The trip's own per-day files (database.ts) are
+      // the offline copy; loadTrip refreshes them right after a pull. A second
+      // copy written from this path is what filled the AsyncStorage budget.
       return byStop;
     }
     // Empty result. An offline/failed read can surface as empty-without-error

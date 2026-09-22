@@ -1,46 +1,40 @@
-// Capture errors that happen BEFORE React mounts.
+// Report uncaught errors, then get out of the way.
 //
-// The existing ErrorBoundary only catches throws during render, inside a tree
-// that is already mounted. A module that throws while it is being imported
-// kills App.tsx's own evaluation, so the root component never registers and
-// the native side shows a bare reload screen with no text on it. That is the
-// screen we are looking at, and no boundary can reach it.
+// Installed as the first thing the bundle does. Whatever the app throws that
+// nothing catches - a render error outside a boundary, a rejected promise
+// nobody awaited - is posted to app_logs, the table the device already writes
+// to, and then handed to the handler that was there before. So the app still
+// crashes, restarts, or rolls back an update exactly as it would have; the
+// only difference is that the error is readable afterwards from a query
+// instead of being gone with the process.
 //
-// So: install a global handler as the very first thing the bundle does, keep
-// whatever it catches in memory, and let the app render it. Deliberately has
-// no imports — anything this file required could itself be the thing failing.
-export type Captured = { message: string; stack: string | null; phase: string; at: number };
+// This replaces a diagnostic version that swallowed fatal errors to keep a
+// screen alive. That was the wrong trade for production: expo-updates relies
+// on a fatal error to know an update is bad and roll it back, and an app kept
+// half-alive after one is in a state nothing was written for.
+import { supabase } from './services/supabase';
 
-const captured: Captured[] = [];
-const listeners = new Set<() => void>();
-
-export function captureError(e: any, phase: string): void {
+function report(e: any, phase: string): void {
   try {
-    captured.push({
-      message: String(e?.message ?? e),
-      stack: typeof e?.stack === 'string' ? e.stack : null,
-      phase,
-      at: Date.now(),
-    });
-    listeners.forEach(l => { try { l(); } catch {} });
+    const message = String(e?.message ?? e);
+    console.warn(`[${phase}]`, message);
+    supabase.from('app_logs').insert({
+      level: 'error',
+      message: `[${phase}] ${message}`.slice(0, 300),
+      data: { stack: String(e?.stack ?? '').slice(0, 1200) },
+    }).then(() => {}, () => {});
   } catch {}
 }
 
-export function getCapturedErrors(): Captured[] { return captured; }
-
-export function subscribeCapturedErrors(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => { listeners.delete(fn); };
-}
-
-// The default handler tears the app down, which is exactly what stops the
-// error being readable. For a diagnostic build, staying alive to render the
-// message is worth more than the default behaviour.
 try {
   const g: any = globalThis as any;
+  const previous = g?.ErrorUtils?.getGlobalHandler?.();
   if (g?.ErrorUtils?.setGlobalHandler) {
     g.ErrorUtils.setGlobalHandler((error: any, isFatal?: boolean) => {
-      captureError(error, isFatal ? 'fatal' : 'error');
+      report(error, isFatal ? 'fatal' : 'error');
+      // Best effort: a fatal error ends the process and the insert above may
+      // not make it out. Non-fatal ones will. Either way, behave as before.
+      if (typeof previous === 'function') previous(error, isFatal);
     });
   }
 } catch {}
@@ -48,8 +42,6 @@ try {
 try {
   const g: any = globalThis as any;
   if (typeof g?.addEventListener === 'function') {
-    g.addEventListener('unhandledrejection', (ev: any) => {
-      captureError(ev?.reason ?? ev, 'promise');
-    });
+    g.addEventListener('unhandledrejection', (ev: any) => report(ev?.reason ?? ev, 'promise'));
   }
 } catch {}

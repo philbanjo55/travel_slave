@@ -119,7 +119,7 @@ export default function TripScreen() {
                 ? `Offline copy saved (${st.wroteDays}/${st.totalDays} days, ${st.kb} kB).`
                 : st
                   ? `OFFLINE COPY NOT SAVED — ${st.wroteDays}/${st.totalDays} days wrote, `
-                    + `wanted ${st.kb} kB.\n${st.storageKb != null ? `Storage now ${st.storageKb} kB` : ''}`
+                    + `wanted ${st.kb} kB.\n${st.storageKb != null ? `AsyncStorage ${st.storageKb} kB` : ''}${st.fileKb != null ? `, files ${st.fileKb} kB` : ''}`
                     + `${st.biggest ? `, biggest ${st.biggest}` : ''}.`
                     + `\n${st.error ?? 'no error reported'}`
                   : 'Offline copy: no result recorded.';
