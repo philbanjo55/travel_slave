@@ -650,7 +650,9 @@ const HEADERS = {
 
 async function fetchTrip() {
   // Single embedded query: trip → days → stops → stop_photos
-  const url = `${SUPABASE_URL}/rest/v1/trips?id=eq.${TRIP_ID}&select=*,days(*,stops(*,stop_photos(id,storage_url,caption,position,photo_type),weather_forecasts(score_stars,score_label,score_reason,temperature_c,cloud_cover_pct,precip_probability_pct,wind_gusts_kmh,fog_risk,is_dark,is_golden_hour,sunrise,sunset,raw)))`;
+  const url = `${SUPABASE_URL}/rest/v1/trips?id=eq.${TRIP_ID}&select=*,days(*,stops(*,stop_photos(id,storage_url,caption,position,photo_type),weather_forecasts(score_stars,score_label,score_reason,temperature_c,cloud_cover_pct,precip_probability_pct,wind_gusts_kmh,fog_risk,is_dark,is_golden_hour,sunrise,sunset,fetched_at,date_mode:raw->provenance->>date_mode)))`
+    // A stop keeps its full forecast history; fetch only the newest row per stop.
+    + `&days.stops.weather_forecasts.order=fetched_at.desc&days.stops.weather_forecasts.limit=1`;
   const res = await fetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
   const [trip] = await res.json();
@@ -744,8 +746,7 @@ function stopWeather(stop) {
 }
 function isLiveForecast(w) {
   // date_mode 'trip-date' = real forecast for the actual trip day; 'preview' = July stand-in
-  const mode = w && w.raw && w.raw.provenance ? w.raw.provenance.date_mode : null;
-  return mode === 'trip-date';
+  return !!w && w.date_mode === 'trip-date';
 }
 function cToF(c) { return c == null ? null : Math.round(c * 9 / 5 + 32); }
 function kmhToMph(k) { return k == null ? null : Math.round(k * 0.621371); }
