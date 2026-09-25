@@ -38,14 +38,48 @@ function PhotoItem({ photo }: { photo: any }) {
   return <Image source={{ uri }} style={styles.photo} resizeMode="contain" />;
 }
 
+// The first reference photo, small, top right of the stop. Tap opens the
+// full-screen viewer, which swipes through all of them.
+function PhotoThumb({ photo, count, onPress }: { photo: any; count: number; onPress: () => void }) {
+  const [uri, setUri] = React.useState<string>('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    getPhotoUri(photo).then(resolved => {
+      if (!cancelled && resolved) setUri(resolved);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [photo.id]);
+
+  return (
+    <TouchableOpacity
+      style={styles.thumb}
+      onPress={onPress}
+      activeOpacity={0.85}
+      accessibilityLabel={`Open reference photos (1 of ${count})`}
+    >
+      {uri ? (
+        <Image source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      ) : (
+        <ActivityIndicator size="small" color={colors.textTertiary} />
+      )}
+      {count > 1 && (
+        <View style={styles.thumbBadge}>
+          <Text style={styles.thumbBadgeText}>1/{count}</Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
+
 export default function StopDetailScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { stopId, dayId } = route.params;
   const { currentTripData } = useTripStore();
-  const [photoIndex, setPhotoIndex] = useState(0);
   const [fieldPhotoIndex, setFieldPhotoIndex] = useState(0);
   const [viewerPhoto, setViewerPhoto] = useState<any | null>(null);
+  const [viewerList, setViewerList] = useState<any[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const day = currentTripData?.days.find((d: any) => d.id === dayId);
@@ -61,12 +95,18 @@ export default function StopDetailScreen() {
   const fieldPhotos = allPhotos.filter((p: any) => p.photo_type === 'field');
   const { pickAndUpload, takePhoto, deletePhoto, uploading, uploadProgress, error } = usePhotoUpload(stop.id);
 
-  const handlePhotoLongPress = (photoId: string, type: string) => {
+  const handlePhotoLongPress = (photoId: string, type: string, after?: () => void) => {
     Alert.alert('Delete Photo', `Remove this ${type} photo?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deletePhoto(photoId) },
+      { text: 'Delete', style: 'destructive', onPress: () => { deletePhoto(photoId); after?.(); } },
     ]);
   };
+
+  const openViewer = (photo: any, list: any[]) => {
+    setViewerList(list);
+    setViewerPhoto(photo);
+  };
+  const closeViewer = () => setViewerPhoto(null);
 
   // Navigate from PREVIOUS stop to THIS stop (chained directions)
   const openNavigation = () => {
@@ -132,83 +172,57 @@ export default function StopDetailScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder>
-        {/* Stop name */}
-        <View style={styles.nameSection}>
-          <Text style={styles.stopEmoji}>{stop.emoji || '📷'}</Text>
-          <Text style={styles.stopName}>{stop.name}</Text>
-          {signal && (
-            <View style={[styles.signalBadge, { borderColor: signal.color }]}>
-              <Text style={[styles.signalText, { color: signal.color }]}>{signal.label}</Text>
-            </View>
-          )}
-          {prevStop?.name && (
-            <Text style={styles.fromLabel}>From {prevStop.name}</Text>
-          )}
+        {/* Stop name, with the reference photos top right */}
+        <View style={styles.nameRow}>
+          <View style={styles.nameSection}>
+            <Text style={styles.stopEmoji}>{stop.emoji || '📷'}</Text>
+            <Text style={styles.stopName}>{stop.name}</Text>
+            {signal && (
+              <View style={[styles.signalBadge, { borderColor: signal.color }]}>
+                <Text style={[styles.signalText, { color: signal.color }]}>{signal.label}</Text>
+              </View>
+            )}
+            {prevStop?.name && (
+              <Text style={styles.fromLabel}>From {prevStop.name}</Text>
+            )}
+          </View>
+          <View style={styles.thumbCol}>
+            {refPhotos.length > 0 && (
+              <PhotoThumb
+                photo={refPhotos[0]}
+                count={refPhotos.length}
+                onPress={() => openViewer(refPhotos[0], refPhotos)}
+              />
+            )}
+            <TouchableOpacity
+              style={styles.addThumbBtn}
+              onPress={() => pickAndUpload('reference')}
+              disabled={uploading}
+              accessibilityLabel="Add reference photos"
+            >
+              {uploading ? (
+                <>
+                  <ActivityIndicator size="small" color={colors.accent} />
+                  <Text style={styles.addThumbText}>{uploadProgress || '…'}</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="add" size={14} color={colors.accent} />
+                  <Text style={styles.addThumbText}>Add photo</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
+        {error && (
+          <Text style={[styles.uploadError, { marginBottom: spacing.md }]}>Upload failed: {error}</Text>
+        )}
 
         {/* Weather — pinned near the top of the location */}
         <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
 
         {/* Sun & Moon — hidden unless this stop has vantage/subject pairs */}
         <SunPlannerSection tripId={currentTripData?.trip?.id} stopId={stop.id} timeLabel={stop.time_label} />
-
-        {/* Reference Photos */}
-        <View style={[styles.photoSection, { overflow: "hidden" }]}>
-          {refPhotos.length > 0 && (
-            <>
-              <ScrollView
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                bounces={false}
-                overScrollMode="never"
-                onMomentumScrollEnd={(e) => {
-                  setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
-                }}
-              >
-                {refPhotos.map((photo: any) => (
-                  <TouchableOpacity
-                    key={photo.id}
-                    onPress={() => setViewerPhoto(photo)}
-                    onLongPress={() => handlePhotoLongPress(photo.id, 'reference')}
-                    activeOpacity={0.9}
-                  >
-                    <PhotoItem photo={photo} />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-              {refPhotos.length > 1 && (
-                <View style={styles.photoDots}>
-                  {refPhotos.map((_: any, i: number) => (
-                    <View key={i} style={[styles.dot, i === photoIndex && styles.dotActive]} />
-                  ))}
-                </View>
-              )}
-            </>
-          )}
-          <TouchableOpacity
-            style={styles.addPhotoBtn}
-            onPress={() => pickAndUpload('reference')}
-            disabled={uploading}
-          >
-            {uploading ? (
-              <>
-                <ActivityIndicator size="small" color={colors.accent} />
-                <Text style={styles.addPhotoText}>Uploading{uploadProgress ? ` ${uploadProgress}` : ''}...</Text>
-              </>
-            ) : (
-              <>
-                <Ionicons name="images-outline" size={16} color={colors.accent} />
-                <Text style={styles.addPhotoText}>
-                  {refPhotos.length > 0 ? 'Add Reference Photos' : 'Add Reference Photos'}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-          {error && (
-            <Text style={styles.uploadError}>Upload failed: {error}</Text>
-          )}
-        </View>
 
         {/* Info */}
         {stop.info && (
@@ -351,7 +365,7 @@ export default function StopDetailScreen() {
                 {fieldPhotos.map((photo: any) => (
                   <TouchableOpacity
                     key={photo.id}
-                    onPress={() => setViewerPhoto(photo)}
+                    onPress={() => openViewer(photo, fieldPhotos)}
                     onLongPress={() => handlePhotoLongPress(photo.id, 'field')}
                     activeOpacity={0.9}
                   >
@@ -392,8 +406,10 @@ export default function StopDetailScreen() {
       </ScrollView>
       <FullScreenPhotoViewer
         photo={viewerPhoto}
+        photos={viewerList}
         visible={!!viewerPhoto}
-        onClose={() => setViewerPhoto(null)}
+        onClose={closeViewer}
+        onDelete={(p) => handlePhotoLongPress(p.id, p.photo_type === 'field' ? 'field' : 'reference', closeViewer)}
       />
     </SafeAreaView>
   );
@@ -431,7 +447,24 @@ const styles = StyleSheet.create({
   },
   durText: { ...typography.labelMedium, color: colors.textTertiary },
 
-  nameSection: { paddingHorizontal: spacing.xl, paddingBottom: spacing.lg, gap: spacing.sm },
+  nameRow: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: spacing.xl, paddingBottom: spacing.lg, gap: 14 },
+  nameSection: { flex: 1, minWidth: 0, gap: spacing.sm },
+  thumbCol: { width: 96, gap: 6 },
+  thumb: {
+    width: 96, height: 96, borderRadius: 10, overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surfaceElevated,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  thumbBadge: {
+    position: 'absolute', right: 5, bottom: 5, paddingHorizontal: 5, paddingVertical: 1,
+    borderRadius: 4, backgroundColor: 'rgba(0,0,0,0.75)',
+  },
+  thumbBadgeText: { fontSize: 9, fontWeight: '700', color: '#ffffff' },
+  addThumbBtn: {
+    minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
+    borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed', borderRadius: 8,
+  },
+  addThumbText: { fontSize: 11, fontWeight: '600', color: colors.accent },
   stopEmoji: { fontSize: 28 },
   stopName: { fontSize: 22, fontWeight: '600', color: colors.textPrimary, lineHeight: 28 },
   signalBadge: {
@@ -446,7 +479,6 @@ const styles = StyleSheet.create({
   signalText: { ...typography.labelMedium, fontSize: 9 },
   fromLabel: { fontSize: 11, color: colors.textTertiary, fontStyle: 'italic' },
 
-  photoSection: { marginBottom: spacing.lg, overflow: 'hidden' },
   photo: { width, height: 260, backgroundColor: '#111' },
   photoDots: { flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.sm },
   dot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.border },

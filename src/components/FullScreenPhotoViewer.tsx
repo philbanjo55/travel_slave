@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, View, StyleSheet, Pressable, ActivityIndicator, Dimensions } from 'react-native';
+import { Modal, View, Text, StyleSheet, Pressable, ActivityIndicator, Dimensions } from 'react-native';
 import {
   GestureHandlerRootView,
   GestureDetector,
@@ -17,19 +17,39 @@ import { getPhotoUri } from '../services/photoCache';
 const { width, height } = Dimensions.get('window');
 
 // Full-screen, pinch-to-zoom photo viewer. Tap (or the X) to close, pinch to
-// zoom, drag to pan while zoomed, double-tap to toggle 1x/2x. Built only on
-// react-native-gesture-handler + reanimated (already in the native build), so
-// it ships as a JS OTA — no new APK.
+// zoom, drag to pan while zoomed, double-tap to toggle 1x/2x. Given a list of
+// photos, swipe left/right (when not zoomed) to page through them. Built only
+// on react-native-gesture-handler + reanimated (already in the native build),
+// so it ships as a JS OTA — no new APK.
 export default function FullScreenPhotoViewer({
   photo,
+  photos,
   visible,
   onClose,
+  onDelete,
 }: {
   photo: any | null;
+  photos?: any[];
   visible: boolean;
   onClose: () => void;
+  onDelete?: (photo: any) => void;
 }) {
   const [uri, setUri] = useState<string>('');
+  const list = photos && photos.length ? photos : photo ? [photo] : [];
+  const [index, setIndex] = useState(0);
+  const current = list[Math.min(index, Math.max(0, list.length - 1))] ?? null;
+
+  // Open on the photo that was tapped.
+  useEffect(() => {
+    if (visible) {
+      const i = photo ? list.findIndex((p: any) => p.id === photo.id) : 0;
+      setIndex(i >= 0 ? i : 0);
+    }
+  }, [visible, photo?.id]);
+
+  const step = (dir: number) => {
+    setIndex(i => Math.max(0, Math.min(list.length - 1, i + dir)));
+  };
 
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -41,8 +61,9 @@ export default function FullScreenPhotoViewer({
   // Resolve the (cached or remote) URI the same way PhotoItem does.
   useEffect(() => {
     let cancelled = false;
-    if (photo) {
-      getPhotoUri(photo)
+    setUri('');
+    if (current) {
+      getPhotoUri(current)
         .then((r) => {
           if (!cancelled && r) setUri(r);
         })
@@ -53,7 +74,7 @@ export default function FullScreenPhotoViewer({
     return () => {
       cancelled = true;
     };
-  }, [photo?.id]);
+  }, [current?.id]);
 
   // Reset zoom/pan whenever we open or switch photos.
   useEffect(() => {
@@ -65,7 +86,7 @@ export default function FullScreenPhotoViewer({
       savedTx.value = 0;
       savedTy.value = 0;
     }
-  }, [visible, photo?.id]);
+  }, [visible, current?.id]);
 
   const pinch = Gesture.Pinch()
     .onUpdate((e) => {
@@ -87,11 +108,22 @@ export default function FullScreenPhotoViewer({
       if (savedScale.value > 1) {
         tx.value = savedTx.value + e.translationX;
         ty.value = savedTy.value + e.translationY;
+      } else if (e.numberOfPointers === 1) {
+        // Not zoomed: the photo follows the finger sideways, to swipe.
+        tx.value = e.translationX;
       }
     })
-    .onEnd(() => {
-      savedTx.value = tx.value;
-      savedTy.value = ty.value;
+    .onEnd((e) => {
+      if (savedScale.value > 1) {
+        savedTx.value = tx.value;
+        savedTy.value = ty.value;
+        return;
+      }
+      if (Math.abs(e.translationX) > width * 0.2 || Math.abs(e.velocityX) > 800) {
+        runOnJS(step)(e.translationX < 0 ? 1 : -1);
+      }
+      tx.value = withTiming(0, { duration: 150 });
+      savedTx.value = 0;
     });
 
   const doubleTap = Gesture.Tap()
@@ -156,6 +188,21 @@ export default function FullScreenPhotoViewer({
           <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={12}>
             <Ionicons name="close" size={28} color="#fff" />
           </Pressable>
+          {list.length > 1 && (
+            <View style={styles.counter} pointerEvents="none">
+              <Text style={styles.counterText}>{index + 1} / {list.length}</Text>
+            </View>
+          )}
+          {onDelete && current && (
+            <Pressable
+              style={styles.deleteBtn}
+              onPress={() => onDelete(current)}
+              hitSlop={12}
+              accessibilityLabel="Delete this photo"
+            >
+              <Ionicons name="trash-outline" size={22} color="#fff" />
+            </Pressable>
+          )}
         </View>
       </GestureHandlerRootView>
     </Modal>
@@ -164,6 +211,15 @@ export default function FullScreenPhotoViewer({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  counter: {
+    position: 'absolute', top: 54, left: 20, paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  counterText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  deleteBtn: {
+    position: 'absolute', bottom: 44, right: 20, width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center',
+  },
   backdrop: {
     flex: 1,
     backgroundColor: '#000',
