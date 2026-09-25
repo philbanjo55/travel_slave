@@ -12,6 +12,7 @@ import { usePhotoUpload } from '../hooks/usePhotoUpload';
 import { useTripStore } from '../store/tripStore';
 import StopWeatherCard from '../components/StopWeatherCard';
 import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
+import SunPlannerSection from '../components/sun/SunPlannerSection';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 
@@ -147,6 +148,9 @@ export default function StopDetailScreen() {
 
         {/* Weather — pinned near the top of the location */}
         <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
+
+        {/* Sun & Moon — hidden unless this stop has vantage/subject pairs */}
+        <SunPlannerSection tripId={currentTripData?.trip?.id} stopId={stop.id} timeLabel={stop.time_label} />
 
         {/* Reference Photos */}
         <View style={[styles.photoSection, { overflow: "hidden" }]}>
