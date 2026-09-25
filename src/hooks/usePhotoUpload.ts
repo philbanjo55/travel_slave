@@ -144,5 +144,22 @@ export function usePhotoUpload(stopId: string) {
     }
   };
 
-  return { pickAndUpload, takePhoto, deletePhoto, uploading, uploadProgress, error };
+  // Puts `photoId` first in `orderedIds` (the stop's photos of one type, in
+  // their current order) and renumbers positions 0..n-1. Needs a connection.
+  const makeFirst = async (photoId: string, orderedIds: string[]): Promise<boolean> => {
+    const ids = [photoId, ...orderedIds.filter(id => id !== photoId)];
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const { error: e } = await supabase.from('stop_photos').update({ position: i }).eq('id', ids[i]);
+        if (e) throw e;
+      }
+      await refreshCurrentTrip();
+      return true;
+    } catch (err: any) {
+      setError(err.message || 'Could not reorder photos');
+      return false;
+    }
+  };
+
+  return { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error };
 }

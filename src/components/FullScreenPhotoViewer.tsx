@@ -27,28 +27,32 @@ export default function FullScreenPhotoViewer({
   visible,
   onClose,
   onDelete,
+  onMakeFirst,
 }: {
   photo: any | null;
   photos?: any[];
   visible: boolean;
   onClose: () => void;
   onDelete?: (photo: any) => void;
+  onMakeFirst?: (photo: any) => void;
 }) {
   const [uri, setUri] = useState<string>('');
   const list = photos && photos.length ? photos : photo ? [photo] : [];
-  const [index, setIndex] = useState(0);
-  const current = list[Math.min(index, Math.max(0, list.length - 1))] ?? null;
+  // Tracked by id, not position, so reordering the list (Set as first)
+  // keeps showing the same photo.
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const found = list.findIndex((p: any) => p.id === currentId);
+  const index = found >= 0 ? found : 0;
+  const current = list[index] ?? null;
 
   // Open on the photo that was tapped.
   useEffect(() => {
-    if (visible) {
-      const i = photo ? list.findIndex((p: any) => p.id === photo.id) : 0;
-      setIndex(i >= 0 ? i : 0);
-    }
+    if (visible) setCurrentId(photo?.id ?? list[0]?.id ?? null);
   }, [visible, photo?.id]);
 
   const step = (dir: number) => {
-    setIndex(i => Math.max(0, Math.min(list.length - 1, i + dir)));
+    const next = list[Math.max(0, Math.min(list.length - 1, index + dir))];
+    if (next) setCurrentId(next.id);
   };
 
   const scale = useSharedValue(1);
@@ -104,6 +108,7 @@ export default function FullScreenPhotoViewer({
 
   const pan = Gesture.Pan()
     .averageTouches(true)
+    .minDistance(8)
     .onUpdate((e) => {
       if (savedScale.value > 1) {
         tx.value = savedTx.value + e.translationX;
@@ -126,8 +131,11 @@ export default function FullScreenPhotoViewer({
       savedTx.value = 0;
     });
 
+  // Taps are limited to a finger that barely moves, so a swipe is never
+  // also read as a tap (which closed the viewer mid-swipe).
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
+    .maxDistance(10)
     .onEnd(() => {
       if (savedScale.value > 1) {
         scale.value = withTiming(1);
@@ -144,6 +152,8 @@ export default function FullScreenPhotoViewer({
 
   const singleTap = Gesture.Tap()
     .numberOfTaps(1)
+    .maxDistance(10)
+    .maxDuration(300)
     .onEnd(() => {
       runOnJS(onClose)();
     });
@@ -193,6 +203,24 @@ export default function FullScreenPhotoViewer({
               <Text style={styles.counterText}>{index + 1} / {list.length}</Text>
             </View>
           )}
+          {onMakeFirst && current && list.length > 1 && (
+            index === 0 ? (
+              <View style={[styles.firstBtn, styles.firstBtnOn]} pointerEvents="none">
+                <Ionicons name="star" size={16} color="#000" />
+                <Text style={[styles.firstText, { color: '#000' }]}>First photo</Text>
+              </View>
+            ) : (
+              <Pressable
+                style={styles.firstBtn}
+                onPress={() => onMakeFirst(current)}
+                hitSlop={8}
+                accessibilityLabel="Set this as the first photo"
+              >
+                <Ionicons name="star-outline" size={16} color="#fff" />
+                <Text style={styles.firstText}>Set as first</Text>
+              </Pressable>
+            )
+          )}
           {onDelete && current && (
             <Pressable
               style={styles.deleteBtn}
@@ -216,6 +244,12 @@ const styles = StyleSheet.create({
     borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.45)',
   },
   counterText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  firstBtn: {
+    position: 'absolute', bottom: 44, left: 20, height: 44, paddingHorizontal: 14, borderRadius: 22,
+    flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  firstBtnOn: { backgroundColor: 'rgba(255,255,255,0.9)' },
+  firstText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   deleteBtn: {
     position: 'absolute', bottom: 44, right: 20, width: 44, height: 44, borderRadius: 22,
     backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center',

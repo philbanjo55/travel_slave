@@ -157,6 +157,7 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<bool
         if (stop.stop_photos?.length) {
           photoMap[stop.id] = stop.stop_photos.map((p: any) => ({
             id: p.id, stop_id: p.stop_id, storage_url: p.storage_url, position: p.position,
+            photo_type: p.photo_type,
           }));
         }
         if (stop.weather) byStop[stop.id] = slimCachedWeather(stop.weather);

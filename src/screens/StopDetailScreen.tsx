@@ -79,7 +79,7 @@ export default function StopDetailScreen() {
   const { currentTripData } = useTripStore();
   const [fieldPhotoIndex, setFieldPhotoIndex] = useState(0);
   const [viewerPhoto, setViewerPhoto] = useState<any | null>(null);
-  const [viewerList, setViewerList] = useState<any[]>([]);
+  const [viewerKind, setViewerKind] = useState<'reference' | 'field'>('reference');
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const day = currentTripData?.days.find((d: any) => d.id === dayId);
@@ -91,9 +91,10 @@ export default function StopDetailScreen() {
   if (!stop) return null;
 
   const allPhotos = stop.stop_photos || [];
-  const refPhotos = allPhotos.filter((p: any) => !p.photo_type || p.photo_type === 'reference');
-  const fieldPhotos = allPhotos.filter((p: any) => p.photo_type === 'field');
-  const { pickAndUpload, takePhoto, deletePhoto, uploading, uploadProgress, error } = usePhotoUpload(stop.id);
+  const byPosition = (a: any, b: any) => (a.position ?? 1e9) - (b.position ?? 1e9);
+  const refPhotos = allPhotos.filter((p: any) => !p.photo_type || p.photo_type === 'reference').sort(byPosition);
+  const fieldPhotos = allPhotos.filter((p: any) => p.photo_type === 'field').sort(byPosition);
+  const { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error } = usePhotoUpload(stop.id);
 
   const handlePhotoLongPress = (photoId: string, type: string, after?: () => void) => {
     Alert.alert('Delete Photo', `Remove this ${type} photo?`, [
@@ -102,8 +103,9 @@ export default function StopDetailScreen() {
     ]);
   };
 
-  const openViewer = (photo: any, list: any[]) => {
-    setViewerList(list);
+  // The viewer always gets the live list, so a reorder or delete shows at once.
+  const openViewer = (photo: any, kind: 'reference' | 'field') => {
+    setViewerKind(kind);
     setViewerPhoto(photo);
   };
   const closeViewer = () => setViewerPhoto(null);
@@ -191,7 +193,7 @@ export default function StopDetailScreen() {
               <PhotoThumb
                 photo={refPhotos[0]}
                 count={refPhotos.length}
-                onPress={() => openViewer(refPhotos[0], refPhotos)}
+                onPress={() => openViewer(refPhotos[0], 'reference')}
               />
             )}
             <TouchableOpacity
@@ -365,7 +367,7 @@ export default function StopDetailScreen() {
                 {fieldPhotos.map((photo: any) => (
                   <TouchableOpacity
                     key={photo.id}
-                    onPress={() => openViewer(photo, fieldPhotos)}
+                    onPress={() => openViewer(photo, 'field')}
                     onLongPress={() => handlePhotoLongPress(photo.id, 'field')}
                     activeOpacity={0.9}
                   >
@@ -406,10 +408,14 @@ export default function StopDetailScreen() {
       </ScrollView>
       <FullScreenPhotoViewer
         photo={viewerPhoto}
-        photos={viewerList}
+        photos={viewerKind === 'field' ? fieldPhotos : refPhotos}
         visible={!!viewerPhoto}
         onClose={closeViewer}
-        onDelete={(p) => handlePhotoLongPress(p.id, p.photo_type === 'field' ? 'field' : 'reference', closeViewer)}
+        onDelete={(p) => handlePhotoLongPress(p.id, viewerKind, closeViewer)}
+        onMakeFirst={viewerKind === 'reference' ? async (p) => {
+          const ok = await makeFirst(p.id, refPhotos.map((r: any) => r.id));
+          if (!ok) Alert.alert('Not saved', 'Could not change the photo order. Check your connection and try again.');
+        } : undefined}
       />
     </SafeAreaView>
   );
