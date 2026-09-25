@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { fetchFullTrip, supabase } from '../services/supabase';
 import { fetchWeatherForDays, pruneStopWeatherCache } from '../services/weather';
 import { getCachedFullTrip, getCachedTrips, cacheFullTrip, cacheTrips } from '../services/database';
+import { refreshSunPlan } from '../services/sunPlan';
 import { calculateDriveTimesForTrip } from '../services/driveTimes';
 import { downloadAllPhotos } from '../services/photoCache';
 
@@ -125,6 +126,10 @@ export const useTripStore = create<TripState>((set, get) => ({
       return;
     }
 
+    // Sun & Moon planner data for every stop in the trip, saved for offline
+    // like the weather. Its own call and file; never throws, never waits.
+    refreshSunPlan(tripId, true);
+
     // Drive times, in the background and only when a leg is missing one. A
     // leg is a stop with coordinates that follows a stop with coordinates in
     // the same day - the first stop of a day has no leg and never gets a
@@ -171,6 +176,7 @@ export const useTripStore = create<TripState>((set, get) => ({
       set({ isSyncing: false });
       return;
     }
+    refreshSunPlan(tripId, true);
     try {
       const wx = await fetchWeatherForDays(fresh.days.map((d: any) => d.id));
       fresh = attachWeather(fresh, wx);
