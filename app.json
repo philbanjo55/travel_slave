@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Philm+Frame",
-    "slug": "philmframe",
+    "slug": "travelslave",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./src/assets/icon.png",
@@ -24,11 +24,7 @@
         "WRITE_EXTERNAL_STORAGE",
         "CAMERA"
       ],
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyBOA5Zf4L5Px9TVVG_MBzBnGy7lACMokPY"
-        }
-      }
+      "config": {}
     },
     "plugins": [
       "expo-font",
@@ -43,12 +39,21 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow Philm+Frame to use your location for navigation."
         }
-      ]
+      ],
+      "expo-updates"
     ],
     "extra": {
       "eas": {
-        "projectId": "YOUR_EAS_PROJECT_ID"
+        "projectId": "766c58f8-02a0-4ba7-8426-2fb86227bdec"
       }
-    }
+    },
+    "owner": "philandframe",
+    "updates": {
+      "url": "https://u.expo.dev/766c58f8-02a0-4ba7-8426-2fb86227bdec",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": "1.0.0"
   }
 }

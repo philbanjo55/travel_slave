@@ -158,3 +158,18 @@ export async function fetchFullTrip(tripId: string) {
     })),
   };
 }
+
+export async function calculateDriveTimes(tripId: string): Promise<any> {
+  const res = await fetch(
+    `${SUPABASE_URL}/functions/v1/calculate-drive-times`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ trip_id: tripId }),
+    }
+  );
+  return res.json();
+}

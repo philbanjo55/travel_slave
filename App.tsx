@@ -1,3 +1,6 @@
+// First, so that whatever else throws while loading is reported. It does
+// not change how errors are handled - see src/earlyErrors.ts.
+import './src/earlyErrors';
 import 'react-native-url-polyfill/auto';
 import React, { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
