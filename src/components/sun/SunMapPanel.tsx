@@ -42,7 +42,9 @@ export default function SunMapPanel({ pair, light, moon, riseAz, setAz, height }
     } else {
       const dN = Math.abs(pair.s.lat - pair.v.lat) * 110540;
       const dE = Math.abs(pair.s.lng - pair.v.lng) * 111320 * Math.cos(mid.lat * Math.PI / 180);
-      mpp = Math.max(dN / Math.max(60, height - 80), dE / Math.max(60, w - 80), 1);
+      // Wide margins: in north-up the pins can land in the corners, and the
+      // compass sits in the top-right one.
+      mpp = Math.max(dN / Math.max(60, height - 140), dE / Math.max(60, w - 180), 1);
     }
     const zoom = Math.log2((156543.03392 * Math.cos(mid.lat * Math.PI / 180)) / mpp);
     return { mid, mpp, zoom: Math.min(20, Math.max(3, zoom)) };
@@ -183,7 +185,7 @@ const styles = StyleSheet.create({
     color: '#ffffff', fontSize: 11, fontWeight: '600',
     textShadowColor: '#000000', textShadowRadius: 3, textShadowOffset: { width: 0, height: 0 },
   },
-  scale: { position: 'absolute', left: 12, bottom: 8 },
+  scale: { position: 'absolute', right: 12, bottom: 8, alignItems: 'flex-end' },  // clear of the Google logo
   scaleBar: { height: 6, borderLeftWidth: 2, borderRightWidth: 2, borderBottomWidth: 2, borderColor: '#dddddd' },
   scaleText: { color: '#dddddd', fontSize: 10, marginTop: 2, textShadowColor: '#000', textShadowRadius: 2 },
   compassBtn: { position: 'absolute', right: 6, top: 6, alignItems: 'center', width: 60 },
