@@ -237,17 +237,22 @@ export function dayEvents(p: LatLng, day0: number): DayEvents {
   let prev = sunPosition(day0, p.lat, p.lng);
   let prevMoon = moonPosition(day0, p.lat, p.lng).geo + 0.833;
   let kind = phaseOf(prev), from = 0;
+  // An event falls between minute i-1 and i; interpolate and round to the
+  // nearest minute, as almanacs and PhotoPills do (not the minute after).
+  const at = (i: number, a: number, b: number) => Math.round(i - 1 + a / (a - b));
   for (let i = 1; i <= 1440; i++) {
     const ms = day0 + i * 60000;
     const s = sunPosition(ms, p.lat, p.lng);
-    if (prev.geo < SUN_UP_GEO && s.geo >= SUN_UP_GEO && out.rise == null) { out.rise = i; out.riseAz = s.az; }
-    if (prev.geo >= SUN_UP_GEO && s.geo < SUN_UP_GEO && out.set == null) { out.set = i; out.setAz = s.az; }
-    if (prev.alt < 6 && s.alt >= 6 && out.goldenAm == null) out.goldenAm = i;
-    if (prev.alt >= 6 && s.alt < 6 && out.goldenPm == null) out.goldenPm = i;
+    const g0 = prev.geo - SUN_UP_GEO, g1 = s.geo - SUN_UP_GEO;
+    if (g0 < 0 && g1 >= 0 && out.rise == null) { out.rise = at(i, g0, g1); out.riseAz = s.az; }
+    if (g0 >= 0 && g1 < 0 && out.set == null) { out.set = at(i, g0, g1); out.setAz = s.az; }
+    const a0 = prev.alt - 6, a1 = s.alt - 6;
+    if (a0 < 0 && a1 >= 0 && out.goldenAm == null) out.goldenAm = at(i, a0, a1);
+    if (a0 >= 0 && a1 < 0 && out.goldenPm == null) out.goldenPm = at(i, a0, a1);
     // Moon rise/set to the USNO convention (upper limb, standard refraction).
     const mv = moonPosition(ms, p.lat, p.lng).geo + 0.833;
-    if (prevMoon < 0 && mv >= 0 && out.moonRise == null) out.moonRise = i;
-    if (prevMoon >= 0 && mv < 0 && out.moonSet == null) out.moonSet = i;
+    if (prevMoon < 0 && mv >= 0 && out.moonRise == null) out.moonRise = at(i, prevMoon, mv);
+    if (prevMoon >= 0 && mv < 0 && out.moonSet == null) out.moonSet = at(i, prevMoon, mv);
     prevMoon = mv;
     const k = phaseOf(s);
     if (k !== kind || i === 1440) {
