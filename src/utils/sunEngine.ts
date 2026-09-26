@@ -244,8 +244,11 @@ export function dayEvents(p: LatLng, day0: number): DayEvents {
     const ms = day0 + i * 60000;
     const s = sunPosition(ms, p.lat, p.lng);
     const g0 = prev.geo - SUN_UP_GEO, g1 = s.geo - SUN_UP_GEO;
-    if (g0 < 0 && g1 >= 0 && out.rise == null) { out.rise = at(i, g0, g1); out.riseAz = s.az; }
-    if (g0 >= 0 && g1 < 0 && out.set == null) { out.set = at(i, g0, g1); out.setAz = s.az; }
+    // The direction at that same instant (the sun moves ~0.4° a minute along
+    // the horizon at these latitudes, so the whole-minute value shows).
+    const azAt = (a: number, b: number) => prev.az + relAngle(s.az, prev.az) * (a / (a - b));
+    if (g0 < 0 && g1 >= 0 && out.rise == null) { out.rise = at(i, g0, g1); out.riseAz = (azAt(g0, g1) + 360) % 360; }
+    if (g0 >= 0 && g1 < 0 && out.set == null) { out.set = at(i, g0, g1); out.setAz = (azAt(g0, g1) + 360) % 360; }
     const a0 = prev.alt - 6, a1 = s.alt - 6;
     if (a0 < 0 && a1 >= 0 && out.goldenAm == null) out.goldenAm = at(i, a0, a1);
     if (a0 >= 0 && a1 < 0 && out.goldenPm == null) out.goldenPm = at(i, a0, a1);
