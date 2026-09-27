@@ -243,7 +243,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">
                     {spots.map(p => (
                       <TouchableOpacity key={p.vantage_id} style={styles.chip}
-                        onPress={() => set({ vantageName: p.vantage_name, code: p.code ?? '', vCoords: formatCoords({ lat: p.v_lat, lng: p.v_lng }) })}>
+                        onPress={() => set({ vantageName: p.vantage_name, vCoords: formatCoords({ lat: p.v_lat, lng: p.v_lng }) })}>
                         <Text style={styles.chipText}>Same spot as {label(p)}</Text>
                       </TouchableOpacity>
                     ))}
