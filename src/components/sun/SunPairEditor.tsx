@@ -7,7 +7,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { colors, spacing } from '../../theme';
-import { PairCheck, fetchStopPairs, removeSunPair, saveSunPair } from '../../services/sunPlan';
+import { PairCheck, fetchStopPairs, removeSunPair, saveSunPair, setVantagePhoto } from '../../services/sunPlan';
+import { usePhotoUpload } from '../../hooks/usePhotoUpload';
+import VantagePhoto from './VantagePhoto';
 import { Coords, formatCoords, parseCoords } from '../../utils/coords';
 import { compassPoint, shortName } from './sunStyle';
 
@@ -21,6 +23,8 @@ type Props = {
   tripId: string;
   stopId: string;
   stopName?: string | null;
+  stopPhotos?: any[];              // photos to choose a vantage's reference photo from
+  editVantageId?: string | null;   // open straight on this vantage's form
 };
 
 type Form = {
@@ -31,11 +35,17 @@ type Form = {
   subjectName: string;
   sCoords: string;
   sHeight: string;
+  photoId: string | null;
+  photoUrl: string | null;
+  savedPhotoId: string | null;   // what the vantage has now, to tell if it changed
 };
 
-const EMPTY: Form = { vantageId: null, code: '', vantageName: '', vCoords: '', subjectName: '', sCoords: '', sHeight: '' };
+const EMPTY: Form = {
+  vantageId: null, code: '', vantageName: '', vCoords: '', subjectName: '', sCoords: '', sHeight: '',
+  photoId: null, photoUrl: null, savedPhotoId: null,
+};
 
-export default function SunPairEditor({ visible, onClose, tripId, stopId, stopName }: Props) {
+export default function SunPairEditor({ visible, onClose, tripId, stopId, stopName, stopPhotos, editVantageId }: Props) {
   const [pairs, setPairs] = useState<PairCheck[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [form, setForm] = useState<Form | null>(null);
@@ -43,15 +53,22 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<PairCheck | null>(null);
   const [locating, setLocating] = useState(false);
+  const [choosing, setChoosing] = useState(false);
+  const { pickOne, uploading } = usePhotoUpload(stopId);
 
-  const load = async () => {
+  const load = async (openVantageId?: string | null) => {
     setLoadError(null);
-    try { setPairs(await fetchStopPairs(stopId)); }
+    try {
+      const list = await fetchStopPairs(stopId);
+      setPairs(list);
+      const p = openVantageId ? list.find(x => x.vantage_id === openVantageId) : null;
+      if (p) startEdit(p);
+    }
     catch (e: any) { setLoadError(e.message); }
   };
 
   useEffect(() => {
-    if (visible) { setForm(null); setSaved(null); setSaveError(null); load(); }
+    if (visible) { setForm(null); setSaved(null); setSaveError(null); setChoosing(false); load(editVantageId); }
   }, [visible, stopId]);
 
   const vParsed = form ? parseCoords(form.vCoords) : null;
@@ -75,15 +92,22 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
 
   const set = (patch: Partial<Form>) => setForm(f => (f ? { ...f, ...patch } : f));
 
-  const startAdd = () => { setSaved(null); setSaveError(null); setForm({ ...EMPTY }); };
+  const startAdd = () => { setSaved(null); setSaveError(null); setChoosing(false); setForm({ ...EMPTY }); };
   const startEdit = (p: PairCheck) => {
-    setSaved(null); setSaveError(null);
+    setSaved(null); setSaveError(null); setChoosing(false);
     setForm({
       vantageId: p.vantage_id, code: p.code ?? '', vantageName: p.vantage_name,
       vCoords: formatCoords({ lat: p.v_lat, lng: p.v_lng }),
       subjectName: p.subject_name, sCoords: formatCoords({ lat: p.s_lat, lng: p.s_lng }),
       sHeight: p.s_height_m != null ? String(p.s_height_m) : '',
+      photoId: p.photo_id ?? null, photoUrl: p.photo_url ?? null, savedPhotoId: p.photo_id ?? null,
     });
+  };
+
+  const uploadNew = async () => {
+    const ph = await pickOne('reference');
+    if (ph) { set({ photoId: ph.id, photoUrl: ph.storage_url }); setChoosing(false); }
+    else Alert.alert('No photo added', 'Nothing was uploaded. If you picked a photo, check your connection and try again.');
   };
 
   const useMyLocation = async () => {
@@ -107,11 +131,14 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
     if (!form || !vParsed || !sParsed) return;
     setSaving(true); setSaveError(null);
     try {
-      const r = await saveSunPair(tripId, stopId, {
+      let r = await saveSunPair(tripId, stopId, {
         vantageId: form.vantageId, code: form.code.trim() || null,
         vantageName: form.vantageName.trim(), vLat: vParsed.lat, vLng: vParsed.lng,
         subjectName: form.subjectName.trim(), sLat: sParsed.lat, sLng: sParsed.lng, sHeight: height,
       });
+      if ((form.photoId ?? null) !== (r.photo_id ?? null)) {
+        r = await setVantagePhoto(tripId, r.vantage_id, form.photoId);
+      }
       setSaved(r); setForm(null); load();
     } catch (e: any) {
       setSaveError(e.message);
@@ -153,13 +180,16 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                 {loadError && (
                   <View style={styles.errorBox}>
                     <Text style={styles.errorText}>{loadError}</Text>
-                    <TouchableOpacity onPress={load}><Text style={styles.link}>Try again</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={() => load(editVantageId)}><Text style={styles.link}>Try again</Text></TouchableOpacity>
                   </View>
                 )}
                 {pairs?.length === 0 && <Text style={styles.muted}>No vantages on this stop yet.</Text>}
                 {pairs?.map(p => (
                   <View key={p.vantage_id} style={styles.card}>
-                    <Text style={styles.cardTitle}>{label(p)} <Text style={styles.arrow}>→</Text> {shortName(p.subject_name)}</Text>
+                    <View style={styles.cardHead}>
+                      {p.photo_id && <VantagePhoto id={p.photo_id} url={p.photo_url} style={styles.cardThumb} />}
+                      <Text style={[styles.cardTitle, { flex: 1 }]}>{label(p)} <Text style={styles.arrow}>→</Text> {shortName(p.subject_name)}</Text>
+                    </View>
                     <Checks p={p} />
                     <View style={styles.cardActions}>
                       <TouchableOpacity style={styles.smallBtn} onPress={() => startEdit(p)}><Text style={styles.smallBtnText}>Edit</Text></TouchableOpacity>
@@ -223,6 +253,49 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                   placeholder="Only for thin sea stacks or towers" keyboardType="decimal-pad" />
                 {!heightOk && <Text style={styles.bad}>Height must be a number from 0 to 3000.</Text>}
                 <Text style={styles.hint}>The map data misses thin rock towers. A real height lets the top of a stack catch light after the sea below is in shade. Leave empty for hills and mountains.</Text>
+
+                <Text style={[styles.section, { marginTop: 22 }]}>REFERENCE PHOTO</Text>
+                <View style={styles.refRow}>
+                  {form.photoId
+                    ? <VantagePhoto id={form.photoId} url={form.photoUrl} style={styles.refThumb} />
+                    : <View style={[styles.refThumb, styles.refEmpty]}><Ionicons name="image-outline" size={22} color="#555" /></View>}
+                  <View style={{ flex: 1, gap: 6 }}>
+                    <TouchableOpacity style={styles.refBtn} onPress={() => setChoosing(c => !c)} accessibilityRole="button">
+                      <Text style={styles.smallBtnText}>{choosing ? 'Hide stop photos' : 'Choose from stop photos'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.refBtn} onPress={uploadNew} disabled={uploading} accessibilityRole="button">
+                      {uploading ? <ActivityIndicator size="small" color={colors.textPrimary} /> : <Text style={styles.smallBtnText}>Upload new</Text>}
+                    </TouchableOpacity>
+                    {!!form.photoId && (
+                      <TouchableOpacity style={styles.refBtn} onPress={() => set({ photoId: null, photoUrl: null })} accessibilityRole="button">
+                        <Text style={[styles.smallBtnText, { color: '#e0776b' }]}>Remove photo</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+                {choosing && (
+                  (stopPhotos ?? []).length === 0
+                    ? <Text style={styles.hint}>This stop has no photos yet. Use Upload new.</Text>
+                    : (
+                      <View style={styles.pickGrid}>
+                        {(stopPhotos ?? []).map((ph: any) => {
+                          const on = ph.id === form.photoId;
+                          return (
+                            <TouchableOpacity
+                              key={ph.id}
+                              onPress={() => { set({ photoId: ph.id, photoUrl: ph.storage_url }); setChoosing(false); }}
+                              style={[styles.pickCell, on && styles.pickCellOn]}
+                              accessibilityLabel={on ? 'Chosen photo' : 'Choose this photo'}
+                              accessibilityState={{ selected: on }}
+                            >
+                              <VantagePhoto id={ph.id} url={ph.storage_url} style={StyleSheet.absoluteFill} />
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )
+                )}
+                <Text style={styles.hint}>The shot you're going for from this spot. It shows on the Sun & Moon chips and Photo tab, and is saved on the phone for offline.</Text>
 
                 {!!saveError && <View style={styles.errorBox}><Text style={styles.errorText}>{saveError}</Text></View>}
                 <TouchableOpacity style={[styles.primary, !canSave && { opacity: 0.4 }]} onPress={save} disabled={!canSave}>
@@ -309,6 +382,15 @@ const styles = StyleSheet.create({
   muted: { color: colors.textSecondary, fontSize: 14 },
   card: { backgroundColor: colors.surface, borderRadius: 10, borderWidth: 1, borderColor: colors.border, padding: 14, gap: 8 },
   cardTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cardThumb: { width: 44, height: 44, borderRadius: 6 },
+  refRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginTop: 6 },
+  refThumb: { width: 104, height: 104, borderRadius: 8 },
+  refEmpty: { borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  refBtn: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, minHeight: 32, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' },
+  pickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  pickCell: { width: '31.5%', aspectRatio: 1, borderRadius: 6, overflow: 'hidden', backgroundColor: '#0a0a0a' },
+  pickCellOn: { borderWidth: 3, borderColor: '#F0B04A' },
   arrow: { color: colors.textSecondary },
   cardActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
   smallBtn: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },

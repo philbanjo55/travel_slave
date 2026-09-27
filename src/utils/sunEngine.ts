@@ -152,6 +152,8 @@ export type Pair = {
   dist_m: number;
   v_sky: number[] | null;
   s_sky: number[] | null;
+  photo_id?: string | null;    // the vantage's reference photo (a stop photo)
+  photo_url?: string | null;
 };
 
 export type Light = {

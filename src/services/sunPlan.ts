@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import * as FileSystem from 'expo-file-system';
 import { supabase } from './supabase';
+import { downloadPhoto } from './photoCache';
 import type { Pair } from '../utils/sunEngine';
 
 // Sun & Moon planner data: which vantage -> subject pairs each stop has, with
@@ -88,6 +89,7 @@ export function refreshSunPlan(tripId: string, force = false): Promise<SunPlan |
       memory[tripId] = plan;
       listeners.forEach(fn => fn(tripId));
       writeCached(tripId, plan).catch(e => console.warn('[sun] cache write failed:', e));
+      saveVantagePhotos(plan);
       return plan;
     } catch (e) {
       console.warn('[sun] plan fetch failed, keeping the saved copy:', e);
@@ -98,6 +100,20 @@ export function refreshSunPlan(tripId: string, force = false): Promise<SunPlan |
   })();
   inflight[tripId] = p;
   return p;
+}
+
+// Vantage reference photos go into the same on-phone store as trip photos, so
+// they show offline. Already-saved ones are skipped; failures just retry on
+// the next refresh.
+async function saveVantagePhotos(plan: SunPlan): Promise<void> {
+  const seen = new Set<string>();
+  for (const st of Object.values(plan.stops ?? {})) {
+    for (const p of st?.pairs ?? []) {
+      if (!p.photo_id || !p.photo_url || seen.has(p.photo_id)) continue;
+      seen.add(p.photo_id);
+      await downloadPhoto(p.photo_id, p.photo_url).catch(() => {});
+    }
+  }
 }
 
 // The pairs for one stop: from memory, else the saved file, then refreshed in
@@ -143,6 +159,8 @@ export type PairCheck = {
   subject_id: string;
   subject_name: string;
   s_lat: number; s_lng: number; s_height_m: number | null; s_ground_m: number | null; s_status: string | null;
+  photo_id: string | null;
+  photo_url: string | null;
   bearing: number | null;
   dist_m: number;
   warnings: string[];
@@ -190,4 +208,12 @@ export async function removeSunPair(tripId: string, stopId: string, vantageId: s
   const { error } = await supabase.rpc('sun_pair_remove', { p_stop_id: stopId, p_vantage_id: vantageId });
   if (error) throw rpcError(error);
   refreshSunPlan(tripId, true);
+}
+
+// Sets (or clears, with null) a vantage's reference photo.
+export async function setVantagePhoto(tripId: string, vantageId: string, photoId: string | null): Promise<PairCheck> {
+  const { data, error } = await supabase.rpc('sun_vantage_set_photo', { p_vantage_id: vantageId, p_photo_id: photoId });
+  if (error) throw rpcError(error);
+  refreshSunPlan(tripId, true);
+  return data as PairCheck;
 }

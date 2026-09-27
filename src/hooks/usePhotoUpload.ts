@@ -45,7 +45,7 @@ export function usePhotoUpload(stopId: string) {
   const [error, setError] = useState<string | null>(null);
   const { refreshCurrentTrip } = useTripStore();
 
-  const uploadSinglePhoto = async (uri: string, photoType: PhotoType): Promise<void> => {
+  const uploadSinglePhoto = async (uri: string, photoType: PhotoType): Promise<{ id: string; storage_url: string }> => {
     const { id: photoId, storage_url } = await uploadToStorage(stopId, uri);
 
     const { data: existing } = await supabase
@@ -67,6 +67,31 @@ export function usePhotoUpload(stopId: string) {
 
     const dbId = inserted?.id || photoId;
     await downloadPhoto(dbId, storage_url).catch(() => {});
+    return { id: dbId, storage_url };
+  };
+
+  // Picks one photo from the library and adds it to the stop's reference
+  // photos. Returns the new photo, or null if cancelled or it failed.
+  const pickOne = async (photoType: PhotoType = 'reference'): Promise<{ id: string; storage_url: string } | null> => {
+    setError(null);
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') { setError('Camera roll permission required'); return null; }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+    });
+    if (result.canceled || !result.assets?.[0]) return null;
+    setUploading(true);
+    try {
+      const photo = await uploadSinglePhoto(result.assets[0].uri, photoType);
+      refreshCurrentTrip().catch(() => {});
+      return photo;
+    } catch (err: any) {
+      setError(err.message || 'Upload failed');
+      return null;
+    } finally {
+      setUploading(false);
+    }
   };
 
   const pickAndUpload = async (photoType: PhotoType = 'reference') => {
@@ -163,5 +188,5 @@ export function usePhotoUpload(stopId: string) {
     }
   };
 
-  return { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error };
+  return { pickAndUpload, pickOne, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error };
 }
