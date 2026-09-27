@@ -428,6 +428,7 @@ export default function StopDetailScreen() {
         onMakeFirst={viewerKind === 'reference' ? async (p) => {
           const ok = await makeFirst(p.id, refPhotos.map((r: any) => r.id));
           if (!ok) Alert.alert('Not saved', 'Could not change the photo order. Check your connection and try again.');
+          return ok;
         } : undefined}
       />
     </SafeAreaView>

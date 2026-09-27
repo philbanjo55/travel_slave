@@ -149,11 +149,13 @@ export function usePhotoUpload(stopId: string) {
   const makeFirst = async (photoId: string, orderedIds: string[]): Promise<boolean> => {
     const ids = [photoId, ...orderedIds.filter(id => id !== photoId)];
     try {
-      for (let i = 0; i < ids.length; i++) {
-        const { error: e } = await supabase.from('stop_photos').update({ position: i }).eq('id', ids[i]);
-        if (e) throw e;
-      }
-      await refreshCurrentTrip();
+      // All positions saved at once; the trip reload that re-sorts the list
+      // runs in the background, so the caller can confirm straight away.
+      const results = await Promise.all(ids.map((id, i) =>
+        supabase.from('stop_photos').update({ position: i }).eq('id', id)));
+      const failed = results.find(r => r.error);
+      if (failed) throw failed.error;
+      refreshCurrentTrip().catch(() => {});
       return true;
     } catch (err: any) {
       setError(err.message || 'Could not reorder photos');

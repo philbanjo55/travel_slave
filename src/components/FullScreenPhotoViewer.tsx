@@ -36,7 +36,7 @@ export default function FullScreenPhotoViewer({
   visible: boolean;
   onClose: () => void;
   onDelete?: (photo: any) => void;
-  onMakeFirst?: (photo: any) => void;
+  onMakeFirst?: (photo: any) => Promise<boolean | void> | void;
 }) {
   const list = photos && photos.length ? photos : photo ? [photo] : [];
   // Tracked by id, not position, so reordering the list (Set as first)
@@ -46,6 +46,23 @@ export default function FullScreenPhotoViewer({
   const index = found >= 0 ? found : 0;
   const current = list[index] ?? null;
   const [uris, setUris] = useState<Record<string, string>>({});
+  // "Set as first" feedback: which photo is being saved, and which one was
+  // just saved (shown as done until the reordered list arrives).
+  const [settingId, setSettingId] = useState<string | null>(null);
+  const [setId, setSetId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!visible) { setSettingId(null); setSetId(null); }
+  }, [visible]);
+  const makeFirst = async (p: any) => {
+    if (!onMakeFirst || settingId) return;
+    setSettingId(p.id);
+    try {
+      const ok = await onMakeFirst(p);
+      if (ok !== false) setSetId(p.id);
+    } finally {
+      setSettingId(null);
+    }
+  };
 
   // Open on the photo that was tapped.
   useEffect(() => {
@@ -225,16 +242,24 @@ export default function FullScreenPhotoViewer({
             </View>
           )}
           {onMakeFirst && current && list.length > 1 && (
-            index === 0 ? (
+            index === 0 || setId === current.id ? (
               <View style={[styles.firstBtn, styles.firstBtnOn]} pointerEvents="none">
                 <Ionicons name="star" size={16} color="#000" />
-                <Text style={[styles.firstText, { color: '#000' }]}>First photo</Text>
+                <Text style={[styles.firstText, { color: '#000' }]}>
+                  {index === 0 ? 'First photo' : 'Set as first ✓'}
+                </Text>
+              </View>
+            ) : settingId === current.id ? (
+              <View style={styles.firstBtn} pointerEvents="none">
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={styles.firstText}>Setting…</Text>
               </View>
             ) : (
               <Pressable
                 style={styles.firstBtn}
-                onPress={() => onMakeFirst(current)}
+                onPress={() => makeFirst(current)}
                 hitSlop={8}
+                disabled={!!settingId}
                 accessibilityLabel="Set this as the first photo"
               >
                 <Ionicons name="star-outline" size={16} color="#fff" />
