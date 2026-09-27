@@ -190,7 +190,7 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
                 style={[styles.pairChip, on && styles.pairChipOn]}
                 accessibilityState={{ selected: on }}
               >
-                <PairThumb pair={p} size={34} onOpen={() => { setPairIdx(i); openPhoto(p); }} onAdd={() => onEdit(p.vantage_id)} />
+                <PairThumb pair={p} size={34} />
                 <View>
                   <Text style={[styles.pairCode, on && styles.pairTextOn]}>{p.code || shortName(p.vantage_name)}</Text>
                   <Text style={[styles.pairTo, on && styles.pairTextOn]} numberOfLines={1}>{shortName(p.subject_name)}</Text>
@@ -217,8 +217,14 @@ function pairTitle(p: Pair): string {
 }
 
 // The vantage's reference photo: tap for full screen. Without one, a dashed
-// ＋ that opens the editor on this vantage.
-function PairThumb({ pair, size, onOpen, onAdd }: { pair: Pair; size: number; onOpen: () => void; onAdd: () => void }) {
+// ＋ that opens the editor on this vantage. Without handlers (on the vantage
+// chips) it is only a picture: a tap anywhere on the chip just selects it.
+function PairThumb({ pair, size, onOpen, onAdd }: { pair: Pair; size: number; onOpen?: () => void; onAdd?: () => void }) {
+  if (!onOpen || !onAdd) {
+    return pair.photo_id
+      ? <VantagePhoto id={pair.photo_id} url={pair.photo_url} style={{ width: size, height: size, borderRadius: 6 }} />
+      : <View style={[styles.thumbAdd, { width: size, height: size }]}><Text style={styles.thumbAddText}>＋</Text></View>;
+  }
   if (!pair.photo_id) {
     return (
       <TouchableOpacity
