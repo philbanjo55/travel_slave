@@ -40,6 +40,8 @@ type Form = {
   savedPhotoId: string | null;   // what the vantage has now, to tell if it changed
 };
 
+const GRID_GAP = 6;
+
 const EMPTY: Form = {
   vantageId: null, code: '', vantageName: '', vCoords: '', subjectName: '', sCoords: '', sHeight: '',
   photoId: null, photoUrl: null, savedPhotoId: null,
@@ -54,6 +56,10 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   const [saved, setSaved] = useState<PairCheck | null>(null);
   const [locating, setLocating] = useState(false);
   const [choosing, setChoosing] = useState(false);
+  // Grid cells get an explicit size from the grid's measured width: a
+  // percentage width with aspectRatio collapses to 0 height in a wrapping row.
+  const [gridW, setGridW] = useState(0);
+  const cell = gridW > 0 ? Math.floor((gridW - 2 * GRID_GAP) / 3) : 0;
   const { pickOne, uploading } = usePhotoUpload(stopId);
 
   const load = async (openVantageId?: string | null) => {
@@ -277,18 +283,19 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                   (stopPhotos ?? []).length === 0
                     ? <Text style={styles.hint}>This stop has no photos yet. Use Upload new.</Text>
                     : (
-                      <View style={styles.pickGrid}>
-                        {(stopPhotos ?? []).map((ph: any) => {
+                      <View style={styles.pickGrid} onLayout={e => setGridW(e.nativeEvent.layout.width)}>
+                        {cell > 0 && (stopPhotos ?? []).map((ph: any) => {
                           const on = ph.id === form.photoId;
                           return (
                             <TouchableOpacity
                               key={ph.id}
                               onPress={() => { set({ photoId: ph.id, photoUrl: ph.storage_url }); setChoosing(false); }}
-                              style={[styles.pickCell, on && styles.pickCellOn]}
+                              style={[styles.pickCell, { width: cell, height: cell }]}
                               accessibilityLabel={on ? 'Chosen photo' : 'Choose this photo'}
                               accessibilityState={{ selected: on }}
                             >
-                              <VantagePhoto id={ph.id} url={ph.storage_url} style={StyleSheet.absoluteFill} />
+                              <VantagePhoto id={ph.id} url={ph.storage_url} style={{ width: cell, height: cell }} />
+                              {on && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.pickCellOn]} />}
                             </TouchableOpacity>
                           );
                         })}
@@ -388,9 +395,9 @@ const styles = StyleSheet.create({
   refThumb: { width: 104, height: 104, borderRadius: 8 },
   refEmpty: { borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   refBtn: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, minHeight: 32, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' },
-  pickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
-  pickCell: { width: '31.5%', aspectRatio: 1, borderRadius: 6, overflow: 'hidden', backgroundColor: '#0a0a0a' },
-  pickCellOn: { borderWidth: 3, borderColor: '#F0B04A' },
+  pickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP, marginTop: 6, minHeight: 40 },
+  pickCell: { borderRadius: 6, overflow: 'hidden', backgroundColor: '#1a1a1a' },
+  pickCellOn: { borderWidth: 3, borderColor: '#F0B04A', borderRadius: 6 },
   arrow: { color: colors.textSecondary },
   cardActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
   smallBtn: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
