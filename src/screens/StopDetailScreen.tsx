@@ -13,6 +13,7 @@ import { useTripStore } from '../store/tripStore';
 import StopWeatherCard from '../components/StopWeatherCard';
 import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
 import SunPlannerSection from '../components/sun/SunPlannerSection';
+import StopLocationEditor from '../components/StopLocationEditor';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 
@@ -81,6 +82,7 @@ export default function StopDetailScreen() {
   const [viewerPhoto, setViewerPhoto] = useState<any | null>(null);
   const [viewerKind, setViewerKind] = useState<'reference' | 'field'>('reference');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [editingLocation, setEditingLocation] = useState(false);
 
   const day = currentTripData?.days.find((d: any) => d.id === dayId);
   const stops = day?.stops || [];
@@ -260,6 +262,11 @@ export default function StopDetailScreen() {
             </TouchableOpacity>
           )}
 
+          <TouchableOpacity style={styles.actionBtn} onPress={() => setEditingLocation(true)}>
+            <Ionicons name="pin-outline" size={18} color={colors.textPrimary} />
+            <Text style={styles.actionText}>{stop.lat && stop.lng ? 'Change location' : 'Set location'}</Text>
+          </TouchableOpacity>
+
           {stop.alltrails_url && (
             <TouchableOpacity style={styles.actionBtn} onPress={openAllTrails}>
               <Ionicons name="trail-sign-outline" size={18} color={colors.textPrimary} />
@@ -406,6 +413,12 @@ export default function StopDetailScreen() {
 
         <View style={{ height: 80 }} />
       </ScrollView>
+      <StopLocationEditor
+        visible={editingLocation}
+        onClose={() => setEditingLocation(false)}
+        stop={stop}
+        fallback={(() => { const o = stops.find((x: any) => x.lat && x.lng); return o ? { lat: o.lat, lng: o.lng } : null; })()}
+      />
       <FullScreenPhotoViewer
         photo={viewerPhoto}
         photos={viewerKind === 'field' ? fieldPhotos : refPhotos}
