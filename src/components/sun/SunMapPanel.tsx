@@ -8,8 +8,9 @@ import { SUN } from './sunStyle';
 
 // The planner map: you, the subject, the line between you, and where the sun
 // and moon are. "My view" (default) turns the map so the subject is straight
-// ahead; tapping the compass switches to north up, like Google Maps.
-// The map itself does not pan or zoom; it frames the pair.
+// ahead; tapping the compass switches to north up, like Google Maps, and
+// re-frames the pair. Pinch or the +/- buttons zoom; the map stays centred
+// on the pair (one-finger drags scroll the page, not the map).
 
 type Props = {
   pair: Pair;
@@ -27,6 +28,10 @@ export default function SunMapPanel({ pair, light, moon, riseAz, setAz, height }
   const [width, setWidth] = useState(0);
   const [myView, setMyView] = useState(true);
   const [labelsTrack, setLabelsTrack] = useState(true);
+  const [zoomStep, setZoomStep] = useState(0);            // from the +/- buttons
+  const [viewZoom, setViewZoom] = useState<number | null>(null);  // what the map shows now
+  const zoomStepRef = useRef(0);
+  zoomStepRef.current = zoomStep;
 
   const bearing = pair.bearing ?? 0;
   const heading = myView && pair.bearing != null ? bearing : 0;
@@ -46,17 +51,36 @@ export default function SunMapPanel({ pair, light, moon, riseAz, setAz, height }
       // compass sits in the top-right one.
       mpp = Math.max(dN / Math.max(60, height - 140), dE / Math.max(60, w - 180), 1);
     }
-    const zoom = Math.log2((156543.03392 * Math.cos(mid.lat * Math.PI / 180)) / mpp);
+    // Start a little wider than a tight fit, so there is context around the pair.
+    const zoom = Math.log2((156543.03392 * Math.cos(mid.lat * Math.PI / 180)) / mpp) - 0.6;
     return { mid, mpp, zoom: Math.min(20, Math.max(3, zoom)) };
   }, [pair.vantage_id, pair.v.lat, pair.v.lng, pair.s.lat, pair.s.lng, pair.dist_m, heading, width, height]);
 
+  const targetZoom = Math.min(20, Math.max(3, frame.zoom + zoomStep));
   const camera = {
-    center: coord(frame.mid), heading, pitch: 0, zoom: frame.zoom, altitude: 0,
+    center: coord(frame.mid), heading, pitch: 0, zoom: targetZoom, altitude: 0,
   };
 
   useEffect(() => {
     mapRef.current?.animateCamera(camera, { duration: 350 });
-  }, [frame.mid.lat, frame.mid.lng, frame.zoom, heading]);
+  }, [frame.mid.lat, frame.mid.lng, targetZoom, heading]);
+
+  // A new pair or orientation starts from the default framing again.
+  useEffect(() => { setZoomStep(0); }, [pair.vantage_id, heading]);
+
+  // After a pinch, read the zoom back so the arrows and pins keep their size.
+  const onRegionChangeComplete = () => {
+    mapRef.current?.getCamera().then(c => {
+      if (c?.zoom == null) return;
+      setViewZoom(c.zoom);
+      // Keep the buttons' starting point in step with a pinch.
+      if (Math.abs(c.zoom - (frame.zoom + zoomStepRef.current)) > 0.05) setZoomStep(c.zoom - frame.zoom);
+    }).catch(() => {});
+  };
+  // Functional update, so quick repeated taps add up before the map settles.
+  const zoomBy = (d: number) => {
+    setZoomStep(prev => Math.min(20, Math.max(3, frame.zoom + prev + d)) - frame.zoom);
+  };
 
   // Custom marker views need to draw once before they can stop tracking.
   useEffect(() => {
@@ -65,7 +89,9 @@ export default function SunMapPanel({ pair, light, moon, riseAz, setAz, height }
     return () => clearTimeout(t);
   }, [pair.vantage_id, heading]);
 
-  const px = frame.mpp;                       // metres per screen point
+  // Metres per screen point at the zoom actually on screen.
+  const shownZoom = viewZoom ?? targetZoom;
+  const px = (156543.03392 * Math.cos(frame.mid.lat * Math.PI / 180)) / Math.pow(2, shownZoom);
   const longRay = Math.max(pair.dist_m * 3, px * 700);
   const sunUp = light.sun.geo >= SUN_UP_GEO;
   const moonUp = moon.geo >= SUN_UP_GEO;
@@ -114,8 +140,9 @@ export default function SunMapPanel({ pair, light, moon, riseAz, setAz, height }
         style={StyleSheet.absoluteFill}
         mapType="satellite"
         initialCamera={camera}
+        onRegionChangeComplete={onRegionChangeComplete}
         scrollEnabled={false}
-        zoomEnabled={false}
+        zoomEnabled
         rotateEnabled={false}
         pitchEnabled={false}
         toolbarEnabled={false}
@@ -175,6 +202,16 @@ export default function SunMapPanel({ pair, light, moon, riseAz, setAz, height }
         </View>
         <Text style={[styles.modeText, !myView && { color: '#ffffff' }]}>{myView ? 'MY VIEW' : 'NORTH UP'}</Text>
       </TouchableOpacity>
+
+      <View style={styles.zoomBox}>
+        <TouchableOpacity style={styles.zoomBtn} onPress={() => zoomBy(1)} accessibilityLabel="Zoom in" hitSlop={4}>
+          <Text style={styles.zoomText}>+</Text>
+        </TouchableOpacity>
+        <View style={styles.zoomSep} />
+        <TouchableOpacity style={styles.zoomBtn} onPress={() => zoomBy(-1)} accessibilityLabel="Zoom out" hitSlop={4}>
+          <Text style={styles.zoomText}>−</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -201,5 +238,12 @@ const styles = StyleSheet.create({
     borderLeftWidth: 5, borderRightWidth: 5, borderBottomWidth: 12,
     borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#ffffff',
   },
+  zoomBox: {
+    position: 'absolute', right: 13, top: 78, borderRadius: 8, overflow: 'hidden',
+    backgroundColor: 'rgba(0,0,0,0.85)', borderWidth: 1, borderColor: '#444444',
+  },
+  zoomBtn: { width: 34, height: 32, alignItems: 'center', justifyContent: 'center' },
+  zoomText: { color: '#ffffff', fontSize: 18, fontWeight: '600', lineHeight: 20 },
+  zoomSep: { height: 1, backgroundColor: '#444444' },
   modeText: { marginTop: 3, fontSize: 8, fontWeight: '700', letterSpacing: 0.8, color: '#aaaaaa' },
 });

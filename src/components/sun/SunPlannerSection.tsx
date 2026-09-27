@@ -151,6 +151,15 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
 
       <TimeScrubber minute={minute} onChange={setMinute} phases={events.phases} />
 
+      {stop.pairs.length === 1 && (
+        <View style={styles.onePair}>
+          <Text style={styles.onePairText} numberOfLines={2}>
+            <Text style={styles.onePairStrong}>{pair.code ? `${pair.code} ` : ''}{shortName(pair.vantage_name)}</Text>
+            <Text> → </Text>
+            <Text style={styles.onePairStrong}>{shortName(pair.subject_name)}</Text>
+          </Text>
+        </View>
+      )}
       {stop.pairs.length > 1 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
           {stop.pairs.map((p, i) => {
@@ -269,6 +278,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff', borderWidth: 2, borderColor: '#000000',
   },
   chips: { gap: 6 },
+  onePair: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, backgroundColor: '#111111', paddingHorizontal: 10, paddingVertical: 8 },
+  onePairText: { fontSize: 12, color: '#888888' },
+  onePairStrong: { color: '#ffffff', fontWeight: '600' },
   editLink: { alignSelf: 'flex-end', paddingVertical: 2 },
   editLinkText: { fontSize: 12, color: '#888888', textDecorationLine: 'underline' },
   addBtn: {
