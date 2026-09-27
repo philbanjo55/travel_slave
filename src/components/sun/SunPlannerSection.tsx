@@ -3,7 +3,8 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, PanResponder, LayoutChangeEvent,
 } from 'react-native';
 import { colors, spacing, typography } from '../../theme';
-import { SunStop, SUN_PLANNER_ENABLED, useSunStop } from '../../services/sunPlan';
+import { SunStop, SUN_PLANNER_ENABLED, useSunStopState } from '../../services/sunPlan';
+import SunPairEditor from './SunPairEditor';
 import {
   dayEvents, dayStartMs, fmtMinute, lightAt, moonPosition, parseTimeLabel,
 } from '../../utils/sunEngine';
@@ -11,11 +12,12 @@ import SunMapPanel from './SunMapPanel';
 import SunHorizonPanel from './SunHorizonPanel';
 import { LABELS, PHASE_COLORS, compassPoint, shortName } from './sunStyle';
 
-// Sun & Moon for one stop, under Weather. Hidden entirely when the stop has
-// no vantage -> subject pairs, when the planner is switched off, or if
-// anything in it throws: the rest of the stop screen is never affected.
+// Sun & Moon for one stop, under Weather. A stop with no vantage -> subject
+// pairs shows only a small "add" button. Hidden entirely when the planner is
+// switched off, or if anything in it throws: the rest of the stop screen is
+// never affected.
 
-type Props = { tripId: string | null | undefined; stopId: string; timeLabel?: string | null };
+type Props = { tripId: string | null | undefined; stopId: string; timeLabel?: string | null; stopName?: string | null };
 
 export default function SunPlannerSection(props: Props) {
   if (!SUN_PLANNER_ENABLED) return null;
@@ -33,15 +35,35 @@ class SectionGuard extends React.Component<{ children: React.ReactNode }, { fail
   render() { return this.state.failed ? null : this.props.children; }
 }
 
-function SunPlannerInner({ tripId, stopId, timeLabel }: Props) {
-  const stop = useSunStop(tripId, stopId);
-  if (!stop) return null;
-  return <Planner stop={stop} timeLabel={timeLabel} />;
+function SunPlannerInner({ tripId, stopId, timeLabel, stopName }: Props) {
+  const { stop, ready } = useSunStopState(tripId, stopId);
+  const [editing, setEditing] = useState(false);
+  if (!tripId) return null;
+  const editor = (
+    <SunPairEditor visible={editing} onClose={() => setEditing(false)} tripId={tripId} stopId={stopId} stopName={stopName} />
+  );
+  if (!stop) {
+    if (!ready) return null;
+    return (
+      <>
+        <TouchableOpacity style={styles.addBtn} onPress={() => setEditing(true)} accessibilityRole="button">
+          <Text style={styles.addBtnText}>＋ Add Sun &amp; Moon vantage</Text>
+        </TouchableOpacity>
+        {editor}
+      </>
+    );
+  }
+  return (
+    <>
+      <Planner stop={stop} timeLabel={timeLabel} onEdit={() => setEditing(true)} />
+      {editor}
+    </>
+  );
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function Planner({ stop, timeLabel }: { stop: SunStop; timeLabel?: string | null }) {
+function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: string | null; onEdit: () => void }) {
   const stopMinute = parseTimeLabel(timeLabel);
   const day0 = dayStartMs(stop.date, stop.utc_offset_min);
   const [pairIdx, setPairIdx] = useState(0);
@@ -147,6 +169,9 @@ function Planner({ stop, timeLabel }: { stop: SunStop; timeLabel?: string | null
           })}
         </ScrollView>
       )}
+      <TouchableOpacity onPress={onEdit} style={styles.editLink} accessibilityRole="button" hitSlop={8}>
+        <Text style={styles.editLinkText}>Edit vantages</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -244,6 +269,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff', borderWidth: 2, borderColor: '#000000',
   },
   chips: { gap: 6 },
+  editLink: { alignSelf: 'flex-end', paddingVertical: 2 },
+  editLinkText: { fontSize: 12, color: '#888888', textDecorationLine: 'underline' },
+  addBtn: {
+    marginHorizontal: spacing.xl, marginBottom: spacing.lg, paddingVertical: 10, alignItems: 'center',
+    borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed', borderRadius: 8,
+  },
+  addBtnText: { fontSize: 12, fontWeight: '500', color: '#888888' },
   pairChip: {
     minHeight: 40, minWidth: 76, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
     borderWidth: 1, borderColor: colors.border, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center',

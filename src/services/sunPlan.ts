@@ -72,7 +72,11 @@ async function fetchPlan(tripId: string): Promise<SunPlan | null> {
 // Refreshes from the network at most every 10 minutes per trip. Never throws.
 export function refreshSunPlan(tripId: string, force = false): Promise<SunPlan | null> {
   if (!SUN_PLANNER_ENABLED) return Promise.resolve(null);
-  if (inflight[tripId]) return inflight[tripId]!;
+  if (inflight[tripId]) {
+    // A forced refresh (after an edit) must not reuse a download that
+    // started before the edit: queue a fresh one behind it.
+    return force ? inflight[tripId]!.then(() => refreshSunPlan(tripId, true)) : inflight[tripId]!;
+  }
   if (!force && Date.now() - (lastTried[tripId] ?? 0) < REFRESH_EVERY_MS) {
     return Promise.resolve(memory[tripId] ?? null);
   }
@@ -97,14 +101,16 @@ export function refreshSunPlan(tripId: string, force = false): Promise<SunPlan |
 }
 
 // The pairs for one stop: from memory, else the saved file, then refreshed in
-// the background. Returns null until there is something to show.
-export function useSunStop(tripId: string | null | undefined, stopId: string): SunStop | null {
+// the background. `ready` turns true once the saved copy has been checked, so
+// callers can tell "no pairs" from "not loaded yet".
+export function useSunStopState(tripId: string | null | undefined, stopId: string): { stop: SunStop | null; ready: boolean } {
   const [plan, setPlan] = useState<SunPlan | null>(tripId ? memory[tripId] ?? null : null);
+  const [ready, setReady] = useState<boolean>(!!(tripId && memory[tripId]));
 
   useEffect(() => {
     if (!SUN_PLANNER_ENABLED || !tripId) return;
     let alive = true;
-    const onUpdate = (id: string) => { if (alive && id === tripId && memory[id]) setPlan(memory[id]); };
+    const onUpdate = (id: string) => { if (alive && id === tripId && memory[id]) { setPlan(memory[id]); setReady(true); } };
     listeners.add(onUpdate);
     (async () => {
       if (!memory[tripId]) {
@@ -112,12 +118,76 @@ export function useSunStop(tripId: string | null | undefined, stopId: string): S
         if (cached && !memory[tripId]) memory[tripId] = cached;
         if (alive && memory[tripId]) setPlan(memory[tripId]);
       }
+      if (alive) setReady(true);
       refreshSunPlan(tripId);
     })();
     return () => { alive = false; listeners.delete(onUpdate); };
   }, [tripId]);
 
   const s = plan?.stops?.[stopId];
-  if (!s || !Array.isArray(s.pairs) || s.pairs.length === 0 || !s.date) return null;
-  return s;
+  const stop = !s || !Array.isArray(s.pairs) || s.pairs.length === 0 || !s.date ? null : s;
+  return { stop, ready };
+}
+
+export function useSunStop(tripId: string | null | undefined, stopId: string): SunStop | null {
+  return useSunStopState(tripId, stopId).stop;
+}
+
+// ── Editing a stop's pairs (needs a connection) ─────────────────────────────
+
+export type PairCheck = {
+  vantage_id: string;
+  code: string | null;
+  vantage_name: string;
+  v_lat: number; v_lng: number; v_ground_m: number | null; v_status: string | null;
+  subject_id: string;
+  subject_name: string;
+  s_lat: number; s_lng: number; s_height_m: number | null; s_ground_m: number | null; s_status: string | null;
+  bearing: number | null;
+  dist_m: number;
+  warnings: string[];
+};
+
+export type PairInput = {
+  vantageId?: string | null;   // set to edit a pair already on the stop
+  code?: string | null;
+  vantageName: string;
+  vLat: number; vLng: number;
+  subjectName: string;
+  sLat: number; sLng: number;
+  sHeight?: number | null;
+};
+
+function rpcError(error: any): Error {
+  const msg = String(error?.message ?? error ?? 'Something went wrong');
+  if (/network|fetch|timed out/i.test(msg)) return new Error('No connection. Try again when you have signal.');
+  return new Error(msg);
+}
+
+export async function fetchStopPairs(stopId: string): Promise<PairCheck[]> {
+  const { data, error } = await supabase.rpc('sun_stop_pairs', { p_stop_id: stopId });
+  if (error) throw rpcError(error);
+  return Array.isArray(data) ? (data as PairCheck[]) : [];
+}
+
+export async function saveSunPair(tripId: string, stopId: string, p: PairInput): Promise<PairCheck> {
+  const { data, error } = await supabase.rpc('sun_pair_save', {
+    p_stop_id: stopId,
+    p_vantage_id: p.vantageId ?? null,
+    p_code: p.code ?? null,
+    p_vantage_name: p.vantageName,
+    p_v_lat: p.vLat, p_v_lng: p.vLng,
+    p_subject_name: p.subjectName,
+    p_s_lat: p.sLat, p_s_lng: p.sLng,
+    p_s_height: p.sHeight ?? null,
+  });
+  if (error) throw rpcError(error);
+  refreshSunPlan(tripId, true);   // the planner picks up the change
+  return data as PairCheck;
+}
+
+export async function removeSunPair(tripId: string, stopId: string, vantageId: string): Promise<void> {
+  const { error } = await supabase.rpc('sun_pair_remove', { p_stop_id: stopId, p_vantage_id: vantageId });
+  if (error) throw rpcError(error);
+  refreshSunPlan(tripId, true);
 }
