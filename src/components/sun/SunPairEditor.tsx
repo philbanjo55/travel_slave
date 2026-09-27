@@ -10,6 +10,7 @@ import { colors, spacing } from '../../theme';
 import { PairCheck, fetchStopPairs, removeSunPair, saveSunPair, setVantagePhoto } from '../../services/sunPlan';
 import { usePhotoUpload } from '../../hooks/usePhotoUpload';
 import VantagePhoto from './VantagePhoto';
+import PairMapPicker, { PinKind } from './PairMapPicker';
 import { Coords, formatCoords, parseCoords } from '../../utils/coords';
 import { compassPoint, shortName } from './sunStyle';
 
@@ -25,6 +26,7 @@ type Props = {
   stopName?: string | null;
   stopPhotos?: any[];              // photos to choose a vantage's reference photo from
   editVantageId?: string | null;   // open straight on this vantage's form
+  stopCoords?: Coords | null;      // the stop's main location, where the map opens
 };
 
 type Form = {
@@ -47,7 +49,7 @@ const EMPTY: Form = {
   photoId: null, photoUrl: null, savedPhotoId: null,
 };
 
-export default function SunPairEditor({ visible, onClose, tripId, stopId, stopName, stopPhotos, editVantageId }: Props) {
+export default function SunPairEditor({ visible, onClose, tripId, stopId, stopName, stopPhotos, editVantageId, stopCoords }: Props) {
   const [pairs, setPairs] = useState<PairCheck[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [form, setForm] = useState<Form | null>(null);
@@ -56,6 +58,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   const [saved, setSaved] = useState<PairCheck | null>(null);
   const [locating, setLocating] = useState(false);
   const [choosing, setChoosing] = useState(false);
+  const [mapping, setMapping] = useState<PinKind | null>(null);
   // Grid cells get an explicit size from the grid's measured width: a
   // percentage width with aspectRatio collapses to 0 height in a wrapping row.
   const [gridW, setGridW] = useState(0);
@@ -74,7 +77,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   };
 
   useEffect(() => {
-    if (visible) { setForm(null); setSaved(null); setSaveError(null); setChoosing(false); load(editVantageId); }
+    if (visible) { setForm(null); setSaved(null); setSaveError(null); setChoosing(false); setMapping(null); load(editVantageId); }
   }, [visible, stopId]);
 
   const vParsed = form ? parseCoords(form.vCoords) : null;
@@ -164,18 +167,31 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={form ? () => setForm(null) : onClose}>
+    <Modal visible={visible} animationType="slide" onRequestClose={mapping ? () => setMapping(null) : form ? () => setForm(null) : onClose}>
       <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.title}>{form ? (form.vantageId ? 'Edit vantage' : 'Add a vantage') : 'Sun & Moon vantages'}</Text>
+            <Text style={styles.title}>{mapping ? 'Place on map' : form ? (form.vantageId ? 'Edit vantage' : 'Add a vantage') : 'Sun & Moon vantages'}</Text>
             {!!stopName && <Text style={styles.subtitle} numberOfLines={1}>{stopName}</Text>}
           </View>
-          <TouchableOpacity onPress={form ? () => setForm(null) : onClose} hitSlop={12} accessibilityLabel={form ? 'Back' : 'Close'}>
-            <Ionicons name={form ? 'arrow-back' : 'close'} size={24} color={colors.textPrimary} />
+          <TouchableOpacity onPress={mapping ? () => setMapping(null) : form ? () => setForm(null) : onClose} hitSlop={12} accessibilityLabel={form ? 'Back' : 'Close'}>
+            <Ionicons name={form || mapping ? 'arrow-back' : 'close'} size={24} color={colors.textPrimary} />
           </TouchableOpacity>
         </View>
 
+        {mapping && form ? (
+          <PairMapPicker
+            v={vParsed} s={sParsed} start={mapping}
+            centre={stopCoords ?? (pairs?.[0] ? { lat: pairs[0].v_lat, lng: pairs[0].v_lng } : null)}
+            others={(pairs ?? []).filter(p => p.vantage_id !== form.vantageId)
+              .map(p => ({ v: { lat: p.v_lat, lng: p.v_lng }, s: { lat: p.s_lat, lng: p.s_lng } }))}
+            onCancel={() => setMapping(null)}
+            onDone={(v, s2) => {
+              set({ ...(v ? { vCoords: formatCoords(v) } : {}), ...(s2 ? { sCoords: formatCoords(s2) } : {}) });
+              setMapping(null);
+            }}
+          />
+        ) : (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
             {!form && (
@@ -235,10 +251,16 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                 <Field label="Coordinates" value={form.vCoords} onChange={t => set({ vCoords: t })}
                   placeholder="Paste from Google Maps" keyboardType="numbers-and-punctuation" />
                 <CoordStatus text={form.vCoords} parsed={vParsed} />
-                <TouchableOpacity style={styles.secondary} onPress={useMyLocation} disabled={locating}>
-                  {locating ? <ActivityIndicator size="small" color={colors.textPrimary} /> : <Ionicons name="locate" size={16} color={colors.textPrimary} />}
-                  <Text style={styles.secondaryText}>Use my location</Text>
-                </TouchableOpacity>
+                <View style={styles.btnRow}>
+                  <TouchableOpacity style={[styles.secondary, { flex: 1 }]} onPress={() => setMapping('v')}>
+                    <Ionicons name="map-outline" size={16} color={colors.textPrimary} />
+                    <Text style={styles.secondaryText}>Set on map</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.secondary, { flex: 1 }]} onPress={useMyLocation} disabled={locating}>
+                    {locating ? <ActivityIndicator size="small" color={colors.textPrimary} /> : <Ionicons name="locate" size={16} color={colors.textPrimary} />}
+                    <Text style={styles.secondaryText}>Use my location</Text>
+                  </TouchableOpacity>
+                </View>
 
                 <Text style={[styles.section, { marginTop: 22 }]}>WHAT YOU'RE PHOTOGRAPHING</Text>
                 {subjects.length > 0 && (
@@ -255,6 +277,10 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                 <Field label="Coordinates" value={form.sCoords} onChange={t => set({ sCoords: t })}
                   placeholder="Paste from Google Maps" keyboardType="numbers-and-punctuation" />
                 <CoordStatus text={form.sCoords} parsed={sParsed} />
+                <TouchableOpacity style={styles.secondary} onPress={() => setMapping('s')}>
+                  <Ionicons name="map-outline" size={16} color={colors.textPrimary} />
+                  <Text style={styles.secondaryText}>Set on map</Text>
+                </TouchableOpacity>
                 <Field label="Height in metres (optional)" value={form.sHeight} onChange={t => set({ sHeight: t })}
                   placeholder="Only for thin sea stacks or towers" keyboardType="decimal-pad" />
                 {!heightOk && <Text style={styles.bad}>Height must be a number from 0 to 3000.</Text>}
@@ -313,6 +339,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
             )}
           </ScrollView>
         </KeyboardAvoidingView>
+        )}
       </SafeAreaView>
     </Modal>
   );
@@ -415,6 +442,7 @@ const styles = StyleSheet.create({
     borderRadius: 10, minHeight: 40, marginTop: 8,
   },
   secondaryText: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
+  btnRow: { flexDirection: 'row', gap: 8 },
   tip: { color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 8 },
   section: { color: colors.textTertiary, fontSize: 11, fontWeight: '700', letterSpacing: 1.4 },
   chips: { gap: 6, paddingVertical: 4 },

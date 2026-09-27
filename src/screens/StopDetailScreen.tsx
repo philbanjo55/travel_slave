@@ -226,7 +226,10 @@ export default function StopDetailScreen() {
         <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
 
         {/* Sun & Moon — or a small "add vantage" button when the stop has none */}
-        <SunPlannerSection tripId={currentTripData?.trip?.id} stopId={stop.id} timeLabel={stop.time_label} stopName={stop.name} stopPhotos={[...refPhotos, ...fieldPhotos]} />
+        <SunPlannerSection tripId={currentTripData?.trip?.id} stopId={stop.id} timeLabel={stop.time_label} stopName={stop.name} stopPhotos={[...refPhotos, ...fieldPhotos]}
+          stopCoords={stop.lat != null && stop.lng != null ? { lat: stop.lat, lng: stop.lng }
+            : (() => { const o = stops.find((x: any) => x.lat != null && x.lng != null); return o ? { lat: o.lat, lng: o.lng } : null; })()}
+        />
 
         {/* Info */}
         {stop.info && (

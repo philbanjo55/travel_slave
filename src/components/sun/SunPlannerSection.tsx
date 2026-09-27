@@ -24,6 +24,7 @@ import { LABELS, PHASE_COLORS, compassPoint, shortName } from './sunStyle';
 type Props = {
   tripId: string | null | undefined; stopId: string; timeLabel?: string | null; stopName?: string | null;
   stopPhotos?: any[];   // the stop's photos, to pick vantage reference photos from
+  stopCoords?: { lat: number; lng: number } | null;   // the stop's main location, where the vantage map opens
 };
 
 export default function SunPlannerSection(props: Props) {
@@ -42,7 +43,7 @@ class SectionGuard extends React.Component<{ children: React.ReactNode }, { fail
   render() { return this.state.failed ? null : this.props.children; }
 }
 
-function SunPlannerInner({ tripId, stopId, timeLabel, stopName, stopPhotos }: Props) {
+function SunPlannerInner({ tripId, stopId, timeLabel, stopName, stopPhotos, stopCoords }: Props) {
   const { stop, ready } = useSunStopState(tripId, stopId);
   const [editing, setEditing] = useState(false);
   const [editVantageId, setEditVantageId] = useState<string | null>(null);
@@ -51,7 +52,7 @@ function SunPlannerInner({ tripId, stopId, timeLabel, stopName, stopPhotos }: Pr
   const editor = (
     <SunPairEditor
       visible={editing} onClose={() => setEditing(false)} tripId={tripId} stopId={stopId} stopName={stopName}
-      stopPhotos={stopPhotos} editVantageId={editVantageId}
+      stopPhotos={stopPhotos} editVantageId={editVantageId} stopCoords={stopCoords}
     />
   );
   if (!stop) {
