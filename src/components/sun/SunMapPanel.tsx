@@ -4,7 +4,7 @@ import MapView, { Circle, Marker, Polyline, PROVIDER_GOOGLE } from 'react-native
 import {
   Pair, LatLng, Light, MoonPos, SUN_UP_GEO, destination, relAngle,
 } from '../../utils/sunEngine';
-import { SUN } from './sunStyle';
+import { SUN, shotName } from './sunStyle';
 
 // The planner map: you, the subject, the line between you, and where the sun
 // and moon are. "My view" (default) turns the map so the subject is straight
@@ -169,7 +169,7 @@ export default function SunMapPanel({ pair, light, moon, riseAz, setAz, height }
           tracksViewChanges={labelsTrack}
           tappable={false}
         >
-          <Text style={styles.pinLabel}>{pair.subject_name.replace(/\s*\(.*$/, '')}</Text>
+          <Text style={styles.pinLabel}>{shotName(pair)}</Text>
         </Marker>
         <Marker
           key={`v-${pair.vantage_id}-${heading}`}

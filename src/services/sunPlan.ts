@@ -155,6 +155,7 @@ export type PairCheck = {
   vantage_id: string;
   code: string | null;
   vantage_name: string;
+  shot_name: string | null;
   v_lat: number; v_lng: number; v_ground_m: number | null; v_status: string | null;
   subject_id: string;
   subject_name: string;
@@ -166,14 +167,13 @@ export type PairCheck = {
   warnings: string[];
 };
 
-export type PairInput = {
-  vantageId?: string | null;   // set to edit a pair already on the stop
-  code?: string | null;
-  vantageName: string;
+export type ShotInput = {
+  vantageId?: string | null;   // set to edit a shot already on the stop
+  name: string;                // the shot's name
   vLat: number; vLng: number;
-  subjectName: string;
   sLat: number; sLng: number;
   sHeight?: number | null;
+  subjectId?: string | null;   // share this subject point (add only)
 };
 
 function rpcError(error: any): Error {
@@ -188,16 +188,16 @@ export async function fetchStopPairs(stopId: string): Promise<PairCheck[]> {
   return Array.isArray(data) ? (data as PairCheck[]) : [];
 }
 
-export async function saveSunPair(tripId: string, stopId: string, p: PairInput): Promise<PairCheck> {
-  const { data, error } = await supabase.rpc('sun_pair_save', {
+// Adds or edits a shot. The label (T1, T2, ...) is assigned by the database.
+export async function saveSunShot(tripId: string, stopId: string, p: ShotInput): Promise<PairCheck> {
+  const { data, error } = await supabase.rpc('sun_shot_save', {
     p_stop_id: stopId,
     p_vantage_id: p.vantageId ?? null,
-    p_code: p.code ?? null,
-    p_vantage_name: p.vantageName,
+    p_name: p.name,
     p_v_lat: p.vLat, p_v_lng: p.vLng,
-    p_subject_name: p.subjectName,
     p_s_lat: p.sLat, p_s_lng: p.sLng,
     p_s_height: p.sHeight ?? null,
+    p_subject_id: p.subjectId ?? null,
   });
   if (error) throw rpcError(error);
   refreshSunPlan(tripId, true);   // the planner picks up the change

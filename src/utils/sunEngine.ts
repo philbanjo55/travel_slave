@@ -152,6 +152,7 @@ export type Pair = {
   dist_m: number;
   v_sky: number[] | null;
   s_sky: number[] | null;
+  shot_name?: string | null;   // the shot's name (falls back to the subject's)
   photo_id?: string | null;    // the vantage's reference photo (a stop photo)
   photo_url?: string | null;
 };

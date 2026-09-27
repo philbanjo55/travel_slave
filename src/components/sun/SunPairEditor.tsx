@@ -7,12 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { colors, spacing } from '../../theme';
-import { PairCheck, fetchStopPairs, removeSunPair, saveSunPair, setVantagePhoto } from '../../services/sunPlan';
+import { PairCheck, fetchStopPairs, removeSunPair, saveSunShot, setVantagePhoto } from '../../services/sunPlan';
 import { usePhotoUpload } from '../../hooks/usePhotoUpload';
 import VantagePhoto from './VantagePhoto';
 import PairMapPicker, { PinKind } from './PairMapPicker';
 import { Coords, formatCoords, parseCoords } from '../../utils/coords';
-import { compassPoint, shortName } from './sunStyle';
+import { compassPoint, shotTitle } from './sunStyle';
 
 // Add, edit and remove the vantage -> subject pairs on one stop. Writes go
 // straight to the database, which builds the terrain for new coordinates by
@@ -32,10 +32,11 @@ type Props = {
 type Form = {
   vantageId: string | null;
   code: string;
-  vantageName: string;
+  name: string;                  // the shot's name
   vCoords: string;
-  subjectName: string;
   sCoords: string;
+  subjectId: string | null;      // "Same subject as": share that subject point
+  subjectAt: string;             // its coordinates as chosen, to tell if they were changed
   sHeight: string;
   photoId: string | null;
   photoUrl: string | null;
@@ -45,7 +46,7 @@ type Form = {
 const GRID_GAP = 6;
 
 const EMPTY: Form = {
-  vantageId: null, code: '', vantageName: '', vCoords: '', subjectName: '', sCoords: '', sHeight: '',
+  vantageId: null, code: '', name: '', vCoords: '', sCoords: '', subjectId: null, subjectAt: '', sHeight: '',
   photoId: null, photoUrl: null, savedPhotoId: null,
 };
 
@@ -85,12 +86,12 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   const heightText = form?.sHeight.trim() ?? '';
   const height = heightText === '' ? null : Number(heightText.replace(',', '.'));
   const heightOk = height === null || (isFinite(height) && height >= 0 && height <= 3000);
-  const canSave = !!form && !!form.vantageName.trim() && !!form.subjectName.trim() && !!vParsed && !!sParsed && heightOk && !saving;
+  const canSave = !!form && !!form.name.trim() && !!vParsed && !!sParsed && heightOk && !saving;
 
   // Spots and subjects already on this stop, to reuse without retyping.
   const spots = useMemo(() => {
     const seen = new Map<string, PairCheck>();
-    (pairs ?? []).forEach(p => { const k = `${p.vantage_name}|${p.v_lat}|${p.v_lng}`; if (!seen.has(k)) seen.set(k, p); });
+    (pairs ?? []).forEach(p => { const k = `${p.v_lat}|${p.v_lng}`; if (!seen.has(k)) seen.set(k, p); });
     return [...seen.values()];
   }, [pairs]);
   const subjects = useMemo(() => {
@@ -108,9 +109,9 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   const startEdit = (p: PairCheck) => {
     setSaved(null); setSaveError(null); setChoosing(false);
     setForm({
-      vantageId: p.vantage_id, code: p.code || nextCode(), vantageName: p.vantage_name,
+      vantageId: p.vantage_id, code: p.code || nextCode(), name: p.shot_name || p.subject_name,
       vCoords: formatCoords({ lat: p.v_lat, lng: p.v_lng }),
-      subjectName: p.subject_name, sCoords: formatCoords({ lat: p.s_lat, lng: p.s_lng }),
+      sCoords: formatCoords({ lat: p.s_lat, lng: p.s_lng }), subjectId: null, subjectAt: '',
       sHeight: p.s_height_m != null ? String(p.s_height_m) : '',
       photoId: p.photo_id ?? null, photoUrl: p.photo_url ?? null, savedPhotoId: p.photo_id ?? null,
     });
@@ -143,10 +144,12 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
     if (!form || !vParsed || !sParsed) return;
     setSaving(true); setSaveError(null);
     try {
-      let r = await saveSunPair(tripId, stopId, {
-        vantageId: form.vantageId, code: form.code.trim() || nextCode(),
-        vantageName: form.vantageName.trim(), vLat: vParsed.lat, vLng: vParsed.lng,
-        subjectName: form.subjectName.trim(), sLat: sParsed.lat, sLng: sParsed.lng, sHeight: height,
+      // Share the chosen subject only if its point was left as it was.
+      const shareSubject = !form.vantageId && form.subjectId && form.sCoords.trim() === form.subjectAt ? form.subjectId : null;
+      let r = await saveSunShot(tripId, stopId, {
+        vantageId: form.vantageId, name: form.name.trim(),
+        vLat: vParsed.lat, vLng: vParsed.lng, sLat: sParsed.lat, sLng: sParsed.lng, sHeight: height,
+        subjectId: shareSubject,
       });
       if ((form.photoId ?? null) !== (r.photo_id ?? null)) {
         r = await setVantagePhoto(tripId, r.vantage_id, form.photoId);
@@ -160,7 +163,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   };
 
   const remove = (p: PairCheck) => {
-    Alert.alert('Remove from this stop?', `${label(p)} → ${shortName(p.subject_name)}\n\nThe pins stay saved and can be added again.`, [
+    Alert.alert('Remove from this stop?', `${label(p)}\n\nThe pins stay saved and can be added again.`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Remove', style: 'destructive', onPress: async () => {
         try { await removeSunPair(tripId, stopId, p.vantage_id); load(); }
@@ -213,7 +216,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                   <View key={p.vantage_id} style={styles.card}>
                     <View style={styles.cardHead}>
                       {p.photo_id && <VantagePhoto id={p.photo_id} url={p.photo_url} style={styles.cardThumb} />}
-                      <Text style={[styles.cardTitle, { flex: 1 }]}>{label(p)} <Text style={styles.arrow}>→</Text> {shortName(p.subject_name)}</Text>
+                      <Text style={[styles.cardTitle, { flex: 1 }]}>{label(p)}</Text>
                     </View>
                     <Checks p={p} />
                     <View style={styles.cardActions}>
@@ -238,19 +241,21 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
 
             {form && (
               <>
-                <Text style={styles.section}>WHERE YOU STAND</Text>
+                <Text style={styles.section}>SHOT</Text>
+                <Field label="Name" value={form.name} onChange={t => set({ name: t })} placeholder="e.g. spikes" />
+                <Text style={styles.hint}>Label <Text style={{ color: colors.textPrimary, fontWeight: '700' }}>{form.code}</Text> · set automatically</Text>
+
+                <Text style={[styles.section, { marginTop: 22 }]}>WHERE YOU STAND</Text>
                 {!form.vantageId && spots.length > 0 && (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">
                     {spots.map(p => (
                       <TouchableOpacity key={p.vantage_id} style={styles.chip}
-                        onPress={() => set({ vantageName: p.vantage_name, vCoords: formatCoords({ lat: p.v_lat, lng: p.v_lng }) })}>
+                        onPress={() => set({ vCoords: formatCoords({ lat: p.v_lat, lng: p.v_lng }) })}>
                         <Text style={styles.chipText}>Same spot as {label(p)}</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
                 )}
-                <Field label="Name" value={form.vantageName} onChange={t => set({ vantageName: t })} placeholder="e.g. Bøur panoramic viewpoint" />
-                <Text style={styles.hint}>Label <Text style={{ color: colors.textPrimary, fontWeight: '700' }}>{form.code}</Text> · set automatically</Text>
                 <Field label="Coordinates" value={form.vCoords} onChange={t => set({ vCoords: t })}
                   placeholder="Paste from Google Maps" keyboardType="numbers-and-punctuation" />
                 <CoordStatus text={form.vCoords} parsed={vParsed} />
@@ -266,17 +271,19 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                 </View>
 
                 <Text style={[styles.section, { marginTop: 22 }]}>WHAT YOU'RE PHOTOGRAPHING</Text>
-                {subjects.length > 0 && (
+                {!form.vantageId && subjects.length > 0 && (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">
-                    {subjects.map(p => (
-                      <TouchableOpacity key={p.subject_id} style={styles.chip}
-                        onPress={() => set({ subjectName: p.subject_name, sCoords: formatCoords({ lat: p.s_lat, lng: p.s_lng }), sHeight: p.s_height_m != null ? String(p.s_height_m) : '' })}>
-                        <Text style={styles.chipText}>{shortName(p.subject_name)}</Text>
-                      </TouchableOpacity>
-                    ))}
+                    {subjects.map(p => {
+                      const at = formatCoords({ lat: p.s_lat, lng: p.s_lng });
+                      return (
+                        <TouchableOpacity key={p.subject_id} style={styles.chip}
+                          onPress={() => set({ subjectId: p.subject_id, subjectAt: at, sCoords: at, sHeight: p.s_height_m != null ? String(p.s_height_m) : '' })}>
+                          <Text style={styles.chipText}>Same subject as {label(p)}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </ScrollView>
                 )}
-                <Field label="Name" value={form.subjectName} onChange={t => set({ subjectName: t })} placeholder="e.g. Drangarnir" />
                 <Field label="Coordinates" value={form.sCoords} onChange={t => set({ sCoords: t })}
                   placeholder="Paste from Google Maps" keyboardType="numbers-and-punctuation" />
                 <CoordStatus text={form.sCoords} parsed={sParsed} />
@@ -365,7 +372,7 @@ export function autoCode(stopName: string | null | undefined, codes: (string | n
 }
 
 function label(p: PairCheck): string {
-  return p.code ? `${p.code} ${shortName(p.vantage_name)}` : shortName(p.vantage_name);
+  return shotTitle(p);
 }
 
 function Checks({ p }: { p: PairCheck }) {
@@ -392,7 +399,7 @@ function SavedCard({ p }: { p: PairCheck }) {
     <View style={[styles.card, { borderColor: '#3f7d5a' }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Ionicons name="checkmark-circle" size={18} color="#5aaa7a" />
-        <Text style={styles.cardTitle}>Saved: {label(p)} → {shortName(p.subject_name)}</Text>
+        <Text style={styles.cardTitle}>Saved: {label(p)}</Text>
       </View>
       <Checks p={p} />
       <Text style={styles.hint}>Terrain is ready. The Sun & Moon section updates in a moment.</Text>
@@ -444,7 +451,6 @@ const styles = StyleSheet.create({
   pickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP, marginTop: 6, minHeight: 40 },
   pickCell: { borderRadius: 6, overflow: 'hidden', backgroundColor: '#1a1a1a' },
   pickCellOn: { borderWidth: 3, borderColor: '#F0B04A', borderRadius: 6 },
-  arrow: { color: colors.textSecondary },
   cardActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
   smallBtn: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
   smallBtnText: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },

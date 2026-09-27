@@ -34,3 +34,12 @@ export function compassPoint(d: number): string {
 export function shortName(name: string | null | undefined): string {
   return String(name ?? '').replace(/\s*\(.*$/, '').trim() || '—';
 }
+
+// A shot is one vantage -> subject pair. Its name (older shots fall back to
+// the subject's name) and its title with the automatic label: "T4 spikes".
+export function shotName(p: { shot_name?: string | null; subject_name?: string | null }): string {
+  return shortName(p.shot_name || p.subject_name);
+}
+export function shotTitle(p: { code?: string | null; shot_name?: string | null; subject_name?: string | null }): string {
+  return p.code ? `${p.code} ${shotName(p)}` : shotName(p);
+}

@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, LayoutChangeEvent } from 'react-native';
 import {
   Pair, Light, MoonPos, SUN_UP_GEO, fmtMinute, lightAt, moonPosition, relAngle, skylineAt,
 } from '../../utils/sunEngine';
-import { MOON, SHADED_SUN, SUN } from './sunStyle';
+import { MOON, SHADED_SUN, SUN, shotName } from './sunStyle';
 
 // The horizon as you see it facing the subject: subject straight ahead in the
 // middle, directly behind you at both edges. The subject's skyline in grey,
@@ -136,7 +136,7 @@ export default function SunHorizonPanel({ pair, day0, light, moon, height = 190 
       </View>
       <View style={styles.legend}>
         <Text style={styles.legendText}>← behind you</Text>
-        <Text style={[styles.legendText, { color: '#ffffff' }]}>▲ {pair.subject_name.replace(/\s*\(.*$/, '')}</Text>
+        <Text style={[styles.legendText, { color: '#ffffff' }]}>▲ {shotName(pair)}</Text>
         <Text style={styles.legendText}>behind you →</Text>
       </View>
     </View>

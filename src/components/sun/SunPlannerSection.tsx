@@ -14,7 +14,7 @@ import SunHorizonPanel from './SunHorizonPanel';
 import VantagePhoto from './VantagePhoto';
 import FullScreenPhotoViewer from '../FullScreenPhotoViewer';
 import type { Pair } from '../../utils/sunEngine';
-import { LABELS, PHASE_COLORS, compassPoint, shortName } from './sunStyle';
+import { LABELS, PHASE_COLORS, compassPoint, shotName, shotTitle } from './sunStyle';
 
 // Sun & Moon for one stop, under Weather. A stop with no vantage -> subject
 // pairs shows only a small "add" button. Hidden entirely when the planner is
@@ -175,9 +175,8 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
         <View style={styles.onePair}>
           <PairThumb pair={pair} size={46} onOpen={() => openPhoto(pair)} />
           <Text style={[styles.onePairText, { flex: 1 }]} numberOfLines={2}>
-            <Text style={styles.onePairStrong}>{pair.code ? `${pair.code} ` : ''}{shortName(pair.vantage_name)}</Text>
-            <Text> → </Text>
-            <Text style={styles.onePairStrong}>{shortName(pair.subject_name)}</Text>
+            {!!pair.code && <Text>{pair.code} </Text>}
+            <Text style={styles.onePairStrong}>{shotName(pair)}</Text>
           </Text>
         </View>
       )}
@@ -194,8 +193,8 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
               >
                 <PairThumb pair={p} size={34} />
                 <View>
-                  <Text style={[styles.pairCode, on && styles.pairTextOn]}>{p.code || shortName(p.vantage_name)}</Text>
-                  <Text style={[styles.pairTo, on && styles.pairTextOn]} numberOfLines={1}>{shortName(p.subject_name)}</Text>
+                  {!!p.code && <Text style={[styles.pairCode, on && styles.pairTextOn]}>{p.code}</Text>}
+                  <Text style={[styles.pairTo, on && styles.pairTextOn]} numberOfLines={1}>{shotName(p)}</Text>
                 </View>
               </TouchableOpacity>
             );
@@ -215,7 +214,7 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
 }
 
 function pairTitle(p: Pair): string {
-  return `${p.code ? `${p.code} · ` : ''}${shortName(p.vantage_name)} → ${shortName(p.subject_name)}`;
+  return shotTitle(p);
 }
 
 // The vantage's reference photo. With onOpen, a tap opens it full screen; on
@@ -242,7 +241,7 @@ function PhotoPanel({ pair, onOpen, onAdd }: { pair: Pair; onOpen: () => void; o
   if (!pair.photo_id) {
     return (
       <View style={[styles.photoPanel, styles.photoEmpty]}>
-        <Text style={styles.photoEmptyText}>No reference photo for {pair.code || shortName(pair.vantage_name)} yet.</Text>
+        <Text style={styles.photoEmptyText}>No reference photo for {shotTitle(pair)} yet.</Text>
         <TouchableOpacity onPress={onAdd} style={styles.photoAddBtn} accessibilityRole="button">
           <Text style={styles.photoAddText}>＋ Add a reference photo</Text>
         </TouchableOpacity>
