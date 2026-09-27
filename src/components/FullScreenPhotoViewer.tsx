@@ -18,9 +18,11 @@ const { width, height } = Dimensions.get('window');
 
 // Full-screen, pinch-to-zoom photo viewer. Tap (or the X) to close, pinch to
 // zoom, drag to pan while zoomed, double-tap to toggle 1x/2x. Given a list of
-// photos, swipe left/right (when not zoomed) to page through them. Built only
-// on react-native-gesture-handler + reanimated (already in the native build),
-// so it ships as a JS OTA — no new APK.
+// photos, swipe left/right (when not zoomed) to page through them: the photos
+// sit side by side on one strip and the neighbours are loaded ahead, so the
+// next one slides in with the finger instead of loading after the swipe.
+// Built only on react-native-gesture-handler + reanimated (already in the
+// native build), so it ships as a JS OTA — no new APK.
 export default function FullScreenPhotoViewer({
   photo,
   photos,
@@ -36,7 +38,6 @@ export default function FullScreenPhotoViewer({
   onDelete?: (photo: any) => void;
   onMakeFirst?: (photo: any) => void;
 }) {
-  const [uri, setUri] = useState<string>('');
   const list = photos && photos.length ? photos : photo ? [photo] : [];
   // Tracked by id, not position, so reordering the list (Set as first)
   // keeps showing the same photo.
@@ -44,53 +45,60 @@ export default function FullScreenPhotoViewer({
   const found = list.findIndex((p: any) => p.id === currentId);
   const index = found >= 0 ? found : 0;
   const current = list[index] ?? null;
+  const [uris, setUris] = useState<Record<string, string>>({});
 
   // Open on the photo that was tapped.
   useEffect(() => {
     if (visible) setCurrentId(photo?.id ?? list[0]?.id ?? null);
   }, [visible, photo?.id]);
 
-  const step = (dir: number) => {
-    const next = list[Math.max(0, Math.min(list.length - 1, index + dir))];
-    if (next) setCurrentId(next.id);
-  };
+  // Resolve every photo's (cached or remote) URI up front, so the neighbours
+  // are ready before they slide in.
+  const listKey = list.map((p: any) => p.id).join(',');
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    list.forEach((p: any) => {
+      if (uris[p.id]) return;
+      getPhotoUri(p).then((r) => {
+        if (!cancelled && r) setUris((u) => (u[p.id] ? u : { ...u, [p.id]: r }));
+      }).catch(() => {});
+    });
+    return () => { cancelled = true; };
+  }, [visible, listKey]);
 
+  // The strip: photo i sits at x = i * width, and the strip is moved to
+  // -index * width. A swipe animates the strip to the neighbour and only then
+  // updates the index, which leaves the strip exactly where it already is.
+  const stripX = useSharedValue(0);
+  const dragStart = useSharedValue(0);
+  const indexSV = useSharedValue(0);
+  const countSV = useSharedValue(1);
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
-  const tx = useSharedValue(0);
-  const ty = useSharedValue(0);
-  const savedTx = useSharedValue(0);
-  const savedTy = useSharedValue(0);
+  const zx = useSharedValue(0);
+  const zy = useSharedValue(0);
+  const savedZx = useSharedValue(0);
+  const savedZy = useSharedValue(0);
 
-  // Resolve the (cached or remote) URI the same way PhotoItem does.
   useEffect(() => {
-    let cancelled = false;
-    setUri('');
-    if (current) {
-      getPhotoUri(current)
-        .then((r) => {
-          if (!cancelled && r) setUri(r);
-        })
-        .catch(() => {});
-    } else {
-      setUri('');
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [current?.id]);
+    indexSV.value = index;
+    countSV.value = list.length;
+    stripX.value = -index * width;
+  }, [index, list.length]);
 
-  // Reset zoom/pan whenever we open or switch photos.
+  // Reset zoom whenever we open or switch photos.
   useEffect(() => {
     if (visible) {
-      scale.value = 1;
-      savedScale.value = 1;
-      tx.value = 0;
-      ty.value = 0;
-      savedTx.value = 0;
-      savedTy.value = 0;
+      scale.value = 1; savedScale.value = 1;
+      zx.value = 0; zy.value = 0; savedZx.value = 0; savedZy.value = 0;
     }
   }, [visible, current?.id]);
+
+  const goTo = (i: number) => {
+    const p = list[i];
+    if (p) setCurrentId(p.id);
+  };
 
   const pinch = Gesture.Pinch()
     .onUpdate((e) => {
@@ -99,36 +107,42 @@ export default function FullScreenPhotoViewer({
     .onEnd(() => {
       savedScale.value = scale.value;
       if (scale.value <= 1) {
-        tx.value = withTiming(0);
-        ty.value = withTiming(0);
-        savedTx.value = 0;
-        savedTy.value = 0;
+        zx.value = withTiming(0); zy.value = withTiming(0);
+        savedZx.value = 0; savedZy.value = 0;
       }
     });
 
   const pan = Gesture.Pan()
     .averageTouches(true)
     .minDistance(8)
+    .onStart(() => {
+      dragStart.value = stripX.value;
+    })
     .onUpdate((e) => {
       if (savedScale.value > 1) {
-        tx.value = savedTx.value + e.translationX;
-        ty.value = savedTy.value + e.translationY;
-      } else if (e.numberOfPointers === 1) {
-        // Not zoomed: the photo follows the finger sideways, to swipe.
-        tx.value = e.translationX;
+        zx.value = savedZx.value + e.translationX;
+        zy.value = savedZy.value + e.translationY;
+        return;
       }
+      if (e.numberOfPointers !== 1) return;
+      // Resist at the ends, where there is no photo to slide in.
+      const atStart = indexSV.value === 0 && e.translationX > 0;
+      const atEnd = indexSV.value === countSV.value - 1 && e.translationX < 0;
+      stripX.value = dragStart.value + e.translationX * (atStart || atEnd ? 0.3 : 1);
     })
     .onEnd((e) => {
       if (savedScale.value > 1) {
-        savedTx.value = tx.value;
-        savedTy.value = ty.value;
+        savedZx.value = zx.value; savedZy.value = zy.value;
         return;
       }
+      let target = indexSV.value;
       if (Math.abs(e.translationX) > width * 0.2 || Math.abs(e.velocityX) > 800) {
-        runOnJS(step)(e.translationX < 0 ? 1 : -1);
+        target = Math.max(0, Math.min(countSV.value - 1, target + (e.translationX < 0 ? 1 : -1)));
       }
-      tx.value = withTiming(0, { duration: 150 });
-      savedTx.value = 0;
+      const changed = target !== indexSV.value;
+      stripX.value = withTiming(-target * width, { duration: changed ? 220 : 160 }, (finished) => {
+        if (finished && changed) runOnJS(goTo)(target);
+      });
     });
 
   // Taps are limited to a finger that barely moves, so a swipe is never
@@ -138,15 +152,11 @@ export default function FullScreenPhotoViewer({
     .maxDistance(10)
     .onEnd(() => {
       if (savedScale.value > 1) {
-        scale.value = withTiming(1);
-        savedScale.value = 1;
-        tx.value = withTiming(0);
-        ty.value = withTiming(0);
-        savedTx.value = 0;
-        savedTy.value = 0;
+        scale.value = withTiming(1); savedScale.value = 1;
+        zx.value = withTiming(0); zy.value = withTiming(0);
+        savedZx.value = 0; savedZy.value = 0;
       } else {
-        scale.value = withTiming(2);
-        savedScale.value = 2;
+        scale.value = withTiming(2); savedScale.value = 2;
       }
     });
 
@@ -164,13 +174,14 @@ export default function FullScreenPhotoViewer({
     Gesture.Exclusive(doubleTap, singleTap),
   );
 
-  const animStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: tx.value },
-      { translateY: ty.value },
-      { scale: scale.value },
-    ],
+  const stripStyle = useAnimatedStyle(() => ({ transform: [{ translateX: stripX.value }] }));
+  const zoomStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: zx.value }, { translateY: zy.value }, { scale: scale.value }],
   }));
+
+  // Only the current photo and its two neighbours are mounted. Keyed by id,
+  // so a neighbour that becomes current keeps its already-loaded image.
+  const slots = [index - 1, index, index + 1].filter((i) => i >= 0 && i < list.length);
 
   return (
     <Modal
@@ -184,15 +195,25 @@ export default function FullScreenPhotoViewer({
         <View style={styles.backdrop}>
           <GestureDetector gesture={composed}>
             <Animated.View style={styles.center}>
-              {uri ? (
-                <Animated.Image
-                  source={{ uri }}
-                  style={[styles.img, animStyle]}
-                  resizeMode="contain"
-                />
-              ) : (
-                <ActivityIndicator color="#fff" />
-              )}
+              <Animated.View style={[styles.strip, stripStyle]}>
+                {slots.map((i) => {
+                  const p = list[i];
+                  const u = uris[p.id];
+                  return (
+                    <View key={p.id} style={[styles.slot, { left: i * width }]}>
+                      {u ? (
+                        <Animated.Image
+                          source={{ uri: u }}
+                          style={[styles.img, i === index ? zoomStyle : null]}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <ActivityIndicator color="#fff" />
+                      )}
+                    </View>
+                  );
+                })}
+              </Animated.View>
             </Animated.View>
           </GestureDetector>
           <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={12}>
@@ -260,7 +281,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  center: { width, height, justifyContent: 'center', alignItems: 'center' },
+  center: { width, height, overflow: 'hidden' },
+  strip: { position: 'absolute', left: 0, top: 0, width, height },
+  slot: { position: 'absolute', top: 0, width, height, justifyContent: 'center', alignItems: 'center' },
   img: { width, height },
   closeBtn: {
     position: 'absolute',
