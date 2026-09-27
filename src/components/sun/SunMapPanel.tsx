@@ -9,8 +9,8 @@ import { SUN } from './sunStyle';
 // The planner map: you, the subject, the line between you, and where the sun
 // and moon are. "My view" (default) turns the map so the subject is straight
 // ahead; tapping the compass switches to north up, like Google Maps, and
-// re-frames the pair. Pinch or the +/- buttons zoom; the map stays centred
-// on the pair (one-finger drags scroll the page, not the map).
+// re-frames the pair. The +/- buttons zoom, always centred on the pair; the
+// map itself takes no gestures, so drags over it scroll the page.
 
 type Props = {
   pair: Pair;
@@ -142,7 +142,7 @@ export default function SunMapPanel({ pair, light, moon, riseAz, setAz, height }
         initialCamera={camera}
         onRegionChangeComplete={onRegionChangeComplete}
         scrollEnabled={false}
-        zoomEnabled
+        zoomEnabled={false}
         rotateEnabled={false}
         pitchEnabled={false}
         toolbarEnabled={false}
