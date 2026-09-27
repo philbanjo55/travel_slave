@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, PanResponder, LayoutChangeEvent,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../../theme';
 import { SunStop, SUN_PLANNER_ENABLED, useSunStopState } from '../../services/sunPlan';
 import SunPairEditor from './SunPairEditor';
@@ -171,7 +172,7 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
 
       {stop.pairs.length === 1 && (
         <View style={styles.onePair}>
-          <PairThumb pair={pair} size={46} onOpen={() => openPhoto(pair)} onAdd={() => onEdit(pair.vantage_id)} />
+          <PairThumb pair={pair} size={46} onOpen={() => openPhoto(pair)} />
           <Text style={[styles.onePairText, { flex: 1 }]} numberOfLines={2}>
             <Text style={styles.onePairStrong}>{pair.code ? `${pair.code} ` : ''}{shortName(pair.vantage_name)}</Text>
             <Text> → </Text>
@@ -216,29 +217,22 @@ function pairTitle(p: Pair): string {
   return `${p.code ? `${p.code} · ` : ''}${shortName(p.vantage_name)} → ${shortName(p.subject_name)}`;
 }
 
-// The vantage's reference photo: tap for full screen. Without one, a dashed
-// ＋ that opens the editor on this vantage. Without handlers (on the vantage
-// chips) it is only a picture: a tap anywhere on the chip just selects it.
-function PairThumb({ pair, size, onOpen, onAdd }: { pair: Pair; size: number; onOpen?: () => void; onAdd?: () => void }) {
-  if (!onOpen || !onAdd) {
-    return pair.photo_id
-      ? <VantagePhoto id={pair.photo_id} url={pair.photo_url} style={{ width: size, height: size, borderRadius: 6 }} />
-      : <View style={[styles.thumbAdd, { width: size, height: size }]}><Text style={styles.thumbAddText}>＋</Text></View>;
-  }
+// The vantage's reference photo. With onOpen, a tap opens it full screen; on
+// the vantage chips it is only a picture, so a tap just selects the chip.
+// No photo: a plain dark square with a faint camera, not a button.
+function PairThumb({ pair, size, onOpen }: { pair: Pair; size: number; onOpen?: () => void }) {
   if (!pair.photo_id) {
     return (
-      <TouchableOpacity
-        onPress={onAdd}
-        style={[styles.thumbAdd, { width: size, height: size }]}
-        accessibilityLabel={`Add a reference photo for ${pairTitle(pair)}`}
-      >
-        <Text style={styles.thumbAddText}>＋</Text>
-      </TouchableOpacity>
+      <View style={[styles.thumbEmpty, { width: size, height: size }]} accessibilityLabel="No reference photo">
+        <Ionicons name="camera-outline" size={Math.round(size * 0.42)} color="#4a4a4a" />
+      </View>
     );
   }
+  const img = <VantagePhoto id={pair.photo_id} url={pair.photo_url} style={{ width: size, height: size, borderRadius: 6 }} />;
+  if (!onOpen) return img;
   return (
     <TouchableOpacity onPress={onOpen} accessibilityLabel={`Open the reference photo for ${pairTitle(pair)}`}>
-      <VantagePhoto id={pair.photo_id} url={pair.photo_url} style={{ width: size, height: size, borderRadius: 6 }} />
+      {img}
     </TouchableOpacity>
   );
 }
@@ -374,8 +368,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', gap: 7, minHeight: 44, minWidth: 76, paddingLeft: 4, paddingRight: 9, paddingVertical: 4, borderRadius: 8,
     borderWidth: 1, borderColor: colors.border, backgroundColor: '#111111', alignItems: 'center',
   },
-  thumbAdd: { borderRadius: 6, borderWidth: 1, borderColor: '#444444', borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center' },
-  thumbAddText: { color: '#777777', fontSize: 15 },
+  thumbEmpty: { borderRadius: 6, backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' },
   photoPanel: { height: 208, borderRadius: 8, backgroundColor: '#000000' },
   photoEmpty: { borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 16 },
   photoEmptyText: { color: '#888888', fontSize: 12, textAlign: 'center' },
