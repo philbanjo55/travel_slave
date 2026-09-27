@@ -101,11 +101,14 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
 
   const set = (patch: Partial<Form>) => setForm(f => (f ? { ...f, ...patch } : f));
 
-  const startAdd = () => { setSaved(null); setSaveError(null); setChoosing(false); setForm({ ...EMPTY }); };
+  // Labels are automatic: the stop's first letter and the next free number (T1, T2, ...).
+  const nextCode = () => autoCode(stopName, (pairs ?? []).map(p => p.code));
+
+  const startAdd = () => { setSaved(null); setSaveError(null); setChoosing(false); setForm({ ...EMPTY, code: nextCode() }); };
   const startEdit = (p: PairCheck) => {
     setSaved(null); setSaveError(null); setChoosing(false);
     setForm({
-      vantageId: p.vantage_id, code: p.code ?? '', vantageName: p.vantage_name,
+      vantageId: p.vantage_id, code: p.code || nextCode(), vantageName: p.vantage_name,
       vCoords: formatCoords({ lat: p.v_lat, lng: p.v_lng }),
       subjectName: p.subject_name, sCoords: formatCoords({ lat: p.s_lat, lng: p.s_lng }),
       sHeight: p.s_height_m != null ? String(p.s_height_m) : '',
@@ -141,7 +144,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
     setSaving(true); setSaveError(null);
     try {
       let r = await saveSunPair(tripId, stopId, {
-        vantageId: form.vantageId, code: form.code.trim() || null,
+        vantageId: form.vantageId, code: form.code.trim() || nextCode(),
         vantageName: form.vantageName.trim(), vLat: vParsed.lat, vLng: vParsed.lng,
         subjectName: form.subjectName.trim(), sLat: sParsed.lat, sLng: sParsed.lng, sHeight: height,
       });
@@ -247,7 +250,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                   </ScrollView>
                 )}
                 <Field label="Name" value={form.vantageName} onChange={t => set({ vantageName: t })} placeholder="e.g. Bøur panoramic viewpoint" />
-                <Field label="Short label (optional)" value={form.code} onChange={t => set({ code: t })} placeholder="e.g. A1" maxLength={12} />
+                <Text style={styles.hint}>Label <Text style={{ color: colors.textPrimary, fontWeight: '700' }}>{form.code}</Text> · set automatically</Text>
                 <Field label="Coordinates" value={form.vCoords} onChange={t => set({ vCoords: t })}
                   placeholder="Paste from Google Maps" keyboardType="numbers-and-punctuation" />
                 <CoordStatus text={form.vCoords} parsed={vParsed} />
@@ -343,6 +346,22 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
       </SafeAreaView>
     </Modal>
   );
+}
+
+// "Trælanípa · Sørvágsvatn" + [T1, T2] -> "T3". Uses the first letter of the
+// stop's name (skipping emoji and symbols), or V when there is none.
+export function autoCode(stopName: string | null | undefined, codes: (string | null | undefined)[]): string {
+  const isLetter = (ch: string) => ch.toLowerCase() !== ch.toUpperCase();
+  const first = Array.from(String(stopName ?? '')).find(isLetter);
+  const prefix = (first ?? 'V').toUpperCase();
+  let max = 0;
+  codes.forEach(c => {
+    const code = String(c ?? '');
+    const head = Array.from(code)[0] ?? '';
+    const num = code.slice(head.length);
+    if (head.toUpperCase() === prefix && /^\d+$/.test(num)) max = Math.max(max, Number(num));
+  });
+  return `${prefix}${max + 1}`;
 }
 
 function label(p: PairCheck): string {
