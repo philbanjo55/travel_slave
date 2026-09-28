@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { colors, spacing } from '../../theme';
-import { PairCheck, fetchStopPairs, removeSunPair, saveSunShot, setVantagePhoto } from '../../services/sunPlan';
+import { PairCheck, fetchStopPairs, fetchTripShots, removeSunPair, saveSunShot, setVantagePhoto } from '../../services/sunPlan';
 import { usePhotoUpload } from '../../hooks/usePhotoUpload';
 import VantagePhoto from './VantagePhoto';
 import PairMapPicker, { PinKind } from './PairMapPicker';
@@ -69,8 +69,14 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   const cell = gridW > 0 ? Math.floor((gridW - 2 * GRID_GAP) / 3) : 0;
   const { pickOne, uploading } = usePhotoUpload(stopId);
 
+  const [tripCodes, setTripCodes] = useState<(string | null)[]>([]);
+
   const load = async (openVantageId?: string | null) => {
     setLoadError(null);
+    // Labels are unique across the trip, so the next one depends on every
+    // shot in it. Only used to show the label before saving; the database
+    // assigns the real one.
+    fetchTripShots(stopId).then(all => setTripCodes(all.map(x => x.code))).catch(() => {});
     try {
       const list = await fetchStopPairs(stopId);
       setPairs(list);
@@ -105,8 +111,9 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
 
   const set = (patch: Partial<Form>) => setForm(f => (f ? { ...f, ...patch } : f));
 
-  // Labels are automatic: the stop's first letter and the next free number (T1, T2, ...).
-  const nextCode = () => autoCode(stopName, (pairs ?? []).map(p => p.code));
+  // Labels are automatic: the stop's first letter and the next number free
+  // anywhere in the trip (three Bøur stops give B1, B2, B3, never three B1s).
+  const nextCode = () => autoCode(stopName, [...tripCodes, ...(pairs ?? []).map(p => p.code)]);
 
   const startAdd = () => { setSaved(null); setSaveError(null); setChoosing(false); setForm({ ...EMPTY, code: nextCode() }); };
   const startEdit = (p: PairCheck) => {
