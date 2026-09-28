@@ -1,13 +1,16 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   FlatList, Dimensions, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
+import DaySummary from '../components/DaySummary';
+import DayWeatherSummary from '../components/DayWeatherSummary';
+import { WeatherRow, conditionIcon, readScore, cToF } from '../services/weather';
 import { colors, typography, spacing, radius } from '../theme';
 
 const { height } = Dimensions.get('window');
@@ -17,9 +20,22 @@ export default function DayScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { tripId, dayIndex } = route.params;
-  const { currentTripData } = useTripStore();
+  const { currentTripData, syncTrip } = useTripStore();
   const mapRef = useRef<MapView>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
+  const [weather, setWeather] = useState<Record<string, WeatherRow>>({});
+
+  // On focus, re-read the latest weather (and stop data) from the DB and
+  // re-fold it into the trip. This is a plain SELECT of the rows the hourly
+  // cron already wrote — NOT a recompute. The edge-function recompute only
+  // runs when you tap the explicit update button. Reading unconditionally
+  // (no staleness gate) means the cron's freshest rows always win, so weather
+  // can't get stuck on a stale cache-first snapshot.
+  useFocusEffect(
+    useCallback(() => {
+      if (tripId) syncTrip(tripId);
+    }, [tripId, syncTrip])
+  );
 
   const day = currentTripData?.days[dayIndex];
   if (!day) return null;
@@ -59,7 +75,19 @@ export default function DayScreen() {
             <Text style={styles.routeBtnText}>ROUTE</Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity
+          style={styles.routeBtn}
+          onPress={() => navigation.navigate('DayCompare', {
+            dayTitle: day.title, dayNumber: day.day_number, stops, weather,
+          })}
+        >
+          <Ionicons name="git-compare-outline" size={14} color={colors.textPrimary} />
+          <Text style={styles.routeBtnText}>COMPARE</Text>
+        </TouchableOpacity>
       </View>
+
+      {/* Weather — pinned to the top so it's the first thing seen */}
+      <DayWeatherSummary dayId={day.id} date={day.date} onLoaded={setWeather} />
 
       {/* Map */}
       <TouchableOpacity
@@ -113,6 +141,8 @@ export default function DayScreen() {
         </View>
       </TouchableOpacity>
 
+      <DaySummary stops={stops} />
+
       {/* Stop list */}
       <FlatList
         data={stops}
@@ -144,6 +174,45 @@ export default function DayScreen() {
                   {item.duration_minutes ? (
                     <Text style={styles.stopDur}>{item.duration_minutes} min</Text>
                   ) : null}
+                  {(() => {
+                    const w = (item.weather as WeatherRow) ?? weather[item.id];
+                    if (!w || w.temperature_c == null) return null;
+                    const sc = readScore(item.shot_type, w);
+                    // temp, stars, then conditions detail: rain %, rain amount, wind/gusts.
+                    const pop = w.precip_probability_pct;
+                    const rainAmt = (w.rain_mm ?? 0) + (w.showers_mm ?? 0);
+                    const windMph = w.wind_speed_kmh != null ? Math.round(w.wind_speed_kmh / 1.609) : null;
+                    const gustMph = w.wind_gusts_kmh != null ? Math.round(w.wind_gusts_kmh / 1.609) : null;
+                    return (
+                      <View style={styles.stopWx}>
+                        <Ionicons name={conditionIcon(w.weather_code) as any} size={11} color={colors.textSecondary} />
+                        <Text style={styles.stopWxTemp}>{Math.round(cToF(w.temperature_c))}°</Text>
+                        {sc ? (
+                          <View style={styles.stopWxStars}>
+                            {[0, 1, 2, 3].map(i => (
+                              <Ionicons
+                                key={i}
+                                name={i < sc.stars ? 'star' : 'star-outline'}
+                                size={8}
+                                color={i < sc.stars ? colors.textSecondary : colors.textTertiary}
+                              />
+                            ))}
+                          </View>
+                        ) : null}
+                        {pop != null ? (
+                          <Text style={styles.stopWxDetail}>💧 {Math.round(pop)}%</Text>
+                        ) : null}
+                        {rainAmt > 0 ? (
+                          <Text style={styles.stopWxDetail}>{rainAmt.toFixed(1)}mm</Text>
+                        ) : null}
+                        {windMph != null || gustMph != null ? (
+                          <Text style={styles.stopWxDetail}>
+                            💨 {windMph != null ? windMph : '–'}{gustMph != null ? ` / ${gustMph}` : ''} mph
+                          </Text>
+                        ) : null}
+                      </View>
+                    );
+                  })()}
                 </View>
                 <View style={styles.stopIcons}>
                   {item.alltrails_url && <Ionicons name="trail-sign-outline" size={12} color={colors.textTertiary} />}
@@ -258,5 +327,9 @@ const styles = StyleSheet.create({
   stopBody: { flex: 1 },
   stopName: { fontSize: 14, fontWeight: '500', color: colors.textPrimary },
   stopDur: { fontSize: 11, color: colors.textTertiary, marginTop: 2 },
+  stopWx: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  stopWxTemp: { fontSize: 11, color: colors.textSecondary, fontWeight: '500' },
+  stopWxStars: { flexDirection: 'row', gap: 1, marginLeft: 2 },
+  stopWxDetail: { fontSize: 11, color: colors.textSecondary, marginLeft: 4 },
   stopIcons: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
 });

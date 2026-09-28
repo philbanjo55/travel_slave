@@ -1,0 +1,14 @@
+name: JS Update (instant patch)
+
+on:
+  push:
+    branches:
+      - update
+
+jobs:
+  update:
+    name: Publish JS Update
+    type: update
+    params:
+      channel: preview
+      message: ${{ github.event.head_commit.message }}
