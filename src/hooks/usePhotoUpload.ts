@@ -39,7 +39,9 @@ async function uploadToStorage(stopId: string, uri: string): Promise<{ id: strin
   return { id: photoId, storage_url };
 }
 
-export function usePhotoUpload(stopId: string) {
+// groupStopIds: the stops sharing this stop's photos (linked repeat visits);
+// a new photo goes to the end of the whole group's order.
+export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +53,7 @@ export function usePhotoUpload(stopId: string) {
     const { data: existing } = await supabase
       .from('stop_photos')
       .select('position')
-      .eq('stop_id', stopId)
+      .in('stop_id', groupStopIds?.length ? groupStopIds : [stopId])
       .eq('photo_type', photoType)
       .order('position', { ascending: false })
       .limit(1);

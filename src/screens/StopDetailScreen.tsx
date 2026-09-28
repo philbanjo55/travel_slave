@@ -16,6 +16,7 @@ import SunPlannerSection from '../components/sun/SunPlannerSection';
 import StopLocationEditor from '../components/StopLocationEditor';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
+import { photoGroupPhotos, photoGroupStops } from '../utils/photoGroups';
 
 const { width } = Dimensions.get('window');
 
@@ -92,11 +93,13 @@ export default function StopDetailScreen() {
 
   if (!stop) return null;
 
-  const allPhotos = stop.stop_photos || [];
+  // Linked repeat visits (Bøur, Drangarnir, ...) share one photo pool.
+  const groupStops = photoGroupStops(currentTripData, stop);
+  const allPhotos = photoGroupPhotos(groupStops);
   const byPosition = (a: any, b: any) => (a.position ?? 1e9) - (b.position ?? 1e9);
   const refPhotos = allPhotos.filter((p: any) => !p.photo_type || p.photo_type === 'reference').sort(byPosition);
   const fieldPhotos = allPhotos.filter((p: any) => p.photo_type === 'field').sort(byPosition);
-  const { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error } = usePhotoUpload(stop.id);
+  const { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error } = usePhotoUpload(stop.id, groupStops.map((s: any) => s.id));
 
   const handlePhotoLongPress = (photoId: string, type: string, after?: () => void) => {
     Alert.alert('Delete Photo', `Remove this ${type} photo?`, [
