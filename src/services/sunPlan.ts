@@ -217,3 +217,32 @@ export async function setVantagePhoto(tripId: string, vantageId: string, photoId
   refreshSunPlan(tripId, true);
   return data as PairCheck;
 }
+
+// ── Shots from other stops (linked, not copied) ─────────────────────────────
+
+export type TripShot = {
+  vantage_id: string;
+  code: string | null;
+  shot_name: string;
+  photo_id: string | null;
+  photo_url: string | null;
+  on_this_stop: boolean;
+  stops: { stop_id: string; name: string; day: number }[];
+};
+
+// Every shot in the trip, marked with whether this stop already shows it.
+export async function fetchTripShots(stopId: string): Promise<TripShot[]> {
+  const { data, error } = await supabase.rpc('sun_trip_shots', { p_stop_id: stopId });
+  if (error) throw rpcError(error);
+  return Array.isArray(data) ? (data as TripShot[]) : [];
+}
+
+// Shows these shots on this stop too. The same shot, not a copy: editing it
+// anywhere changes it everywhere; the sun is worked out for each stop's own
+// date and time. Returns how many were added.
+export async function linkShots(tripId: string, stopId: string, vantageIds: string[]): Promise<number> {
+  const { data, error } = await supabase.rpc('sun_pair_link', { p_stop_id: stopId, p_vantage_ids: vantageIds });
+  if (error) throw rpcError(error);
+  refreshSunPlan(tripId, true);
+  return typeof data === 'number' ? data : 0;
+}

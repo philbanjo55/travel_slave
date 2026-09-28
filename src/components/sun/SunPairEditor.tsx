@@ -11,6 +11,7 @@ import { PairCheck, fetchStopPairs, removeSunPair, saveSunShot, setVantagePhoto 
 import { usePhotoUpload } from '../../hooks/usePhotoUpload';
 import VantagePhoto from './VantagePhoto';
 import PairMapPicker, { PinKind } from './PairMapPicker';
+import ShotLinker from './ShotLinker';
 import { Coords, formatCoords, parseCoords } from '../../utils/coords';
 import { compassPoint, shotTitle } from './sunStyle';
 
@@ -60,6 +61,8 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   const [locating, setLocating] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const [mapping, setMapping] = useState<PinKind | null>(null);
+  const [linking, setLinking] = useState(false);
+  const [linked, setLinked] = useState<number | null>(null);
   // Grid cells get an explicit size from the grid's measured width: a
   // percentage width with aspectRatio collapses to 0 height in a wrapping row.
   const [gridW, setGridW] = useState(0);
@@ -78,7 +81,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   };
 
   useEffect(() => {
-    if (visible) { setForm(null); setSaved(null); setSaveError(null); setChoosing(false); setMapping(null); load(editVantageId); }
+    if (visible) { setForm(null); setSaved(null); setSaveError(null); setChoosing(false); setMapping(null); setLinking(false); setLinked(null); load(editVantageId); }
   }, [visible, stopId]);
 
   const vParsed = form ? parseCoords(form.vCoords) : null;
@@ -173,19 +176,21 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={mapping ? () => setMapping(null) : form ? () => setForm(null) : onClose}>
+    <Modal visible={visible} animationType="slide" onRequestClose={linking ? () => setLinking(false) : mapping ? () => setMapping(null) : form ? () => setForm(null) : onClose}>
       <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.title}>{mapping ? 'Place on map' : form ? (form.vantageId ? 'Edit vantage' : 'Add a vantage') : 'Sun & Moon vantages'}</Text>
+            <Text style={styles.title}>{linking ? 'Add shots from other stops' : mapping ? 'Place on map' : form ? (form.vantageId ? 'Edit vantage' : 'Add a vantage') : 'Sun & Moon vantages'}</Text>
             {!!stopName && <Text style={styles.subtitle} numberOfLines={1}>{stopName}</Text>}
           </View>
-          <TouchableOpacity onPress={mapping ? () => setMapping(null) : form ? () => setForm(null) : onClose} hitSlop={12} accessibilityLabel={form ? 'Back' : 'Close'}>
-            <Ionicons name={form || mapping ? 'arrow-back' : 'close'} size={24} color={colors.textPrimary} />
+          <TouchableOpacity onPress={linking ? () => setLinking(false) : mapping ? () => setMapping(null) : form ? () => setForm(null) : onClose} hitSlop={12} accessibilityLabel={form || linking ? 'Back' : 'Close'}>
+            <Ionicons name={form || mapping || linking ? 'arrow-back' : 'close'} size={24} color={colors.textPrimary} />
           </TouchableOpacity>
         </View>
 
-        {mapping && form ? (
+        {linking ? (
+          <ShotLinker tripId={tripId} stopId={stopId} onDone={(n) => { setLinking(false); setLinked(n); load(); }} />
+        ) : mapping && form ? (
           <PairMapPicker
             v={vParsed} s={sParsed} start={mapping}
             centre={stopCoords ?? (pairs?.[0] ? { lat: pairs[0].v_lat, lng: pairs[0].v_lng } : null)}
@@ -203,6 +208,11 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
             {!form && (
               <>
                 {saved && <SavedCard p={saved} />}
+                {linked != null && (
+                  <View style={[styles.card, { borderColor: '#3f7d5a' }]}>
+                    <Text style={styles.cardTitle}>{linked === 0 ? 'Nothing new to add' : `Added ${linked} shot${linked === 1 ? '' : 's'} to this stop`}</Text>
+                  </View>
+                )}
 
                 {pairs === null && !loadError && <ActivityIndicator color={colors.textSecondary} style={{ marginVertical: 24 }} />}
                 {loadError && (
@@ -230,6 +240,12 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                   <TouchableOpacity style={styles.primary} onPress={startAdd}>
                     <Ionicons name="add" size={18} color="#000" />
                     <Text style={styles.primaryText}>Add a vantage</Text>
+                  </TouchableOpacity>
+                )}
+                {!loadError && (
+                  <TouchableOpacity style={styles.secondary} onPress={() => { setSaved(null); setLinked(null); setLinking(true); }}>
+                    <Ionicons name="link" size={16} color={colors.textPrimary} />
+                    <Text style={styles.secondaryText}>Add shots from other stops</Text>
                   </TouchableOpacity>
                 )}
                 <Text style={styles.tip}>
