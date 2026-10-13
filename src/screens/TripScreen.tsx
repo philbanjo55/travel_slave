@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
-import { supabase } from '../services/supabase';
+import { supabase, checkDayForDelete, deleteDay } from '../services/supabase';
 import { calculateDriveTimesForTrip, recalculateTimeLabels } from '../services/driveTimes';
 import { pullWeatherForTrip, WeatherRow, conditionIcon, readScore, cToF } from '../services/weather';
 import { getCacheStatus } from '../services/database';
@@ -28,6 +28,7 @@ export default function TripScreen() {
   const [weatherUpdating, setWeatherUpdating] = useState(false);
   const [weatherProgress, setWeatherProgress] = useState<{ done: number; total: number } | null>(null);
   const [dayWeather, setDayWeather] = useState<Record<string, WeatherRow>>({});
+  const [deletingDay, setDeletingDay] = useState(false);
 
   useEffect(() => { loadTrip(tripId); }, [tripId]);
 
@@ -140,6 +141,61 @@ export default function TripScreen() {
     );
   }, [tripId, activeDay]);
 
+  // Delete the day on screen. Checks the server first: a day whose stops
+  // still carry photos is refused, because deleting the stops would delete
+  // the photos with them.
+  const confirmDeleteDay = useCallback(async () => {
+    const all = useTripStore.getState().currentTripData?.days ?? [];
+    const d = all[activeDay];
+    if (!d) return;
+    let chk;
+    try {
+      chk = await checkDayForDelete(d.id);
+    } catch {
+      Alert.alert('Offline', 'Deleting a day needs a connection. Try again when you are online.');
+      return;
+    }
+    if (chk.photos > 0) {
+      Alert.alert(
+        'Can’t delete this day yet',
+        `Day ${d.day_number} has ${chk.photos} photo${chk.photos === 1 ? '' : 's'} on its stops. `
+        + 'Deleting the day would delete those photos too. Move the stops with photos to another day first.'
+      );
+      return;
+    }
+    const extras = [
+      chk.sunPairs ? `${chk.sunPairs} sun/moon pin link${chk.sunPairs === 1 ? '' : 's'}` : null,
+      chk.exposures ? `${chk.exposures} exposure${chk.exposures === 1 ? '' : 's'} will be kept but unlinked` : null,
+    ].filter(Boolean).join(', ');
+    Alert.alert(
+      `Delete Day ${d.day_number}?`,
+      `“${d.title}”\n\nRemoves the day and its ${chk.stops} stop${chk.stops === 1 ? '' : 's'} with their weather`
+      + (extras ? ` (also ${extras})` : '')
+      + '. Later days move up one number. This can’t be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingDay(true);
+            try {
+              await deleteDay(d.id, tripId);
+              const next = Math.max(0, Math.min(activeDay, all.length - 2));
+              setActiveDay(next);
+              setCurrentDay(next);
+              await loadTrip(tripId);
+            } catch (e: any) {
+              Alert.alert('Not deleted', String(e?.message ?? e));
+            } finally {
+              setDeletingDay(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [activeDay, tripId]);
+
   // Weather now travels inside the trip data (folded in at load, cached with
   // it), so read it straight off the active day's stops — synchronous and
   // offline-safe, with no separate fetch to race or blank out.
@@ -226,6 +282,16 @@ export default function TripScreen() {
             <Text style={styles.dayTitle}>{day.title}</Text>
             {day.subtitle && <Text style={styles.daySub}>{day.subtitle}</Text>}
           </View>
+          <TouchableOpacity
+            style={styles.deleteDayBtn}
+            onPress={confirmDeleteDay}
+            disabled={deletingDay}
+            accessibilityLabel={`Delete day ${day.day_number}`}
+          >
+            {deletingDay
+              ? <ActivityIndicator color={colors.textTertiary} size="small" />
+              : <Ionicons name="trash-outline" size={16} color={colors.textTertiary} />}
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.mapBtn}
             onPress={() => navigation.navigate('Day', { tripId, dayIndex: activeDay })}
@@ -385,6 +451,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.sm,
   },
   mapBtnText: { ...typography.labelMedium, color: colors.textPrimary },
+  deleteDayBtn: { padding: spacing.sm, marginRight: spacing.sm },
   stopList: { paddingHorizontal: spacing.xl, paddingTop: spacing.sm, paddingBottom: 100 },
   connector: { height: 28, flexDirection: 'row', alignItems: 'center', paddingLeft: 84, position: 'relative' },
   connectorLine: { position: 'absolute', left: 91, top: 0, bottom: 0, width: StyleSheet.hairlineWidth, backgroundColor: colors.border },
