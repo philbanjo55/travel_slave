@@ -34,20 +34,92 @@ type Registry = {
   centreOf: Record<string, string>;
   resolutionOf: Record<string, number>;
   sortOf: Record<string, number>;
+  // Region rule for blends (weather_models.native_model / outside_native).
+  nativeOf: Record<string, string>;
+  outsideOf: Record<string, string>;
+  outsideResOf: Record<string, number>;
 };
 function registryFrom(
   centres: Record<string, string[]>,
   res?: Record<string, number>,
   sort?: Record<string, number>,
+  native?: { nativeOf: Record<string, string>; outsideOf: Record<string, string>; outsideResOf: Record<string, number> },
 ): Registry {
   const centreOf: Record<string, string> = {};
   for (const [c, ms] of Object.entries(centres)) for (const m of ms) centreOf[m] = c;
   return {
     centres, models: Object.values(centres).flat(), centreOf,
     resolutionOf: res ?? {}, sortOf: sort ?? {},
+    nativeOf: native?.nativeOf ?? {}, outsideOf: native?.outsideOf ?? {}, outsideResOf: native?.outsideResOf ?? {},
   };
 }
 const FALLBACK_REGISTRY = registryFrom(FALLBACK_CENTRES);
+
+// REGION RULE, applied per stop.
+// A "seamless" blend equals its sharp regional run inside that run's
+// coverage and silently becomes a global model outside it (verified Oct
+// 2026: icon_seamless == icon_global and dmi_seamless == ECMWF IFS 9 km at
+// Teton stops). Coverage comes from model_grid_points, which is probed for
+// every stop automatically, so no trip needs configuring. Outside coverage
+// the blend is relabelled at its true resolution ('downgrade') or skipped
+// because it would repeat a centre that already votes ('exclude').
+// Unprobed coverage (a brand-new stop, for a few minutes) leaves the blend
+// as it is.
+function stopRegistry(
+  reg: Registry, grid: Record<string, { km: number|null; ok: boolean }>
+): { reg: Registry; adjustments: any[] } {
+  const adjustments: any[] = [];
+  const resolutionOf = { ...reg.resolutionOf };
+  const keep: string[] = [];
+  for (const m of reg.models) {
+    const native = reg.nativeOf[m];
+    const cover = native ? grid[native] : undefined;
+    if (native && cover && cover.ok === false) {
+      if (reg.outsideOf[m] === 'exclude') {
+        adjustments.push({ model: m, action: 'excluded', native_model: native });
+        continue;
+      }
+      if (reg.outsideOf[m] === 'downgrade' && reg.outsideResOf[m] != null) {
+        resolutionOf[m] = reg.outsideResOf[m];
+        adjustments.push({ model: m, action: 'downgraded', native_model: native, resolution_km: resolutionOf[m] });
+      }
+    }
+    keep.push(m);
+  }
+  const centres: Record<string, string[]> = {};
+  for (const m of keep) (centres[reg.centreOf[m]] ??= []).push(m);
+  return { reg: { ...reg, centres, models: keep, resolutionOf }, adjustments };
+}
+
+// MAIN MODEL BY MEASURED ACCURACY.
+// model_skill holds, per ground-truth station and lead (forecast issued N
+// days ahead), each model's error over the last 14 days against that
+// station's METARs (refresh_model_skill_step, every 10 min, refreshed
+// daily). When a trip uses primary_selection = 'skill', the main model is
+// the best-scoring model at this stop's lead that has data this hour and
+// carries cloud layers (scoring needs low/mid cloud). Too little evidence
+// (under SKILL_MIN_HOURS) falls back to the resolution rule.
+const SKILL_MIN_HOURS = 120;
+type SkillRow = { skill_score: number; n_hours: number };
+function pickPrimary(
+  ranked: string[], models: Record<string, any>, skillAtLead: Record<string, SkillRow> | null,
+): { model: string | null; method: string; score: number | null; ranking: any[] | null } {
+  const layered = (m: string) => models[m]?.cloud_cover_low_pct != null;
+  if (skillAtLead) {
+    const scored = ranked
+      .filter(m => skillAtLead[m] && skillAtLead[m].n_hours >= SKILL_MIN_HOURS)
+      .sort((a, b) => skillAtLead[a].skill_score - skillAtLead[b].skill_score);
+    const pick = scored.find(layered);
+    if (pick) {
+      return {
+        model: pick, method: 'skill', score: skillAtLead[pick].skill_score,
+        ranking: scored.slice(0, 5).map(m => ({ model: m, skill_score: skillAtLead[m].skill_score, layered: layered(m) })),
+      };
+    }
+  }
+  const byRes = ranked.find(layered) ?? ranked[0] ?? null;
+  return { model: byRes, method: skillAtLead ? 'resolution-fallback' : 'resolution', score: null, ranking: null };
+}
 
 // Which model fills the real columns, best first. DMI HARMONIE is 2 km and
 // the only one here carrying cloud base/top and a native 2 m fog field,
@@ -119,7 +191,8 @@ const MARINE_VARS = [
   'swell_wave_height', 'swell_wave_period', 'wind_wave_height', 'sea_surface_temperature',
 ];
 
-const METAR_STATION = 'EKVG';
+// METAR station is per trip now (trips.metar_station). v32 and earlier
+// hard-coded EKVG, which stamped Faroes ground truth onto every trip.
 const ENSEMBLE_GRID = 0.25; // ECMWF ensemble cell size; stops are deduped onto it
 
 function wmoText(code: number): string {
@@ -364,13 +437,13 @@ function ensembleStats(H: any, idx: number) {
   return { member_count: memberCount, by_variable: stats };
 }
 
-// EKVG GROUND TRUTH
-function parseMetar(o: any) {
+// GROUND TRUTH (station from trips.metar_station)
+function parseMetar(o: any, station: string) {
   const clouds: any[] = Array.isArray(o?.clouds) ? o.clouds : [];
   const ceilLayer = clouds.find(c => c?.cover === 'OVC' || c?.cover === 'BKN') ?? clouds[0] ?? null;
   const visSm = num(o?.visib);
   return {
-    station: o?.icaoId ?? METAR_STATION,
+    station: o?.icaoId ?? station,
     observed_at: o?.reportTime ? new Date(o.reportTime).toISOString() : null,
     lat: num(o?.lat), lng: num(o?.lon),
     temperature_c: num(o?.temp),
@@ -402,12 +475,43 @@ Deno.serve(async (req) => {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
     const { data: day, error: dayErr } = await supabase
-      .from('days').select('id,date,trip_id,title').eq('id', dayId).single();
+      .from('days').select('id,date,trip_id,title,metar_station').eq('id', dayId).single();
     if (dayErr || !day) return new Response(JSON.stringify({ ok:false, error:'day not found', detail:dayErr?.message }),
       { status:404, headers:{ ...corsHeaders, 'Content-Type':'application/json' } });
 
+    // Ground-truth station: the trip's manual override, else this day's
+    // auto-picked nearest airport ('-' = none in range). Null = skip METAR.
+    let metarStation: string | null = null;
+    let stationSource: string | null = null;
+    let primarySelection = 'resolution';
+    {
+      const { data: trip } = await supabase
+        .from('trips').select('metar_station,primary_selection').eq('id', day.trip_id).single();
+      const st = (trip as any)?.metar_station;
+      const auto = (day as any)?.metar_station;
+      if (typeof st === 'string' && st.trim()) { metarStation = st.trim().toUpperCase(); stationSource = 'trip'; }
+      else if (typeof auto === 'string' && auto.trim() && auto.trim() !== '-') { metarStation = auto.trim().toUpperCase(); stationSource = 'auto'; }
+      primarySelection = (trip as any)?.primary_selection === 'skill' ? 'skill' : 'resolution';
+    }
+
+    // Measured accuracy at this station, by lead day (skill trips only).
+    const skillByLead: Record<number, Record<string, SkillRow>> = {};
+    let skillRowsLoaded = 0;
+    if (primarySelection === 'skill' && metarStation) {
+      const { data: sk } = await supabase
+        .from('model_skill')
+        .select('model,lead_day,n_hours,skill_score,computed_at')
+        .eq('station', metarStation)
+        .gte('computed_at', new Date(Date.now() - 3*86400000).toISOString());
+      for (const row of (sk ?? []) as any[]) {
+        if (row.skill_score == null) continue;
+        (skillByLead[row.lead_day] ??= {})[row.model] = { skill_score: Number(row.skill_score), n_hours: row.n_hours };
+        skillRowsLoaded++;
+      }
+    }
+
     const { data: stops, error: stopsErr } = await supabase
-      .from('stops').select('id,name,time_label,lat,lng,shot_type,position')
+      .from('stops').select('id,name,time_label,lat,lng,shot_type,position,elevation_m')
       .eq('day_id', dayId).not('lat','is',null).order('position');
     if (stopsErr) throw stopsErr;
     if (!stops || !stops.length) return new Response(JSON.stringify({ ok:true, day_id:dayId, stops:[], day_summary:'No mappable stops.' }),
@@ -425,7 +529,7 @@ Deno.serve(async (req) => {
     {
       const { data: rows } = await supabase
         .from('weather_models')
-        .select('model,centre,resolution_km,sort_order')
+        .select('model,centre,resolution_km,sort_order,native_model,outside_native,outside_resolution_km')
         .eq('active', true)
         .order('sort_order', { ascending: true, nullsFirst: false })
         .order('model', { ascending: true });
@@ -433,12 +537,18 @@ Deno.serve(async (req) => {
         const centres: Record<string, string[]> = {};
         const res: Record<string, number> = {};
         const sort: Record<string, number> = {};
+        const nativeOf: Record<string, string> = {};
+        const outsideOf: Record<string, string> = {};
+        const outsideResOf: Record<string, number> = {};
         for (const r of rows as any[]) {
           (centres[r.centre] ??= []).push(r.model);
           if (r.resolution_km != null) res[r.model] = Number(r.resolution_km);
           if (r.sort_order != null) sort[r.model] = Number(r.sort_order);
+          if (r.native_model) nativeOf[r.model] = r.native_model;
+          if (r.outside_native) outsideOf[r.model] = r.outside_native;
+          if (r.outside_resolution_km != null) outsideResOf[r.model] = Number(r.outside_resolution_km);
         }
-        reg = registryFrom(centres, res, sort);
+        reg = registryFrom(centres, res, sort, { nativeOf, outsideOf, outsideResOf });
         registrySource = 'weather_models';
       }
     }
@@ -462,12 +572,12 @@ Deno.serve(async (req) => {
 
     // Ground truth, once per invocation rather than once per stop.
     let metar: any = null, metarErr: string | null = null;
-    {
+    if (metarStation) {
       const { j, err } = await getJson(
-        `https://aviationweather.gov/api/data/metar?ids=${METAR_STATION}&format=json&taf=true`);
+        `https://aviationweather.gov/api/data/metar?ids=${metarStation}&format=json&taf=true`);
       if (err) metarErr = err;
       else if (Array.isArray(j) && j.length) {
-        metar = parseMetar(j[0]);
+        metar = parseMetar(j[0], metarStation);
         if (metar.observed_at) {
           await supabase.from('weather_observations')
             .upsert(metar, { onConflict: 'station,observed_at' });
@@ -499,7 +609,8 @@ Deno.serve(async (req) => {
       // Skip models measured as not covering this stop. Unprobed models are
       // requested anyway - absence of a measurement is not evidence.
       const grid = gridByStop.get(s.id) ?? {};
-      const askModels = reg.models.filter(m => grid[m] === undefined || grid[m].ok);
+      const { reg: sreg, adjustments: regionAdjustments } = stopRegistry(reg, grid);
+      const askModels = sreg.models.filter(m => grid[m] === undefined || grid[m].ok);
 
       const [multi, marine] = await Promise.all([
         getJson(`https://api.open-meteo.com/v1/forecast?${base}`
@@ -524,17 +635,26 @@ Deno.serve(async (req) => {
       // Every model that has something to say at this hour.
       const models: Record<string, any> = {};
       for (const m of askModels) {
-        const row = readModelRow(H, idx, m, reg.centreOf);
+        const row = readModelRow(H, idx, m, sreg.centreOf);
         if (row) {
           row.distance_km = grid[m]?.km ?? null;      // how far this number really is
-          row.resolution_km = reg.resolutionOf[m] ?? null;
+          row.resolution_km = sreg.resolutionOf[m] ?? null;
           models[m] = row;
         }
       }
-      // Primary is now chosen per stop by resolution then distance, rather
-      // than from a fixed global order.
-      const ranked = rankModels(reg, Object.keys(models), grid);
-      const primaryModel = ranked[0]
+      // Resolution ranking (then distance). A model carrying cloud LAYERS
+      // beats one that does not, because scoring keys summit obscuration
+      // off low/mid cloud.
+      const ranked = rankModels(sreg, Object.keys(models), grid);
+      // Lead = how far ahead of now the forecast hour actually fetched is
+      // (preview rows are fetched for today, so they land on lead 1).
+      const validAt = matchedTime ? Date.parse(`${matchedTime}:00${offsetStr(off)}`) : NaN;
+      const leadDay = !Number.isFinite(validAt) ? 1
+        : Math.min(7, Math.max(1, Math.round((validAt - now.getTime()) / 86400000)));
+      const skillAtLead = primarySelection === 'skill' ? (skillByLead[leadDay] ?? null) : null;
+      const pick = pickPrimary(ranked, models, skillAtLead);
+      const layered = ranked.find(m => models[m]?.cloud_cover_low_pct != null);
+      const primaryModel = pick.model
         ?? FALLBACK_PRIMARY_ORDER.find(m => models[m])
         ?? Object.keys(models)[0] ?? null;
       if (!primaryModel) {
@@ -619,7 +739,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      const cons = consensus(models, reg, grid);
+      const cons = consensus(models, sreg, grid);
 
       const ex: any = {
         // Primary model, flattened - the shape v25 produced, so anything
@@ -658,9 +778,13 @@ Deno.serve(async (req) => {
         sea,
         metar: metar ? { observed_at: metar.observed_at, raw_metar: metar.raw_metar, raw_taf: metar.raw_taf,
                          ceiling_ft: metar.ceiling_ft, visibility_m: metar.visibility_m,
-                         flight_category: metar.flight_category, station: metar.station } : (metarErr ? { error: metarErr } : null),
+                         flight_category: metar.flight_category, station: metar.station }
+                     : (metarErr ? { error: metarErr } : (metarStation ? null : { skipped: 'no metar_station on trip' })),
         provenance: {
           source_lat: s.lat, source_lng: s.lng,
+          // Standing elevation of the stop. weather_score() reads this to
+          // decide whether summit cloud lives in the low or mid band.
+          stop_elevation_m: num((s as any).elevation_m),
           timezone: w.timezone ?? null, utc_offset_seconds: off,
           forecast_date: usedDate,
           requested_time_label: s.time_label ?? null,
@@ -670,16 +794,24 @@ Deno.serve(async (req) => {
           date_mode: dateShifted ? 'preview' : 'trip-date',
           source: `open-meteo /v1/forecast?models=${primaryModel}`,
           primary_model: primaryModel,
+          primary_chosen_for_cloud_layers: !!layered && layered !== ranked[0],
+          primary_selection: pick.method,           // skill | resolution | resolution-fallback
+          primary_skill_score: pick.score,
+          skill_lead_day: primarySelection === 'skill' ? leadDay : null,
+          skill_ranking: pick.ranking,
+          region_adjustments: regionAdjustments,
           registry_source: registrySource,
           models_in_registry: reg.models.length,
           models_requested: askModels.length,
           models_returned: Object.keys(models).length,
-          models_skipped_no_coverage: reg.models.length - askModels.length,
+          models_skipped_no_coverage: sreg.models.length - askModels.length,
           centres_returned: cons.centre_count,
           primary_distance_km: grid[primaryModel]?.km ?? null,
-          primary_resolution_km: reg.resolutionOf[primaryModel] ?? null,
+          primary_resolution_km: sreg.resolutionOf[primaryModel] ?? null,
+          metar_station: metarStation,
+          metar_station_source: stationSource,
           pulled_at: new Date().toISOString(),
-          version: 'v32-db-scoring',
+          version: 'v34-skill',
         },
       };
 
@@ -783,11 +915,15 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({
       ok:true, day_id:dayId, day_title:day.title, test, date_shifted:dateShifted,
       forecast_date_used:usedDate, real_trip_date:day.date, generated_at:new Date().toISOString(),
-      version:'v32-db-scoring',
+      version:'v34-skill',
+      primary_selection: primarySelection,
+      skill_rows_loaded: skillRowsLoaded,
+      metar_station_source: stationSource,
       registry_source: registrySource,
       models_in_registry: reg.models.length,
       ensemble_cells: ensembleByCell.size,
       rows_written: writeRows.length,
+      metar_station: metarStation,
       metar: metar ? metar.raw_metar : (metarErr ? `error: ${metarErr}` : null),
       day_summary:summary, stops:results,
     }), { headers:{ ...corsHeaders, 'Content-Type':'application/json' } });
