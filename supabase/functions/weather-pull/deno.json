@@ -1,0 +1,3 @@
+{
+  "tasks": { "test": "deno test --no-remote logic_test.ts" }
+}
