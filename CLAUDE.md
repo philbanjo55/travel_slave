@@ -13,8 +13,8 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 
 ## Branches and releases
 
-- **`update`**: the app (Expo SDK 51, `src/`, `App.tsx`) plus everything else. Pushing `src/**` or `App.tsx` publishes an instant (OTA) update to channel `preview` (`.eas/workflows/update.yml`). Pushing native files (`package.json`, `package-lock.json`, `app.json`, `app.config.js`, `eas.json`) builds a new APK (`.eas/workflows/native-build.yml`). Backend/docs/web commits trigger neither.
-- **Native-change rule:** when adding or upgrading a library with native code, or changing permissions/plugins, bump `runtimeVersion` in `app.json` (e.g. `"1.0.0"` -> `"1.0.1"`) in the same commit. Otherwise the OTA update also reaches the old APK and can crash it. Expo's automatic fingerprint check needs SDK 52+, so this is manual.
+- **`update`**: the app (Expo SDK 52, React Native 0.76, old architecture: `newArchEnabled: false` because react-native-maps/reanimated are the likely breakers) plus everything else. Pushing app files runs `.eas/workflows/update.yml`: fingerprint the native side; if an APK with that fingerprint exists, publish an instant (OTA) update to channel `preview`; otherwise build a new APK. `runtimeVersion` uses the fingerprint policy, so an update only reaches an APK it matches. Backend/docs/web commits trigger nothing. All EAS jobs use the `preview` environment (the `preview` build profile's default) so fingerprints line up.
+- **Test builds:** eas.json profile `test` (`APP_VARIANT=test`) builds "Philm+Frame TEST", package `com.philmframe.app.test`, channel `test`, which installs side by side with the real app. `.eas/workflows/test-build.yml` builds it on pushes to the work branch only.
 - **`main`**: old "build an APK" branch (`.eas/workflows/build.yml`). No longer needed for releases; kept as a manual fallback.
 - **`master`**: GitHub default branch. Netlify deploys the web viewers (`faroes-web/`, `iceland-web/`) from it, and GitHub only runs scheduled workflows (`webcam-clip`) from the default branch.
 
