@@ -56,7 +56,6 @@
     },
     "runtimeVersion": {
       "policy": "fingerprint"
-    },
-    "newArchEnabled": false
+    }
   }
 }

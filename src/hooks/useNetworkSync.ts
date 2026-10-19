@@ -34,7 +34,7 @@ export function useNetworkSync() {
       'change',
       (nextState: AppStateStatus) => {
         if (
-          appState.current.match(/inactive|background/) &&
+          appState.current?.match(/inactive|background/) &&
           nextState === 'active'
         ) {
           checkAndSync();

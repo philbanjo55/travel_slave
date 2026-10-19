@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from '../services/supabase';
 import { useTripStore } from '../store/tripStore';
 import { downloadPhoto } from '../services/photoCache';

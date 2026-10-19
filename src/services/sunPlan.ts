@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from './supabase';
 import { downloadPhoto } from './photoCache';
 import type { Pair } from '../utils/sunEngine';

@@ -101,7 +101,7 @@ export default function TripsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#000" />
+      <StatusBar barStyle="light-content" />
 
       <View style={styles.header}>
         <Text style={styles.brand}>PHILM+FRAME ✦</Text>
@@ -160,7 +160,7 @@ export default function TripsScreen() {
                   {showArchived ? 'Hide Archived' : `Show Archived (${archivedTrips.length})`}
                 </Text>
               </TouchableOpacity>
-            ) : null
+            ) : undefined
           }
         />
       )}

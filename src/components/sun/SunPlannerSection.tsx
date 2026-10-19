@@ -268,7 +268,7 @@ function TimeScrubber({ minute, onChange, phases }: {
   onChange: (m: number) => void;
   phases: { from: number; to: number; kind: keyof typeof PHASE_COLORS }[];
 }) {
-  const trackRef = useRef<View>(null);
+  const trackRef = useRef<React.ComponentRef<typeof View>>(null);
   const geom = useRef({ x: 0, w: 1 });
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
