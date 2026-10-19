@@ -1,0 +1,31 @@
+name: webcam-clip
+
+# Labels archived webcam frames with CLIP (free, runs on GitHub's CPU runners).
+# Full frames are kept 7 days in Supabase Storage, so a daily run never misses one.
+on:
+  schedule:
+    - cron: '23 3 * * *'   # scheduled runs only fire from the default branch
+  workflow_dispatch:
+  push:
+    branches: [ccr-dba965ff-afy6cz]
+    paths: ['tools/webcam_clip/**', '.github/workflows/webcam-clip.yml']
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tools/webcam_clip/requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-clip-vit-base-patch16
+      - run: pip install -r tools/webcam_clip/requirements.txt
+      - run: python tools/webcam_clip/label.py
+        env:
+          LABELLER_TOKEN: ${{ secrets.WEBCAM_LABELLER_TOKEN }}
