@@ -14,7 +14,7 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 
 - The repo copy of each function must match what is deployed. Before editing one, fetch the deployed source (`get_edge_function`) and diff — the repo has drifted before (weather-pull v33 vs deployed v35).
 - `weather-pull` (v35, `index.ts` + `logic.ts`): per-day display forecasts into `weather_forecasts`. Triggered by pg_cron jobs `hourly-weather-pull` and `daily-preview-refresh`.
-- `weather-ensemble-pull`: nightly ensemble archive into `weather_ensemble` (per 0.25° cell, member arrays). Separate from weather-pull on purpose.
+- `weather-ensemble-pull`: nightly ensemble archive into `weather_ensemble` (per 0.25° cell, member arrays; `*_c10`/`*_kmh10`/`*_mm10` are value × 10). pg_cron `17 22 * * *` UTC. Separate from weather-pull on purpose. Never schedule Open-Meteo pulls at :07 — hourly-weather-pull runs then and the shared per-minute quota returns 429s.
 - `calculate-drive-times`: writes `stops.drive_override_minutes` (previous-stop leg) via Google Directions.
 
 ## Database conventions

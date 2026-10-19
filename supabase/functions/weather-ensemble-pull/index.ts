@@ -26,19 +26,24 @@ type Spec = {
 const SPECS: Spec[] = [
   { model: 'ecmwf_ifs025', api: 'ensemble', stepH: 3, meta: 'ecmwf_ifs025_ensemble', vars: {
       cloud_total: 'cloud_cover', cloud_low: 'cloud_cover_low', cloud_mid: 'cloud_cover_mid',
-      rh: 'relative_humidity_2m', temp: 'temperature_2m', dew: 'dew_point_2m',
-      wind: 'wind_speed_10m', gust: 'wind_gusts_10m', precip: 'precipitation', wcode: 'weather_code' } },
+      rh: 'relative_humidity_2m', temp_c10: 'temperature_2m', dew_c10: 'dew_point_2m',
+      wind_kmh10: 'wind_speed_10m', gust_kmh10: 'wind_gusts_10m', precip_mm10: 'precipitation',
+      wcode: 'weather_code' } },
   { model: 'gfs025', api: 'ensemble', stepH: 3, meta: 'ncep_gefs025', vars: { vis: 'visibility' } },
   { model: 'ukmo_global_ensemble_20km', api: 'ensemble', stepH: 1, meta: 'ukmo_global_ensemble_20km', vars: { vis: 'visibility' } },
   { model: 'dmi_harmonie_arome_europe', api: 'forecast', stepH: 1, meta: 'dmi_harmonie_arome_europe', vars: {
       vis: 'visibility', cloud_base: 'cloud_base', cloud_2m: 'cloud_cover_2m',
       cloud_total: 'cloud_cover', cloud_low: 'cloud_cover_low', rh: 'relative_humidity_2m',
-      temp: 'temperature_2m', dew: 'dew_point_2m', wcode: 'weather_code',
-      wind: 'wind_speed_10m', gust: 'wind_gusts_10m', precip: 'precipitation' } },
+      temp_c10: 'temperature_2m', dew_c10: 'dew_point_2m', wcode: 'weather_code',
+      wind_kmh10: 'wind_speed_10m', gust_kmh10: 'wind_gusts_10m', precip_mm10: 'precipitation' } },
 ];
 
-// smallint[] columns; everything else is real[]
-const INT_COLS = new Set(['cloud_total', 'cloud_low', 'cloud_mid', 'cloud_2m', 'rh', 'wcode']);
+// Free plan: members are stored as smallint[] wherever 0.1 resolution is
+// enough (value x 10 in the *10 columns). vis and cloud_base stay real[].
+const SCALE: Record<string, number> = {
+  cloud_total: 1, cloud_low: 1, cloud_mid: 1, cloud_2m: 1, rh: 1, wcode: 1,
+  temp_c10: 10, dew_c10: 10, wind_kmh10: 10, gust_kmh10: 10, precip_mm10: 10,
+};
 
 const HOST = { ensemble: 'https://ensemble-api.open-meteo.com', forecast: 'https://api.open-meteo.com' };
 const PATH = { ensemble: '/v1/ensemble', forecast: '/v1/forecast' };
@@ -49,20 +54,30 @@ const cellKey = (lat: number, lng: number) =>
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 // Upstream 500s have wiped a whole night of ensemble stats before; retry
-// before giving up on a cell.
+// before giving up on a cell. A 429 means the per-minute weighted quota is
+// spent (51 members count heavily), so wait it out for longer.
 async function getJson(url: string, attempts = 3): Promise<{ j: any; err: string | null }> {
   let err: string | null = null;
   for (let i = 0; i < attempts; i++) {
+    let wait = 2000 * (i + 1);
     try {
       const r = await fetch(url);
       if (r.ok) return { j: await r.json(), err: null };
       err = `${r.status}`;
-      if (r.status >= 400 && r.status < 500 && r.status !== 429) break;
+      if (r.status === 429) wait = 20000;
+      else if (r.status >= 400 && r.status < 500) break;
     } catch (e) { err = String(e); }
-    if (i < attempts - 1) await sleep(2000 * (i + 1));
+    if (i < attempts - 1) await sleep(wait);
   }
   return { j: null, err };
 }
+
+// HARMONIE DINI is a European domain; elsewhere it only returns 400s.
+const inDomain = (spec: Spec, lng: number) => spec.model !== 'dmi_harmonie_arome_europe' || lng > -40;
+
+// Requests are spaced so the pull stays under Open-Meteo's per-minute limit
+// even with the hourly weather-pull running.
+const SPACING_MS = 700;
 
 const num = (v: any): number | null => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
 
@@ -132,17 +147,19 @@ Deno.serve(async (req) => {
 
     for (const cell of cells) {
       const [lat, lng] = cell.split(',').map(Number);
-      const results = await Promise.all(SPECS.map(spec => getJson(
-        `${HOST[spec.api]}${PATH[spec.api]}?latitude=${lat}&longitude=${lng}`
-        + `&hourly=${Object.values(spec.vars).join(',')}&models=${spec.model}`
-        + `&forecast_days=4&timezone=GMT&wind_speed_unit=kmh`)));
-
-      SPECS.forEach((spec, si) => {
-        const { j, err } = results[si];
+      for (const spec of SPECS) {
+        if (!inDomain(spec, lng)) continue;
+        // Free-plan wall clock is 150 s; keep time to write what we have.
+        if (Date.now() - t0 > 115_000) { errors.push({ cell, model: spec.model, error: 'time budget' }); continue; }
+        const { j, err } = await getJson(
+          `${HOST[spec.api]}${PATH[spec.api]}?latitude=${lat}&longitude=${lng}`
+          + `&hourly=${Object.values(spec.vars).join(',')}&models=${spec.model}`
+          + `&forecast_days=4&timezone=GMT&wind_speed_unit=kmh`);
+        await sleep(SPACING_MS);
         if (err || !j?.hourly?.time) {
           errors.push({ cell, model: spec.model, error: err ?? 'no hourly' });
           if (spec.model === 'ecmwf_ifs025') ecmwfFailed++;
-          return;
+          continue;
         }
         const H = j.hourly;
         const cols: Record<string, (number | null)[][]> = {};
@@ -159,14 +176,14 @@ Deno.serve(async (req) => {
             if (!members.length) continue;
             const vals = Array.from({ length: members.length }, (_, k) => {
               const x = num(members[k]?.[i]);
-              return x == null ? null : INT_COLS.has(col) ? Math.round(x) : Math.round(x * 100) / 100;
+              return x == null ? null : col in SCALE ? Math.round(x * SCALE[col]) : Math.round(x * 100) / 100;
             });
             if (vals.some(x => x != null)) { row[col] = vals; any = true; }
           }
           // A model outside its domain (HARMONIE at the Tetons) returns nulls.
           if (any) rows.push(row);
         });
-      });
+      }
     }
 
     for (let i = 0; i < rows.length; i += 200) {
