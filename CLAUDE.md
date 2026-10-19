@@ -7,8 +7,16 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 - **Never DELETE rows from `stops`.** Deleting a stop cascades (`ON DELETE CASCADE`) to:
   `stop_photos` (Phil's photos), `weather_forecasts` (forecast archive), `stop_sun_pairs` (vantage links), `model_grid_points`, `drive_times`. `exposures.stop_id` is set NULL.
 - **Move stops with `UPDATE stops SET day_id, position`**, never insert-plus-delete. Inserting a new stop is allowed.
-- The repo is public and ships the anon/publishable key. Since Oct 2026 restrictive policies (`anon_no_insert/update/delete`) make `stops`/`days`/`trips` read-only for anon/authenticated; writes go through the service role (edge functions, MCP) or SECURITY DEFINER functions. Other tables (e.g. `stop_photos`) still have anon `full_access`.
+- The repo is public and ships the anon/publishable key, and the app (branch `update`) writes `stops`, `days`, `trips`, `stop_photos`, `exposures` and the `photos` storage bucket with that key. Do NOT tighten RLS on those without moving the app's writes behind an edge function first (an Oct 2026 lock broke the app for 25 min; the `anon_no_*` policies are now neutralised to `true`).
+- Before judging what the app does, read the code on branch `update`, not `master`.
 - `reset_test_bed()` deletes and rebuilds trip `7e57bed0-0000-4000-8000-000000000001` only. Use that trip for experiments.
+
+## Branches and releases
+
+- **`update`**: the app (Expo/React Native, `src/`, `App.tsx`) plus everything else. Pushing app files triggers `.eas/workflows/update.yml`: fingerprint the native side; if an APK with that fingerprint exists, publish an instant (OTA) update to channel `preview`; otherwise build a new APK. `runtimeVersion` uses the fingerprint policy, so an update can only reach an APK it is compatible with. Backend/docs/web commits do not trigger it.
+- **`main`**: old "build an APK" branch (`.eas/workflows/build.yml`). No longer needed for releases; kept as a manual fallback.
+- **`master`**: GitHub default branch. Netlify deploys the web viewers (`faroes-web/`, `iceland-web/`) from it, and GitHub only runs scheduled workflows (`webcam-clip`) from the default branch.
+- All EAS jobs use the `preview` environment (the `preview` build profile's default); keep them in sync or fingerprints never match.
 
 ## Edge functions
 
