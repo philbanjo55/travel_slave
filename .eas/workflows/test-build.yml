@@ -8,6 +8,17 @@ on:
   push:
     branches:
       - ccr-dba965ff-afy6cz
+    # App files only, so backend/docs commits on this branch don't build an APK.
+    paths:
+      - 'src/**'
+      - 'App.tsx'
+      - 'app.json'
+      - 'app.config.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'eas.json'
+      - 'babel.config.js'
+      - 'tsconfig.json'
 
 jobs:
   build:
