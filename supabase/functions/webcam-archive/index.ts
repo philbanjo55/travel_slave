@@ -3,11 +3,14 @@ import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
 import jpeg from 'npm:jpeg-js@0.4.4';
 
 // WEBCAM FOG ARCHIVE
-// Landsverk road/harbour webcams (lv.fo/tmp/<code>.jpg, refreshed every
-// ~30 min; archiving approved by Landsverk). Every 3 h each active camera's
-// frame is stored, given cheap haze metrics (fog flattens contrast and edges)
-// and labelled by Gemini's free tier. These are the place-specific fog truth
-// the solver's forecasts get scored against; EKVG METAR covers only the airport.
+// Every 3 h each active row of webcam_cameras (any trip: image_url, region,
+// source and permission per camera; first set is Landsverk in the Faroes,
+// approved by Landsverk) is stored and given cheap haze metrics (fog flattens
+// contrast and edges). Labels come from CLIP in GitHub Actions
+// (tools/webcam_clip via webcam-labels); Gemini labelling here is optional and
+// off unless GEMINI_ENABLED=true (the free tier refused this account with 402).
+// These are the place-specific fog truth the solver's forecasts get scored
+// against; METAR covers only airports.
 //
 // Storage (free plan, 1 GB): full frames kept 7 days, plus one frame per
 // camera per day (the 12 UTC capture) kept permanently.
@@ -22,7 +25,7 @@ const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') ?? 'gemini-3.8-flash';
 const LABELS = ['clear', 'haze', 'low_cloud', 'fog', 'dark', 'camera_problem'];
 const CLOUD = ['none', 'above_hills', 'touching_tops', 'covering_hills', 'unknown'];
 
-const PROMPT = (name: string, island: string, hint: string) => `You are labelling a Faroe Islands road webcam frame for a landscape photographer's fog archive.
+const PROMPT = (region: string, name: string, island: string, hint: string) => `You are labelling a ${region} webcam frame for a landscape photographer's fog archive.
 Camera: ${name} (${island}). ${hint}
 Judge only what the image shows. Labels:
 - clear: hills and distance clearly visible, no fog or cloud on the hills
@@ -79,7 +82,7 @@ async function label(key: string, cam: any, buf: Uint8Array) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [
-          { text: PROMPT(cam.name, cam.island ?? '', cam.hint ?? '') },
+          { text: PROMPT(cam.region ?? 'road', cam.name, cam.island ?? '', cam.hint ?? '') },
           { inline_data: { mime_type: 'image/jpeg', data: encodeBase64(buf) } },
         ] }],
         generationConfig: { responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0 },
@@ -98,7 +101,7 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const geminiKey = Deno.env.get('GEMINI_API_KEY');
+    const geminiKey = Deno.env.get('GEMINI_ENABLED') === 'true' ? Deno.env.get('GEMINI_API_KEY') : undefined;
 
     const { data: buckets } = await supabase.storage.listBuckets();
     if (!buckets?.some(b => b.name === BUCKET)) await supabase.storage.createBucket(BUCKET, { public: false });
@@ -118,8 +121,9 @@ Deno.serve(async (req) => {
           .eq('camera_code', cam.code).eq('captured_at', slot.toISOString()).maybeSingle();
         if (existing && body.force !== true) { res.skipped = 'already captured this slot'; results.push(res); continue; }
 
-        const r = await fetch(`https://www.lv.fo/tmp/${cam.code}.jpg?t=${Date.now()}`,
-          { headers: { 'User-Agent': 'travel_slave webcam archive (approved by Landsverk)' } });
+        const sep = cam.image_url.includes('?') ? '&' : '?';
+        const r = await fetch(`${cam.image_url}${sep}t=${Date.now()}`,
+          { headers: { 'User-Agent': 'travel_slave webcam archive (permission: see webcam_cameras.permission_note)' } });
         if (!r.ok) throw new Error(`image ${r.status}`);
         const buf = new Uint8Array(await r.arrayBuffer());
 
@@ -134,7 +138,7 @@ Deno.serve(async (req) => {
         let lab: any = null, labErr: string | null = null;
         if (geminiKey) {
           try { lab = await label(geminiKey, cam, buf); } catch (e) { labErr = String(e).slice(0, 300); }
-        } else labErr = 'no GEMINI_API_KEY';
+        }
 
         const row = {
           camera_code: cam.code, captured_at: slot.toISOString(), storage_path: path, bytes: buf.length,
