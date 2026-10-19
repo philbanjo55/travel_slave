@@ -1,0 +1,41 @@
+# travel_slave — notes for Claude sessions
+
+Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`faroes-web/`, `iceland-web/`), and a Supabase backend (project `ohshrzlvvxyovcjmdajc`). Most backend logic lives in the database and edge functions, not in this repo — read the live definitions before changing anything.
+
+## Data safety (hard rules)
+
+- **Never DELETE rows from `stops`.** Deleting a stop cascades (`ON DELETE CASCADE`) to:
+  `stop_photos` (Phil's photos), `weather_forecasts` (forecast archive), `stop_sun_pairs` (vantage links), `model_grid_points`, `drive_times`. `exposures.stop_id` is set NULL.
+- **Move stops with `UPDATE stops SET day_id, position`**, never insert-plus-delete. Inserting a new stop is allowed.
+- The repo is public and ships the anon/publishable key, and the app (branch `update`) writes `stops`, `days`, `trips`, `stop_photos`, `exposures` and the `photos` storage bucket with that key. Do NOT tighten RLS on those without moving the app's writes behind an edge function first (an Oct 2026 lock broke the app for 25 min; the `anon_no_*` policies are now neutralised to `true`).
+- Before judging what the app does, read the code on branch `update`, not `master`.
+- `reset_test_bed()` deletes and rebuilds trip `7e57bed0-0000-4000-8000-000000000001` only. Use that trip for experiments.
+
+## Branches and releases
+
+- **`update`**: the app (Expo/React Native, `src/`, `App.tsx`) plus everything else. Pushing app files triggers `.eas/workflows/update.yml`: fingerprint the native side; if an APK with that fingerprint exists, publish an instant (OTA) update to channel `preview`; otherwise build a new APK. `runtimeVersion` uses the fingerprint policy, so an update can only reach an APK it is compatible with. Backend/docs/web commits do not trigger it.
+- **`main`**: old "build an APK" branch (`.eas/workflows/build.yml`). No longer needed for releases; kept as a manual fallback.
+- **`master`**: GitHub default branch. Netlify deploys the web viewers (`faroes-web/`, `iceland-web/`) from it, and GitHub only runs scheduled workflows (`webcam-clip`) from the default branch.
+- All EAS jobs use the `preview` environment (the `preview` build profile's default); keep them in sync or fingerprints never match.
+
+## Edge functions
+
+- The repo copy of each function must match what is deployed. Before editing one, fetch the deployed source (`get_edge_function`) and diff — the repo has drifted before (weather-pull v33 vs deployed v35).
+- `weather-pull` (v35, `index.ts` + `logic.ts`): per-day display forecasts into `weather_forecasts`. Triggered by pg_cron jobs `hourly-weather-pull` and `daily-preview-refresh`.
+- `weather-ensemble-pull`: nightly ensemble archive into `weather_ensemble` (per 0.25° cell, member arrays; `*_c10`/`*_kmh10`/`*_mm10` are value × 10). pg_cron `17 22 * * *` UTC. Separate from weather-pull on purpose. Never schedule Open-Meteo pulls at :07 — hourly-weather-pull runs then and the shared per-minute quota returns 429s.
+- `webcam-archive`: every 3 h (`37 */3 * * *`) saves each active `webcam_cameras` row (any trip; per-camera `image_url`, `region`, `source`, `permission_note` — always get permission before adding a camera) to Storage bucket `webcams`, haze metrics into `webcam_frames`. Full images kept 7 days, the 12 UTC frame kept forever. Gemini labelling is off unless secret `GEMINI_ENABLED=true` (free tier returned 402 for this account).
+- `webcam-labels`: token-gated door (`WEBCAM_LABELLER_TOKEN`) for the CLIP labeller in GitHub Actions (`tools/webcam_clip`, `.github/workflows/webcam-clip.yml`, nightly 03:23 UTC). The repo is public: the workflow must never hold the service-role key.
+- `webcam-probe`: retired stub (returns 410); delete it from the dashboard.
+- `calculate-drive-times`: writes `stops.drive_override_minutes` (previous-stop leg) via Google Directions.
+
+## Database conventions
+
+- pg_cron runs in GMT/UTC. Faroe time is UTC+1 in summer, UTC+0 from late Oct to late Mar.
+- `cron.job` calls edge functions with `net.http_post`; pg_net times out at 5 s but the function keeps running. Don't rely on the HTTP response.
+- New tables get RLS enabled automatically (`ensure_rls` event trigger). With no policy the app/web viewers read zero rows — add a SELECT policy if the client needs it.
+- `prune_weather_forecasts()` (weekly) strips `raw` blobs older than 21 days. `weather_forecasts` is a display table, not an archive.
+- Free plan: database must stay under 500 MB or it goes read-only. Check `pg_database_size` before adding anything that grows nightly. `db_size_check()` logs the size daily to `app_logs`.
+
+## Solver
+
+Spec: `SOLVER_SPEC.md` (in Phil's uploads). Review and corrected build order: `docs/solver/SPEC_REVIEW.md`. The solver writes proposals to its own tables and never writes to `stops` except through an explicit apply step.

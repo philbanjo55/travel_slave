@@ -1,14 +1,59 @@
-name: JS Update (instant patch)
+name: Deploy app (instant update, or new APK only when needed)
+
+# Push to `update` -> if the app's native side is unchanged (an APK with the
+# same fingerprint already exists) publish an instant update; if native code,
+# permissions, plugins or native dependencies changed, build a new APK instead.
+# runtimeVersion uses the fingerprint policy, so an update can only ever reach
+# an APK it is compatible with.
+#
+# Only app files trigger this. Backend, docs and web-viewer commits do not.
+# Every job uses the `preview` environment because the `preview` build
+# profile builds with it; a mismatch would make every fingerprint look new.
 
 on:
   push:
     branches:
       - update
+    paths:
+      - src/**
+      - App.tsx
+      - app.json
+      - app.config.js
+      - package.json
+      - package-lock.json
+      - eas.json
+      - babel.config.js
+      - tsconfig.json
+      - .eas/workflows/update.yml
 
 jobs:
-  update:
-    name: Publish JS Update
+  fingerprint:
+    name: Fingerprint native side
+    type: fingerprint
+    environment: preview
+  get_android_build:
+    name: Find an APK with this fingerprint
+    needs: [fingerprint]
+    type: get-build
+    params:
+      platform: android
+      profile: preview
+      fingerprint_hash: ${{ needs.fingerprint.outputs.android_fingerprint_hash }}
+  build_android:
+    name: Build new APK (native change)
+    needs: [get_android_build]
+    if: ${{ !needs.get_android_build.outputs.build_id }}
+    type: build
+    params:
+      platform: android
+      profile: preview
+  publish_android_update:
+    name: Publish instant update
+    needs: [get_android_build]
+    if: ${{ needs.get_android_build.outputs.build_id }}
     type: update
+    environment: preview
     params:
       channel: preview
+      platform: android
       message: ${{ github.event.head_commit.message }}
