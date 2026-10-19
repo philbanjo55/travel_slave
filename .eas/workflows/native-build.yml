@@ -1,0 +1,27 @@
+name: Native APK build (only when native files change)
+
+# Push to `update` that changes the native side -> build a new APK with the
+# `preview` profile (same as main's build.yml). JS-only changes go out as
+# instant updates via update.yml instead.
+# If the change adds or upgrades a native library, bump "runtimeVersion" in
+# app.json in the same commit so the matching OTA update only reaches this
+# new APK.
+
+on:
+  push:
+    branches:
+      - update
+    paths:
+      - package.json
+      - package-lock.json
+      - app.json
+      - app.config.js
+      - eas.json
+
+jobs:
+  build:
+    name: Build Android APK
+    type: build
+    params:
+      platform: android
+      profile: preview
