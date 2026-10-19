@@ -7,7 +7,7 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 - **Never DELETE rows from `stops`.** Deleting a stop cascades (`ON DELETE CASCADE`) to:
   `stop_photos` (Phil's photos), `weather_forecasts` (forecast archive), `stop_sun_pairs` (vantage links), `model_grid_points`, `drive_times`. `exposures.stop_id` is set NULL.
 - **Move stops with `UPDATE stops SET day_id, position`**, never insert-plus-delete. Inserting a new stop is allowed.
-- The anon key in the app and web viewers has full write access to `stops`/`days`/`trips` (`full_access` policy). Nothing technical stops a bad write — be careful.
+- The repo is public and ships the anon/publishable key. Since Oct 2026 restrictive policies (`anon_no_insert/update/delete`) make `stops`/`days`/`trips` read-only for anon/authenticated; writes go through the service role (edge functions, MCP) or SECURITY DEFINER functions. Other tables (e.g. `stop_photos`) still have anon `full_access`.
 - `reset_test_bed()` deletes and rebuilds trip `7e57bed0-0000-4000-8000-000000000001` only. Use that trip for experiments.
 
 ## Edge functions
@@ -17,7 +17,7 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 - `weather-ensemble-pull`: nightly ensemble archive into `weather_ensemble` (per 0.25° cell, member arrays; `*_c10`/`*_kmh10`/`*_mm10` are value × 10). pg_cron `17 22 * * *` UTC. Separate from weather-pull on purpose. Never schedule Open-Meteo pulls at :07 — hourly-weather-pull runs then and the shared per-minute quota returns 429s.
 - `webcam-archive`: every 3 h (`37 */3 * * *`) saves each active `webcam_cameras` row (any trip; per-camera `image_url`, `region`, `source`, `permission_note` — always get permission before adding a camera) to Storage bucket `webcams`, haze metrics into `webcam_frames`. Full images kept 7 days, the 12 UTC frame kept forever. Gemini labelling is off unless secret `GEMINI_ENABLED=true` (free tier returned 402 for this account).
 - `webcam-labels`: token-gated door (`WEBCAM_LABELLER_TOKEN`) for the CLIP labeller in GitHub Actions (`tools/webcam_clip`, `.github/workflows/webcam-clip.yml`, nightly 03:23 UTC). The repo is public: the workflow must never hold the service-role key.
-- `webcam-probe`: temporary diagnostics; safe to delete.
+- `webcam-probe`: retired stub (returns 410); delete it from the dashboard.
 - `calculate-drive-times`: writes `stops.drive_override_minutes` (previous-stop leg) via Google Directions.
 
 ## Database conventions
