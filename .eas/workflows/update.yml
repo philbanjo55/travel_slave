@@ -1,14 +1,15 @@
-name: Deploy app (instant update, or new APK only when needed)
+name: JS Update (instant patch)
 
-# Push to `update` -> if the app's native side is unchanged (an APK with the
-# same fingerprint already exists) publish an instant update; if native code,
-# permissions, plugins or native dependencies changed, build a new APK instead.
-# runtimeVersion uses the fingerprint policy, so an update can only ever reach
-# an APK it is compatible with.
+# Push to `update` that changes app JavaScript -> instant (OTA) update to the
+# APK on the phone. Same job as before (channel `preview`, default
+# environment), now limited to app code so backend/docs/web commits do not
+# publish anything.
 #
-# Only app files trigger this. Backend, docs and web-viewer commits do not.
-# Every job uses the `preview` environment because the `preview` build
-# profile builds with it; a mismatch would make every fingerprint look new.
+# Native changes (package.json, app.json, app.config.js, eas.json) are built
+# into a new APK by native-build.yml instead. When a change adds or upgrades
+# a native library, bump "runtimeVersion" in app.json in the same commit so
+# this update only reaches the new APK. (Expo's automatic fingerprint check
+# needs SDK 52+; this app is on SDK 51.)
 
 on:
   push:
@@ -17,43 +18,11 @@ on:
     paths:
       - src/**
       - App.tsx
-      - app.json
-      - app.config.js
-      - package.json
-      - package-lock.json
-      - eas.json
-      - babel.config.js
-      - tsconfig.json
-      - .eas/workflows/update.yml
 
 jobs:
-  fingerprint:
-    name: Fingerprint native side
-    type: fingerprint
-    environment: preview
-  get_android_build:
-    name: Find an APK with this fingerprint
-    needs: [fingerprint]
-    type: get-build
-    params:
-      platform: android
-      profile: preview
-      fingerprint_hash: ${{ needs.fingerprint.outputs.android_fingerprint_hash }}
-  build_android:
-    name: Build new APK (native change)
-    needs: [get_android_build]
-    if: ${{ !needs.get_android_build.outputs.build_id }}
-    type: build
-    params:
-      platform: android
-      profile: preview
-  publish_android_update:
-    name: Publish instant update
-    needs: [get_android_build]
-    if: ${{ needs.get_android_build.outputs.build_id }}
+  update:
+    name: Publish JS Update
     type: update
-    environment: preview
     params:
       channel: preview
-      platform: android
       message: ${{ github.event.head_commit.message }}
