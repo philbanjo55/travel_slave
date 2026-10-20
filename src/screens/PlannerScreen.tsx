@@ -7,7 +7,8 @@ import { format, parseISO, differenceInCalendarDays } from 'date-fns';
 import { useTripStore } from '../store/tripStore';
 import { colors, spacing, radius, typography } from '../theme';
 import {
-  CameraFrame, PlanRun, fetchDayRuns, fetchFrames, fetchScores, fetchTripSettings, latestByDay, planDay,
+  CameraFrame, ClaudeSpend, PlanRun, fetchClaudeSpend, fetchDayRuns, fetchFrames, fetchScores, fetchTripSettings,
+  latestByDay, planDay, spendLine,
 } from '../services/planner';
 import { FrameModal, FrameTile } from '../components/planner/CameraView';
 
@@ -29,6 +30,7 @@ export default function PlannerScreen() {
   const [rows, setRows] = useState<DayRow[]>([]);
   const [cams, setCams] = useState<CameraFrame[] | null>(null);
   const [open, setOpen] = useState<CameraFrame | null>(null);
+  const [spend, setSpend] = useState<ClaudeSpend | null>(null);
   const [subjects, setSubjects] = useState<{ tier: string; nailed: number; got: number; left: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [planning, setPlanning] = useState<{ done: number; total: number } | null>(null);
@@ -57,6 +59,7 @@ export default function PlannerScreen() {
     } catch (e: any) { setError(String(e?.message ?? e)); }
     setLoading(false);
     fetchFrames().then(setCams).catch(() => setCams([]));
+    fetchClaudeSpend().then(setSpend).catch(() => {});
   }, [tripId, days.length]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -155,6 +158,7 @@ export default function PlannerScreen() {
 
         <Text style={[styles.label, { marginTop: spacing.xl }]}>CAMERAS NOW</Text>
         <Text style={styles.hint}>Tap one, check it, and say what you see. Your taps are the scoreboard's ground truth.</Text>
+        {spend ? <Text style={styles.hint}>{spendLine(spend)}</Text> : null}
         {cams == null ? <ActivityIndicator color={colors.textTertiary} style={{ marginVertical: spacing.md }} /> : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.md, paddingVertical: spacing.sm }}>
             {cams.map(c => <FrameTile key={c.camera.code} item={c} onPress={() => setOpen(c)} />)}

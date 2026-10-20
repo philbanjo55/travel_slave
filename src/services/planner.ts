@@ -129,6 +129,15 @@ export async function fetchFrames(near?: { lat: number; lng: number }, n = 2): P
   return j.cameras;
 }
 
+// Claude API spend this UTC month (webcam labels etc.), capped server-side.
+export type ClaudeSpend = { month_usd: number; cap_usd: number; calls: number; today_usd: number; last_at: string | null };
+export async function fetchClaudeSpend(): Promise<ClaudeSpend | null> {
+  const { data, error } = await supabase.rpc('claude_spend_summary');
+  return error ? null : (data as ClaudeSpend);
+}
+export const spendLine = (s: ClaudeSpend) =>
+  `Claude this month: $${s.month_usd.toFixed(2)} of $${s.cap_usd} (today $${s.today_usd.toFixed(2)})`;
+
 export type PhilLabel = 'clear' | 'cloud_on_hills' | 'fog' | 'cant_tell';
 export const labelFrame = (frameId: string, label: PhilLabel | null) =>
   solverAction({ action: 'label_frame', frame_id: frameId, label });

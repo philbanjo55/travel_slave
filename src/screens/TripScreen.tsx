@@ -17,6 +17,7 @@ import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
 import { IS_TEST_APP } from '../utils/variant';
+import { fetchClaudeSpend, spendLine } from '../services/planner';
 
 export default function TripScreen() {
   const navigation = useNavigation<any>();
@@ -125,10 +126,12 @@ export default function TripScreen() {
                     + `${st.biggest ? `, biggest ${st.biggest}` : ''}.`
                     + `\n${st.error ?? 'no error reported'}`
                   : 'Offline copy: no result recorded.';
+              const spend = IS_TEST_APP ? await fetchClaudeSpend().catch(() => null) : null;
               Alert.alert(
                 'Weather Updated',
                 `Pulled ${res.ok} of ${res.days} days${res.failed ? ` (${res.failed} failed)` : ''}.`
                 + `\n\n${saved}`
+                + (spend ? `\n\n${spendLine(spend)}` : '')
               );
             } catch (e) {
               Alert.alert('Error', 'Failed to update trip weather.');

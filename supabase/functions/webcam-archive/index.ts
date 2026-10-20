@@ -10,7 +10,8 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 // contrast and edges). Night frames (sun below -6 deg) are skipped.
 // Labels come from Claude (ANTHROPIC_API_KEY secret; CLAUDE_LABELS=false turns
 // it off, CLAUDE_LABEL_MODEL overrides the model, CLAUDE_DAILY_CAP caps calls
-// per UTC day). Phil's own taps go to phil_label, never over Claude's label,
+// per UTC day, CLAUDE_MONTHLY_CAP_USD caps spend per UTC month, logged in
+// claude_usage). Phil's own taps go to phil_label, never over Claude's label,
 // so the two can be compared. These are the place-specific fog truth the
 // solver's forecasts get scored against; METAR covers only airports.
 //
@@ -26,6 +27,15 @@ const KEEP_HOUR_UTC = 12;
 const NIGHT_ALT = -6;
 const MODEL = Deno.env.get('CLAUDE_LABEL_MODEL') ?? 'claude-opus-5-5';
 const DAILY_CAP = Number(Deno.env.get('CLAUDE_DAILY_CAP') ?? 400);
+const MONTHLY_CAP_USD = Number(Deno.env.get('CLAUDE_MONTHLY_CAP_USD') ?? 40);
+// USD per million tokens [input, output]; unknown models are priced as Opus.
+const PRICES: Record<string, [number, number]> = {
+  'claude-opus': [4, 20], 'claude-sonnet': [2, 10], 'claude-haiku': [0.1, 0.5],
+};
+const costUsd = (model: string, inTok: number, outTok: number) => {
+  const p = Object.entries(PRICES).find(([k]) => model.startsWith(k))?.[1] ?? PRICES['claude-opus'];
+  return (inTok * p[0] + outTok * p[1]) / 1e6;
+};
 
 const LABELS = ['clear', 'haze', 'low_cloud', 'fog', 'dark', 'camera_problem'];
 const CLOUD = ['none', 'above_hills', 'touching_tops', 'covering_hills', 'unknown'];
@@ -148,13 +158,21 @@ Deno.serve(async (req) => {
     const { count: usedToday } = await supabase.from('webcam_frames').select('id', { count: 'exact', head: true })
       .like('label_model', 'claude%').gte('captured_at', dayStart.toISOString());
     let budget = Math.max(0, DAILY_CAP - (usedToday ?? 0));
+    const { data: spentMonth } = await supabase.rpc('claude_spend_month');
+    let spent = Number(spentMonth ?? 0);
     const tokens = { input: 0, output: 0 };
     const tryLabel = async (cam: any, buf: Uint8Array) => {
       if (!claude || budget <= 0) return { lab: null, model: null, err: claude ? 'daily cap reached' : null };
+      if (spent >= MONTHLY_CAP_USD) return { lab: null, model: null, err: 'monthly spend cap reached' };
       budget--;
       try {
         const r = await label(claude, cam, buf);
-        tokens.input += r.usage?.input_tokens ?? 0; tokens.output += r.usage?.output_tokens ?? 0;
+        const inTok = r.usage?.input_tokens ?? 0, outTok = r.usage?.output_tokens ?? 0;
+        tokens.input += inTok; tokens.output += outTok;
+        const cost = costUsd(r.model ?? MODEL, inTok, outTok);
+        spent += cost;
+        await supabase.from('claude_usage').insert({ fn: 'webcam-archive', purpose: 'webcam_label', model: r.model,
+          input_tokens: inTok, output_tokens: outTok, cost_usd: Math.round(cost * 1e5) / 1e5 });
         return { lab: r.lab, model: r.model, err: null };
       } catch (e) { return { lab: null, model: null, err: String(e).slice(0, 300) }; }
     };
@@ -242,7 +260,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    return json({ ok: true, slot: slot.toISOString(), model: claude ? MODEL : null, tokens, backfilled, pruned, results });
+    return json({ ok: true, slot: slot.toISOString(), model: claude ? MODEL : null, tokens,
+                  spent_month_usd: Math.round(spent * 100) / 100, backfilled, pruned, results });
   } catch (e: any) {
     return json({ ok: false, error: String(e?.message ?? e) }, 500);
   }
