@@ -32,13 +32,14 @@ const CLOUD = ['none', 'above_hills', 'touching_tops', 'covering_hills', 'unknow
 
 const PROMPT = (region: string, name: string, island: string, hint: string) => `You are labelling a ${region} webcam frame for a landscape photographer's weather archive. The labels are scored against forecasts, so judge only what the image shows.
 Camera: ${name} (${island}). ${hint}
+These are road cameras: road, verges, barriers or rock filling much of the frame is normal. Judge the weather from whatever part shows sky, hills or distance, even a thin strip.
 label:
 - clear: hills and distance clearly visible, no fog or cloud on the hills
 - haze: visibility reduced by haze or mist but hills still discernible
 - low_cloud: cloud sitting on or hiding the hilltops, lower ground visible
 - fog: fog at camera level, distant terrain hidden
 - dark: too dark to judge
-- camera_problem: frozen, blank, lens covered by water or snow, or obstructed
+- camera_problem: frozen, blank, or lens so covered by water or snow that no sky, hills or distance can be judged
 hills_visible: the hills in view can be seen to their tops.
 cloud_on_hills: where the lowest cloud sits relative to the hills.
 sun_on_land: direct sunlight is falling on the land or sea in view (shadows, sunlit patches), not just a bright overcast sky.
