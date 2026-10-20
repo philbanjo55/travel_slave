@@ -37,7 +37,7 @@ const MULTI_BEAM = 80;
 type PlanNode = { id: string; name: string; w: number; dur: number; group: number; free: boolean };
 type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
 type State = {
-  t: number; loc: number; next: number; visited: Uint8Array; groupBest: Map<number, Uint8Array>;
+  t: number; loc: number; next: number; visited: Uint8Array; m0: number; m1: number; groupBest: Map<number, Uint8Array>;
   total: Float32Array; route: Visit[]; drive: number; j: number; mean: number; cvar: number;
 };
 type DayPlan = { date: string; tripDate: string | null; hotel: number; dayStart: number; routes: State[]; anchors: number; ms: number };
@@ -116,7 +116,15 @@ Deno.serve(async (req) => {
         .order('fetched_at', { ascending: false }).limit(1);
       tz = (wf?.[0] as any)?.tz ?? 'UTC';
     }
-    const localDate = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+    // One formatter, and each slot's local date worked out once: building
+    // formatters per score row used up the 2 s CPU limit.
+    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    const dateCache = new Map<string, string>();
+    const slotDate = (slotAt: string) => {
+      let d = dateCache.get(slotAt);
+      if (d === undefined) { d = fmt.format(new Date(slotAt)); dateCache.set(slotAt, d); }
+      return d;
+    };
 
     const [inputs, scoresAll, stopsAll, accs, tripDays] = await Promise.all([
       all<any>((a, b) => db.from('solver_stop_inputs')
@@ -128,7 +136,13 @@ Deno.serve(async (req) => {
       db.from('days').select('id, date').eq('trip_id', tripId).then(r => r.data ?? []),
     ]);
     const stopById = new Map(stopsAll.map(s => [s.id, s]));
-    const dates = [...new Set(scoresAll.map(r => localDate(Date.parse(r.slot_at))))].sort();
+    const scoresByDate = new Map<string, any[]>();
+    for (const r of scoresAll) {
+      const d = slotDate(r.slot_at);
+      if (!scoresByDate.has(d)) scoresByDate.set(d, []);
+      scoresByDate.get(d)!.push(r);
+    }
+    const dates = [...scoresByDate.keys()].sort();
     const dayInputs: { date: string; trip_date?: string }[] =
       body.days ?? (body.multi ? dates.map(d => ({ date: d })) : [{ date: body.date ?? dates[0], trip_date: body.trip_date }]);
 
@@ -203,7 +217,7 @@ Deno.serve(async (req) => {
       const td0 = performance.now();
       const H = pos.get(day.hotelId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
-      const scores = scoresAll.filter(r => localDate(Date.parse(r.slot_at)) === day.date);
+      const scores = scoresByDate.get(day.date) ?? [];
       const slotMs = scores.map(r => Date.parse(r.slot_at));
       const first = Math.min(...slotMs, ...anchors.map(a => a.startMs)), last = Math.max(...slotMs, ...anchors.map(a => a.startMs + a.dur * 60000));
       const dayStart = Math.floor((first - 90 * 60000) / (SLOT * 60000)) * SLOT * 60000;
@@ -247,23 +261,25 @@ Deno.serve(async (req) => {
           else groupBest.set(g, w);
         }
         const visited = Uint8Array.from(st.visited); visited[n] = 1;
+        // Visited set as a 64-bit mask (two ints) for the dedupe key.
+        const m0 = n < 32 ? (st.m0 | (1 << n)) >>> 0 : st.m0, m1 = n >= 32 ? (st.m1 | (1 << (n - 32))) >>> 0 : st.m1;
         const m = metric(total);
         const d = st.drive + drive;
         return {
-          t: (i + len) * SLOT, loc: n, next: st.next + (anchor ? 1 : 0), visited, groupBest, total, drive: d,
+          t: (i + len) * SLOT, loc: n, next: st.next + (anchor ? 1 : 0), visited, m0, m1, groupBest, total, drive: d,
           route: [...st.route, { n, arrive: st.t + drive, start: i * SLOT, end: (i + len) * SLOT, drive, anchor }],
           mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * (d + D[n][H]),
         };
       };
 
-      const root: State = { t: 0, loc: H, next: 0, visited: new Uint8Array(nodes.length), groupBest: new Map(),
+      const root: State = { t: 0, loc: H, next: 0, visited: new Uint8Array(nodes.length), m0: 0, m1: 0, groupBest: new Map(),
         total: new Float32Array(M), route: [], drive: 0, j: 0, mean: 0, cvar: 0 };
       const pool: State[] = [];
       let beam: State[] = [root];
       while (beam.length) {
         const children = new Map<string, State>();
         const keep = (c: State) => {
-          const key = `${c.visited.join('')}|${c.loc}`;
+          const key = nodes.length <= 64 ? `${c.m0},${c.m1},${c.loc}` : `${c.visited.join('')}|${c.loc}`;
           const have = children.get(key);
           if (!have || have.j < c.j || (have.j === c.j && have.t > c.t)) children.set(key, c);
         };
