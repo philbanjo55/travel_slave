@@ -373,14 +373,17 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Top K distinct plans (at least half the day-subjects differ), plus the safest.
+    // Top K distinct plans, plus the safest. Distinct: at least half the
+    // day-subjects differ for one day, 30% across several (three-day plans
+    // share most of their subjects, so 50% left only one).
     combos.sort((a, b) => b.j - a.j);
+    const minDist = planned.length > 1 ? 0.3 : 0.5;
     const setOf = (c: Combo) => subjectSet(c.picks.map(st => st.groupBest));
     const picked: Combo[] = [];
     for (const c of combos) {
       if (picked.length >= K) break;
       const s = setOf(c);
-      if (picked.every(p => jaccardDist(s, setOf(p)) >= 0.5)) picked.push(c);
+      if (picked.every(p => jaccardDist(s, setOf(p)) >= minDist)) picked.push(c);
     }
     const safest = combos.reduce((a, b) => (b.cvar > a.cvar ? b : a), combos[0]);
     const safestAdded = !!safest && !picked.includes(safest);
