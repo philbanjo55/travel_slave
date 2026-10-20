@@ -6,8 +6,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //   frames       {lat?, lng?, n?}  latest frame of the n cameras nearest the
 //                point (all active cameras without a point), as signed URLs;
 //                {camera, at?}: that camera's frame at or before `at`.
-//                Daylight frames only (sun > 3 deg): at night the tile shows
-//                the last labelled frame and its real age, not a dark one
+//                Daylight, fresh frames only (sun > 3 deg, not stale): at night
+//                or when a camera freezes, the tile shows the last good frame
+//                and its real age
 //   label_frame  {frame_id, label: clear|cloud_on_hills|fog|cant_tell|null}
 //   plan         {trip_id, trip_date, preview?}  plan a trip day now: light-only
 //                past the forecast; preview: this week's forecast as that day
@@ -57,7 +58,7 @@ Deno.serve(async (req) => {
         const out = await Promise.all(ranked.map(async c => {
           const { data: f } = await db.from('webcam_frames')
             .select('id, captured_at, storage_path, label, hills_visible, cloud_on_hills, sun_on_land, label_note, label_model, label_error, phil_label, edge_top')
-            .eq('camera_code', c.code).not('storage_path', 'is', null).gt('sun_altitude', 3)
+            .eq('camera_code', c.code).not('storage_path', 'is', null).gt('sun_altitude', 3).eq('stale', false)
             .lte('captured_at', body.at ?? new Date().toISOString())
             .order('captured_at', { ascending: false }).limit(1).maybeSingle();
           let signed: string | null = null;

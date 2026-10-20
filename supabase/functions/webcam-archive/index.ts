@@ -20,6 +20,12 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 //
 // POST {} archives this hour; {force: true} re-captures it; {backfill: n}
 // labels up to n stored daylight frames that have no label yet.
+//
+// Stale frames: a camera can freeze and keep serving an old picture. Each
+// image's SHA-256 is stored; a repeat of an earlier frame is not sent to
+// Claude. Claude also reads the time printed on the image (camera_time_text);
+// the webcam_frame_stale trigger marks a frame stale when it repeats or its
+// printed time is over 45 min from fetched_at. Stale frames are no truth.
 
 const BUCKET = 'webcams';
 const KEEP_DAYS = 7;
@@ -53,12 +59,13 @@ label:
 hills_visible: the hills in view can be seen to their tops.
 cloud_on_hills: where the lowest cloud sits relative to the hills.
 sun_on_land: direct sunlight is falling on the land or sea in view (shadows, sunlit patches), not just a bright overcast sky.
+camera_time: the date and time printed on the image's caption bar, written YYYY-MM-DD HH:MM exactly as shown (do not convert time zones); an empty string if none is printed.
 confidence: 0 to 1. note: one short sentence on what decided it.`;
 
 const SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['label', 'hills_visible', 'cloud_on_hills', 'sea_visible', 'rain_or_wet_lens', 'sun_on_land', 'confidence', 'note'],
+  required: ['label', 'hills_visible', 'cloud_on_hills', 'sea_visible', 'rain_or_wet_lens', 'sun_on_land', 'camera_time', 'confidence', 'note'],
   properties: {
     label: { type: 'string', enum: LABELS },
     hills_visible: { type: 'boolean' },
@@ -66,6 +73,7 @@ const SCHEMA = {
     sea_visible: { type: 'boolean' },
     rain_or_wet_lens: { type: 'boolean' },
     sun_on_land: { type: 'boolean' },
+    camera_time: { type: 'string' },
     confidence: { type: 'number' },
     note: { type: 'string' },
   },
@@ -140,6 +148,7 @@ const labelColumns = (lab: any, model: string | null, err: string | null) => ({
   sun_on_land: typeof lab?.sun_on_land === 'boolean' ? lab.sun_on_land : null,
   label_confidence: typeof lab?.confidence === 'number' ? lab.confidence : null,
   label_note: typeof lab?.note === 'string' ? lab.note.slice(0, 500) : null,
+  camera_time_text: typeof lab?.camera_time === 'string' && lab.camera_time.trim() ? lab.camera_time.trim().slice(0, 40) : null,
   label_model: lab ? model : null,
   label_error: err,
 });
@@ -201,6 +210,14 @@ Deno.serve(async (req) => {
           { headers: { 'User-Agent': 'travel_slave webcam archive (permission: see webcam_cameras.permission_note)' } });
         if (!r.ok) throw new Error(`image ${r.status}`);
         const buf = new Uint8Array(await r.arrayBuffer());
+        const fetchedAt = new Date().toISOString();
+        const sha = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)))
+          .map(b => b.toString(16).padStart(2, '0')).join('');
+        // A frozen camera serves the same picture again: keep it, but don't pay to label it.
+        const { data: same } = await supabase.from('webcam_frames').select('id')
+          .eq('camera_code', cam.code).eq('image_sha256', sha).lt('captured_at', slot.toISOString())
+          .gt('captured_at', new Date(slot.getTime() - 12 * 3600_000).toISOString()).limit(1);
+        const repeat = (same?.length ?? 0) > 0;
 
         const path = `${cam.code}/${slot.toISOString().slice(0, 13)}.jpg`;
         const { error: upErr } = await supabase.storage.from(BUCKET)
@@ -209,18 +226,19 @@ Deno.serve(async (req) => {
 
         let metrics: any = {};
         try { metrics = hazeMetrics(buf); } catch (e) { res.metrics_error = String(e).slice(0, 200); }
-        const l = await tryLabel(cam, buf);
+        const l = repeat ? { lab: null, model: null, err: 'repeat image, not labelled' } : await tryLabel(cam, buf);
 
         const row = {
           camera_code: cam.code, captured_at: slot.toISOString(), storage_path: path, bytes: buf.length,
           keep: slot.getUTCHours() === KEEP_HOUR_UTC, sun_altitude: alt, ...metrics,
+          image_sha256: sha, fetched_at: fetchedAt,
           ...labelColumns(l.lab, l.model, l.err),
         };
         const { error: insErr } = await supabase.from('webcam_frames')
           .upsert(row, { onConflict: 'camera_code,captured_at' });
         if (insErr) throw insErr;
         Object.assign(res, { bytes: buf.length, label: row.label, cloud_on_hills: row.cloud_on_hills,
-                             sun_on_land: row.sun_on_land, label_error: l.err });
+                             sun_on_land: row.sun_on_land, camera_time: row.camera_time_text, repeat, label_error: l.err });
       } catch (e: any) { res.error = String(e?.message ?? e).slice(0, 300); }
       results.push(res);
     }
@@ -231,7 +249,7 @@ Deno.serve(async (req) => {
     if (claude) {
       const { data: pending, error: pErr } = await supabase.from('webcam_frames')
         .select('id,camera_code,storage_path,captured_at').is('label', null).not('storage_path', 'is', null)
-        .gte('sun_altitude', NIGHT_ALT).neq('captured_at', slot.toISOString())
+        .eq('stale', false).gte('sun_altitude', NIGHT_ALT).neq('captured_at', slot.toISOString())
         .order('captured_at', { ascending: false }).limit(Math.min(Number(body.backfill ?? 4), 40));
       if (pErr) results.push({ backfill_error: pErr.message });
       results.push({ backfill_candidates: pending?.length ?? null });
