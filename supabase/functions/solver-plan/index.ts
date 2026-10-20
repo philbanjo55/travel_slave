@@ -13,8 +13,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // A subject shot twice in one day (stops whose starred shots aim within
 // 300 m of each other, or share a shot) only counts the improvement. Search is
 // a beam over partial routes; every partial route is a valid plan because
-// the drive home is checked at each step. The top K distinct plans (stop-set
-// Jaccard distance >= 0.34) are written to solver_runs / solver_plans.
+// the drive home is checked at each step. The top K distinct plans (subject-
+// set Jaccard distance >= 0.5) are written to solver_runs / solver_plans.
 // Time-locked stops are left out in v0 (they are booked, not planned).
 // Proposals only: nothing here writes to stops.
 
@@ -111,8 +111,13 @@ Deno.serve(async (req) => {
       const covering = (acc ?? []).find(a => a.check_in <= date && date < a.check_out);
       const pick = covering ?? (acc ?? []).sort((a, b) => (b.nights ?? 0) - (a.nights ?? 0))[0];
       if (pick?.lat != null) {
-        hotelId = (stopsAll ?? []).filter(s => s.lat != null)
-          .sort((a, b) => metersApart(a, pick) - metersApart(b, pick))[0]?.id;
+        // Prefer a stop named after the accommodation ("Cottages by the Sea —
+        // Check-in"), else the nearest stop.
+        const word = String(pick.name ?? '').split(/[ —,(]/)[0].toLowerCase();
+        const near = (stopsAll ?? []).filter(s => s.lat != null)
+          .sort((a, b) => metersApart(a, pick) - metersApart(b, pick));
+        hotelId = (near.find(s => word.length > 2 && metersApart(s, pick) < 500 && s.name.toLowerCase().startsWith(word))
+          ?? near[0])?.id;
       }
     }
     if (!hotelId) return json({ ok: false, error: 'no hotel: pass hotel_stop_id' }, 400);
@@ -230,8 +235,10 @@ Deno.serve(async (req) => {
     }
 
     // Top K distinct plans by objective, plus the best worst-case plan.
+    // Distinct = at least half the subjects differ (stops of one subject,
+    // like the Bøur viewpoints, count as the same).
     pool.sort((a, b) => b.j - a.j);
-    const setOf = (st: State) => new Set(st.route.map(v => v.s));
+    const setOf = (st: State) => new Set(st.route.map(v => stops[v.s].group));
     const jaccardDist = (a: Set<number>, b: Set<number>) => {
       let inter = 0; for (const x of a) if (b.has(x)) inter++;
       const uni = a.size + b.size - inter; return uni ? 1 - inter / uni : 0;
@@ -240,7 +247,7 @@ Deno.serve(async (req) => {
     for (const st of pool) {
       if (picked.length >= K) break;
       const s = setOf(st);
-      if (picked.every(p => jaccardDist(s, setOf(p)) >= 0.34)) picked.push(st);
+      if (picked.every(p => jaccardDist(s, setOf(p)) >= 0.5)) picked.push(st);
     }
     const bestCvar = pool.reduce((a, b) => (b.cvar > a.cvar ? b : a), pool[0]);
     const notes = new Map<State, string>();
