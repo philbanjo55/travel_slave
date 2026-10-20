@@ -28,6 +28,7 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 - `webcam-labels`: token-gated door (`WEBCAM_LABELLER_TOKEN`) for the CLIP labeller in GitHub Actions (`tools/webcam_clip`, `.github/workflows/webcam-clip.yml`, nightly 03:23 UTC). The repo is public: the workflow must never hold the service-role key.
 - `webcam-probe`: retired stub (returns 410); delete it from the dashboard.
 - `calculate-drive-times`: writes `stops.drive_override_minutes` (previous-stop leg) via Google Directions.
+- `solver-drive-matrix` (POST `{trip_id}`): fills `solver_drive_legs` (per spot pair, coords rounded to 3 dp by `solver_trip_spots()`, shared across trips) via the Google Routes matrix API. Incremental: only pairs not yet stored are fetched, so re-running is free unless a stop moved. `solver_drive_matrix` (view) gives stop-to-stop minutes per trip; legs Google can't route (car ferries) go through `solver_ferry_links`. Call it from SQL with `net.http_post` (this container can't reach supabase.co directly).
 
 ## Database conventions
 
@@ -39,4 +40,4 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 
 ## Solver
 
-Spec: `SOLVER_SPEC.md` (in Phil's uploads). Review and corrected build order: `docs/solver/SPEC_REVIEW.md`. The solver writes proposals to its own tables and never writes to `stops` except through an explicit apply step.
+Spec: `SOLVER_SPEC.md` (in Phil's uploads). Review and corrected build order: `docs/solver/SPEC_REVIEW.md`. Per-stop inputs (backend only, the app never reads them): `solver_stop_settings` (tier, starred shot, light wanted front/side/back/soft, fog_wanted, time_locked; `source` = suggested/phil), resolved by the `solver_stop_inputs` view. Fog/rain/wind are global penalties; waterfalls get a rained-yesterday bonus. The solver writes proposals to its own tables and never writes to `stops` except through an explicit apply step.
