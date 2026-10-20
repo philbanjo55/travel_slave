@@ -1,13 +1,17 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// SOLVER PLANNER (v0.2)
-// POST {trip_id, date?, trip_date?, hotel_stop_id?, multi?, days?, k?, beam?}
+// SOLVER PLANNER (v0.3)
+// POST {trip_id, date?, trip_date?, light?, hotel_stop_id?, multi?, days?, k?, beam?}
 //   single day (default): plan `date` (a day in the latest score build).
-//   multi: plan every day in the build (or `days: [{date, trip_date?}]`) as
-//          one trip, so a subject shot on two days counts only its better day.
-//   trip_date: plan the weather of `date` as if it were that trip day: its
-//          hotel and its booked (time-locked) stops. Defaults to `date` when
-//          the trip has a day on that date, else no bookings apply.
+//   trip_date alone: plan that trip day. Forecast scores when the build covers
+//          its date, else light-only scores for its real date
+//          (solver_light_scores: 51 made-up sun scenarios, no rain/wind/fog).
+//          light: true forces light-only.
+//   date + trip_date: plan the weather of `date` as if it were that trip day:
+//          its hotels, its booked (time-locked) stops and its own stops.
+//   multi: plan every day in the build (or `days: [{date?, trip_date?,
+//          light?}]`) as one trip, so a subject shot on two days counts only
+//          its better day.
 //
 // Uses the latest score build (solver_scores: per stop, 15-min slot and ECMWF
 // member, V x250), tier weights, drive minutes (solver_drive_matrix) and each
@@ -18,11 +22,18 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //
 // A subject (stops whose starred shots aim within 300 m of each other, or
 // share a shot) counts once: repeats only add their improvement, within a
-// day and across days. Booked stops are fixed visits at their time_label;
-// free stops must still reach the next booking in time. Each day is a beam
-// over partial routes from the hotel and back; multi-day combines the top
-// routes of each day with a second beam. Writes solver_runs / solver_plans.
-// Proposals only: nothing here writes to stops.
+// day and across days. Shot status: a 'got' subject is worth only the
+// improvement over its shot_value; a 'nailed' one is not planned and is worth
+// nothing more. A day starts at the previous night's accommodation and ends
+// at that night's, so move days run hotel to hotel. Booked stops are fixed
+// visits at their time_label; free stops must still reach the next booking in
+// time. Each day is a beam over partial routes from the hotel; multi-day
+// combines the top routes of each day with a second beam.
+//
+// Rank 0, "my day": the trip day's own stops at their time_labels, scored
+// the same way, each with its chance and its best time that day.
+// Writes solver_runs / solver_plans. Proposals only: nothing here writes to
+// stops (solver_apply_plan does, on request).
 
 const TIER_W: Record<string, number> = { GOD: 10, S: 5, A: 2, B: 1, C: 1, D: 0.5, F: 0 };
 const LAMBDA = 0.5;
@@ -33,6 +44,15 @@ const DRIVE_PENALTY = 0.002; // tier points per driving minute: tie-break only
 const SAME_SUBJECT_M = 300;
 const DAY_POOL = 60;         // routes per day carried into the multi-day combine
 const MULTI_BEAM = 150;
+const GOOD = 150;            // V >= 0.6 counts as a good shot (p_good)
+// Day window, local time: leave the hotel no earlier, be back no later
+// (made up from Phil's own days, 05:45-22:30). Booked stops override it.
+// Body: earliest / latest as "HH:MM".
+const EARLIEST = '05:00';
+const LATEST = '23:30';
+// Light-only scenarios: sun visibility (k/50)^2, k = 0..50. Same expansion
+// as SQL solver_light_scores; solver_light_terms gives dir/soft per slot.
+const SCENARIOS = Array.from({ length: 51 }, (_, k) => (k / 50) ** 2);
 
 type PlanNode = { id: string; name: string; w: number; dur: number; group: number; free: boolean };
 type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
@@ -40,7 +60,12 @@ type State = {
   t: number; loc: number; next: number; visited: Uint8Array; m0: number; m1: number; groupBest: Map<number, Uint8Array>;
   total: Float32Array; route: Visit[]; drive: number; j: number; mean: number; cvar: number;
 };
-type DayPlan = { date: string; tripDate: string | null; hotel: number; dayStart: number; routes: State[]; anchors: number; ms: number };
+type DayPlan = {
+  date: string; tripDate: string | null; light: boolean; start: number; end: number; dayStart: number; nSlots: number;
+  routes: State[]; anchors: number; ms: number; winLo: number; winHi: number;
+  W: (n: number, slot: number) => Uint8Array | null;
+  peak: (n: number, slot: number) => number;
+};
 
 function metric(total: Float32Array) {
   const n = total.length;
@@ -81,13 +106,17 @@ function zonedToUtc(date: string, minutes: number, tz: string) {
   return guess - (asLocal - guess);
 }
 
-// "5:50 AM" -> 350
+// "5:50 AM" or "~5:50 AM" -> 350
 function labelMinutes(label: string | null): number | null {
-  const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec((label ?? '').trim());
+  const m = /^~?\s*(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec((label ?? '').trim());
   if (!m) return null;
   let h = +m[1] % 12; if (m[3].toUpperCase() === 'PM') h += 12;
   return h * 60 + +m[2];
 }
+
+const hhmm = (s: string) => { const [h, m] = s.split(':').map(Number); return h * 60 + (m || 0); };
+const dayBefore = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+const r2 = (x: number) => Math.round(x * 100) / 100;
 
 Deno.serve(async (req) => {
   const json = (b: any, status = 200) =>
@@ -104,7 +133,6 @@ Deno.serve(async (req) => {
     const { data: build, error: bErr } = await db.from('solver_score_builds').select('id, built_at')
       .eq('trip_id', tripId).order('built_at', { ascending: false }).limit(1).maybeSingle();
     if (bErr) throw bErr;
-    if (!build) return json({ ok: false, error: 'no score build for this trip' }, 404);
     // Timezone: trip setting, else what Open-Meteo reported for the trip's
     // stops (as solver_build_scores and trip_sun_plan do), else UTC.
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
@@ -126,25 +154,54 @@ Deno.serve(async (req) => {
       return d;
     };
 
-    const [inputs, scoresAll, stopsAll, accs, tripDays] = await Promise.all([
+    // The build's dates, from its first and last slot.
+    const buildDates: string[] = [];
+    if (build) {
+      const edge = (asc: boolean) => db.from('solver_scores').select('slot_at').eq('build_id', build.id)
+        .order('slot_at', { ascending: asc }).limit(1).maybeSingle().then(r => r.data?.slot_at as string | undefined);
+      const [lo, hi] = await Promise.all([edge(true), edge(false)]);
+      if (lo && hi) for (let d = slotDate(lo); d <= slotDate(hi); d = new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10)) buildDates.push(d);
+    }
+
+    // What to plan: forecast days use the build, light days their own date.
+    const rawDays: { date?: string; trip_date?: string; light?: boolean }[] =
+      body.days ?? (body.multi ? buildDates.map(d => ({ date: d })) : [{ date: body.date, trip_date: body.trip_date, light: body.light }]);
+    const specs = rawDays.map(di => {
+      const light = !!di.light || (!di.date && !!di.trip_date && !buildDates.includes(di.trip_date));
+      const date = light ? (di.trip_date ?? di.date)! : (di.date ?? buildDates[0]);
+      return { date, trip_date: di.trip_date, light };
+    });
+    if (!specs.length || specs.some(s => !s.date)) return json({ ok: false, error: 'nothing to plan: no score build and no trip_date' }, 404);
+    const forecastDates = [...new Set(specs.filter(s => !s.light).map(s => s.date))];
+    const lightDates = [...new Set(specs.filter(s => s.light).map(s => s.date))];
+    if (forecastDates.length && !build) return json({ ok: false, error: 'no score build for this trip' }, 404);
+
+    const [inputs, scoresAll, lightAll, stopsAll, accs, tripDays] = await Promise.all([
       all<any>((a, b) => db.from('solver_stop_inputs')
-        .select('stop_id, name, tier, star_vantage_id, duration_minutes, time_locked, day_id')
+        .select('stop_id, name, tier, star_vantage_id, duration_minutes, time_locked, day_id, shot_status, shot_value')
         .eq('trip_id', tripId).range(a, b)),
-      all<any>((a, b) => db.from('solver_scores').select('stop_id, slot_at, v').eq('build_id', build.id).order('slot_at').range(a, b)),
-      all<any>((a, b) => db.from('stops').select('id, name, lat, lng, time_label, duration_minutes, day_id').eq('trip_id', tripId).range(a, b)),
+      forecastDates.length
+        ? all<any>((a, b) => db.from('solver_scores').select('stop_id, slot_at, v').eq('build_id', build!.id).order('slot_at').order('stop_id').range(a, b))
+        : Promise.resolve([] as any[]),
+      lightDates.length
+        ? all<any>((a, b) => db.rpc('solver_light_terms', { p_trip_id: tripId, p_dates: lightDates }).order('slot_at').order('stop_id').range(a, b))
+            .then(rows => rows.map(r => ({
+              stop_id: r.stop_id, slot_at: r.slot_at,
+              v: SCENARIOS.map(s => Math.round(250 * Math.max(0, Math.min(1,
+                (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * (r.fog_wanted ? 0.6 : 1))))),
+            })))
+        : Promise.resolve([] as any[]),
+      all<any>((a, b) => db.from('stops').select('id, name, lat, lng, time_label, duration_minutes, drive_override_minutes, day_id, position').eq('trip_id', tripId).range(a, b)),
       db.from('accommodations').select('name, lat, lng, check_in, check_out, nights').eq('trip_id', tripId).then(r => r.data ?? []),
       db.from('days').select('id, date').eq('trip_id', tripId).then(r => r.data ?? []),
     ]);
     const stopById = new Map(stopsAll.map(s => [s.id, s]));
-    const scoresByDate = new Map<string, any[]>();
-    for (const r of scoresAll) {
-      const d = slotDate(r.slot_at);
-      if (!scoresByDate.has(d)) scoresByDate.set(d, []);
-      scoresByDate.get(d)!.push(r);
-    }
-    const dates = [...scoresByDate.keys()].sort();
-    const dayInputs: { date: string; trip_date?: string }[] =
-      body.days ?? (body.multi ? dates.map(d => ({ date: d })) : [{ date: body.date ?? dates[0], trip_date: body.trip_date }]);
+    const byDate = (rows: any[]) => {
+      const m = new Map<string, any[]>();
+      for (const r of rows) { const d = slotDate(r.slot_at); if (!m.has(d)) m.set(d, []); m.get(d)!.push(r); }
+      return m;
+    };
+    const scoresByDate = byDate(scoresAll), lightByDate = byDate(lightAll);
 
     // Rated stops with a starred shot: the only ones that carry value.
     const rated = inputs.filter(r => (TIER_W[r.tier] ?? 0) > 0 && r.star_vantage_id);
@@ -164,35 +221,51 @@ Deno.serve(async (req) => {
     }
     const groupW = new Map<number, number>();
     rated.forEach((r, i) => groupW.set(find(i), Math.max(groupW.get(find(i)) ?? 0, TIER_W[r.tier])));
+    // What a subject already has (x250): nailed = everything, got = shot_value.
+    const groupBase = new Map<number, number>();
+    rated.forEach((r, i) => {
+      const b = r.shot_status === 'nailed' ? 250 : r.shot_status === 'got' ? Math.round(250 * (r.shot_value ?? 0.5)) : 0;
+      if (b > 0) groupBase.set(find(i), Math.max(groupBase.get(find(i)) ?? 0, b));
+    });
 
-    // Hotel for a trip date: the accommodation covering it, else the longest
-    // stay; mapped to a stop named after it (else the nearest stop).
-    const hotelFor = (tripDate: string | null): string | undefined => {
-      const covering = tripDate ? accs.find(a => a.check_in <= tripDate && tripDate < a.check_out) : undefined;
-      const pick = covering ?? [...accs].sort((a, b) => (b.nights ?? 0) - (a.nights ?? 0))[0];
-      if (pick?.lat == null) return undefined;
-      const word = String(pick.name ?? '').split(/[ —,(]/)[0].toLowerCase();
-      const near = stopsAll.filter(s => s.lat != null).sort((a, b) => metersApart(a, pick) - metersApart(b, pick));
-      return (near.find(s => word.length > 2 && metersApart(s, pick) < 500 && s.name.toLowerCase().startsWith(word)) ?? near[0])?.id;
+    // Accommodation -> a stop named after it (else the nearest stop).
+    const accStop = (acc: any): string | undefined => {
+      if (acc?.lat == null) return undefined;
+      const word = String(acc.name ?? '').split(/[ —,(]/)[0].toLowerCase();
+      const near = stopsAll.filter(s => s.lat != null).sort((a, b) => metersApart(a, acc) - metersApart(b, acc));
+      return (near.find(s => word.length > 2 && metersApart(s, acc) < 500 && s.name.toLowerCase().startsWith(word)) ?? near[0])?.id;
+    };
+    const accOn = (night: string) => accs.find(a => a.check_in <= night && night < a.check_out);
+    const longest = [...accs].sort((a, b) => (b.nights ?? 0) - (a.nights ?? 0))[0];
+    // Start: where Phil slept the night before. End: where Phil sleeps tonight
+    // (last day: the last night's place). Unknown trip day: the longest stay.
+    const hotelsFor = (tripDate: string | null) => {
+      const before = tripDate ? accOn(dayBefore(tripDate)) : undefined;
+      const tonight = (tripDate ? accOn(tripDate) : undefined) ?? before ?? longest;
+      return { start: accStop(before ?? tonight), end: accStop(tonight) };
     };
 
-    // Per-day setup: hotel, bookings, node list.
+    // Per-day setup: hotels, bookings, own stops.
     const lockedInputs = inputs.filter(r => r.time_locked);
-    const days = dayInputs.map(di => {
-      const tripDate = di.trip_date ?? (tripDays.some(d => d.date === di.date) ? di.date : null);
-      const hotelId: string | undefined = (dayInputs.length === 1 ? body.hotel_stop_id : undefined) ?? hotelFor(tripDate);
+    const days = specs.map(sp => {
+      const tripDate = sp.trip_date ?? (tripDays.some(d => d.date === sp.date) ? sp.date : null);
+      const h = hotelsFor(tripDate);
+      const override: string | undefined = specs.length === 1 ? body.hotel_stop_id : undefined;
       const dayIds = new Set(tripDays.filter(d => d.date === tripDate).map(d => d.id));
       const anchors = lockedInputs
         .map(r => ({ r, s: stopById.get(r.stop_id), min: labelMinutes(stopById.get(r.stop_id)?.time_label) }))
         .filter(a => a.s && dayIds.has(a.s.day_id) && a.min != null && a.s.lat != null)
-        .map(a => ({ id: a.r.stop_id, startMs: zonedToUtc(di.date, a.min!, tz), dur: a.s.duration_minutes ?? 15 }))
+        .map(a => ({ id: a.r.stop_id, startMs: zonedToUtc(sp.date, a.min!, tz), dur: a.s.duration_minutes ?? 15 }))
         .sort((a, b) => a.startMs - b.startMs);
-      return { date: di.date, tripDate, hotelId, anchors };
+      const own = stopsAll.filter(s => dayIds.has(s.day_id)).sort((a, b) => a.position - b.position);
+      return { date: sp.date, light: sp.light, tripDate, startId: override ?? h.start, endId: override ?? h.end, anchors, own };
     });
-    if (days.some(d => !d.hotelId)) return json({ ok: false, error: 'no hotel: pass hotel_stop_id' }, 400);
+    if (days.some(d => !d.startId || !d.endId)) return json({ ok: false, error: 'no hotel: pass hotel_stop_id' }, 400);
+    const noScores = days.filter(d => !(d.light ? lightByDate : scoresByDate).get(d.date)?.length).map(d => d.date);
+    if (noScores.length) return json({ ok: false, error: 'no scores for these dates', dates: noScores }, 404);
 
     // Drive minutes between every stop any day can use.
-    const ids = [...new Set([...rated.map(r => r.stop_id), ...days.flatMap(d => [d.hotelId!, ...d.anchors.map(a => a.id)])])];
+    const ids = [...new Set([...rated.map(r => r.stop_id), ...days.flatMap(d => [d.startId!, d.endId!, ...d.anchors.map(a => a.id)])])];
     const dm = await all<any>((a, b) => db.from('solver_drive_matrix').select('from_stop_id, to_stop_id, minutes')
       .eq('trip_id', tripId).in('from_stop_id', ids).in('to_stop_id', ids).range(a, b));
     const pos = new Map(ids.map((id, i) => [id, i]));
@@ -207,23 +280,34 @@ Deno.serve(async (req) => {
         id, name: s?.name ?? id, w: r ? TIER_W[r.tier] : 0,
         dur: Math.max(r?.duration_minutes ?? s?.duration_minutes ?? 60, SLOT),
         group: ri != null ? find(ri) : -1 - (pos.get(id) ?? 0),
-        free: !!r && !r.time_locked,
+        free: !!r && !r.time_locked && r.shot_status !== 'nailed',
       };
     });
     const freeNodes = nodes.map((n, i) => (n.free ? i : -1)).filter(i => i >= 0);
 
-    // One day: beam over partial routes from the hotel and back.
+    // Value of seeing subject g at w after prev, over what is already shot.
+    const gain = (g: number, w: number, prev: number | undefined) => Math.max(0, w - Math.max(prev ?? 0, groupBase.get(g) ?? 0));
+
+    // One day: beam over partial routes from the morning hotel to the night's.
     const planDay = (day: typeof days[number]): DayPlan => {
       const td0 = performance.now();
-      const H = pos.get(day.hotelId!)!;
+      const H0 = pos.get(day.startId!)!, H = pos.get(day.endId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
-      const scores = scoresByDate.get(day.date) ?? [];
+      const scores = (day.light ? lightByDate : scoresByDate).get(day.date) ?? [];
       const slotMs = scores.map(r => Date.parse(r.slot_at));
-      const first = Math.min(...slotMs, ...anchors.map(a => a.startMs)), last = Math.max(...slotMs, ...anchors.map(a => a.startMs + a.dur * 60000));
-      const dayStart = Math.floor((first - 90 * 60000) / (SLOT * 60000)) * SLOT * 60000;
-      const dayEnd = last + 60 * 60000;
+      // From 90 min before the first light (else the window opens), to an
+      // hour after the last (else it closes); bookings always fit.
+      const winStart = zonedToUtc(day.date, hhmm(body.earliest ?? EARLIEST), tz!), winEnd = zonedToUtc(day.date, hhmm(body.latest ?? LATEST), tz!);
+      const first = Math.min(Math.max(Math.min(...slotMs) - 90 * 60000, winStart), ...anchors.map(a => a.startMs - 90 * 60000));
+      const last = Math.max(Math.min(Math.max(...slotMs) + 60 * 60000, winEnd), ...anchors.map(a => a.startMs + (a.dur + 60) * 60000));
+      const dayStart = Math.floor(first / (SLOT * 60000)) * SLOT * 60000;
+      const dayEnd = last;
       const nSlots = Math.ceil((dayEnd - dayStart) / (SLOT * 60000));
       const dayMin = (dayEnd - dayStart) / 60000;
+      // Free stops stay inside the window even when a booking stretches the day.
+      const winLo = Math.max(0, Math.ceil((winStart - dayStart) / (SLOT * 60000)));
+      const winMin = Math.min(dayMin, (winEnd - dayStart) / 60000);
+      const winHi = Math.floor(winMin / SLOT);
       const M = scores[0]?.v.length ?? 51;
 
       // V per node per slot, W = best V over the visit window starting there.
@@ -235,6 +319,7 @@ Deno.serve(async (req) => {
       }
       const wCache = new Map<number, Uint8Array | null>();
       const W = (ni: number, start: number): Uint8Array | null => {
+        if (start < 0 || start >= nSlots) return null;
         const key = ni * 10000 + start;
         if (wCache.has(key)) return wCache.get(key)!;
         const len = Math.ceil(nodes[ni].dur / SLOT);
@@ -247,6 +332,16 @@ Deno.serve(async (req) => {
         return best;
       };
       const wMean = (ni: number, start: number) => { const w = W(ni, start); if (!w) return -1; let s = 0; for (const x of w) s += x; return s / M; };
+      // The slot in a visit window with the best mean V: when to shoot.
+      const peak = (ni: number, start: number) => {
+        let bt = start, bs = -1;
+        for (let t = Math.max(start, 0); t < Math.min(start + Math.ceil(nodes[ni].dur / SLOT), nSlots); t++) {
+          const v = V[ni][t]; if (!v) continue;
+          let s = 0; for (const x of v) s += x;
+          if (s > bs) { bs = s; bt = t; }
+        }
+        return bt;
+      };
       const anchorSlot = anchors.map(a => Math.round((a.startMs - dayStart) / (SLOT * 60000)));
 
       const extend = (st: State, n: number, i: number, drive: number, anchor: boolean): State => {
@@ -256,7 +351,7 @@ Deno.serve(async (req) => {
         const groupBest = new Map(st.groupBest);
         if (w) {
           const g = nodes[n].group, prev = st.groupBest.get(g);
-          for (let k = 0; k < M; k++) total[k] += nodes[n].w * (prev ? Math.max(0, w[k] - prev[k]) : w[k]) / 250;
+          for (let k = 0; k < M; k++) total[k] += nodes[n].w * gain(g, w[k], prev?.[k]) / 250;
           if (prev) { const nb = Uint8Array.from(prev); for (let k = 0; k < M; k++) if (w[k] > nb[k]) nb[k] = w[k]; groupBest.set(g, nb); }
           else groupBest.set(g, w);
         }
@@ -272,8 +367,8 @@ Deno.serve(async (req) => {
         };
       };
 
-      const root: State = { t: 0, loc: H, next: 0, visited: new Uint8Array(nodes.length), m0: 0, m1: 0, groupBest: new Map(),
-        total: new Float32Array(M), route: [], drive: 0, j: 0, mean: 0, cvar: 0 };
+      const root: State = { t: 0, loc: H0, next: 0, visited: new Uint8Array(nodes.length), m0: 0, m1: 0, groupBest: new Map(),
+        total: new Float32Array(M), route: [], drive: 0, j: -DRIVE_PENALTY * D[H0][H], mean: 0, cvar: 0 };
       const pool: State[] = [];
       let beam: State[] = [root];
       while (beam.length) {
@@ -291,14 +386,14 @@ Deno.serve(async (req) => {
             const drive = D[st.loc][nextA.n];
             if (Number.isFinite(drive) && st.t + drive <= nextSlot * SLOT) keep(extend(st, nextA.n, nextSlot, drive, true));
           }
-          // A free stop, if it still leaves time for the next booking (or home).
+          // A free stop, if it still leaves time for the next booking (or the night's hotel).
           for (const s of freeNodes) {
             if (st.visited[s]) continue;
             const drive = D[st.loc][s], home = D[s][H];
             if (!Number.isFinite(drive) || !Number.isFinite(home)) continue;
             const len = Math.ceil(nodes[s].dur / SLOT);
-            const i0 = Math.ceil((st.t + drive) / SLOT);
-            let iMax = Math.floor((dayMin - home) / SLOT) - len;
+            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), winLo);
+            let iMax = Math.floor((winMin - home) / SLOT) - len;
             if (nextA) {
               const toA = D[s][nextA.n]; if (!Number.isFinite(toA)) continue;
               iMax = Math.min(iMax, Math.floor((nextSlot * SLOT - toA) / SLOT) - len);
@@ -322,8 +417,8 @@ Deno.serve(async (req) => {
       }
       if (!anchors.length) pool.push(root);
       pool.sort((a, b) => b.j - a.j);
-      return { date: day.date, tripDate: day.tripDate, hotel: H, dayStart, routes: pool, anchors: anchors.length,
-               ms: Math.round(performance.now() - td0) };
+      return { date: day.date, tripDate: day.tripDate, light: day.light, start: H0, end: H, dayStart, nSlots, routes: pool,
+               anchors: anchors.length, ms: Math.round(performance.now() - td0), winLo, winHi, W, peak };
     };
 
     const planned = days.map(planDay);
@@ -331,10 +426,20 @@ Deno.serve(async (req) => {
     if (missing.length) return json({ ok: false, error: 'bookings cannot all be reached', days: missing.map(p => p.date) }, 422);
 
     const iso = (p: DayPlan, min: number) => new Date(p.dayStart + min * 60000).toISOString();
+    // Chance for a visit starting at a slot: mean V and share of members
+    // with a good shot (best moment of the visit), and when that moment is.
+    const chance = (p: DayPlan, n: number, slot: number) => {
+      if (nodes[n].w <= 0) return null;
+      const w = p.W(n, slot); if (!w) return null;
+      let s = 0, g = 0;
+      for (const x of w) { s += x; if (x >= GOOD) g++; }
+      return { value: r2(s / w.length / 250), p_good: r2(g / w.length), peak_at: iso(p, p.peak(n, slot) * SLOT) };
+    };
     const visitsOf = (p: DayPlan, st: State) => st.route.map(v => ({
-      date: p.date, stop_id: nodes[v.n].id, name: nodes[v.n].name, booked: v.anchor,
+      date: p.date, trip_date: p.tripDate, stop_id: nodes[v.n].id, name: nodes[v.n].name, booked: v.anchor,
       arrive: iso(p, v.arrive), start: iso(p, v.start), end: iso(p, v.end),
       wait_min: Math.round(v.start - v.arrive), drive_min: Math.round(v.drive),
+      ...chance(p, v.n, Math.round(v.start / SLOT)),
     }));
     const subjectSet = (groupsByDay: Map<number, Uint8Array>[]) => new Set(groupsByDay.flatMap((g, d) => [...g.keys()].map(k => `${d}:${k}`)));
     // Tier-weighted Jaccard distance over "day:subject" keys, so swapping a
@@ -346,19 +451,27 @@ Deno.serve(async (req) => {
       for (const x of b) if (!a.has(x)) uni += keyW(x);
       return uni ? 1 - inter / uni : 0;
     };
+    const M = planned[0].routes[0].total.length;
+    // A subject counts once, at its best day per member, over what is already shot.
+    const totalOf = (groups: Map<number, Uint8Array>) => {
+      const t = new Float32Array(M);
+      for (const [g, w] of groups) { const wt = groupW.get(g) ?? 0; for (let k = 0; k < M; k++) t[k] += wt * gain(g, w[k], undefined) / 250; }
+      return t;
+    };
+    const mergeInto = (groups: Map<number, Uint8Array>, add: Map<number, Uint8Array>) => {
+      for (const [g, w] of add) {
+        const prev = groups.get(g);
+        if (!prev) groups.set(g, w);
+        else { const nb = Uint8Array.from(prev); for (let k = 0; k < M; k++) if (w[k] > nb[k]) nb[k] = w[k]; groups.set(g, nb); }
+      }
+    };
 
     type Combo = { picks: State[]; groups: Map<number, Uint8Array>; total: Float32Array; drive: number; j: number; mean: number; cvar: number };
+    const homeLeg = (st: State, p: DayPlan) => D[st.loc][p.end];
     let combos: Combo[];
     if (planned.length === 1) {
       combos = planned[0].routes.map(st => ({ picks: [st], groups: st.groupBest, total: st.total, drive: st.drive, j: st.j, mean: st.mean, cvar: st.cvar }));
     } else {
-      // Multi-day: a subject counts once, at its best day per member.
-      const M = planned[0].routes[0].total.length;
-      const totalOf = (groups: Map<number, Uint8Array>) => {
-        const t = new Float32Array(M);
-        for (const [g, w] of groups) { const wt = groupW.get(g) ?? 0; for (let k = 0; k < M; k++) t[k] += wt * w[k] / 250; }
-        return t;
-      };
       // Each day's candidate routes, at most 4 per backbone (its GOD/S subjects).
       const dayPool = (routes: State[]) => {
         const seen = new Map<string, number>(), out: State[] = [];
@@ -377,14 +490,10 @@ Deno.serve(async (req) => {
         const pool = dayPool(p.routes);
         for (const c of combos) for (const st of pool) {
           const groups = new Map(c.groups);
-          for (const [g, w] of st.groupBest) {
-            const prev = groups.get(g);
-            if (!prev) groups.set(g, w);
-            else { const nb = Uint8Array.from(prev); for (let k = 0; k < M; k++) if (w[k] > nb[k]) nb[k] = w[k]; groups.set(g, nb); }
-          }
+          mergeInto(groups, st.groupBest);
           const total = totalOf(groups);
           const m = metric(total);
-          const drive = c.drive + st.drive + D[st.loc][p.hotel];
+          const drive = c.drive + st.drive + homeLeg(st, p);
           next.push({ picks: [...c.picks, st], groups, total, drive, mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * drive });
         }
         // Keep at most 3 combos per backbone (which GOD/S subjects go on
@@ -420,22 +529,75 @@ Deno.serve(async (req) => {
     const safestAdded = !!safest && !picked.includes(safest);
     if (safestAdded) picked.push(safest);
 
-    const plans = picked.map((c, r) => ({
+    const plans: any[] = picked.map((c, r) => ({
       rank: r + 1,
       objective: Math.round(c.j * 1000) / 1000, mean: Math.round(c.mean * 1000) / 1000, cvar11: Math.round(c.cvar * 1000) / 1000,
-      drive_minutes: Math.round(c.picks.reduce((s, st, d) => s + st.drive + D[st.loc][planned[d].hotel], 0)),
+      drive_minutes: Math.round(c.picks.reduce((s, st, d) => s + st.drive + homeLeg(st, planned[d]), 0)),
       note: safestAdded && c === safest ? 'safest: best worst-case' : null,
       visits: c.picks.flatMap((st, d) => visitsOf(planned[d], st)),
     }));
 
+    // My day: the own stops on each trip day, at their time_labels.
+    const ownDays = planned.map((p, d) => {
+      const own = days[d].own;
+      if (!own.length) return null;
+      const groups = new Map<number, Uint8Array>();
+      const visits = own.map(s => {
+        const n = pos.get(s.id);
+        const min = labelMinutes(s.time_label);
+        const slot = min == null ? null : Math.round((zonedToUtc(p.date, min, tz!) - p.dayStart) / (SLOT * 60000));
+        const rated = n != null && nodes[n].w > 0;
+        let at = null, best = null;
+        if (rated && slot != null) {
+          at = chance(p, n!, slot);
+          const w = p.W(n!, slot);
+          if (w) mergeInto(groups, new Map([[nodes[n!].group, w]]));
+        }
+        if (rated) {
+          let bi = -1, bm = -1;
+          for (let i = p.winLo; i <= p.winHi; i++) { const c = chance(p, n!, i); if (c && c.value > bm) { bm = c.value; bi = i; } }
+          if (bi >= 0) best = { start: iso(p, bi * SLOT), ...chance(p, n!, bi) };
+        }
+        return {
+          date: p.date, trip_date: p.tripDate, stop_id: s.id, name: s.name, booked: !!inputs.find(r => r.stop_id === s.id)?.time_locked,
+          start: slot != null ? iso(p, slot * SLOT) : null, rated, ...at, best,
+        };
+      });
+      const drive = own.reduce((t, s) => t + (s.drive_override_minutes ?? 0), 0);
+      return { groups, visits, drive };
+    });
+    if (ownDays.some(o => o)) {
+      const groups = new Map<number, Uint8Array>();
+      for (const o of ownDays) if (o) mergeInto(groups, o.groups);
+      const m = metric(totalOf(groups));
+      const drive = ownDays.reduce((t, o) => t + (o?.drive ?? 0), 0);
+      plans.unshift({
+        rank: 0, objective: Math.round((m.j - DRIVE_PENALTY * drive) * 1000) / 1000,
+        mean: Math.round(m.mean * 1000) / 1000, cvar11: Math.round(m.cvar * 1000) / 1000, drive_minutes: drive,
+        note: 'my day: the trip day as it stands', visits: ownDays.flatMap(o => o?.visits ?? []),
+      });
+    }
+
+    // Light at each scored visit's best moment, from the light cache.
+    const starOf = new Map(rated.map(r => [r.stop_id, r.star_vantage_id]));
+    const want = plans.flatMap(p => p.visits).filter(v => v.peak_at && starOf.has(v.stop_id));
+    if (want.length) {
+      const { data: lc } = await db.from('solver_light_cache').select('vantage_id, slot_at, light')
+        .in('vantage_id', [...new Set(want.map(v => starOf.get(v.stop_id)))])
+        .in('slot_at', [...new Set(want.map(v => v.peak_at))]);
+      const lightAt = new Map((lc ?? []).map(r => [`${r.vantage_id}|${Date.parse(r.slot_at)}`, r.light]));
+      for (const v of want) v.light = lightAt.get(`${starOf.get(v.stop_id)}|${Date.parse(v.peak_at)}`) ?? null;
+    }
+
     const stats = {
-      kind: planned.length > 1 ? 'multi' : 'day', members: combos[0]?.total.length,
-      days: planned.map(p => ({ date: p.date, trip_date: p.tripDate, hotel: nodes[p.hotel].name, bookings: p.anchors, routes: p.routes.length, ms: p.ms })),
-      candidates: freeNodes.length, ms: Math.round(performance.now() - t0), dates,
+      kind: planned.length > 1 ? 'multi' : 'day', members: M,
+      days: planned.map(p => ({ date: p.date, trip_date: p.tripDate, light_only: p.light, start_hotel: nodes[p.start].name,
+                                end_hotel: nodes[p.end].name, bookings: p.anchors, routes: p.routes.length, ms: p.ms })),
+      candidates: freeNodes.length, ms: Math.round(performance.now() - t0), build_dates: buildDates,
     };
     const { data: run, error: rErr } = await db.from('solver_runs').insert({
-      trip_id: tripId, build_id: build.id, plan_date: planned[0].date, hotel_stop_id: nodes[planned[0].hotel].id,
-      params: { k: K, beam: BEAM, lambda: LAMBDA, tail: TAIL, tz, days: dayInputs }, stats,
+      trip_id: tripId, build_id: forecastDates.length ? build!.id : null, plan_date: planned[0].date, hotel_stop_id: nodes[planned[0].end].id,
+      params: { k: K, beam: BEAM, lambda: LAMBDA, tail: TAIL, tz, days: rawDays }, stats,
     }).select('id').single();
     if (rErr) throw rErr;
     if (plans.length) {
