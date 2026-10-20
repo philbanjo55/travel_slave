@@ -4,7 +4,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // POST {action, ...}
 //   mark_shot    {stop_id, status: 'got' | 'nailed' | null}   tick on a stop
 //   frames       {lat?, lng?, n?}  latest frame of the n cameras nearest the
-//                point (all active cameras without a point), as signed URLs;
+//                point, within MAX_CAMERA_KM (all active cameras without a
+//                point), as signed URLs;
 //                {camera, at?}: that camera's frame at or before `at`.
 //                Daylight, fresh frames only (sun > 3 deg, not stale): at night
 //                or when a camera freezes, the tile shows the last good frame
@@ -19,6 +20,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const TEST_BED = '7e57bed0-0000-4000-8000-000000000001';
 const SIGNED_URL_S = 3600;
+// A camera further than this says nothing about a stop (a Teton stop got
+// Faroe cameras 6,400 km away).
+const MAX_CAMERA_KM = 50;
 
 function km(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
   const r = Math.PI / 180;
@@ -53,6 +57,7 @@ Deno.serve(async (req) => {
         const here = body.lat != null && body.lng != null ? { lat: Number(body.lat), lng: Number(body.lng) } : null;
         const ranked = (cams ?? []).filter(c => c.lat != null && (!body.camera || c.code === body.camera))
           .map(c => ({ ...c, distance_km: here ? Math.round(km(here, c) * 10) / 10 : null }))
+          .filter(c => c.distance_km == null || c.distance_km <= MAX_CAMERA_KM)
           .sort((a, b) => (a.distance_km ?? 0) - (b.distance_km ?? 0))
           .slice(0, here ? Math.min(Number(body.n ?? 2), 8) : 8);
         const out = await Promise.all(ranked.map(async c => {
