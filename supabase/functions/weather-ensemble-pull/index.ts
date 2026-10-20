@@ -14,6 +14,12 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const GRID = 0.25; // same cell convention as weather-pull's cellKey
 const HORIZON_H = 72;
+// OUTLOOK: when a live trip has days 4-15 days out, ECMWF (only) is pulled
+// for 16 days and kept up to the last such trip day, so the solver can plan
+// those days on real ensemble members instead of light only. Beyond 144 h
+// ECMWF is 6-hourly. Approved by Phil 21 Oct 2026; sleeps outside trip windows.
+const OUTLOOK_DAYS = 15;
+// {outlook_until: 'YYYY-MM-DD'} in the body forces a window (testing).
 
 type Spec = {
   model: string;
@@ -132,6 +138,15 @@ Deno.serve(async (req) => {
       .filter((s: any) => s.shot_type !== 'logistics')
       .map((s: any) => cellKey(s.lat, s.lng)))];
 
+    // Last live trip day inside the outlook window (days 4-15), if any.
+    const inDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+    let outlookUntil: string | null = body.outlook_until ?? null;
+    if (!outlookUntil && tripIds.length) {
+      const { data: od } = await supabase.from('days').select('date').in('trip_id', tripIds)
+        .gte('date', inDays(3)).lte('date', inDays(OUTLOOK_DAYS)).order('date', { ascending: false }).limit(1);
+      outlookUntil = od?.[0]?.date ?? null;
+    }
+
     const runs: Record<string, string | null> = {};
     for (const spec of SPECS) runs[spec.model] = await runAt(spec);
 
@@ -141,6 +156,8 @@ Deno.serve(async (req) => {
 
     const fromMs = Math.floor(Date.now() / 3600_000) * 3600_000;
     const toMs = fromMs + HORIZON_H * 3600_000;
+    // To the end of the last outlook trip day (UTC +1 day covers late evening local).
+    const outlookToMs = outlookUntil ? Date.parse(`${outlookUntil}T00:00:00Z`) + 2 * 86400000 : toMs;
     const errors: any[] = [];
     let ecmwfFailed = 0;
     const rows: any[] = [];
@@ -151,10 +168,12 @@ Deno.serve(async (req) => {
         if (!inDomain(spec, lng)) continue;
         // Free-plan wall clock is 150 s; keep time to write what we have.
         if (Date.now() - t0 > 115_000) { errors.push({ cell, model: spec.model, error: 'time budget' }); continue; }
+        const outlook = outlookUntil != null && spec.model === 'ecmwf_ifs025';
+        const lastMs = outlook ? Math.max(toMs, outlookToMs) : toMs;
         const { j, err } = await getJson(
           `${HOST[spec.api]}${PATH[spec.api]}?latitude=${lat}&longitude=${lng}`
           + `&hourly=${Object.values(spec.vars).join(',')}&models=${spec.model}`
-          + `&forecast_days=4&timezone=GMT&wind_speed_unit=kmh`);
+          + `&forecast_days=${outlook ? 16 : 4}&timezone=GMT&wind_speed_unit=kmh`);
         await sleep(SPACING_MS);
         if (err || !j?.hourly?.time) {
           errors.push({ cell, model: spec.model, error: err ?? 'no hourly' });
@@ -167,8 +186,9 @@ Deno.serve(async (req) => {
 
         (H.time as string[]).forEach((t, i) => {
           const ms = Date.parse(`${t}:00Z`);
-          if (!(ms >= fromMs && ms <= toMs)) return;
-          if (new Date(ms).getUTCHours() % spec.stepH !== 0) return;
+          if (!(ms >= fromMs && ms <= lastMs)) return;
+          const step = ms - fromMs > 144 * 3600_000 ? Math.max(spec.stepH, 6) : spec.stepH;
+          if (new Date(ms).getUTCHours() % step !== 0) return;
           const row: Record<string, any> = { pull_id: pull.id, cell_key: cell, model: spec.model,
                                              valid_at: new Date(ms).toISOString() };
           let any = false;
@@ -197,7 +217,7 @@ Deno.serve(async (req) => {
       duration_ms: Date.now() - t0,
     }).eq('id', pull.id);
 
-    return json({ ok: true, pull_id: pull.id, cells: cells.length, rows_written: rows.length,
+    return json({ ok: true, pull_id: pull.id, cells: cells.length, rows_written: rows.length, outlook_until: outlookUntil,
                   degraded, errors: errors.length, run_at: runs, duration_ms: Date.now() - t0 });
   } catch (e: any) {
     return json({ ok: false, error: String(e?.message ?? e) }, 500);
