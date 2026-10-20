@@ -359,10 +359,23 @@ Deno.serve(async (req) => {
         for (const [g, w] of groups) { const wt = groupW.get(g) ?? 0; for (let k = 0; k < M; k++) t[k] += wt * w[k] / 250; }
         return t;
       };
+      // Each day's candidate routes, at most 4 per backbone (its GOD/S subjects).
+      const dayPool = (routes: State[]) => {
+        const seen = new Map<string, number>(), out: State[] = [];
+        for (const st of routes) {
+          const key = [...st.groupBest.keys()].filter(g => (groupW.get(g) ?? 0) >= 5).sort((a, b) => a - b).join('.');
+          const n = seen.get(key) ?? 0;
+          if (n >= 4) continue;
+          seen.set(key, n + 1); out.push(st);
+          if (out.length >= DAY_POOL) break;
+        }
+        return out;
+      };
       combos = [{ picks: [], groups: new Map(), total: new Float32Array(M), drive: 0, j: 0, mean: 0, cvar: 0 }];
       for (const p of planned) {
         const next: Combo[] = [];
-        for (const c of combos) for (const st of p.routes.slice(0, DAY_POOL)) {
+        const pool = dayPool(p.routes);
+        for (const c of combos) for (const st of pool) {
           const groups = new Map(c.groups);
           for (const [g, w] of st.groupBest) {
             const prev = groups.get(g);
@@ -374,7 +387,20 @@ Deno.serve(async (req) => {
           const drive = c.drive + st.drive + D[st.loc][p.hotel];
           next.push({ picks: [...c.picks, st], groups, total, drive, mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * drive });
         }
-        combos = next.sort((a, b) => b.j - a.j).slice(0, MULTI_BEAM);
+        // Keep at most 3 combos per backbone (which GOD/S subjects go on
+        // which day), so the beam holds real alternatives, not 150
+        // reshuffles of minor stops around one schedule.
+        next.sort((a, b) => b.j - a.j);
+        const perBackbone = new Map<string, number>();
+        combos = [];
+        for (const c of next) {
+          const key = c.picks.map(st => [...st.groupBest.keys()].filter(g => (groupW.get(g) ?? 0) >= 5).sort((a, b) => a - b).join('.')).join('|');
+          const n = perBackbone.get(key) ?? 0;
+          if (n >= 3) continue;
+          perBackbone.set(key, n + 1);
+          combos.push(c);
+          if (combos.length >= MULTI_BEAM) break;
+        }
       }
     }
 
