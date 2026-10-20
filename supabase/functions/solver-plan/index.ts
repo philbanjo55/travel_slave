@@ -11,7 +11,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //          its hotels, its booked (time-locked) stops and its own stops.
 //   multi: plan every day in the build (or `days: [{date?, trip_date?,
 //          light?}]`) as one trip, so a subject shot on two days counts only
-//          its better day.
+//          its better day, with 6 h between back at night and out again.
+//   earliest / latest / earliest_sunrise: day window, "HH:MM" local.
 //
 // Uses the latest score build (solver_scores: per stop, 15-min slot and ECMWF
 // member, V x250), tier weights, drive minutes (solver_drive_matrix) and each
@@ -50,6 +51,13 @@ const GOOD = 150;            // V >= 0.6 counts as a good shot (p_good)
 // Body: earliest / latest as "HH:MM".
 const EARLIEST = '05:00';
 const LATEST = '23:30';
+// Sunrise (Phil, 21 Oct 2026): a GOD or S stop may start from 03:45 on a
+// forecast day when at least half the members give a good shot there. Not on
+// light-only days: no forecast to say it's worth the alarm.
+const SUNRISE_EARLIEST = '03:45';
+const SUNRISE_MIN_P = 0.5;
+// Multi-day: at least 6 h from back at the hotel to leaving again.
+const REST_HOURS = 6;
 // Light-only scenarios: sun visibility (k/50)^2, k = 0..50. Same expansion
 // as SQL solver_light_scores; solver_light_terms gives dir/soft per slot.
 const SCENARIOS = Array.from({ length: 51 }, (_, k) => (k / 50) ** 2);
@@ -298,7 +306,8 @@ Deno.serve(async (req) => {
       // From 90 min before the first light (else the window opens), to an
       // hour after the last (else it closes); bookings always fit.
       const winStart = zonedToUtc(day.date, hhmm(body.earliest ?? EARLIEST), tz!), winEnd = zonedToUtc(day.date, hhmm(body.latest ?? LATEST), tz!);
-      const first = Math.min(Math.max(Math.min(...slotMs) - 90 * 60000, winStart), ...anchors.map(a => a.startMs - 90 * 60000));
+      const earlyStart = day.light ? winStart : zonedToUtc(day.date, hhmm(body.earliest_sunrise ?? SUNRISE_EARLIEST), tz!);
+      const first = Math.min(Math.max(Math.min(...slotMs) - 90 * 60000, earlyStart), ...anchors.map(a => a.startMs - 90 * 60000));
       const last = Math.max(Math.min(Math.max(...slotMs) + 60 * 60000, winEnd), ...anchors.map(a => a.startMs + (a.dur + 60) * 60000));
       const dayStart = Math.floor(first / (SLOT * 60000)) * SLOT * 60000;
       const dayEnd = last;
@@ -306,6 +315,7 @@ Deno.serve(async (req) => {
       const dayMin = (dayEnd - dayStart) / 60000;
       // Free stops stay inside the window even when a booking stretches the day.
       const winLo = Math.max(0, Math.ceil((winStart - dayStart) / (SLOT * 60000)));
+      const earlyLo = Math.max(0, Math.ceil((earlyStart - dayStart) / (SLOT * 60000)));
       const winMin = Math.min(dayMin, (winEnd - dayStart) / 60000);
       const winHi = Math.floor(winMin / SLOT);
       const M = scores[0]?.v.length ?? 51;
@@ -332,6 +342,9 @@ Deno.serve(async (req) => {
         return best;
       };
       const wMean = (ni: number, start: number) => { const w = W(ni, start); if (!w) return -1; let s = 0; for (const x of w) s += x; return s / M; };
+      const pGood = (ni: number, start: number) => { const w = W(ni, start); if (!w) return 0; let g = 0; for (const x of w) if (x >= GOOD) g++; return g / M; };
+      // Before the window only GOD/S stops, and only when the forecast is good.
+      const startOk = (ni: number, i: number) => i >= winLo || (nodes[ni].w >= 5 && i >= earlyLo && pGood(ni, i) >= SUNRISE_MIN_P);
       // The slot in a visit window with the best mean V: when to shoot.
       const peak = (ni: number, start: number) => {
         let bt = start, bs = -1;
@@ -392,7 +405,7 @@ Deno.serve(async (req) => {
             const drive = D[st.loc][s], home = D[s][H];
             if (!Number.isFinite(drive) || !Number.isFinite(home)) continue;
             const len = Math.ceil(nodes[s].dur / SLOT);
-            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), winLo);
+            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), nodes[s].w >= 5 ? earlyLo : winLo);
             let iMax = Math.floor((winMin - home) / SLOT) - len;
             if (nextA) {
               const toA = D[s][nextA.n]; if (!Number.isFinite(toA)) continue;
@@ -402,13 +415,14 @@ Deno.serve(async (req) => {
             const opts = new Set<number>([i0]);
             let bWait = -1, bWaitI = -1, bDay = -1, bDayI = -1;
             for (let i = i0; i <= Math.min(iMax, nSlots - 1); i++) {
+              if (i < winLo && !startOk(s, i)) continue;
               const m = wMean(s, i);
               if (m > bDay) { bDay = m; bDayI = i; }
               if (i <= i0 + MAX_WAIT_SLOTS && m > bWait) { bWait = m; bWaitI = i; }
             }
             if (bWaitI >= 0) opts.add(bWaitI);
             if (bDayI >= 0) opts.add(bDayI);
-            for (const i of opts) if (W(s, i)) keep(extend(st, s, i, drive, false));
+            for (const i of opts) if (W(s, i) && startOk(s, i)) keep(extend(st, s, i, drive, false));
           }
         }
         beam = [...children.values()].sort((a, b) => b.j - a.j).slice(0, BEAM);
@@ -466,11 +480,17 @@ Deno.serve(async (req) => {
       }
     };
 
-    type Combo = { picks: State[]; groups: Map<number, Uint8Array>; total: Float32Array; drive: number; j: number; mean: number; cvar: number };
+    type Combo = { picks: State[]; groups: Map<number, Uint8Array>; total: Float32Array; drive: number; j: number; mean: number; cvar: number;
+                   back: number | null; date: string | null };
     const homeLeg = (st: State, p: DayPlan) => D[st.loc][p.end];
+    // Leaving the hotel (just in time for the first visit) and back at night, ms.
+    const departMs = (p: DayPlan, st: State) => st.route.length ? p.dayStart + (st.route[0].start - st.route[0].drive) * 60000 : null;
+    const backMs = (p: DayPlan, st: State) => st.route.length ? p.dayStart + (st.t + homeLeg(st, p)) * 60000 : null;
+    const restRelaxed: string[] = [];
     let combos: Combo[];
     if (planned.length === 1) {
-      combos = planned[0].routes.map(st => ({ picks: [st], groups: st.groupBest, total: st.total, drive: st.drive, j: st.j, mean: st.mean, cvar: st.cvar }));
+      combos = planned[0].routes.map(st => ({ picks: [st], groups: st.groupBest, total: st.total, drive: st.drive, j: st.j, mean: st.mean, cvar: st.cvar,
+                                              back: null, date: null }));
     } else {
       // Each day's candidate routes, at most 4 per backbone (its GOD/S subjects).
       const dayPool = (routes: State[]) => {
@@ -484,18 +504,29 @@ Deno.serve(async (req) => {
         }
         return out;
       };
-      combos = [{ picks: [], groups: new Map(), total: new Float32Array(M), drive: 0, j: 0, mean: 0, cvar: 0 }];
+      combos = [{ picks: [], groups: new Map(), total: new Float32Array(M), drive: 0, j: 0, mean: 0, cvar: 0, back: null, date: null }];
       for (const p of planned) {
-        const next: Combo[] = [];
         const pool = dayPool(p.routes);
-        for (const c of combos) for (const st of pool) {
-          const groups = new Map(c.groups);
-          mergeInto(groups, st.groupBest);
-          const total = totalOf(groups);
-          const m = metric(total);
-          const drive = c.drive + st.drive + homeLeg(st, p);
-          next.push({ picks: [...c.picks, st], groups, total, drive, mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * drive });
-        }
+        const day = p.tripDate ?? p.date;
+        const combine = (rest: boolean) => {
+          const out: Combo[] = [];
+          for (const c of combos) for (const st of pool) {
+            // Enough sleep after the night before (consecutive days only).
+            const dep = departMs(p, st);
+            if (rest && c.back != null && dep != null && c.date === dayBefore(day) && dep - c.back < REST_HOURS * 3600000) continue;
+            const groups = new Map(c.groups);
+            mergeInto(groups, st.groupBest);
+            const total = totalOf(groups);
+            const m = metric(total);
+            const drive = c.drive + st.drive + homeLeg(st, p);
+            out.push({ picks: [...c.picks, st], groups, total, drive, mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * drive,
+                       back: backMs(p, st), date: day });
+          }
+          return out;
+        };
+        let next = combine(true);
+        // Bookings that leave no room for 6 h: plan anyway and say so.
+        if (!next.length) { next = combine(false); restRelaxed.push(day); }
         // Keep at most 3 combos per backbone (which GOD/S subjects go on
         // which day), so the beam holds real alternatives, not 150
         // reshuffles of minor stops around one schedule.
@@ -594,6 +625,8 @@ Deno.serve(async (req) => {
       days: planned.map(p => ({ date: p.date, trip_date: p.tripDate, light_only: p.light, start_hotel: nodes[p.start].name,
                                 end_hotel: nodes[p.end].name, bookings: p.anchors, routes: p.routes.length, ms: p.ms })),
       candidates: freeNodes.length, ms: Math.round(performance.now() - t0), build_dates: buildDates,
+      window: { earliest: body.earliest ?? EARLIEST, latest: body.latest ?? LATEST, sunrise: body.earliest_sunrise ?? SUNRISE_EARLIEST,
+                sunrise_min_p_good: SUNRISE_MIN_P, rest_hours: REST_HOURS, rest_relaxed: restRelaxed },
     };
     const { data: run, error: rErr } = await db.from('solver_runs').insert({
       trip_id: tripId, build_id: forecastDates.length ? build!.id : null, plan_date: planned[0].date, hotel_stop_id: nodes[planned[0].end].id,
