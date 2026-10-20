@@ -35,7 +35,7 @@ export default function ExposureImportScreen() {
     try {
       const { inserted, updated } = await importExposures(preview, { source: 'text' });
       Alert.alert('Imported', `${inserted} new, ${updated} updated.`, [
-        { text: 'OK', onPress: () => navigation.navigate('Exposures') },
+        { text: 'OK', onPress: () => navigation.popTo('Exposures') },
       ]);
     } catch (e) {
       Alert.alert('Error', 'Import failed — are you online?');
