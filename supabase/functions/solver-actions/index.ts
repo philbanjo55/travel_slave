@@ -4,7 +4,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // POST {action, ...}
 //   mark_shot    {stop_id, status: 'got' | 'nailed' | null}   tick on a stop
 //   frames       {lat?, lng?, n?}  latest frame of the n cameras nearest the
-//                point (all active cameras without a point), as signed URLs
+//                point (all active cameras without a point), as signed URLs;
+//                {camera, at?}: that camera's frame at or before `at`
 //   label_frame  {frame_id, label: clear|cloud_on_hills|fog|cant_tell|null}
 //   plan         {trip_id, trip_date, preview?}  plan a trip day now: light-only
 //                past the forecast; preview: this week's forecast as that day
@@ -47,7 +48,7 @@ Deno.serve(async (req) => {
           .select('code, name, island, lat, lng, image_url, source').eq('active', true);
         if (error) throw error;
         const here = body.lat != null && body.lng != null ? { lat: Number(body.lat), lng: Number(body.lng) } : null;
-        const ranked = (cams ?? []).filter(c => c.lat != null)
+        const ranked = (cams ?? []).filter(c => c.lat != null && (!body.camera || c.code === body.camera))
           .map(c => ({ ...c, distance_km: here ? Math.round(km(here, c) * 10) / 10 : null }))
           .sort((a, b) => (a.distance_km ?? 0) - (b.distance_km ?? 0))
           .slice(0, here ? Math.min(Number(body.n ?? 2), 8) : 8);
@@ -55,6 +56,7 @@ Deno.serve(async (req) => {
           const { data: f } = await db.from('webcam_frames')
             .select('id, captured_at, storage_path, label, hills_visible, cloud_on_hills, sun_on_land, label_note, label_model, label_error, phil_label, edge_top')
             .eq('camera_code', c.code).not('storage_path', 'is', null)
+            .lte('captured_at', body.at ?? new Date().toISOString())
             .order('captured_at', { ascending: false }).limit(1).maybeSingle();
           let signed: string | null = null;
           if (f?.storage_path) {
