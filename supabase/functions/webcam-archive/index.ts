@@ -26,11 +26,19 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 // Claude. Claude also reads the time printed on the image (camera_time_text);
 // the webcam_frame_stale trigger marks a frame stale when it repeats or its
 // printed time is over 45 min from fetched_at. Stale frames are no truth.
+//
+// image_url may be a template for archives that name files by time (TetonCam:
+// .../{YYYY}/{MM}/{DD}/{HHmm}.jpg): filled in the camera's tz on 15-min steps,
+// newest first, stepping back up to an hour; the file's time becomes
+// camera_time_text. Every image fetch times out after FETCH_TIMEOUT_MS so one
+// dead camera can't stall the run.
 
 const BUCKET = 'webcams';
 const KEEP_DAYS = 7;
 const KEEP_HOUR_UTC = 12;
 const NIGHT_ALT = -6;
+const FETCH_TIMEOUT_MS = 20_000;
+const TEMPLATE_STEP_MIN = 15;
 const MODEL = Deno.env.get('CLAUDE_LABEL_MODEL') ?? 'claude-opus-5-5';
 const DAILY_CAP = Number(Deno.env.get('CLAUDE_DAILY_CAP') ?? 400);
 const MONTHLY_CAP_USD = Number(Deno.env.get('CLAUDE_MONTHLY_CAP_USD') ?? 40);
@@ -139,6 +147,43 @@ async function label(client: Anthropic, cam: any, buf: Uint8Array) {
   return { lab: JSON.parse(text), model: msg.model as string, usage: msg.usage };
 }
 
+// Candidate URLs for a templated image_url, newest first, with the local
+// time each one names (YYYY-MM-DD HH:MM).
+function templateCandidates(url: string, tz: string, now: Date): { url: string; time: string }[] {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const step = TEMPLATE_STEP_MIN * 60_000;
+  const out: { url: string; time: string }[] = [];
+  for (let k = 0; k <= 60 / TEMPLATE_STEP_MIN; k++) {
+    const t = new Date(Math.floor(now.getTime() / step) * step - k * step);
+    const p: Record<string, string> = {};
+    for (const x of fmt.formatToParts(t)) p[x.type] = x.value;
+    out.push({
+      url: url.replace('{YYYY}', p.year).replace('{MM}', p.month).replace('{DD}', p.day).replace('{HHmm}', p.hour + p.minute),
+      time: `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`,
+    });
+  }
+  return out;
+}
+
+async function fetchImage(cam: any, now: Date): Promise<{ buf: Uint8Array; time: string | null }> {
+  const headers = { 'User-Agent': 'travel_slave webcam archive (permission: see webcam_cameras.permission_note)' };
+  if (!cam.image_url.includes('{')) {
+    const sep = cam.image_url.includes('?') ? '&' : '?';
+    const r = await fetch(`${cam.image_url}${sep}t=${Date.now()}`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (!r.ok) throw new Error(`image ${r.status}`);
+    return { buf: new Uint8Array(await r.arrayBuffer()), time: null };
+  }
+  let last = 'no candidate';
+  for (const c of templateCandidates(cam.image_url, cam.tz ?? 'UTC', now)) {
+    const r = await fetch(c.url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (r.ok) return { buf: new Uint8Array(await r.arrayBuffer()), time: c.time };
+    await r.body?.cancel();
+    last = `image ${r.status}`;
+  }
+  throw new Error(last);
+}
+
 const labelColumns = (lab: any, model: string | null, err: string | null) => ({
   label: LABELS.includes(lab?.label) ? lab.label : null,
   hills_visible: typeof lab?.hills_visible === 'boolean' ? lab.hills_visible : null,
@@ -205,11 +250,7 @@ Deno.serve(async (req) => {
           .eq('camera_code', cam.code).eq('captured_at', slot.toISOString()).maybeSingle();
         if (existing && body.force !== true) { res.skipped = 'already captured this hour'; results.push(res); continue; }
 
-        const sep = cam.image_url.includes('?') ? '&' : '?';
-        const r = await fetch(`${cam.image_url}${sep}t=${Date.now()}`,
-          { headers: { 'User-Agent': 'travel_slave webcam archive (permission: see webcam_cameras.permission_note)' } });
-        if (!r.ok) throw new Error(`image ${r.status}`);
-        const buf = new Uint8Array(await r.arrayBuffer());
+        const { buf, time: fileTime } = await fetchImage(cam, now);
         const fetchedAt = new Date().toISOString();
         const sha = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)))
           .map(b => b.toString(16).padStart(2, '0')).join('');
@@ -233,6 +274,8 @@ Deno.serve(async (req) => {
           keep: slot.getUTCHours() === KEEP_HOUR_UTC, sun_altitude: alt, ...metrics,
           image_sha256: sha, fetched_at: fetchedAt,
           ...labelColumns(l.lab, l.model, l.err),
+          // A file named by its time is a better clock than reading the image.
+          ...(fileTime ? { camera_time_text: fileTime } : {}),
         };
         const { error: insErr } = await supabase.from('webcam_frames')
           .upsert(row, { onConflict: 'camera_code,captured_at' });
