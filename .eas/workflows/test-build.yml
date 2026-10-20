@@ -1,4 +1,4 @@
-name: TEST app (Philm+Frame TEST, side by side): instant update, or new APK when needed
+name: TEST app (Philm+Frame TEST, side by side) - instant update, or new APK when needed
 
 # The `test` profile: separate package id (com.philmframe.app.test) and
 # channel `test`, so it installs next to the real app and never receives the
