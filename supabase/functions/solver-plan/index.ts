@@ -42,6 +42,11 @@ const TAIL = 11;             // worst 11 of 51 members
 const SLOT = 15;             // minutes
 const MAX_WAIT_SLOTS = 16;   // 4 h
 const DRIVE_PENALTY = 0.002; // tier points per driving minute: tie-break only
+// Drives under an hour are fine for anything (Phil, 21 Oct 2026); minutes
+// beyond 60 on one leg cost 1 tier point per hour (made up, adjustable).
+const LONG_LEG_MIN = 60;
+const LONG_LEG_PENALTY = 1 / 60;
+const over = (leg: number) => Math.max(0, leg - LONG_LEG_MIN);
 const SAME_SUBJECT_M = 300;
 const DAY_POOL = 60;         // routes per day carried into the multi-day combine
 const MULTI_BEAM = 150;
@@ -66,7 +71,7 @@ type PlanNode = { id: string; name: string; w: number; dur: number; group: numbe
 type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
 type State = {
   t: number; loc: number; next: number; visited: Uint8Array; m0: number; m1: number; groupBest: Map<number, Uint8Array>;
-  total: Float32Array; route: Visit[]; drive: number; j: number; mean: number; cvar: number;
+  total: Float32Array; route: Visit[]; drive: number; over: number; j: number; mean: number; cvar: number;
 };
 type DayPlan = {
   date: string; tripDate: string | null; light: boolean; start: number; end: number; dayStart: number; nSlots: number;
@@ -134,7 +139,8 @@ Deno.serve(async (req) => {
     const tripId: string = body.trip_id;
     if (!tripId) return json({ error: 'trip_id required' }, 400);
     const K = Math.min(Math.max(body.k ?? 5, 1), 10);
-    const BEAM = Math.min(Math.max(body.beam ?? (body.multi || body.days ? 100 : 150), 10), 400);
+    // Multi-day at 300: a check on 21 Oct found 1.8% better 3-day plans than at 100, same time.
+    const BEAM = Math.min(Math.max(body.beam ?? (body.multi || body.days ? 300 : 150), 10), 400);
     const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const t0 = performance.now();
 
@@ -372,16 +378,17 @@ Deno.serve(async (req) => {
         // Visited set as a 64-bit mask (two ints) for the dedupe key.
         const m0 = n < 32 ? (st.m0 | (1 << n)) >>> 0 : st.m0, m1 = n >= 32 ? (st.m1 | (1 << (n - 32))) >>> 0 : st.m1;
         const m = metric(total);
-        const d = st.drive + drive;
+        const d = st.drive + drive, o = st.over + over(drive);
         return {
-          t: (i + len) * SLOT, loc: n, next: st.next + (anchor ? 1 : 0), visited, m0, m1, groupBest, total, drive: d,
+          t: (i + len) * SLOT, loc: n, next: st.next + (anchor ? 1 : 0), visited, m0, m1, groupBest, total, drive: d, over: o,
           route: [...st.route, { n, arrive: st.t + drive, start: i * SLOT, end: (i + len) * SLOT, drive, anchor }],
-          mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * (d + D[n][H]),
+          mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * (d + D[n][H]) - LONG_LEG_PENALTY * (o + over(D[n][H])),
         };
       };
 
       const root: State = { t: 0, loc: H0, next: 0, visited: new Uint8Array(nodes.length), m0: 0, m1: 0, groupBest: new Map(),
-        total: new Float32Array(M), route: [], drive: 0, j: -DRIVE_PENALTY * D[H0][H], mean: 0, cvar: 0 };
+        total: new Float32Array(M), route: [], drive: 0, over: 0,
+        j: -DRIVE_PENALTY * D[H0][H] - LONG_LEG_PENALTY * over(D[H0][H]), mean: 0, cvar: 0 };
       const pool: State[] = [];
       let beam: State[] = [root];
       while (beam.length) {
@@ -480,8 +487,8 @@ Deno.serve(async (req) => {
       }
     };
 
-    type Combo = { picks: State[]; groups: Map<number, Uint8Array>; total: Float32Array; drive: number; j: number; mean: number; cvar: number;
-                   back: number | null; date: string | null };
+    type Combo = { picks: State[]; groups: Map<number, Uint8Array>; total: Float32Array; drive: number; over: number; j: number;
+                   mean: number; cvar: number; back: number | null; date: string | null };
     const homeLeg = (st: State, p: DayPlan) => D[st.loc][p.end];
     // Leaving the hotel (just in time for the first visit) and back at night, ms.
     const departMs = (p: DayPlan, st: State) => st.route.length ? p.dayStart + (st.route[0].start - st.route[0].drive) * 60000 : null;
@@ -489,8 +496,8 @@ Deno.serve(async (req) => {
     const restRelaxed: string[] = [];
     let combos: Combo[];
     if (planned.length === 1) {
-      combos = planned[0].routes.map(st => ({ picks: [st], groups: st.groupBest, total: st.total, drive: st.drive, j: st.j, mean: st.mean, cvar: st.cvar,
-                                              back: null, date: null }));
+      combos = planned[0].routes.map(st => ({ picks: [st], groups: st.groupBest, total: st.total, drive: st.drive, over: st.over, j: st.j,
+                                              mean: st.mean, cvar: st.cvar, back: null, date: null }));
     } else {
       // Each day's candidate routes, at most 4 per backbone (its GOD/S subjects).
       const dayPool = (routes: State[]) => {
@@ -504,7 +511,7 @@ Deno.serve(async (req) => {
         }
         return out;
       };
-      combos = [{ picks: [], groups: new Map(), total: new Float32Array(M), drive: 0, j: 0, mean: 0, cvar: 0, back: null, date: null }];
+      combos = [{ picks: [], groups: new Map(), total: new Float32Array(M), drive: 0, over: 0, j: 0, mean: 0, cvar: 0, back: null, date: null }];
       for (const p of planned) {
         const pool = dayPool(p.routes);
         const day = p.tripDate ?? p.date;
@@ -519,8 +526,9 @@ Deno.serve(async (req) => {
             const total = totalOf(groups);
             const m = metric(total);
             const drive = c.drive + st.drive + homeLeg(st, p);
-            out.push({ picks: [...c.picks, st], groups, total, drive, mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * drive,
-                       back: backMs(p, st), date: day });
+            const o = c.over + st.over + over(homeLeg(st, p));
+            out.push({ picks: [...c.picks, st], groups, total, drive, over: o, mean: m.mean, cvar: m.cvar,
+                       j: m.j - DRIVE_PENALTY * drive - LONG_LEG_PENALTY * o, back: backMs(p, st), date: day });
           }
           return out;
         };
@@ -564,6 +572,7 @@ Deno.serve(async (req) => {
       rank: r + 1,
       objective: Math.round(c.j * 1000) / 1000, mean: Math.round(c.mean * 1000) / 1000, cvar11: Math.round(c.cvar * 1000) / 1000,
       drive_minutes: Math.round(c.picks.reduce((s, st, d) => s + st.drive + homeLeg(st, planned[d]), 0)),
+      long_leg_minutes: Math.round(c.picks.reduce((s, st, d) => s + st.over + over(homeLeg(st, planned[d])), 0)),
       note: safestAdded && c === safest ? 'safest: best worst-case' : null,
       visits: c.picks.flatMap((st, d) => visitsOf(planned[d], st)),
     }));
