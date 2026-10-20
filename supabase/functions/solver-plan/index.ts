@@ -32,7 +32,7 @@ const MAX_WAIT_SLOTS = 16;   // 4 h
 const DRIVE_PENALTY = 0.002; // tier points per driving minute: tie-break only
 const SAME_SUBJECT_M = 300;
 const DAY_POOL = 60;         // routes per day carried into the multi-day combine
-const MULTI_BEAM = 80;
+const MULTI_BEAM = 150;
 
 type PlanNode = { id: string; name: string; w: number; dur: number; group: number; free: boolean };
 type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
@@ -337,9 +337,14 @@ Deno.serve(async (req) => {
       wait_min: Math.round(v.start - v.arrive), drive_min: Math.round(v.drive),
     }));
     const subjectSet = (groupsByDay: Map<number, Uint8Array>[]) => new Set(groupsByDay.flatMap((g, d) => [...g.keys()].map(k => `${d}:${k}`)));
-    const jaccardDist = (a: Set<any>, b: Set<any>) => {
-      let inter = 0; for (const x of a) if (b.has(x)) inter++;
-      const uni = a.size + b.size - inter; return uni ? 1 - inter / uni : 0;
+    // Tier-weighted Jaccard distance over "day:subject" keys, so swapping a
+    // C-tier church barely counts and moving a GOD subject to another day does.
+    const keyW = (k: string) => groupW.get(Number(k.split(':')[1])) ?? 0.5;
+    const jaccardDist = (a: Set<string>, b: Set<string>) => {
+      let inter = 0, uni = 0;
+      for (const x of a) { const w = keyW(x); uni += w; if (b.has(x)) inter += w; }
+      for (const x of b) if (!a.has(x)) uni += keyW(x);
+      return uni ? 1 - inter / uni : 0;
     };
 
     type Combo = { picks: State[]; groups: Map<number, Uint8Array>; total: Float32Array; drive: number; j: number; mean: number; cvar: number };
@@ -373,11 +378,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Top K distinct plans, plus the safest. Distinct: at least half the
-    // day-subjects differ for one day, 30% across several (three-day plans
-    // share most of their subjects, so 50% left only one).
+    // Top K distinct plans, plus the safest. Distinct: at least 40% of the
+    // tier-weighted day-subjects differ for one day, 25% across several
+    // (multi-day plans share most of their subjects).
     combos.sort((a, b) => b.j - a.j);
-    const minDist = planned.length > 1 ? 0.3 : 0.5;
+    const minDist = planned.length > 1 ? 0.25 : 0.4;
     const setOf = (c: Combo) => subjectSet(c.picks.map(st => st.groupBest));
     const picked: Combo[] = [];
     for (const c of combos) {
