@@ -14,6 +14,8 @@ import StopWeatherCard from '../components/StopWeatherCard';
 import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
 import SunPlannerSection from '../components/sun/SunPlannerSection';
 import StopLocationEditor from '../components/StopLocationEditor';
+import StopPlannerSection from '../components/planner/StopPlannerSection';
+import { IS_TEST_APP } from '../utils/variant';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { photoGroupPhotos, photoGroupStops } from '../utils/photoGroups';
@@ -223,6 +225,12 @@ export default function StopDetailScreen() {
         </View>
         {error && (
           <Text style={[styles.uploadError, { marginBottom: spacing.md }]}>Upload failed: {error}</Text>
+        )}
+
+        {/* Planner tick + nearest webcams (TEST app only until the solver is signed off) */}
+        {IS_TEST_APP && (
+          <StopPlannerSection stopId={stop.id}
+            coords={stop.lat != null && stop.lng != null ? { lat: stop.lat, lng: stop.lng } : null} />
         )}
 
         {/* Weather — pinned near the top of the location */}

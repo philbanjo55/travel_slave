@@ -11,6 +11,8 @@ import ExposuresScreen from '../screens/ExposuresScreen';
 import ExposureDetailScreen from '../screens/ExposureDetailScreen';
 import ExposureImportScreen from '../screens/ExposureImportScreen';
 import DayCompareScreen from '../screens/DayCompareScreen';
+import PlannerScreen from '../screens/PlannerScreen';
+import PlanScreen from '../screens/PlanScreen';
 import { colors } from '../theme';
 
 export type RootStackParamList = {
@@ -23,6 +25,9 @@ export type RootStackParamList = {
   Exposures: undefined;
   ExposureDetail: { id: string };
   ExposureImport: undefined;
+  // Solver Planner, TEST app only (see utils/variant).
+  Planner: { tripId: string };
+  Plan: { tripId: string; tripDate: string; dayNumber?: number };
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -71,6 +76,8 @@ export default function RootNavigator() {
         <Stack.Screen name="ExposureDetail" component={ExposureDetailScreen} />
         <Stack.Screen name="ExposureImport" component={ExposureImportScreen} />
         <Stack.Screen name="DayCompare" component={DayCompareScreen} />
+        <Stack.Screen name="Planner" component={PlannerScreen} />
+        <Stack.Screen name="Plan" component={PlanScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

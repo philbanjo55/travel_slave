@@ -16,6 +16,7 @@ import DayWeatherOverview from '../components/DayWeatherOverview';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
+import { IS_TEST_APP } from '../utils/variant';
 
 export default function TripScreen() {
   const navigation = useNavigation<any>();
@@ -242,6 +243,12 @@ export default function TripScreen() {
         <TouchableOpacity onPress={recalcDriveTimes} disabled={recalculating}>
           <Ionicons name="time-outline" size={20} color={recalculating ? colors.textTertiary : colors.textSecondary} />
         </TouchableOpacity>
+        {IS_TEST_APP && (
+          <TouchableOpacity onPress={() => navigation.navigate('Planner', { tripId })} style={styles.plannerBtn}
+            accessibilityLabel="Open the Planner">
+            <Ionicons name="sparkles-outline" size={18} color={colors.textPrimary} />
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.tabBarWrapper}>
@@ -474,6 +481,10 @@ const styles = StyleSheet.create({
   stopWxItem: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 },
   stopWxDetail: { fontSize: 11, color: colors.textSecondary },
   headerBtn: { minWidth: 28, alignItems: 'center', justifyContent: 'center' },
+  plannerBtn: {
+    width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.border, marginLeft: spacing.xs,
+  },
   wxProgress: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   stopRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
 });

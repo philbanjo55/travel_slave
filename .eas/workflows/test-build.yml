@@ -1,14 +1,19 @@
-name: Test APK (Philm+Frame TEST, side by side)
+name: TEST app (Philm+Frame TEST, side by side): instant update, or new APK when needed
 
-# Builds the `test` profile: separate package id (com.philmframe.app.test)
-# and channel `test`, so it installs next to the real app and never receives
-# the real app's updates. Only runs from the work branch, never from `update`.
+# The `test` profile: separate package id (com.philmframe.app.test) and
+# channel `test`, so it installs next to the real app and never receives the
+# real app's updates. Only runs from the work branch, never from `update`.
+#
+# Same flow as update.yml: fingerprint the native side; if a TEST APK with
+# that fingerprint exists, publish an instant (OTA) update to channel `test`,
+# otherwise build a new TEST APK. APP_VARIANT=test is set on every job so the
+# fingerprint and the update see the TEST app config (name, package id).
 
 on:
   push:
     branches:
       - ccr-dba965ff-afy6cz
-    # App files only, so backend/docs commits on this branch don't build an APK.
+    # App files only, so backend/docs commits on this branch don't build.
     paths:
       - 'src/**'
       - 'App.tsx'
@@ -19,11 +24,40 @@ on:
       - 'eas.json'
       - 'babel.config.js'
       - 'tsconfig.json'
+      - '.eas/workflows/test-build.yml'
 
 jobs:
-  build:
-    name: Build TEST APK
+  fingerprint:
+    name: Fingerprint native side (TEST)
+    type: fingerprint
+    environment: preview
+    env:
+      APP_VARIANT: test
+  get_android_build:
+    name: Find a TEST APK with this fingerprint
+    needs: [fingerprint]
+    type: get-build
+    params:
+      platform: android
+      profile: test
+      fingerprint_hash: ${{ needs.fingerprint.outputs.android_fingerprint_hash }}
+  build_android:
+    name: Build new TEST APK (native change)
+    needs: [get_android_build]
+    if: ${{ !needs.get_android_build.outputs.build_id }}
     type: build
     params:
       platform: android
       profile: test
+  publish_android_update:
+    name: Publish instant update to TEST
+    needs: [get_android_build]
+    if: ${{ needs.get_android_build.outputs.build_id }}
+    type: update
+    environment: preview
+    env:
+      APP_VARIANT: test
+    params:
+      channel: test
+      platform: android
+      message: ${{ github.event.head_commit.message }}
