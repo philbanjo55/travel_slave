@@ -22,7 +22,7 @@ export default function TripScreen() {
   const route = useRoute<any>();
   const { tripId } = route.params;
   const { currentTripData, loadTrip, isSyncing, setCurrentDay } = useTripStore();
-  const tabScrollRef = useRef<ScrollView>(null);
+  const tabScrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const [activeDay, setActiveDay] = useState(0);
   const [recalculating, setRecalculating] = useState(false);
   const [weatherUpdating, setWeatherUpdating] = useState(false);

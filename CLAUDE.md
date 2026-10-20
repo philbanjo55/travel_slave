@@ -13,8 +13,9 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 
 ## Branches and releases
 
-- **`update`**: the app (Expo SDK 52, React Native 0.76, old architecture: `newArchEnabled: false` because react-native-maps/reanimated are the likely breakers) plus everything else. Pushing app files runs `.eas/workflows/update.yml`: fingerprint the native side; if an APK with that fingerprint exists, publish an instant (OTA) update to channel `preview`; otherwise build a new APK. `runtimeVersion` uses the fingerprint policy, so an update only reaches an APK it matches. Backend/docs/web commits trigger nothing. All EAS jobs use the `preview` environment (the `preview` build profile's default) so fingerprints line up.
+- **`update`**: the app plus everything else. Pushing app files runs `.eas/workflows/update.yml`: fingerprint the native side; if an APK with that fingerprint exists, publish an instant (OTA) update to channel `preview`; otherwise build a new APK. `runtimeVersion` uses the fingerprint policy, so an update only reaches an APK it matches. Backend/docs/web commits trigger nothing. All EAS jobs use the `preview` environment (the `preview` build profile's default) so fingerprints line up.
 - **Test builds:** eas.json profile `test` (`APP_VARIANT=test`) builds "Philm+Frame TEST", package `com.philmframe.app.test`, channel `test`, which installs side by side with the real app. `.eas/workflows/test-build.yml` builds it on pushes to the work branch only.
+- **App stack (SDK 58 since 20 Oct 2026, tested by Phil on the TEST build first):** Expo SDK 58, RN 0.88, React 19.3, New Architecture on (mandatory since RN 0.82), Reanimated 4 + react-native-worklets (babel-preset-expo adds the worklets plugin itself; don't list it in `babel.config.js`), file-system calls via `expo-file-system/legacy`, `babel-preset-expo` as a direct devDependency, React Navigation 7 (v6 stack calls `InteractionManager`, which RN 0.88 removed: crash on launch; v7 `navigate` no longer pops back to a screen already in the stack, use `popTo`). Native upgrades go through the TEST build first, then merge into `update`, which builds a new real APK (new fingerprint).
 - **`main`**: old "build an APK" branch (`.eas/workflows/build.yml`). No longer needed for releases; kept as a manual fallback.
 - **`master`**: GitHub default branch. Netlify deploys the web viewers (`faroes-web/`, `iceland-web/`) from it, and GitHub only runs scheduled workflows (`webcam-clip`) from the default branch.
 
@@ -27,6 +28,7 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 - `webcam-labels`: token-gated door (`WEBCAM_LABELLER_TOKEN`) for the CLIP labeller in GitHub Actions (`tools/webcam_clip`, `.github/workflows/webcam-clip.yml`, nightly 03:23 UTC). The repo is public: the workflow must never hold the service-role key.
 - `webcam-probe`: retired stub (returns 410); delete it from the dashboard.
 - `calculate-drive-times`: writes `stops.drive_override_minutes` (previous-stop leg) via Google Directions.
+- `solver-drive-matrix` (POST `{trip_id}`): fills `solver_drive_legs` (per spot pair, coords rounded to 3 dp by `solver_trip_spots()`, shared across trips) via the Google Routes matrix API. Incremental: only pairs not yet stored are fetched, so re-running is free unless a stop moved. `solver_drive_matrix` (view) gives stop-to-stop minutes per trip; legs Google can't route (car ferries) go through `solver_ferry_links`. Call it from SQL with `net.http_post` (this container can't reach supabase.co directly).
 
 ## Database conventions
 
@@ -38,4 +40,4 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 
 ## Solver
 
-Spec: `SOLVER_SPEC.md` (in Phil's uploads). Review and corrected build order: `docs/solver/SPEC_REVIEW.md`. The solver writes proposals to its own tables and never writes to `stops` except through an explicit apply step.
+Spec: `SOLVER_SPEC.md` (in Phil's uploads). Review and corrected build order: `docs/solver/SPEC_REVIEW.md`. Per-stop inputs (backend only, the app never reads them): `solver_stop_settings` (tier, starred shot, light wanted front/side/back/soft, fog_wanted, time_locked; `source` = suggested/phil), resolved by the `solver_stop_inputs` view. Fog/rain/wind are global penalties; waterfalls get a rained-yesterday bonus. The solver writes proposals to its own tables and never writes to `stops` except through an explicit apply step.

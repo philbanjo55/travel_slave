@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 // WHERE THINGS LIVE
 //
@@ -116,7 +116,7 @@ export async function storageReport(): Promise<{ totalKb: number; fileKb: number
     const info = await FileSystem.getInfoAsync(CACHE_DIR);
     if (info.exists) {
       for (const name of await FileSystem.readDirectoryAsync(CACHE_DIR)) {
-        const f = await FileSystem.getInfoAsync(CACHE_DIR + name, { size: true });
+        const f = await FileSystem.getInfoAsync(CACHE_DIR + name);
         if (f.exists && typeof (f as any).size === 'number') fileKb += (f as any).size / 1024;
       }
     }

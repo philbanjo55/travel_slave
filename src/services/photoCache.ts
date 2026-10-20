@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const PHOTO_DIR = `${FileSystem.documentDirectory}pf_photos/`;
 const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';

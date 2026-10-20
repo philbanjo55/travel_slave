@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import TripsScreen from '../screens/TripsScreen';
 import TripScreen from '../screens/TripScreen';
@@ -28,8 +28,10 @@ export type RootStackParamList = {
 const Stack = createStackNavigator<RootStackParamList>();
 
 const navigationTheme = {
+  ...DarkTheme,
   dark: true,
   colors: {
+    ...DarkTheme.colors,
     primary: colors.accent,
     background: colors.background,
     card: colors.surface,
