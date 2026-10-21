@@ -135,7 +135,7 @@ Found by the 21 Oct 2026 audit. Fixed the same day, without changing the real ap
 | HARMONIE requested anywhere east of 40°W | `weather-ensemble-pull` v8: a box around Europe only |
 | TEST app: exposure times stored as `-04:00` | The phone's offset at the moment of the shot (TEST app only) |
 | TEST app: maps opened on the Faroes; "DMI only" fog; `island` on the camera card | Trip's first stop, else the world; fog says blank outside northern Europe; place shown only when set |
-| Web viewers used the legacy JWT key | Publishable key, on the work branch only: live once merged to `master` (Netlify) |
+| Web viewers used the legacy JWT key | Publishable key; live on `master` since 21 Oct 2026 (both pages checked by Phil) |
 | Deployed but not in the repo | `calculate-drive-times`, `upload-exposure-photo`, `migrate-photos-to-storage` added. `iceland` (an old archived trip page) and the retired `dem-load` / `webcam-probe` stubs are still only on the server |
 | No import | `trip_import(json)` |
 
