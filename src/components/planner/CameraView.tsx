@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, Modal, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { CameraFrame, PhilLabel, labelFrame, frameSummary, ago } from '../../services/planner';
+import { format } from 'date-fns';
+import { CameraFrame, PhilLabel, labelFrame, frameSummary, ago, solverAction } from '../../services/planner';
 import { colors, spacing, radius, typography } from '../../theme';
 
 const LABELS: { key: PhilLabel; text: string }[] = [
@@ -39,15 +40,48 @@ export function LabelButtons({ frameId, value, onChange }: {
   );
 }
 
+const LIVE_REFRESH_MS = 30_000;
+
+// Live view: the camera's picture now, reloaded every 30 s while open. The new
+// picture is downloaded first and swapped in, so it doesn't blink. Templated
+// archives (TetonCam) ask the server for their newest file each time.
+function useLive(camera: CameraFrame['camera'] | undefined, on: boolean) {
+  const [state, setState] = useState<{ uri: string; at: Date; picture: string | null; failed: boolean } | null>(null);
+  useEffect(() => {
+    if (!on || !camera) { setState(null); return; }
+    let alive = true;
+    const load = async () => {
+      let url = camera.live_url ?? camera.image_url;
+      let picture = camera.live_time ?? null;
+      if (camera.image_url.includes('{')) {
+        try {
+          const r = await solverAction<{ cameras: CameraFrame[] }>({ action: 'frames', camera: camera.code });
+          const c = r.cameras[0]?.camera;
+          if (c?.live_url) { url = c.live_url; picture = c.live_time ?? null; }
+        } catch { /* keep the last address */ }
+      }
+      const uri = `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+      let ok = true;
+      try { ok = await Image.prefetch(uri); } catch { ok = false; }
+      if (!alive) return;
+      setState(prev => ok || !prev ? { uri, at: new Date(), picture, failed: !ok } : { ...prev, failed: true });
+    };
+    load();
+    const id = setInterval(load, LIVE_REFRESH_MS);
+    return () => { alive = false; clearInterval(id); };
+  }, [on, camera?.code]);
+  return state;
+}
+
 // Full-size frame with Live (straight from the camera now) and labels.
 export function FrameModal({ item, onClose }: { item: CameraFrame | null; onClose: () => void }) {
   const [live, setLive] = useState(false);
-  const [liveKey] = useState(() => Date.now());
+  const liveView = useLive(item?.camera, live);
   if (!item) return null;
   const { camera, frame } = item;
-  const liveUrl = camera.live_url ?? camera.image_url;
-  const sep = liveUrl.includes('?') ? '&' : '?';
-  const uri = live ? `${liveUrl}${sep}t=${liveKey}` : frame?.url ?? undefined;
+  const uri = live ? liveView?.uri : frame?.url ?? undefined;
+  const liveMeta = !liveView ? 'loading live' : liveView.failed ? `camera not answering · last ${format(liveView.at, 'h:mm:ss a')}`
+    : `live · updated ${format(liveView.at, 'h:mm:ss a')}`;
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.modalBg}>
@@ -57,7 +91,7 @@ export function FrameModal({ item, onClose }: { item: CameraFrame | null; onClos
               <Text style={styles.camName}>{camera.name}</Text>
               <Text style={styles.camMeta}>
                 {camera.island}{camera.distance_km != null ? ` · ${camera.distance_km} km away` : ''}
-                {' · '}{live ? 'live now' : frame ? ago(frame.taken_at ?? frame.captured_at) : 'no frame'}
+                {' · '}{live ? liveMeta : frame ? ago(frame.taken_at ?? frame.captured_at) : 'no frame'}
               </Text>
             </View>
             <TouchableOpacity onPress={onClose} accessibilityLabel="Close" style={styles.closeBtn}>
@@ -66,7 +100,8 @@ export function FrameModal({ item, onClose }: { item: CameraFrame | null; onClos
           </View>
           {uri ? <Image source={{ uri }} style={styles.bigImage} resizeMode="contain" /> : <View style={styles.bigImage} />}
           <View style={styles.modalRow}>
-            <Text style={styles.summary}>{live ? 'Live view, not labelled' : frameSummary(frame)}</Text>
+            <Text style={styles.summary}>{live ? (liveView?.picture ? `Picture from ${liveView.picture} camera time · every 30 s` : 'Live view, refreshes every 30 s')
+              : frameSummary(frame)}</Text>
             <TouchableOpacity onPress={() => setLive(v => !v)} style={styles.liveBtn}>
               <Ionicons name={live ? 'time-outline' : 'radio-outline'} size={14} color={colors.accent} />
               <Text style={styles.liveText}>{live ? 'Saved frame' : 'Live'}</Text>

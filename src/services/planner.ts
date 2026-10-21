@@ -20,7 +20,7 @@ export type PlanRun = { id: string; created_at: string; plan_date: string; param
 export type RunMode = 'forecast' | 'light' | 'preview';
 
 export type CameraFrame = {
-  camera: { code: string; name: string; island: string; lat: number; lng: number; image_url: string; live_url?: string; distance_km: number | null };
+  camera: { code: string; name: string; island: string; lat: number; lng: number; image_url: string; live_url?: string; live_time?: string | null; distance_km: number | null };
   frame: null | {
     // taken_at: the camera's own time when known, else when it was fetched
     // (captured_at is only the hourly slot).
