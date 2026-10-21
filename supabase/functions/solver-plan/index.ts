@@ -1,6 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// SOLVER PLANNER (v0.3)
+// SOLVER PLANNER (v0.3, v16: variant)
 // POST {trip_id, date?, trip_date?, light?, hotel_stop_id?, multi?, days?, k?, beam?}
 //   single day (default): plan `date` (a day in the latest score build).
 //   trip_date alone: plan that trip day. Forecast scores when the build covers
@@ -13,6 +13,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //          light?}]`) as one trip, so a subject shot on two days counts only
 //          its better day, with 6 h between back at night and out again.
 //   earliest / latest / earliest_sunrise: day window, "HH:MM" local.
+//   variant: 'calib' plans from the calibrated score build (side-by-side
+//          test on 🧪 Faroes Live); stored as kind calib_day / calib_multi
+//          with stats.variant, so the app and the normal backtest skip it.
 //
 // Uses the latest score build (solver_scores: per stop, 15-min slot and ECMWF
 // member, V x250), tier weights, drive minutes (solver_drive_matrix) and each
@@ -145,11 +148,12 @@ Deno.serve(async (req) => {
     const K = Math.min(Math.max(body.k ?? 5, 1), 10);
     // Multi-day at 300: a check on 21 Oct found 1.8% better 3-day plans than at 100, same time.
     const BEAM = Math.min(Math.max(body.beam ?? (body.multi || body.days ? 300 : 150), 10), 400);
+    const variant = body.variant === 'calib' ? 'calib' : 'raw';
     const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const t0 = performance.now();
 
     const { data: build, error: bErr } = await db.from('solver_score_builds').select('id, built_at')
-      .eq('trip_id', tripId).order('built_at', { ascending: false }).limit(1).maybeSingle();
+      .eq('trip_id', tripId).eq('variant', variant).order('built_at', { ascending: false }).limit(1).maybeSingle();
     if (bErr) throw bErr;
     // Timezone: trip setting, else what Open-Meteo reported for the trip's
     // stops (as solver_build_scores and trip_sun_plan do), else UTC.
@@ -640,7 +644,7 @@ Deno.serve(async (req) => {
     }
 
     const stats = {
-      kind: planned.length > 1 ? 'multi' : 'day', members: M,
+      kind: (variant === 'calib' ? 'calib_' : '') + (planned.length > 1 ? 'multi' : 'day'), variant, members: M,
       days: planned.map(p => ({ date: p.date, trip_date: p.tripDate, light_only: p.light, start_hotel: nodes[p.start].name,
                                 end_hotel: nodes[p.end].name, bookings: p.anchors, routes: p.routes.length, ms: p.ms })),
       candidates: freeNodes.length, ms: Math.round(performance.now() - t0), build_dates: buildDates,
@@ -649,7 +653,7 @@ Deno.serve(async (req) => {
     };
     const { data: run, error: rErr } = await db.from('solver_runs').insert({
       trip_id: tripId, build_id: forecastDates.length ? build!.id : null, plan_date: planned[0].date, hotel_stop_id: nodes[planned[0].end].id,
-      params: { k: K, beam: BEAM, lambda: LAMBDA, tail: TAIL, tz, days: rawDays }, stats,
+      params: { k: K, beam: BEAM, lambda: LAMBDA, tail: TAIL, tz, days: rawDays, variant }, stats,
     }).select('id').single();
     if (rErr) throw rErr;
     if (plans.length) {
