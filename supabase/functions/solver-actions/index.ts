@@ -6,6 +6,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //   frames       {lat?, lng?, n?}  latest frame of the n cameras nearest the
 //                point, within MAX_CAMERA_KM (all active cameras without a
 //                point), as signed URLs;
+//                {trip_id}: cameras within MAX_CAMERA_KM of any of the
+//                trip's stops (the Planner's strip);
 //                {camera, at?}: that camera's frame at or before `at`.
 //                Daylight, fresh frames only (sun > 3 deg, not stale): at night
 //                or when a camera freezes, the tile shows the last good frame
@@ -55,11 +57,20 @@ Deno.serve(async (req) => {
           .select('code, name, island, lat, lng, image_url, source').eq('active', true);
         if (error) throw error;
         const here = body.lat != null && body.lng != null ? { lat: Number(body.lat), lng: Number(body.lng) } : null;
+        let tripStops: { lat: number; lng: number }[] | null = null;
+        if (body.trip_id) {
+          const { data: st, error: sErr } = await db.from('stops').select('lat, lng')
+            .eq('trip_id', body.trip_id).not('lat', 'is', null);
+          if (sErr) throw sErr;
+          tripStops = st ?? [];
+        }
+        const dist = (c: any) => here ? km(here, c)
+          : tripStops ? Math.min(Infinity, ...tripStops.map(s => km(s, c))) : null;
         const ranked = (cams ?? []).filter(c => c.lat != null && (!body.camera || c.code === body.camera))
-          .map(c => ({ ...c, distance_km: here ? Math.round(km(here, c) * 10) / 10 : null }))
+          .map(c => { const d = dist(c); return { ...c, distance_km: d == null ? null : Math.round(d * 10) / 10 }; })
           .filter(c => c.distance_km == null || c.distance_km <= MAX_CAMERA_KM)
           .sort((a, b) => (a.distance_km ?? 0) - (b.distance_km ?? 0))
-          .slice(0, here ? Math.min(Number(body.n ?? 2), 8) : 8);
+          .slice(0, here ? Math.min(Number(body.n ?? 2), 8) : 12);
         const out = await Promise.all(ranked.map(async c => {
           const { data: f } = await db.from('webcam_frames')
             .select('id, captured_at, storage_path, label, hills_visible, cloud_on_hills, sun_on_land, label_note, label_model, label_error, phil_label, edge_top')

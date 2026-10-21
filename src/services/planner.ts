@@ -129,6 +129,12 @@ export async function fetchFrames(near?: { lat: number; lng: number }, n = 2): P
   return j.cameras;
 }
 
+// Cameras within 50 km of any of the trip's stops.
+export async function fetchTripFrames(tripId: string): Promise<CameraFrame[]> {
+  const j = await solverAction<{ cameras: CameraFrame[] }>({ action: 'frames', trip_id: tripId });
+  return j.cameras;
+}
+
 // Claude API spend this UTC month (webcam labels etc.), capped server-side.
 export type ClaudeSpend = { month_usd: number; cap_usd: number; calls: number; today_usd: number; last_at: string | null };
 export async function fetchClaudeSpend(): Promise<ClaudeSpend | null> {

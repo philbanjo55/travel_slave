@@ -7,7 +7,7 @@ import { format, parseISO, differenceInCalendarDays } from 'date-fns';
 import { useTripStore } from '../store/tripStore';
 import { colors, spacing, radius, typography } from '../theme';
 import {
-  CameraFrame, ClaudeSpend, PlanRun, fetchClaudeSpend, fetchDayRuns, fetchFrames, fetchScores, fetchTripSettings,
+  CameraFrame, ClaudeSpend, PlanRun, fetchClaudeSpend, fetchDayRuns, fetchScores, fetchTripFrames, fetchTripSettings,
   latestByDay, planDay, spendLine,
 } from '../services/planner';
 import { FrameModal, FrameTile } from '../components/planner/CameraView';
@@ -58,7 +58,7 @@ export default function PlannerScreen() {
       }));
     } catch (e: any) { setError(String(e?.message ?? e)); }
     setLoading(false);
-    fetchFrames().then(setCams).catch(() => setCams([]));
+    fetchTripFrames(tripId).then(setCams).catch(() => setCams([]));
     fetchClaudeSpend().then(setSpend).catch(() => {});
   }, [tripId, days.length]);
 
@@ -159,13 +159,14 @@ export default function PlannerScreen() {
         <Text style={[styles.label, { marginTop: spacing.xl }]}>CAMERAS NOW</Text>
         <Text style={styles.hint}>Tap one, check it, and say what you see. Your taps are the scoreboard's ground truth.</Text>
         {spend ? <Text style={styles.hint}>{spendLine(spend)}</Text> : null}
-        {cams == null ? <ActivityIndicator color={colors.textTertiary} style={{ marginVertical: spacing.md }} /> : (
+        {cams == null ? <ActivityIndicator color={colors.textTertiary} style={{ marginVertical: spacing.md }} />
+          : cams.length === 0 ? <Text style={styles.hint}>No cameras near this trip's stops yet.</Text> : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.md, paddingVertical: spacing.sm }}>
             {cams.map(c => <FrameTile key={c.camera.code} item={c} onPress={() => setOpen(c)} />)}
           </ScrollView>
         )}
       </ScrollView>
-      <FrameModal item={open} onClose={() => { setOpen(null); fetchFrames().then(setCams).catch(() => {}); }} />
+      <FrameModal item={open} onClose={() => { setOpen(null); fetchTripFrames(tripId).then(setCams).catch(() => {}); }} />
     </SafeAreaView>
   );
 }
