@@ -640,7 +640,9 @@ body::before {
 
 <script>
 const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oc2hyemx2dnh5b3Zjam1kYWpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTU5MzQsImV4cCI6MjA5MDU3MTkzNH0.9pXc7sekND4D5Bhf7tDbltzzkAW51-vKvcryYfK_ya8';
+// Publishable key (same as the app). The legacy JWT anon key stops working
+// if legacy API keys are ever turned off in Supabase.
+const SUPABASE_ANON_KEY = 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2';
 const TRIP_ID = 'a7ed8985-c440-499a-93d3-db574925ebac';
 
 const HEADERS = {
