@@ -4,7 +4,7 @@ import {
   FlatList, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import { supabase, checkDayForDelete, deleteDay } from '../services/supabase';
@@ -17,7 +17,9 @@ import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
 import { IS_TEST_APP } from '../utils/variant';
-import { fetchClaudeSpend, spendLine } from '../services/planner';
+import { fetchClaudeSpend, spendLine, fetchDayRuns } from '../services/planner';
+import { DayPlannerBanner, StopPlannerHint, useDayPlanner } from '../components/planner/DayPlannerHints';
+import { briefSeenAt } from '../services/plannerSeen';
 
 export default function TripScreen() {
   const navigation = useNavigation<any>();
@@ -31,6 +33,16 @@ export default function TripScreen() {
   const [weatherProgress, setWeatherProgress] = useState<{ done: number; total: number } | null>(null);
   const [dayWeather, setDayWeather] = useState<Record<string, WeatherRow>>({});
   const [deletingDay, setDeletingDay] = useState(false);
+  // TEST app only: the planner's read of the shown day, and a dot on the
+  // Planner icon when there's a plan newer than the last brief Phil opened.
+  const planner = useDayPlanner(IS_TEST_APP ? tripId : null, currentTripData?.days?.[activeDay]?.date, currentTripData?.days ?? []);
+  const [briefNew, setBriefNew] = useState(false);
+  useFocusEffect(useCallback(() => {
+    if (!IS_TEST_APP) return;
+    Promise.all([fetchDayRuns(tripId, 5), briefSeenAt(tripId)])
+      .then(([runs, seen]) => setBriefNew(!!runs[0] && (!seen || runs[0].created_at > seen)))
+      .catch(() => {});
+  }, [tripId]));
 
   useEffect(() => { loadTrip(tripId); }, [tripId]);
 
@@ -250,6 +262,7 @@ export default function TripScreen() {
           <TouchableOpacity onPress={() => navigation.navigate('Planner', { tripId })} style={styles.plannerBtn}
             accessibilityLabel="Open the Planner">
             <Ionicons name="sparkles-outline" size={18} color={colors.textPrimary} />
+            {briefNew ? <View style={styles.plannerDot} /> : null}
           </TouchableOpacity>
         )}
       </View>
@@ -316,6 +329,8 @@ export default function TripScreen() {
 
       <DaySummary stops={stops} />
 
+      {IS_TEST_APP && day?.date ? <DayPlannerBanner tripId={tripId} date={day.date} planner={planner} /> : null}
+
       <FlatList
         data={stops}
         keyExtractor={(item: any) => item.id}
@@ -351,6 +366,7 @@ export default function TripScreen() {
                 {item.duration_minutes ? (
                   <Text style={styles.stopDur}>{minutesToHoursMin(item.duration_minutes)}</Text>
                 ) : null}
+                {IS_TEST_APP ? <StopPlannerHint stopId={item.id} planner={planner} /> : null}
                 {(() => {
                   const w = dayWeather[item.id];
                   // Guard w BEFORE scoring — readScore reads w.is_dark and
@@ -488,6 +504,7 @@ const styles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: colors.border, marginLeft: spacing.xs,
   },
+  plannerDot: { position: 'absolute', top: 2, right: 2, width: 9, height: 9, borderRadius: 5, backgroundColor: colors.signalOk, borderWidth: 1, borderColor: colors.background },
   wxProgress: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   stopRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
 });

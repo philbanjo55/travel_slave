@@ -26,7 +26,7 @@ export type RootStackParamList = {
   ExposureDetail: { id: string };
   ExposureImport: undefined;
   // Solver Planner, TEST app only (see utils/variant).
-  Planner: { tripId: string };
+  Planner: { tripId: string; tab?: 'overview' | 'plans' | 'subjects' | 'map' | 'setup'; date?: string };
   Plan: { tripId: string; tripDate: string; dayNumber?: number };
 };
 

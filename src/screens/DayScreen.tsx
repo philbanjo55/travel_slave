@@ -230,7 +230,7 @@ export default function DayScreen() {
   );
 }
 
-const darkMapStyle = [
+export const darkMapStyle = [
   { elementType: 'geometry', stylers: [{ color: '#111111' }] },
   { elementType: 'labels.text.fill', stylers: [{ color: '#888888' }] },
   { elementType: 'labels.text.stroke', stylers: [{ color: '#000000' }] },

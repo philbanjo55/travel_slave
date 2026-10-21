@@ -107,6 +107,39 @@ export async function planDay(tripId: string, tripDate: string, preview = false)
   return j.run_id;
 }
 
+// Several trip days planned together (a subject counts once, at its best day).
+export async function planDays(tripId: string, tripDates: string[]): Promise<string> {
+  const j = await solverAction<{ run_id: string }>({ action: 'plan', trip_id: tripId, trip_dates: tripDates });
+  return j.run_id;
+}
+
+// Multi-day runs, newest first; trip dates from stats.days.
+export async function fetchMultiRuns(tripId: string, limit = 60): Promise<PlanRun[]> {
+  const { data, error } = await supabase.from('solver_runs')
+    .select('id, created_at, plan_date, params, stats')
+    .eq('trip_id', tripId).order('created_at', { ascending: false }).limit(limit);
+  if (error) throw error;
+  return (data ?? []).filter((r: any) => r.stats?.kind === 'multi');
+}
+export const runTripDates = (r: PlanRun): string[] =>
+  (r.stats?.days ?? []).map((d: RunDay) => d.trip_date ?? d.date);
+
+// Each rated stop's best chance on every trip day (forecast, else light only).
+export type GridCell = { stop_id: string; trip_date: string; mean: number; p_good: number; best_at: string; source: 'forecast' | 'light' };
+export async function fetchSubjectGrid(tripId: string): Promise<GridCell[]> {
+  const j = await solverAction<{ grid: GridCell[] }>({ action: 'subject_grid', trip_id: tripId });
+  return j.grid;
+}
+
+// Keep every suggested setting on the trip as Phil's own.
+export async function confirmAllSettings(tripId: string): Promise<number> {
+  const j = await solverAction<{ confirmed: number }>({ action: 'confirm_all', trip_id: tripId });
+  return j.confirmed;
+}
+
+export const planTitle = (p: Plan) =>
+  p.rank === 0 ? 'My day' : p.note?.startsWith('safest') ? 'Safest' : p.rank === 1 ? 'Best' : `Alt ${p.rank}`;
+
 export type ShotStatus = 'got' | 'nailed' | null;
 
 // The stop's planner settings and its shots, through solver-actions.
@@ -131,11 +164,13 @@ export async function saveStopSettings(stopId: string, patch: Partial<Pick<StopS
   return j.setting;
 }
 
-export async function fetchTripSettings(tripId: string) {
+export type TripSetting = StopSettings & { stop_id: string };
+export async function fetchTripSettings(tripId: string): Promise<TripSetting[]> {
   const { data, error } = await supabase.from('solver_stop_settings')
-    .select('stop_id, tier, shot_status, source, stops!inner(trip_id)').eq('stops.trip_id', tripId);
+    .select('stop_id, tier, light_wanted, fog_wanted, star_vantage_id, shot_status, source, stops!inner(trip_id)')
+    .eq('stops.trip_id', tripId);
   if (error) throw error;
-  return (data ?? []) as { stop_id: string; tier: string | null; shot_status: ShotStatus; source: string }[];
+  return (data ?? []) as any;
 }
 
 export const markShot = (stopId: string, status: ShotStatus) =>
@@ -201,4 +236,41 @@ export function frameSummary(f: CameraFrame['frame']): string {
   const parts = [what[f.label] ?? f.label];
   if (f.sun_on_land) parts.push('sun on the land');
   return parts.join(' · ');
+}
+
+// Tonight's brief for one trip day: the newest plan against the one before
+// it (same kind), in plain lines. Built here from saved plans, no extra call.
+export type Brief = { tripDate: string; runAt: string; headline: string; leave: string | null; changes: string[] };
+export async function fetchBrief(tripId: string, tripDate: string, tierOf: (stopId: string) => string | null): Promise<Brief | null> {
+  const runs = (await fetchDayRuns(tripId)).filter(r => runTripDate(r) === tripDate && runMode(r) !== 'preview');
+  if (!runs.length) return null;
+  const mode = runMode(runs[0]);
+  const [now, before] = runs.filter(r => runMode(r) === mode);
+  const best = async (r?: PlanRun) => (r ? (await fetchPlans(r.id)).find(p => p.rank === 1) : undefined);
+  const [pNow, pBefore] = await Promise.all([best(now), best(before)]);
+  if (!pNow) return null;
+  const tz: string | undefined = now.params?.tz;
+  const scored = pNow.visits.filter(v => v.p_good != null);
+  const big = scored.filter(v => ['GOD', 'S'].includes(tierOf(v.stop_id) ?? ''));
+  const top = [...(big.length ? big : scored)].sort((a, b) => (b.p_good ?? 0) - (a.p_good ?? 0))[0];
+  const headline = top
+    ? `Go for ${top.name} at ${hhmm(top.peak_at ?? top.start, tz)} (${Math.round((top.p_good ?? 0) * 100)}%).`
+    : 'Nothing rated looks good this day.';
+  const first = pNow.visits.find(v => v.start);
+  const leave = first?.start
+    ? `Leave ${hhmm(new Date(new Date(first.start).getTime() - (first.drive_min ?? 0) * 60000).toISOString(), tz)} for ${first.name}.`
+    : null;
+  const changes: string[] = [];
+  if (pBefore) {
+    const was = new Map(pBefore.visits.map(v => [v.stop_id, v.p_good ?? 0]));
+    for (const v of scored) {
+      const a = was.get(v.stop_id);
+      if (a == null) continue;
+      const d = (v.p_good ?? 0) - a;
+      if (Math.abs(d) >= 0.15) changes.push(`${d > 0 ? '↑' : '↓'} ${v.name} ${Math.round(a * 100)}% → ${Math.round((v.p_good ?? 0) * 100)}%`);
+    }
+    const newIn = pNow.visits.filter(v => v.p_good != null && !was.has(v.stop_id)).map(v => v.name);
+    if (newIn.length) changes.push(`New in the plan: ${newIn.slice(0, 3).join(', ')}`);
+  }
+  return { tripDate, runAt: now.created_at, headline, leave, changes: changes.slice(0, 4) };
 }

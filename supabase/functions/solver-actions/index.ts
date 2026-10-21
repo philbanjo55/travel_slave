@@ -21,8 +21,12 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //   set_settings {stop_id, tier?, light_wanted?, fog_wanted?, star_vantage_id?}
 //                Phil's own settings from the stop screen (source -> 'phil';
 //                {stop_id} alone confirms Claude's suggestion as it is)
+//   confirm_all  {trip_id}  keep every suggested setting on the trip as Phil's
+//   subject_grid {trip_id}  each rated stop's best chance on every trip day
+//                (solver_subject_grid: forecast inside the score build, else light only)
 //   plan         {trip_id, trip_date, preview?}  plan a trip day now: light-only
-//                past the forecast; preview: this week's forecast as that day
+//                past the forecast; preview: this week's forecast as that day;
+//                {trip_id, trip_dates: [up to 3]} plans those days together
 //   apply_preview {run_id, rank}  what applying a plan would change
 //   apply        {run_id, rank}  test-bed trip only until Phil signs off the
 //                solver; the real trip gets the preview
@@ -168,10 +172,30 @@ Deno.serve(async (req) => {
         return json({ ok: true, setting: data });
       }
 
+      case 'confirm_all': {
+        if (!body.trip_id) return json({ error: 'trip_id required' }, 400);
+        const { data: st, error: sErr } = await db.from('stops').select('id').eq('trip_id', body.trip_id);
+        if (sErr) throw sErr;
+        const { data, error } = await db.from('solver_stop_settings').update({ source: 'phil' })
+          .in('stop_id', (st ?? []).map(x => x.id)).eq('source', 'suggested').select('stop_id');
+        if (error) throw error;
+        return json({ ok: true, confirmed: data?.length ?? 0 });
+      }
+
+      case 'subject_grid': {
+        if (!body.trip_id) return json({ error: 'trip_id required' }, 400);
+        const { data, error } = await db.rpc('solver_subject_grid', { p_trip: body.trip_id });
+        if (error) throw error;
+        return json({ ok: true, grid: data ?? [] });
+      }
+
       case 'plan': {
-        if (!body.trip_id || !body.trip_date) return json({ error: 'trip_id and trip_date required' }, 400);
-        const planBody: any = { trip_id: body.trip_id, trip_date: body.trip_date, k: 4 };
-        if (body.preview) planBody.date = new Date().toISOString().slice(0, 10);
+        const dates: string[] | null = Array.isArray(body.trip_dates) ? body.trip_dates.slice(0, 3) : null;
+        if (!body.trip_id || (!body.trip_date && !dates?.length)) return json({ error: 'trip_id and trip_date (or trip_dates) required' }, 400);
+        const planBody: any = dates?.length
+          ? { trip_id: body.trip_id, days: dates.map(d => ({ trip_date: d })), k: 4 }
+          : { trip_id: body.trip_id, trip_date: body.trip_date, k: 4 };
+        if (body.preview && !dates) planBody.date = new Date().toISOString().slice(0, 10);
         const r = await fetch(`${url}/functions/v1/solver-plan`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(planBody),
         });
