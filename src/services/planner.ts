@@ -20,9 +20,11 @@ export type PlanRun = { id: string; created_at: string; plan_date: string; param
 export type RunMode = 'forecast' | 'light' | 'preview';
 
 export type CameraFrame = {
-  camera: { code: string; name: string; island: string; lat: number; lng: number; image_url: string; distance_km: number | null };
+  camera: { code: string; name: string; island: string; lat: number; lng: number; image_url: string; live_url?: string; distance_km: number | null };
   frame: null | {
-    id: string; captured_at: string; url: string | null; label: string | null; hills_visible: boolean | null;
+    // taken_at: the camera's own time when known, else when it was fetched
+    // (captured_at is only the hourly slot).
+    id: string; captured_at: string; taken_at?: string; url: string | null; label: string | null; hills_visible: boolean | null;
     cloud_on_hills: string | null; sun_on_land: boolean | null; label_note: string | null;
     label_model: string | null; label_error: string | null; phil_label: string | null;
   };

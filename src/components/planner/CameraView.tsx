@@ -45,8 +45,9 @@ export function FrameModal({ item, onClose }: { item: CameraFrame | null; onClos
   const [liveKey] = useState(() => Date.now());
   if (!item) return null;
   const { camera, frame } = item;
-  const sep = camera.image_url.includes('?') ? '&' : '?';
-  const uri = live ? `${camera.image_url}${sep}t=${liveKey}` : frame?.url ?? undefined;
+  const liveUrl = camera.live_url ?? camera.image_url;
+  const sep = liveUrl.includes('?') ? '&' : '?';
+  const uri = live ? `${liveUrl}${sep}t=${liveKey}` : frame?.url ?? undefined;
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.modalBg}>
@@ -56,7 +57,7 @@ export function FrameModal({ item, onClose }: { item: CameraFrame | null; onClos
               <Text style={styles.camName}>{camera.name}</Text>
               <Text style={styles.camMeta}>
                 {camera.island}{camera.distance_km != null ? ` · ${camera.distance_km} km away` : ''}
-                {' · '}{live ? 'live now' : frame ? ago(frame.captured_at) : 'no frame'}
+                {' · '}{live ? 'live now' : frame ? ago(frame.taken_at ?? frame.captured_at) : 'no frame'}
               </Text>
             </View>
             <TouchableOpacity onPress={onClose} accessibilityLabel="Close" style={styles.closeBtn}>
@@ -93,7 +94,7 @@ export function FrameTile({ item, onPress, wide }: { item: CameraFrame; onPress:
         : <View style={[styles.tileImage, wide && styles.tileImageWide, styles.empty]}><ActivityIndicator color={colors.textTertiary} /></View>}
       <Text style={styles.tileName} numberOfLines={1}>{camera.name}</Text>
       <Text style={styles.tileMeta} numberOfLines={1}>
-        {camera.distance_km != null ? `${camera.distance_km} km · ` : ''}{frame ? ago(frame.captured_at) : '—'}
+        {camera.distance_km != null ? `${camera.distance_km} km · ` : ''}{frame ? ago(frame.taken_at ?? frame.captured_at) : '—'}
       </Text>
       <Text style={styles.tileLabel} numberOfLines={1}>
         {frameSummary(frame)}{frame?.phil_label ? ' · you ✓' : ''}

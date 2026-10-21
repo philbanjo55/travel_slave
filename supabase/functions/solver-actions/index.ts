@@ -11,7 +11,10 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //                {camera, at?}: that camera's frame at or before `at`.
 //                Daylight, fresh frames only (sun > 3 deg, not stale): at night
 //                or when a camera freezes, the tile shows the last good frame
-//                and its real age
+//                and its real age (taken_at: the camera's own time when known,
+//                else when it was fetched). camera.live_url is the camera's
+//                newest picture for the Live button (templated archives: the
+//                newest file at least LIVE_LAG_MIN old)
 //   label_frame  {frame_id, label: clear|cloud_on_hills|fog|cant_tell|null}
 //   plan         {trip_id, trip_date, preview?}  plan a trip day now: light-only
 //                past the forecast; preview: this week's forecast as that day
@@ -25,6 +28,20 @@ const SIGNED_URL_S = 3600;
 // A camera further than this says nothing about a stop (a Teton stop got
 // Faroe cameras 6,400 km away).
 const MAX_CAMERA_KM = 50;
+// Templated archives (TetonCam) upload each 15-min file a few minutes late.
+const LIVE_LAG_MIN = 10;
+const TEMPLATE_STEP_MIN = 15;
+
+function liveUrl(c: { image_url: string; tz: string | null }, now: Date): string {
+  if (!c.image_url.includes('{')) return c.image_url;
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: c.tz ?? 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const step = TEMPLATE_STEP_MIN * 60_000;
+  const t = new Date(Math.floor((now.getTime() - LIVE_LAG_MIN * 60_000) / step) * step);
+  const p: Record<string, string> = {};
+  for (const x of fmt.formatToParts(t)) p[x.type] = x.value;
+  return c.image_url.replace('{YYYY}', p.year).replace('{MM}', p.month).replace('{DD}', p.day).replace('{HHmm}', p.hour + p.minute);
+}
 
 function km(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
   const r = Math.PI / 180;
@@ -54,8 +71,9 @@ Deno.serve(async (req) => {
 
       case 'frames': {
         const { data: cams, error } = await db.from('webcam_cameras')
-          .select('code, name, island, lat, lng, image_url, source').eq('active', true);
+          .select('code, name, island, lat, lng, image_url, source, tz').eq('active', true);
         if (error) throw error;
+        const now = new Date();
         const here = body.lat != null && body.lng != null ? { lat: Number(body.lat), lng: Number(body.lng) } : null;
         let tripStops: { lat: number; lng: number }[] | null = null;
         if (body.trip_id) {
@@ -67,13 +85,13 @@ Deno.serve(async (req) => {
         const dist = (c: any) => here ? km(here, c)
           : tripStops ? Math.min(Infinity, ...tripStops.map(s => km(s, c))) : null;
         const ranked = (cams ?? []).filter(c => c.lat != null && (!body.camera || c.code === body.camera))
-          .map(c => { const d = dist(c); return { ...c, distance_km: d == null ? null : Math.round(d * 10) / 10 }; })
+          .map(c => { const d = dist(c); return { ...c, live_url: liveUrl(c, now), distance_km: d == null ? null : Math.round(d * 10) / 10 }; })
           .filter(c => c.distance_km == null || c.distance_km <= MAX_CAMERA_KM)
           .sort((a, b) => (a.distance_km ?? 0) - (b.distance_km ?? 0))
           .slice(0, here ? Math.min(Number(body.n ?? 2), 8) : 12);
         const out = await Promise.all(ranked.map(async c => {
           const { data: f } = await db.from('webcam_frames')
-            .select('id, captured_at, storage_path, label, hills_visible, cloud_on_hills, sun_on_land, label_note, label_model, label_error, phil_label, edge_top')
+            .select('id, captured_at, fetched_at, camera_time, storage_path, label, hills_visible, cloud_on_hills, sun_on_land, label_note, label_model, label_error, phil_label, edge_top')
             .eq('camera_code', c.code).not('storage_path', 'is', null).gt('sun_altitude', 3).eq('stale', false)
             .lte('captured_at', body.at ?? new Date().toISOString())
             .order('captured_at', { ascending: false }).limit(1).maybeSingle();
@@ -82,7 +100,8 @@ Deno.serve(async (req) => {
             const { data: s } = await db.storage.from('webcams').createSignedUrl(f.storage_path, SIGNED_URL_S);
             signed = s?.signedUrl ?? null;
           }
-          return { camera: c, frame: f ? { ...f, url: signed, label_error: f.label_error ? 'not labelled yet' : null } : null };
+          return { camera: c, frame: f ? { ...f, url: signed, taken_at: f.camera_time ?? f.fetched_at ?? f.captured_at,
+                                           label_error: f.label_error ? 'not labelled yet' : null } : null };
         }));
         return json({ ok: true, cameras: out });
       }
