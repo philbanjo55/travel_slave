@@ -21,6 +21,10 @@ interface Props {
   // If the parent already loaded the day's weather, pass the row to avoid a
   // second fetch. Otherwise the card self-fetches the latest stored forecast.
   weather?: WeatherRow | null;
+  // TEST stop screen (camera picture on top): start folded to one line, and
+  // when open skip the temperature headline the picture already shows.
+  foldable?: boolean;
+  hideHeadline?: boolean;
 }
 
 // The comparison table, declared as data. Adding a column is one line here;
@@ -120,8 +124,9 @@ function voteTone(level: string | null | undefined) {
   return { icon: 'checkmark-circle-outline', color: colors.textTertiary };
 }
 
-export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: Props) {
+export default function StopWeatherCard({ stopId, shotType, dayDate, weather, foldable, hideHeadline }: Props) {
   const [row, setRow] = useState<WeatherRow | null>(weather ?? null);
+  const [folded, setFolded] = useState(!!foldable);
   const [loaded, setLoaded] = useState(weather !== undefined);
   const [verifying, setVerifying] = useState(false);
   const [verify, setVerify] = useState<VerifyResult | null>(null);
@@ -166,6 +171,30 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
   if ((row.showers_mm ?? 0) > 0) precipParts.push(`${row.showers_mm} mm showers`);
   if ((row.snowfall_cm ?? 0) > 0) precipParts.push(`${row.snowfall_cm} cm snow`);
 
+  // Folded: the rating, the centre vote and fog on one line. Tap to open.
+  if (foldable && folded) {
+    const vote = cmp.voteShootable != null && cmp.voteCentres != null ? `${cmp.voteShootable} of ${cmp.voteCentres} shootable` : null;
+    return (
+      <TouchableOpacity style={[styles.section, styles.foldRow]} onPress={() => setFolded(false)} activeOpacity={0.7}
+        accessibilityRole="button" accessibilityState={{ expanded: false }}
+        accessibilityLabel={`Weather: ${[score?.label, vote, fog?.label].filter(Boolean).join(', ')}. Tap to open.`}>
+        <Text style={styles.label}>WEATHER</Text>
+        {score ? (
+          <View style={styles.stars}>
+            {[0, 1, 2, 3].map(i => (
+              <Ionicons key={i} name={i < score.stars ? 'star' : 'star-outline'} size={11}
+                color={i < score.stars ? colors.textPrimary : colors.textTertiary} />
+            ))}
+          </View>
+        ) : null}
+        <Text style={styles.foldText} numberOfLines={1}>
+          {[score?.label?.toUpperCase(), vote, fog?.label?.toLowerCase()].filter(Boolean).join(' · ')}
+        </Text>
+        <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
+      </TouchableOpacity>
+    );
+  }
+
   return (
     <View style={styles.section}>
       <View style={styles.headerCol}>
@@ -173,6 +202,12 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
           <Text style={styles.label}>WEATHER</Text>
           {updatedAgoText(row?.fetched_at) ? (
             <Text style={styles.updatedText}>· {updatedAgoText(row?.fetched_at)}</Text>
+          ) : null}
+          {foldable ? (
+            <TouchableOpacity onPress={() => setFolded(true)} style={styles.foldBtn} hitSlop={10}
+              accessibilityRole="button" accessibilityLabel="Fold the weather">
+              <Ionicons name="chevron-up" size={16} color={colors.textSecondary} />
+            </TouchableOpacity>
           ) : null}
         </View>
         <View style={styles.badgeFlow}>
@@ -246,14 +281,14 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
       </View>
 
       {/* Headline: condition logo + temperature + rating */}
-      <View style={styles.headline}>
+      {hideHeadline ? null : <View style={styles.headline}>
         <Ionicons name={conditionIcon(row.weather_code) as any} size={30} color={colors.textPrimary} />
         <Text style={styles.temp}>{tempText(row.temperature_c)}</Text>
         <View style={{ flex: 1 }}>
           <Text style={styles.conditions}>{conditionsText(row.weather_code)}</Text>
           {showFeels ? <Text style={styles.feels}>feels {tempText(feels)}</Text> : null}
         </View>
-      </View>
+      </View>}
 
       {/* Shot-type rating */}
       {score ? (
@@ -678,6 +713,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   titleRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' },
+  foldRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 48, paddingTop: 0 },
+  foldText: { flex: 1, fontSize: 12, color: colors.textSecondary },
+  foldBtn: { marginLeft: 'auto', alignSelf: 'center' },
   badgeFlow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap', rowGap: spacing.xs },
   label: { ...typography.labelLarge, color: colors.textTertiary },
   updatedText: { color: colors.textTertiary, fontSize: 10, letterSpacing: 0.4 },

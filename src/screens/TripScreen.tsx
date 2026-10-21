@@ -18,8 +18,9 @@ import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
 import { IS_TEST_APP } from '../utils/variant';
 import { fetchClaudeSpend, spendLine, fetchDayRuns } from '../services/planner';
-import { DayPlannerBanner, StopPlannerHint, useDayPlanner } from '../components/planner/DayPlannerHints';
+import { DayPlannerBanner, useDayPlanner } from '../components/planner/DayPlannerHints';
 import { briefSeenAt } from '../services/plannerSeen';
+import { TimelineRow } from '../components/planner/DayTimeline';
 
 export default function TripScreen() {
   const navigation = useNavigation<any>();
@@ -327,7 +328,8 @@ export default function TripScreen() {
 
       <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />
 
-      <DaySummary stops={stops} />
+      {/* TEST (mockup E5): the timeline shows each drive, so no totals row. */}
+      {IS_TEST_APP ? null : <DaySummary stops={stops} />}
 
       {IS_TEST_APP && day?.date ? <DayPlannerBanner tripId={tripId} date={day.date} planner={planner} /> : null}
 
@@ -336,7 +338,10 @@ export default function TripScreen() {
         keyExtractor={(item: any) => item.id}
         contentContainerStyle={styles.stopList}
         showsVerticalScrollIndicator={false}
-        renderItem={({ item, index }: { item: any; index: number }) => (
+        renderItem={({ item, index }: { item: any; index: number }) => IS_TEST_APP ? (
+          <TimelineRow item={item} index={index} isLast={index === stops.length - 1} weather={dayWeather[item.id]}
+            planner={planner} onPress={() => navigation.navigate('StopDetail', { stopId: item.id, dayId: day.id })} />
+        ) : (
           <View>
             {index > 0 && (
               <View style={styles.connector}>
@@ -366,7 +371,6 @@ export default function TripScreen() {
                 {item.duration_minutes ? (
                   <Text style={styles.stopDur}>{minutesToHoursMin(item.duration_minutes)}</Text>
                 ) : null}
-                {IS_TEST_APP ? <StopPlannerHint stopId={item.id} planner={planner} /> : null}
                 {(() => {
                   const w = dayWeather[item.id];
                   // Guard w BEFORE scoring — readScore reads w.is_dark and

@@ -15,6 +15,8 @@ import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
 import SunPlannerSection from '../components/sun/SunPlannerSection';
 import StopLocationEditor from '../components/StopLocationEditor';
 import StopPlannerSection from '../components/planner/StopPlannerSection';
+import StopCameraHero, { useNearbyFrames } from '../components/planner/StopCameraHero';
+import { useDayPlanner } from '../components/planner/DayPlannerHints';
 import { IS_TEST_APP } from '../utils/variant';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
@@ -92,6 +94,15 @@ export default function StopDetailScreen() {
   const stopIndex = stops.findIndex((s: any) => s.id === stopId);
   const stop = stops[stopIndex];
   const prevStop = stopIndex > 0 ? stops[stopIndex - 1] : null;
+
+  // TEST app only (mockup S3e): the nearest camera's picture on top with the
+  // forecast over it, the planner's chance for this stop, the weather folded.
+  const planner = useDayPlanner(IS_TEST_APP ? currentTripData?.trip?.id ?? null : null, day?.date, currentTripData?.days ?? []);
+  const { cams, reload: reloadCams } = useNearbyFrames(IS_TEST_APP && stop?.lat != null && stop?.lng != null
+    ? { lat: stop.lat, lng: stop.lng } : null);
+  // While cameras load the picture's space is kept; with none near, the full
+  // weather card takes the top instead.
+  const hero = IS_TEST_APP && (cams == null || cams.length > 0);
 
   if (!stop) return null;
 
@@ -181,6 +192,11 @@ export default function StopDetailScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder>
+        {hero ? <StopCameraHero cams={cams} weather={stop.weather ?? null} timeLabel={stop.time_label} onClosed={reloadCams} /> : null}
+        {IS_TEST_APP && !hero ? (
+          <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
+        ) : null}
+
         {/* Stop name, with the reference photos top right */}
         <View style={styles.nameRow}>
           <View style={styles.nameSection}>
@@ -227,14 +243,16 @@ export default function StopDetailScreen() {
           <Text style={[styles.uploadError, { marginBottom: spacing.md }]}>Upload failed: {error}</Text>
         )}
 
-        {/* Planner tick + nearest webcams (TEST app only until the solver is signed off) */}
-        {IS_TEST_APP && (
-          <StopPlannerSection stopId={stop.id}
-            coords={stop.lat != null && stop.lng != null ? { lat: stop.lat, lng: stop.lng } : null} />
-        )}
+        {/* Planner chance + settings (TEST app only until the solver is signed off) */}
+        {IS_TEST_APP && <StopPlannerSection stopId={stop.id} planner={planner} />}
 
-        {/* Weather — pinned near the top of the location */}
-        <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
+        {/* Weather — pinned near the top of the location. TEST: folded under the
+            camera picture, which already shows the headline numbers. */}
+        {!IS_TEST_APP ? (
+          <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
+        ) : hero ? (
+          <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} foldable hideHeadline />
+        ) : null}
 
         {/* Sun & Moon — or a small "add vantage" button when the stop has none */}
         <SunPlannerSection tripId={currentTripData?.trip?.id} stopId={stop.id} timeLabel={stop.time_label} stopName={stop.name} stopPhotos={[...refPhotos, ...fieldPhotos]}
@@ -242,8 +260,8 @@ export default function StopDetailScreen() {
             : (() => { const o = stops.find((x: any) => x.lat != null && x.lng != null); return o ? { lat: o.lat, lng: o.lng } : null; })()}
         />
 
-        {/* Info */}
-        {stop.info && (
+        {/* Info (TEST: under the map instead) */}
+        {!IS_TEST_APP && stop.info && (
           <View style={styles.infoCard}>
             <Text style={styles.infoText}>{stop.info}</Text>
           </View>
@@ -327,6 +345,12 @@ export default function StopDetailScreen() {
                 pinColor="#ffffff"
               />
             </MapView>
+          </View>
+        )}
+
+        {IS_TEST_APP && stop.info && (
+          <View style={styles.infoCard}>
+            <Text style={styles.infoText}>{stop.info}</Text>
           </View>
         )}
 
