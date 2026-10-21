@@ -76,8 +76,9 @@ export default function RootNavigator() {
         <Stack.Screen name="ExposureDetail" component={ExposureDetailScreen} />
         <Stack.Screen name="ExposureImport" component={ExposureImportScreen} />
         <Stack.Screen name="DayCompare" component={DayCompareScreen} />
-        <Stack.Screen name="Planner" component={PlannerScreen} />
-        <Stack.Screen name="Plan" component={PlanScreen} />
+        {/* No swipe-back: it grabbed sideways swipes on the camera strip and moved the whole screen. */}
+        <Stack.Screen name="Planner" component={PlannerScreen} options={{ gestureEnabled: false }} />
+        <Stack.Screen name="Plan" component={PlanScreen} options={{ gestureEnabled: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

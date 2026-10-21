@@ -17,6 +17,10 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //                newest file at least LIVE_LAG_MIN old, its camera-local time
 //                in camera.live_time)
 //   label_frame  {frame_id, label: clear|cloud_on_hills|fog|cant_tell|null}
+//   stop_settings {stop_id}  the stop's planner settings and its shots
+//   set_settings {stop_id, tier?, light_wanted?, fog_wanted?, star_vantage_id?}
+//                Phil's own settings from the stop screen (source -> 'phil';
+//                {stop_id} alone confirms Claude's suggestion as it is)
 //   plan         {trip_id, trip_date, preview?}  plan a trip day now: light-only
 //                past the forecast; preview: this week's forecast as that day
 //   apply_preview {run_id, rank}  what applying a plan would change
@@ -25,6 +29,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // Plans and settings are read straight from the tables (read-only policies).
 
 const TEST_BED = '7e57bed0-0000-4000-8000-000000000001';
+const TIERS = ['GOD', 'S', 'A', 'B', 'C', 'D', 'F'];
+const LIGHTS = ['front', 'side', 'back', 'soft'];
+const SETTING_COLS = 'stop_id, tier, light_wanted, fog_wanted, star_vantage_id, shot_status, source';
 const SIGNED_URL_S = 3600;
 // A camera further than this says nothing about a stop (a Teton stop got
 // Faroe cameras 6,400 km away).
@@ -119,6 +126,46 @@ Deno.serve(async (req) => {
           .eq('id', body.frame_id);
         if (error) throw error;
         return json({ ok: true });
+      }
+
+      case 'stop_settings': {
+        if (!body.stop_id) return json({ error: 'stop_id required' }, 400);
+        const [{ data: setting, error: sErr }, { data: pairs, error: pErr }] = await Promise.all([
+          db.from('solver_stop_settings').select(SETTING_COLS).eq('stop_id', body.stop_id).maybeSingle(),
+          db.from('stop_sun_pairs').select('vantage_id, position, scout_vantages(shot_name, name)')
+            .eq('stop_id', body.stop_id).order('position'),
+        ]);
+        if (sErr) throw sErr;
+        if (pErr) throw pErr;
+        const shots = (pairs ?? []).map((p: any) => ({
+          vantage_id: p.vantage_id, position: p.position,
+          name: p.scout_vantages?.shot_name ?? p.scout_vantages?.name ?? 'shot',
+        }));
+        return json({ ok: true, setting, shots });
+      }
+
+      case 'set_settings': {
+        if (!body.stop_id) return json({ error: 'stop_id required' }, 400);
+        const patch: Record<string, any> = { source: 'phil' };
+        if ('tier' in body) {
+          if (body.tier != null && !TIERS.includes(body.tier)) return json({ error: `tier must be one of ${TIERS.join(', ')}` }, 400);
+          patch.tier = body.tier;
+        }
+        if ('light_wanted' in body) {
+          if (!Array.isArray(body.light_wanted) || body.light_wanted.some((l: any) => !LIGHTS.includes(l))) {
+            return json({ error: `light_wanted must be a list of ${LIGHTS.join(', ')}` }, 400);
+          }
+          patch.light_wanted = [...new Set(body.light_wanted)];
+        }
+        if ('fog_wanted' in body) patch.fog_wanted = !!body.fog_wanted;
+        if ('star_vantage_id' in body) patch.star_vantage_id = body.star_vantage_id ?? null;
+        const { data: have } = await db.from('solver_stop_settings').select('stop_id').eq('stop_id', body.stop_id).maybeSingle();
+        const q = have
+          ? db.from('solver_stop_settings').update(patch).eq('stop_id', body.stop_id)
+          : db.from('solver_stop_settings').insert({ stop_id: body.stop_id, time_locked: false, ...patch });
+        const { data, error } = await q.select(SETTING_COLS).single();
+        if (error) return json({ ok: false, error: error.message }, 400);
+        return json({ ok: true, setting: data });
       }
 
       case 'plan': {

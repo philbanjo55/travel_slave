@@ -109,11 +109,26 @@ export async function planDay(tripId: string, tripDate: string, preview = false)
 
 export type ShotStatus = 'got' | 'nailed' | null;
 
-export async function fetchStopSetting(stopId: string) {
-  const { data, error } = await supabase.from('solver_stop_settings')
-    .select('tier, shot_status, shot_value, source').eq('stop_id', stopId).maybeSingle();
-  if (error) throw error;
-  return data as { tier: string | null; shot_status: ShotStatus; shot_value: number | null; source: string } | null;
+// The stop's planner settings and its shots, through solver-actions.
+export type Light = 'front' | 'side' | 'back' | 'soft';
+export type StopSettings = {
+  tier: string | null; light_wanted: Light[] | null; fog_wanted: boolean | null;
+  star_vantage_id: string | null; shot_status: ShotStatus; source: 'suggested' | 'phil';
+};
+export type StopShot = { vantage_id: string; position: number; name: string };
+export const TIER_CHOICES = ['GOD', 'S', 'A', 'B', 'C', 'D', 'F'];
+export const LIGHT_CHOICES: { key: Light; text: string }[] = [
+  { key: 'front', text: 'Front' }, { key: 'side', text: 'Side' }, { key: 'back', text: 'Back' }, { key: 'soft', text: 'Soft' },
+];
+
+export async function fetchStopSettings(stopId: string) {
+  return solverAction<{ setting: StopSettings | null; shots: StopShot[] }>({ action: 'stop_settings', stop_id: stopId });
+}
+
+// Phil's own settings (source becomes 'phil'); an empty patch confirms the suggestion.
+export async function saveStopSettings(stopId: string, patch: Partial<Pick<StopSettings, 'tier' | 'light_wanted' | 'fog_wanted' | 'star_vantage_id'>>) {
+  const j = await solverAction<{ setting: StopSettings }>({ action: 'set_settings', stop_id: stopId, ...patch });
+  return j.setting;
 }
 
 export async function fetchTripSettings(tripId: string) {
