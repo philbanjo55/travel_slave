@@ -21,8 +21,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //   visit value, per member k = tier weight x best V_k while you are there
 //   plan value  = mean_k(total) + 0.5 x CVaR (mean of the worst 11 of 51)
 //
-// A subject (stops whose starred shots aim within 300 m of each other, or
-// share a shot) counts once: repeats only add their improvement, within a
+// A subject (stops whose starred shots aim within 300 m of each other from
+// stand spots within 1.5 km, or share a shot) counts once: repeats only add their improvement, within a
 // day and across days. Shot status: a 'got' subject is worth only the
 // improvement over its shot_value; a 'nailed' one is not planned and is worth
 // nothing more. A day starts at the previous night's accommodation and ends
@@ -48,6 +48,9 @@ const LONG_LEG_MIN = 60;
 const LONG_LEG_PENALTY = 1 / 60;
 const over = (leg: number) => Math.max(0, leg - LONG_LEG_MIN);
 const SAME_SUBJECT_M = 300;
+// ...and only from about the same place: the Grand Teton from Mormon Row and
+// from Oxbow Bend are different photos (Phil, 21 Oct 2026).
+const SAME_STAND_M = 1500;
 const DAY_POOL = 60;         // routes per day carried into the multi-day combine
 const MULTI_BEAM = 150;
 const GOOD = 150;            // V >= 0.6 counts as a good shot (p_good)
@@ -223,16 +226,22 @@ Deno.serve(async (req) => {
 
     // Same-subject groups from the starred shots' aim points.
     const vIds = [...new Set(rated.map(c => c.star_vantage_id))];
-    const { data: vants } = await db.from('scout_vantages').select('id, subject_id').in('id', vIds);
+    const { data: vants } = await db.from('scout_vantages').select('id, subject_id, lat, lng').in('id', vIds);
     const subjIds = [...new Set((vants ?? []).map(v => v.subject_id))];
     const { data: subjs } = await db.from('scout_subjects').select('id, lat, lng').in('id', subjIds);
     const aim = new Map<string, { lat: number; lng: number }>();
-    for (const v of vants ?? []) { const s = (subjs ?? []).find(x => x.id === v.subject_id); if (s?.lat != null) aim.set(v.id, s); }
+    const stand = new Map<string, { lat: number; lng: number }>();
+    for (const v of vants ?? []) {
+      const s = (subjs ?? []).find(x => x.id === v.subject_id); if (s?.lat != null) aim.set(v.id, s);
+      if (v.lat != null) stand.set(v.id, v);
+    }
+    const near = (a?: { lat: number; lng: number }, b?: { lat: number; lng: number }, m = 0) => !!a && !!b && metersApart(a, b) <= m;
     const parent = rated.map((_, i) => i);
     const find = (i: number): number => parent[i] === i ? i : (parent[i] = find(parent[i]));
     for (let a = 0; a < rated.length; a++) for (let b = a + 1; b < rated.length; b++) {
       const pa = aim.get(rated[a].star_vantage_id), pb = aim.get(rated[b].star_vantage_id);
-      if (rated[a].star_vantage_id === rated[b].star_vantage_id || (pa && pb && metersApart(pa, pb) <= SAME_SUBJECT_M)) parent[find(a)] = find(b);
+      const va = rated[a].star_vantage_id, vb = rated[b].star_vantage_id;
+      if (va === vb || (near(pa, pb, SAME_SUBJECT_M) && near(stand.get(va), stand.get(vb), SAME_STAND_M))) parent[find(a)] = find(b);
     }
     const groupW = new Map<number, number>();
     rated.forEach((r, i) => groupW.set(find(i), Math.max(groupW.get(find(i)) ?? 0, TIER_W[r.tier])));
