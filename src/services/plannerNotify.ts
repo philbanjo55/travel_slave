@@ -2,16 +2,17 @@ import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// TEST app only: one local notification a night when the nightly plans are in
-// (solver-plan runs at 22:55 UTC; the reminder fires at 23:15 UTC, shown in
-// the phone's own time). Local, so it needs no push server or Firebase.
+// TEST app only: one local notification a night when the evening plans are in
+// (solver-plan runs at 19:55 UTC from the forecast pulled at 19:17; the
+// reminder fires at 20:15 UTC, shown in the phone's own time). Local, so it
+// needs no push server or Firebase.
 const KEY = 'planner_nightly';
 const CHANNEL = 'planner';
-export type Nightly = { id: string; tripId: string; hour: number; minute: number };
+export type Nightly = { id: string; tripId: string; hour: number; minute: number; title?: string };
 
 export function readyTimeLocal(): { hour: number; minute: number } {
   const d = new Date();
-  d.setUTCHours(23, 15, 0, 0);
+  d.setUTCHours(20, 15, 0, 0);
   return { hour: d.getHours(), minute: d.getMinutes() };
 }
 
@@ -48,15 +49,16 @@ export async function enableNightly(tripId: string, tripTitle: string): Promise<
     content: { title: `Planner · ${tripTitle}`, body: "Tonight's plans are in. Tap for the brief.", data: { kind: 'planner_brief', tripId } },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour, minute, channelId: CHANNEL },
   });
-  try { await AsyncStorage.setItem(KEY, JSON.stringify({ id, tripId, hour, minute })); } catch { /* still scheduled */ }
+  try { await AsyncStorage.setItem(KEY, JSON.stringify({ id, tripId, hour, minute, title: tripTitle })); } catch { /* still scheduled */ }
   return null;
 }
 
-// After a time-zone change (travel, clocks going back) the same 23:15 UTC is
-// a different phone time: move the reminder.
-export async function refreshNightly(tripTitle: string) {
+// After a time-zone change (travel, clocks going back) or a new ready time,
+// the same UTC time is a different phone time: move the reminder. Also run
+// at app start, so an update that moves the time takes effect at once.
+export async function refreshNightly(tripTitle?: string) {
   const cur = await nightlyState();
   if (!cur) return;
   const t = readyTimeLocal();
-  if (t.hour !== cur.hour || t.minute !== cur.minute) await enableNightly(cur.tripId, tripTitle);
+  if (t.hour !== cur.hour || t.minute !== cur.minute) await enableNightly(cur.tripId, tripTitle ?? cur.title ?? 'Trip');
 }
