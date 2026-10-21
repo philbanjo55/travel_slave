@@ -106,8 +106,13 @@ export function parseExposureText(text: string): ParsedExposure[] {
       let hh = parseInt(h, 10);
       if (ap === 'PM' && hh !== 12) hh += 12;
       if (ap === 'AM' && hh === 12) hh = 0;
-      // assume Eastern; store with explicit offset so UTC is correct
-      captured = `${y}-${mo}-${d}T${String(hh).padStart(2, '0')}:${mi}:${sec}-04:00`;
+      // The meter app writes the phone's local time, so use the phone's UTC
+      // offset at that moment (was a fixed -04:00, US Eastern summer, which
+      // put every frame shot elsewhere at the wrong time).
+      const off = -new Date(+y, +mo - 1, +d, hh, +mi, +sec).getTimezoneOffset();
+      const sign = off < 0 ? '-' : '+', a = Math.abs(off);
+      const zone = `${sign}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
+      captured = `${y}-${mo}-${d}T${String(hh).padStart(2, '0')}:${mi}:${sec}${zone}`;
     }
 
     const loc = grab('Location', block) || '';

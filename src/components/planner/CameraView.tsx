@@ -90,8 +90,8 @@ export function FrameModal({ item, onClose }: { item: CameraFrame | null; onClos
             <View style={{ flex: 1 }}>
               <Text style={styles.camName}>{camera.name}</Text>
               <Text style={styles.camMeta}>
-                {camera.island}{camera.distance_km != null ? ` · ${camera.distance_km} km away` : ''}
-                {' · '}{live ? liveMeta : frame ? ago(frame.taken_at ?? frame.captured_at) : 'no frame'}
+                {[camera.island, camera.distance_km != null ? `${camera.distance_km} km away` : null,
+                  live ? liveMeta : frame ? ago(frame.taken_at ?? frame.captured_at) : 'no frame'].filter(Boolean).join(' · ')}
               </Text>
             </View>
             <TouchableOpacity onPress={onClose} accessibilityLabel="Close" style={styles.closeBtn}>

@@ -4,7 +4,8 @@ import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { colors, spacing } from '../../theme';
-import { Coords } from '../../utils/coords';
+import { Coords, tripCentre, WORLD_CENTRE } from '../../utils/coords';
+import { useTripStore } from '../../store/tripStore';
 import { bearingDeg, distanceM } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
 
@@ -38,7 +39,7 @@ export default function PairMapPicker({ v: v0, s: s0, start, centre, others, onD
   const mapRef = useRef<MapView>(null);
 
   // Open on the pins when both exist, else on the one pin, else the stop.
-  const focus = v ?? s ?? centre ?? { lat: 62.0, lng: -6.9 };
+  const focus = v ?? s ?? centre ?? tripCentre(useTripStore.getState().currentTripData) ?? WORLD_CENTRE;
   const onReady = () => {
     if (v0 && s0) {
       mapRef.current?.fitToCoordinates([ll(v0), ll(s0)], {

@@ -434,7 +434,7 @@ function CoordStatus({ text, parsed }: { text: string; parsed: Coords | null }) 
   if (!text.trim()) return null;
   return parsed
     ? <Text style={styles.good}>✓ {formatCoords(parsed)}</Text>
-    : <Text style={styles.bad}>Can't read these. Paste "62.085177, -7.366927" or a Google Maps link.</Text>;
+    : <Text style={styles.bad}>Can't read these. Paste "43.741, -110.802" or a Google Maps link.</Text>;
 }
 
 function Field({ label, value, onChange, placeholder, keyboardType, maxLength }: {

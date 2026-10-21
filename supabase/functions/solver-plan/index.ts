@@ -119,10 +119,11 @@ function zonedToUtc(date: string, minutes: number, tz: string) {
   return guess - (asLocal - guess);
 }
 
-// "5:50 AM" or "~5:50 AM" -> 350
+// "5:50 AM", "~5:50 PM", or 24-hour "05:50" / "17:50" -> minutes (350).
 function labelMinutes(label: string | null): number | null {
-  const m = /^~?\s*(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec((label ?? '').trim());
-  if (!m) return null;
+  const m = /^~?\s*(\d{1,2}):(\d{2})\s*(AM|PM)?$/i.exec((label ?? '').trim());
+  if (!m || +m[2] > 59) return null;
+  if (!m[3]) return +m[1] <= 23 ? +m[1] * 60 + +m[2] : null;
   let h = +m[1] % 12; if (m[3].toUpperCase() === 'PM') h += 12;
   return h * 60 + +m[2];
 }

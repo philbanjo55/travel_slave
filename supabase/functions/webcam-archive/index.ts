@@ -16,7 +16,9 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 // solver's forecasts get scored against; METAR covers only airports.
 //
 // Storage (free plan, 1 GB): full frames kept 7 days, plus one frame per
-// camera per day (the 12 UTC capture) kept permanently.
+// camera per day kept permanently: the capture nearest the camera's solar
+// noon (12 UTC in the Faroes, 19 UTC at the Tetons; a fixed 12 UTC kept only
+// pre-dawn or night frames outside Europe, and those are never captured).
 //
 // POST {} archives this hour; {force: true} re-captures it; {backfill: n}
 // labels up to n stored daylight frames that have no label yet.
@@ -35,7 +37,6 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 
 const BUCKET = 'webcams';
 const KEEP_DAYS = 7;
-const KEEP_HOUR_UTC = 12;
 const NIGHT_ALT = -6;
 const FETCH_TIMEOUT_MS = 20_000;
 const TEMPLATE_STEP_MIN = 15;
@@ -54,11 +55,14 @@ const costUsd = (model: string, inTok: number, outTok: number) => {
 const LABELS = ['clear', 'haze', 'low_cloud', 'fog', 'dark', 'camera_problem'];
 const CLOUD = ['none', 'above_hills', 'touching_tops', 'covering_hills', 'unknown'];
 
-const PROMPT = (region: string, name: string, island: string, hint: string) => `You are labelling a ${region} webcam frame for a landscape photographer's weather archive. The labels are scored against forecasts, so judge only what the image shows.
-Camera: ${name} (${island}). ${hint}
-These are road cameras: road, verges, barriers or rock filling much of the frame is normal. Judge the weather from whatever part shows sky, hills or distance, even a thin strip.
+// UTC hour of the capture kept forever: nearest the camera's solar noon.
+const keepHourUtc = (lng: number | null) => lng == null ? 12 : ((Math.round(12 - lng / 15) % 24) + 24) % 24;
+
+const PROMPT = (region: string, name: string, place: string, hint: string) => `You are labelling a ${region ? region + ' ' : ''}webcam frame for a landscape photographer's weather archive. The labels are scored against forecasts, so judge only what the image shows.
+Camera: ${name}${place ? ` (${place})` : ''}. ${hint}
+Foreground (road, verges, buildings, trees, snow, rock) filling much of the frame is normal. Judge the weather from whatever part shows sky, mountains, hills or distance, even a thin strip.
 label:
-- clear: hills and distance clearly visible, no fog or cloud on the hills
+- clear: hills or mountains and distance clearly visible, no fog or cloud on them
 - haze: visibility reduced by haze or mist but hills still discernible
 - low_cloud: cloud sitting on or hiding the hilltops, lower ground visible
 - fog: fog at camera level, distant terrain hidden
@@ -67,7 +71,7 @@ label:
 hills_visible: the hills in view can be seen to their tops.
 cloud_on_hills: where the lowest cloud sits relative to the hills.
 sun_on_land: direct sunlight is falling on the land or sea in view (shadows, sunlit patches), not just a bright overcast sky.
-camera_time: the date and time printed on the image's caption bar, written YYYY-MM-DD HH:MM exactly as shown (do not convert time zones); an empty string if none is printed.
+camera_time: the date and time printed on the image (caption bar or overlay), written YYYY-MM-DD HH:MM exactly as shown (do not convert time zones); an empty string if none is printed.
 confidence: 0 to 1. note: one short sentence on what decided it.`;
 
 const SCHEMA = {
@@ -137,7 +141,7 @@ async function label(client: Anthropic, cam: any, buf: Uint8Array) {
       role: 'user',
       content: [
         { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: encodeBase64(buf) } },
-        { type: 'text', text: PROMPT(cam.region ?? 'road', cam.name, cam.island ?? '', cam.hint ?? '') },
+        { type: 'text', text: PROMPT(cam.region ?? '', cam.name, cam.island ?? '', cam.hint ?? '') },
       ],
     }],
   } as any);
@@ -271,7 +275,7 @@ Deno.serve(async (req) => {
 
         const row = {
           camera_code: cam.code, captured_at: slot.toISOString(), storage_path: path, bytes: buf.length,
-          keep: slot.getUTCHours() === KEEP_HOUR_UTC, sun_altitude: alt, ...metrics,
+          keep: slot.getUTCHours() === keepHourUtc(cam.lng), sun_altitude: alt, ...metrics,
           image_sha256: sha, fetched_at: fetchedAt,
           ...labelColumns(l.lab, l.model, l.err),
           // A file named by its time is a better clock than reading the image.

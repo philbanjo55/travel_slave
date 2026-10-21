@@ -78,8 +78,13 @@ async function getJson(url: string, attempts = 3): Promise<{ j: any; err: string
   return { j: null, err };
 }
 
-// HARMONIE DINI is a European domain; elsewhere it only returns 400s.
-const inDomain = (spec: Spec, lng: number) => spec.model !== 'dmi_harmonie_arome_europe' || lng > -40;
+// HARMONIE DINI is a European domain (probed with data from Iceland to
+// Scotland, none in the US); elsewhere it only returns 400s. A generous box
+// around Europe, so trips in Asia or Africa don't spend requests on it.
+// Outside it the solver's fog / cloud-base gate rests on GFS and UKMO
+// visibility alone.
+const inDomain = (spec: Spec, lat: number, lng: number) =>
+  spec.model !== 'dmi_harmonie_arome_europe' || (lat > 35 && lat < 75 && lng > -40 && lng < 45);
 
 // Requests are spaced so the pull stays under Open-Meteo's per-minute limit
 // even with the hourly weather-pull running.
@@ -165,7 +170,7 @@ Deno.serve(async (req) => {
     for (const cell of cells) {
       const [lat, lng] = cell.split(',').map(Number);
       for (const spec of SPECS) {
-        if (!inDomain(spec, lng)) continue;
+        if (!inDomain(spec, lat, lng)) continue;
         // Free-plan wall clock is 150 s; keep time to write what we have.
         if (Date.now() - t0 > 115_000) { errors.push({ cell, model: spec.model, error: 'time budget' }); continue; }
         const outlook = outlookUntil != null && spec.model === 'ecmwf_ifs025';

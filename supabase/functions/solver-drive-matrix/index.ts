@@ -7,12 +7,14 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // later trip reuses any spot it shares and a repeat call costs nothing unless
 // a stop moves: only pairs not yet stored are sent to Google. That also caps
 // what an unauthenticated caller can spend.
-// Points over MAX_KM from the trip's middle (home airport, connections) are
-// left out. Google won't route across car ferries (ROUTE_NOT_FOUND);
+// Points cut off from the trip by a gap of more than LINK_KM (home airport,
+// connections) are left out: spots are kept by chaining out from the one
+// nearest the trip's middle, so a long road trip (Iceland's Ring Road) keeps
+// its far end. (Until Oct 2026: anything over 300 km from the middle.) Google won't route across car ferries (ROUTE_NOT_FOUND);
 // solver_drive_matrix prices those legs through solver_ferry_links.
 
 const MAPS_KEY = Deno.env.get('GOOGLE_MAPS_API_KEY')!;
-const MAX_KM = 300;
+const LINK_KM = 300;
 const MAX_ELEMENTS_PER_CALL = 2500;
 
 type Spot = { lat: number; lng: number };
@@ -80,7 +82,12 @@ Deno.serve(async (req) => {
     const pts = [...all.values()];
     if (pts.length < 2) return json({ ok: true, spots: pts.length, fetched: 0 });
     const mid = { lat: pts.map(p => p.lat).sort((a, b) => a - b)[pts.length >> 1], lng: pts.map(p => p.lng).sort((a, b) => a - b)[pts.length >> 1] };
-    const spots = pts.filter(p => km(p, mid) <= MAX_KM);
+    const start = pts.reduce((a, b) => km(a, mid) <= km(b, mid) ? a : b);
+    const spots: Spot[] = [start];
+    const rest = new Set(pts.filter(p => p !== start));
+    for (let i = 0; i < spots.length; i++) {
+      for (const p of [...rest]) if (km(spots[i], p) <= LINK_KM) { spots.push(p); rest.delete(p); }
+    }
 
     // Paged: PostgREST caps a response at 1000 rows, and a leg missed here
     // would be paid for again.

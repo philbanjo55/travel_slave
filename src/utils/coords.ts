@@ -36,6 +36,16 @@ export function parseCoords(input: string | null | undefined): Coords | null {
   return null;
 }
 
+// Where to open a map when nothing nearer is known: the trip's first located
+// stop, else the whole world (it used to open on the Faroes for every trip).
+export const WORLD_CENTRE: Coords = { lat: 20, lng: 0 };
+export function tripCentre(data: any): Coords | null {
+  for (const d of data?.days ?? []) for (const s of d.stops ?? []) {
+    if (s.lat != null && s.lng != null) return { lat: s.lat, lng: s.lng };
+  }
+  return null;
+}
+
 export function formatCoords(c: Coords | null | undefined): string {
   return c ? `${c.lat.toFixed(6)}, ${c.lng.toFixed(6)}` : '';
 }

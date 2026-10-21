@@ -93,7 +93,7 @@ const COLUMNS: Col[] = [
     get: s => ft(s.values?.cloud_top_m ?? null) },
   { key: 'vis',   head: 'VIS', unit: 'mi',   hint: 'visibility in miles', get: s => s.visibility_m == null ? '—'
     : s.visibility_m < 1609 ? `${(s.visibility_m / 1609.34).toFixed(1)}` : `${Math.round(s.visibility_m / 1609.34)}` },
-  { key: 'fog',   head: 'FOG', unit: '%',   hint: 'cloud sitting at 2 m — the native fog field, DMI only',
+  { key: 'fog',   head: 'FOG', unit: '%',   hint: 'cloud sitting at 2 m — the native fog field; only DMI reports it, so it is blank outside northern Europe',
     get: s => pct(s.values?.cloud_cover_2m_pct ?? null) },
   { key: 'rain',  head: 'RAIN', unit: 'in',  hint: 'precipitation for the hour, in inches', get: s => inch(s.rain_mm) },
   { key: 'pop',   head: 'POP', unit: '%',   hint: 'chance of precipitation — only some models report it',
@@ -569,7 +569,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather }: 
             the columns; tap a source for every field it reported. Sorted by grid
             size, then distance: a coarse model whose sampled point happens to land
             nearby is still averaging over its whole cell. Compare BASE to the height
-            of what you are shooting. FOG is cloud at 2 m, which only DMI reports.
+            of what you are shooting. FOG is cloud at 2 m, which only DMI reports (northern Europe; blank elsewhere).
             RAIN is fall for the hour, POP the chance of any — most models report one
             or the other, not both. CLOUD is every layer stacked; LOW is the one that
             hides a summit, MID flattens the light, HIGH is cirrus and gives the sky

@@ -4,7 +4,7 @@ How to take a trip from "Phil has an itinerary" to everything working: app, maps
 
 **The check:** `select * from trip_readiness('<trip id>');` returns one row per item below with `ok` / `todo` (a step not done yet) / `wait` (a job will do it) / `warn` (works, but degraded) / `info`. Run it after each phase and again the morning after. It is read-only (migration `20261021300000_trip_readiness.sql`).
 
-The app cannot create trips, days or stops (nothing calls `insertStop`), and nothing writes `accommodations`, so phases 1 and 3–6 are done by Claude in SQL. Hard rules from CLAUDE.md still apply: never DELETE stops (move them with UPDATE day_id/position), and never add a camera without the owner's permission.
+The app cannot create trips, days or stops (nothing calls `insertStop`), and nothing writes `accommodations`, so phases 1 and 3–6 are done by Claude in SQL. Phase 1 is one call: `trip_import(json)`. Hard rules from CLAUDE.md still apply: never DELETE stops (move them with UPDATE day_id/position), and never add a camera without the owner's permission.
 
 ---
 
@@ -22,14 +22,22 @@ The app cannot create trips, days or stops (nothing calls `insertStop`), and not
 
 ---
 
-## 1. Trip skeleton (Claude, SQL)
+## 1. Trip skeleton (Claude, SQL): `trip_import`
+
+Turn Phil's itinerary (any form: a doc, a list of Google Maps links, a chat message) into JSON and run `select trip_import('<json>', true);` (dry run: every problem listed, nothing written), then `select trip_import('<json>');`. The JSON format is in the header of `supabase/migrations/20261021320000_trip_import.sql`: `trip`, `days[].stops[]`, `accommodations[]`.
+- It checks everything first and writes nothing if anything is wrong. It only inserts; it never updates or deletes.
+- It converts 24-hour times to "h:mm AM/PM".
+- It adds the hotel as a logistics stop at the start and end of each new day, unless a stop is already within 500 m.
+- `{"trip_id": ..., "days": [...]}` appends to an existing trip: new dates become new days, and stops on an existing date go after its last stop.
+
+What the rows need (`trip_import` enforces the required parts):
 
 - **`trips`**: `title`, `start_date`, `end_date`, `travelers`, `archived = false`, and:
   - **`timezone`** (IANA, e.g. `America/Denver`). Required. Without it the solver and the sun planner fall back to the forecasts' zone and, before the first forecast, to UTC: day windows and light dates go wrong silently.
   - **`metar_station`**: the airport within 30 km of the stops (ICAO, e.g. `KJAC`). With none set, a 10-minute job guesses a station per day, which can pick a station whose observations are never fetched (the Teton trip got KDIJ).
 - **`days`**: one per date, `day_number`, `date`. Every trip date should have a day.
 - **`stops`**: `trip_id`, `day_id`, `position`, `name`, `lat`, `lng`, `duration_minutes`, and:
-  - `time_label` as **"h:mm AM/PM"** (`~` allowed). The solver ignores 24-hour labels like "05:50" as bookings.
+  - `time_label` as **"h:mm AM/PM"** (`~` allowed): the app reads only that. The solver also reads 24-hour times since 21 Oct 2026.
   - `shot_type`: mountain / seascape / waterfall / canyon / urban / reflection for photo stops; **`logistics`** for airports, hotels, food, fuel. Logistics stops get no weather score, no ensemble pull and no solver settings.
   - `time_locked = true` for bookings.
 - **`accommodations`**: `trip_id`, `name`, `lat`, `lng`, `check_in`, `check_out`, `nights`. Start the hotel's logistics stop name with the hotel's first word (the solver matches by first word within 500 m, else the nearest stop). Put a logistics stop at the hotel at the start and end of each day.
@@ -41,7 +49,7 @@ Nothing to run. pg_cron fills these for live trips (not archived, `end_date` not
 | Job | When (UTC) | Fills |
 |---|---|---|
 | `stop-elevation-refresh` | every 5 min | `stops.elevation_m` |
-| `model-grid-refresh` | every 5 min | `model_grid_points`: which weather models cover each stop. Only while `start_date >= today` |
+| `model-grid-refresh` | every 5 min | `model_grid_points`: which weather models cover each stop (live trips, including stops moved mid-trip) |
 | `model-skill-refresh` | every 10 min | `metar_stations`, `station_obs_hourly`, `model_skill` for the trip's station |
 | `hourly-weather-pull` / `daily-preview-refresh` | :07 hourly / 05:10 | display weather. Days more than 15 days out get a "preview" (today's weather as that day) |
 | `weather-ensemble-pull` | 22:17 | 51-member ECMWF archive per 0.25° cell of the photo stops |
@@ -70,7 +78,7 @@ Triggers build each terrain profile (~180 KB each) and the skyline cache. Phil c
 - **Drive matrix**: `select net.http_post('https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/solver-drive-matrix', '{"trip_id":"<id>"}'::jsonb, ...)`, then read `net._http_response`.
   - Repeat while it reports an element cap (about 50 spots per call).
   - Pairs with no route are never planned: car ferries need a `solver_ferry_links` row.
-  - Spots more than 300 km from the median spot are dropped (`MAX_KM`, a problem on a long road trip like the Iceland Ring Road).
+  - Spots cut off from the rest by a gap of more than 300 km (home airports) are left out (`left_out` in the reply). A long chain of stops, like the Iceland Ring Road, is kept.
 - Nightly, the trip is picked up once it has rated stops: `solver-build-scores` 22:41, `solver-plan` 22:55 UTC. To see plans the same day, plan a trip day from the TEST app's Planner (light-only past the forecast).
 
 ## 6. Ground truth: scoreboard and backtest
@@ -109,23 +117,26 @@ Copy `faroes-web/` to `<trip>-web/` and change five places: the `<title>`, `TRIP
 
 ---
 
-## Known gaps (one-time fixes, not per-trip steps)
+## Known gaps
 
-Found by the 21 Oct 2026 audit; fix them once rather than working around them on every trip.
+Found by the 21 Oct 2026 audit. Fixed the same day, without changing the real app (app changes went to the TEST app only):
 
-| # | Gap | Effect |
-|---|---|---|
-| 1 | `webcam-archive` keeps the 12:00 UTC frame forever | Outside Europe that hour is night or dawn, so nothing is kept long-term (05:00 at the Tetons in winter) |
-| 2 | `webcam-archive` prompt says "road cameras", uses `island` | Wrong context for park, ski or town cameras |
-| 3 | `upload-exposure-photo` takes uploads with no login and can overwrite any file in `photos` | Security |
-| 4 | `model-grid-refresh` only while `start_date >= today` | Stops added or moved during a trip get no model grid |
-| 5 | Scoreboard uses every station within 30 km, but only the trip's station has observations | Stations like KDIJ add nothing |
-| 6 | `solver_light_cache` never pruned | About 0.5 MB per night per live trip |
-| 7 | `solver-plan` reads only "h:mm AM/PM" labels | 24-hour labels are ignored as bookings |
-| 8 | `solver-drive-matrix` `MAX_KM = 300` | Long road trips lose their far stops |
-| 9 | Ensemble fog fields come from HARMONIE (Europe only) | Weaker fog and cloud-base gate elsewhere; requests wasted east of 40°E |
-| 10 | App: exposure capture times stored as `-04:00` | Wrong outside US Eastern summer time |
-| 11 | App: map fallback on the Faroes, "DMI only" fog wording, `island` on the camera card | Cosmetic |
-| 12 | Web viewers use the legacy JWT anon key | They break if legacy keys are turned off |
-| 13 | Deployed but not in the repo: `calculate-drive-times`, `iceland`, `upload-exposure-photo`, `migrate-photos-to-storage` | Drift |
-| 14 | No import: Claude writes the trip by hand in SQL | Slow; a `trip_import(json)` would make phase 1 one call |
+| Gap | Fix |
+|---|---|
+| `webcam-archive` kept the 12:00 UTC frame forever: night or dawn outside Europe | v14 keeps the capture nearest each camera's solar noon (12 UTC in the Faroes, 19 UTC at the Tetons) |
+| `webcam-archive` prompt said "road cameras" and used `island` | Neutral foreground wording; the place name is shown only when set |
+| `upload-exposure-photo` took uploads with no login and could overwrite any file in `photos` | v5: new files under `exposures/` only, no overwrite, ~10 MB cap. Nothing in the app calls it |
+| `model-grid-refresh` only while `start_date >= today` | Live trips (`20261021310000_new_trip_gap_fixes.sql`) |
+| Scoreboard used stations without observations (KDIJ) | Only stations with an observation in the last 3 days |
+| `solver_light_cache` never pruned | `solver_prune_light_cache()`, weekly `solver-light-prune` (Sun 04:23 UTC): dates over 3 days past |
+| Faroe trip had no `trips.timezone` | Set to `Atlantic/Faroe` |
+| `solver-plan` read only "h:mm AM/PM" | v14 also reads "HH:MM" |
+| `solver-drive-matrix` dropped spots over 300 km from the middle | v4 chains spots (gap over 300 km = left out) |
+| HARMONIE requested anywhere east of 40°W | `weather-ensemble-pull` v8: a box around Europe only |
+| TEST app: exposure times stored as `-04:00` | The phone's offset at the moment of the shot (TEST app only) |
+| TEST app: maps opened on the Faroes; "DMI only" fog; `island` on the camera card | Trip's first stop, else the world; fog says blank outside northern Europe; place shown only when set |
+| Web viewers used the legacy JWT key | Publishable key, on the work branch only: live once merged to `master` (Netlify) |
+| Deployed but not in the repo | `calculate-drive-times`, `upload-exposure-photo`, `migrate-photos-to-storage` added. `iceland` (an old archived trip page) and the retired `dem-load` / `webcam-probe` stubs are still only on the server |
+| No import | `trip_import(json)` |
+
+Still open: outside Europe the solver's fog and cloud-base gate has only GFS/UKMO visibility (no HARMONIE). This is a data limit, not a bug.

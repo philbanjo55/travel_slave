@@ -11,7 +11,7 @@ import { colors, spacing } from '../theme';
 import { updateStop } from '../services/supabase';
 import { LegChange, recalcLegsAround } from '../services/driveTimes';
 import { useTripStore } from '../store/tripStore';
-import { Coords, formatCoords, parseCoords } from '../utils/coords';
+import { Coords, formatCoords, parseCoords, tripCentre, WORLD_CENTRE } from '../utils/coords';
 
 // Set or change a stop's main location: the point used for navigation,
 // the route map, drive times and the weather. Paste coordinates, use where
@@ -90,7 +90,7 @@ export default function StopLocationEditor({ visible, onClose, stop, fallback }:
     }
   };
 
-  const centre = pin ?? original ?? fallback ?? { lat: 62.0, lng: -6.9 };
+  const centre = pin ?? original ?? fallback ?? tripCentre(useTripStore.getState().currentTripData) ?? WORLD_CENTRE;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -165,7 +165,7 @@ export default function StopLocationEditor({ visible, onClose, stop, fallback }:
                 />
                 {!!text.trim() && (parsed
                   ? <Text style={styles.good}>✓ {formatCoords(parsed)}</Text>
-                  : <Text style={styles.bad}>Can't read these. Paste "62.085177, -7.366927" or a Google Maps link.</Text>)}
+                  : <Text style={styles.bad}>Can't read these. Paste "43.741, -110.802" or a Google Maps link.</Text>)}
 
                 <TouchableOpacity style={styles.secondary} onPress={useMyLocation} disabled={locating}>
                   {locating ? <ActivityIndicator size="small" color={colors.textPrimary} /> : <Ionicons name="locate" size={16} color={colors.textPrimary} />}
