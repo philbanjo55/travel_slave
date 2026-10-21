@@ -11,6 +11,7 @@ import PlansTab from './planner/PlansTab';
 import SubjectsTab from './planner/SubjectsTab';
 import MapTab from './planner/MapTab';
 import SetupTab from './planner/SetupTab';
+import NightlyToggle from '../components/planner/NightlyToggle';
 
 export { dayBadge } from '../components/planner/dayBadge';
 
@@ -58,7 +59,8 @@ export default function PlannerScreen() {
       </View>
 
       <View style={{ flex: 1 }}>
-        {tab === 'overview' ? <OverviewTab tripId={tripId} days={days} goPlans={goPlans} goTab={setTab} />
+        {tab === 'overview' ? <OverviewTab tripId={tripId} days={days} goPlans={goPlans} goTab={setTab}
+            extra={<NightlyToggle tripId={tripId} tripTitle={currentTripData?.trip?.title ?? 'Trip'} />} />
           : tab === 'plans' ? <PlansTab tripId={tripId} days={days} date={date} setDate={setDate} goMap={() => setTab('map')} />
           : tab === 'subjects' ? <SubjectsTab tripId={tripId} days={days} tz={tz} goPlans={goPlans} />
           : tab === 'map' ? <MapTab tripId={tripId} days={days} date={date} setDate={setDate} goPlans={goPlans} />

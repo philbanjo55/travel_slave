@@ -1,5 +1,8 @@
-import React from 'react';
-import { NavigationContainer, DarkTheme } from '@react-navigation/native';
+import React, { useEffect } from 'react';
+import { NavigationContainer, DarkTheme, createNavigationContainerRef } from '@react-navigation/native';
+import * as Notifications from 'expo-notifications';
+import { IS_TEST_APP } from '../utils/variant';
+import { setupPlannerNotifications } from '../services/plannerNotify';
 import { createStackNavigator } from '@react-navigation/stack';
 import TripsScreen from '../screens/TripsScreen';
 import TripScreen from '../screens/TripScreen';
@@ -46,9 +49,29 @@ const navigationTheme = {
   },
 };
 
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
+// TEST app: tapping the nightly brief opens that trip's Planner (through the
+// trip page, which loads the trip).
+function usePlannerNotificationTaps() {
+  const last = Notifications.useLastNotificationResponse();
+  useEffect(() => { if (IS_TEST_APP) setupPlannerNotifications(); }, []);
+  useEffect(() => {
+    const data: any = last?.notification.request.content.data;
+    if (!IS_TEST_APP || data?.kind !== 'planner_brief' || !data.tripId) return;
+    const go = () => {
+      if (!navigationRef.isReady()) { setTimeout(go, 300); return; }
+      navigationRef.navigate('Trip', { tripId: data.tripId });
+      navigationRef.navigate('Planner', { tripId: data.tripId, tab: 'overview' });
+    };
+    go();
+  }, [last?.notification.request.identifier, last?.actionIdentifier]);
+}
+
 export default function RootNavigator() {
+  usePlannerNotificationTaps();
   return (
-    <NavigationContainer theme={navigationTheme}>
+    <NavigationContainer theme={navigationTheme} ref={navigationRef}>
       <Stack.Navigator
         screenOptions={{
           headerShown: false,
