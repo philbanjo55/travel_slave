@@ -2,22 +2,22 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, ActivityIndicator, Dimensions } from 'react-native';
 import { colors, spacing, radius } from '../../theme';
 import { CameraFrame, ago, fetchFrames } from '../../services/planner';
-import { cachedFrames, nearKey, storeFrames } from '../../services/cameraCache';
+import { cachedNear, storeFrames } from '../../services/cameraCache';
 import { WeatherRow, conditionsText, tempText, windText, visibilityText, kmhToMph } from '../../services/weather';
 import { FrameModal } from './CameraView';
 
 // The nearest cameras with a stored daylight frame: null while loading,
-// [] when none is within 50 km (or the stop has no location). The pictures
-// saved on the phone show first, then the server's newest replace them.
+// [] when none is within 50 km (or the stop has no location). The nearest
+// cameras saved on the phone (from any view) show first, then the server's
+// newest replace them.
 export function useNearbyFrames(coords: { lat: number; lng: number } | null) {
   const [cams, setCams] = useState<CameraFrame[] | null>(null);
   const load = useCallback(() => {
     if (!coords) { setCams([]); return; }
-    const key = nearKey(coords, 3);
     let fresh = false;
-    cachedFrames(key).then(c => { if (!fresh && c) setCams(prev => prev ?? c); });
+    cachedNear(coords, 3).then(c => { if (!fresh && c) setCams(prev => prev ?? c); });
     fetchFrames(coords, 3)
-      .then(r => storeFrames(key, r.filter(c => c.frame?.url)))
+      .then(r => storeFrames(r.filter(c => c.frame?.url)))
       .then(r => { fresh = true; setCams(r); })
       .catch(() => setCams(prev => prev ?? []));
   }, [coords?.lat, coords?.lng]);

@@ -11,7 +11,7 @@ import {
 import { FrameModal, FrameTile } from '../../components/planner/CameraView';
 import { dayBadge } from '../../components/planner/dayBadge';
 import { markBriefSeen } from '../../services/plannerSeen';
-import { cachedFrames, storeFrames, tripKey } from '../../services/cameraCache';
+import { cachedTrip, storeFrames } from '../../services/cameraCache';
 
 type DayRow = { id: string; date: string; day_number: number; run?: PlanRun; best?: number; mine?: number; top?: string[] };
 
@@ -32,10 +32,9 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
   // Cameras near the trip: the pictures saved on the phone first, then the
   // server's newest (saved for next time).
   const loadCams = useCallback(() => {
-    const key = tripKey(tripId);
     let fresh = false;
-    cachedFrames(key).then(c => { if (!fresh && c) setCams(prev => prev ?? c); });
-    fetchTripFrames(tripId).then(r => storeFrames(key, r)).then(r => { fresh = true; setCams(r); })
+    cachedTrip(tripId).then(c => { if (!fresh && c) setCams(prev => prev ?? c); });
+    fetchTripFrames(tripId).then(r => storeFrames(r, tripId)).then(r => { fresh = true; setCams(r); })
       .catch(() => setCams(prev => prev ?? []));
   }, [tripId]);
 
