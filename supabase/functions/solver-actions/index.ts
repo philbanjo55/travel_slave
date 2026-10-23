@@ -15,7 +15,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //                else when it was fetched). camera.live_url is the camera's
 //                newest picture for the Live button (templated archives: the
 //                newest file at least LIVE_LAG_MIN old, its camera-local time
-//                in camera.live_time)
+//                in camera.live_time; Roundshot panoramas: the newest file
+//                their Location header names)
 //   label_frame  {frame_id, label: clear|cloud_on_hills|fog|cant_tell|null}
 //   stop_settings {stop_id}  the stop's planner settings and its shots
 //   set_settings {stop_id, tier?, light_wanted?, fog_wanted?, star_vantage_id?}
@@ -56,6 +57,21 @@ function liveUrl(c: { image_url: string; tz: string | null }, now: Date): { url:
     url: c.image_url.replace('{YYYY}', p.year).replace('{MM}', p.month).replace('{DD}', p.day).replace('{HHmm}', p.hour + p.minute),
     time: `${p.hour}:${p.minute}`,
   };
+}
+
+// Roundshot's .../cams/<id>/<size> answers 200 with an empty body and the
+// newest picture in Location, which an app image can't follow: resolve it
+// here (its file name carries the camera-local time).
+async function resolveRoundshot(l: { url: string; time: string | null }) {
+  if (!/roundshot\.com\/cams\//.test(l.url)) return l;
+  try {
+    const r = await fetch(l.url, { signal: AbortSignal.timeout(5000) });
+    await r.body?.cancel();
+    const loc = r.headers.get('location');
+    if (!loc) return l;
+    const m = loc.match(/\d{4}-\d{2}-\d{2}-(\d{2})-(\d{2})-\d{2}_[a-z]+\.jpg/);
+    return { url: new URL(loc, l.url).toString(), time: m ? `${m[1]}:${m[2]}` : null };
+  } catch { return l; }
 }
 
 function km(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
@@ -105,7 +121,9 @@ Deno.serve(async (req) => {
           .filter(c => c.distance_km == null || c.distance_km <= MAX_CAMERA_KM)
           .sort((a, b) => (a.distance_km ?? 0) - (b.distance_km ?? 0))
           .slice(0, here ? Math.min(Number(body.n ?? 2), 8) : 12);
-        const out = await Promise.all(ranked.map(async c => {
+        const out = await Promise.all(ranked.map(async c0 => {
+          const l = await resolveRoundshot({ url: c0.live_url, time: c0.live_time });
+          const c = { ...c0, live_url: l.url, live_time: l.time };
           const { data: f } = await db.from('webcam_frames')
             .select('id, captured_at, fetched_at, camera_time, storage_path, label, hills_visible, cloud_on_hills, sun_on_land, label_note, label_model, label_error, phil_label, edge_top')
             .eq('camera_code', c.code).not('storage_path', 'is', null).gt('sun_altitude', 3).eq('stale', false)

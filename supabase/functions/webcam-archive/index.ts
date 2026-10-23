@@ -33,7 +33,9 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 // .../{YYYY}/{MM}/{DD}/{HHmm}.jpg): filled in the camera's tz on 15-min steps,
 // newest first, stepping back up to an hour; the file's time becomes
 // camera_time_text. Every image fetch times out after FETCH_TIMEOUT_MS so one
-// dead camera can't stall the run.
+// dead camera can't stall the run. A plain image_url that answers with an
+// empty body and a Location header (Roundshot panoramas) is followed, and a
+// time in that file name becomes camera_time_text too.
 
 const BUCKET = 'webcams';
 const KEEP_DAYS = 7;
@@ -176,7 +178,21 @@ async function fetchImage(cam: any, now: Date): Promise<{ buf: Uint8Array; time:
     const sep = cam.image_url.includes('?') ? '&' : '?';
     const r = await fetch(`${cam.image_url}${sep}t=${Date.now()}`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!r.ok) throw new Error(`image ${r.status}`);
-    return { buf: new Uint8Array(await r.arrayBuffer()), time: null };
+    let buf = new Uint8Array(await r.arrayBuffer());
+    let time: string | null = null;
+    // Roundshot's .../cams/<id>/<size> answers 200 with an empty body and the
+    // newest picture in Location (no redirect status), so follow it by hand.
+    // Its file name carries the camera-local time (..._2026-10-23-11-50-00_quarter.jpg).
+    const loc = r.headers.get('location');
+    if (buf.length === 0 && loc) {
+      const r2 = await fetch(new URL(loc, cam.image_url).toString(), { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      if (!r2.ok) throw new Error(`image ${r2.status} (location)`);
+      buf = new Uint8Array(await r2.arrayBuffer());
+      const m = loc.match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-\d{2}_[a-z]+\.jpg/);
+      if (m) time = `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+    }
+    if (buf.length === 0) throw new Error('empty image');
+    return { buf, time };
   }
   let last = 'no candidate';
   for (const c of templateCandidates(cam.image_url, cam.tz ?? 'UTC', now)) {
