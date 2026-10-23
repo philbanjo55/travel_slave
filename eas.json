@@ -1,6 +1,7 @@
 {
   "cli": {
-    "version": ">= 9.0.0"
+    "version": ">= 9.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
     "development": {
@@ -12,11 +13,24 @@
     },
     "preview": {
       "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "test": {
+      "distribution": "internal",
+      "channel": "test",
+      "environment": "preview",
+      "env": {
+        "APP_VARIANT": "test"
+      },
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
+      "channel": "production",
       "android": {
         "buildType": "app-bundle"
       }
