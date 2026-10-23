@@ -31,8 +31,10 @@ export default function TripsScreen() {
 
   useEffect(() => { loadTrips(); }, []);
 
-  const activeTrips = trips.filter((t: any) => !t.archived);
-  const archivedTrips = trips.filter((t: any) => t.archived);
+  // Training trips (live-weather copies, trips.training_of) stay off the list.
+  const mainTrips = trips.filter((t: any) => !t.training_of);
+  const activeTrips = mainTrips.filter((t: any) => !t.archived);
+  const archivedTrips = mainTrips.filter((t: any) => t.archived);
 
   const archiveTrip = async (item: any, archive: boolean) => {
     try {
