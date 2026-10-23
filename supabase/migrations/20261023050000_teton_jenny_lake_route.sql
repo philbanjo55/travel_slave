@@ -1,0 +1,4 @@
+-- Day 3 route from the NPS cross-country ski & snowshoe handout (rev. 2/2017,
+-- Phil's upload, 23 Oct 2026), on the real trip and the Teton Live copy.
+update stops set info = 'ROUTE (NPS ski and snowshoe handout, rev. 2/2017): Jenny Lake Trail, easy, 8.0 mi round trip, 200 ft climbing. From this lot head NW on the trail, keep right past the Taggart Lake turn, then north on the west side of Cottonwood Creek (bridges: Highlands, Lucas-Fabian, Lupine Meadows) to the south end of Jenny Lake. Come back on the Teton Park Road (about 4.4 mi: 2.6 + 0.5 + 1.3) to make a loop. Winter trails are not marked or flagged. On the road one lane is ski only, the other is for walking and snowshoes.' || E'\n' || info
+ where id in ('6d93b189-c83f-446f-86af-bda655b450bf', '283db46f-4585-435c-b132-58b38057e9df');
