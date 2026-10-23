@@ -12,6 +12,8 @@ import { colors, typography, spacing, radius } from '../theme';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import * as Updates from 'expo-updates';
 import { migratePhotosToStorage } from '../services/migratePhotos';
+import { IS_TEST_APP } from '../utils/variant';
+import { isTrainingRunning } from './TrainingScreen';
 
 export default function TripsScreen() {
   const navigation = useNavigation<any>();
@@ -31,8 +33,12 @@ export default function TripsScreen() {
 
   useEffect(() => { loadTrips(); }, []);
 
-  const activeTrips = trips.filter((t: any) => !t.archived);
-  const archivedTrips = trips.filter((t: any) => t.archived);
+  // TEST app: training trips (copies on live weather) have their own screen.
+  const mainTrips = IS_TEST_APP ? trips.filter((t: any) => !t.training_of) : trips;
+  const activeTrips = mainTrips.filter((t: any) => !t.archived);
+  const archivedTrips = mainTrips.filter((t: any) => t.archived);
+  const trainingTrips = IS_TEST_APP ? trips.filter((t: any) => t.training_of) : [];
+  const trainingRunning = trainingTrips.filter((t: any) => isTrainingRunning(t));
 
   const archiveTrip = async (item: any, archive: boolean) => {
     try {
@@ -91,6 +97,9 @@ export default function TripsScreen() {
             <Text style={styles.tripTitle}>{item.title}</Text>
             {item.subtitle ? <Text style={styles.tripSub}>{item.subtitle}</Text> : null}
             {days ? <Text style={styles.tripMeta}>{days} days</Text> : null}
+            {trainingRunning.some((t: any) => t.training_of === item.id) ? (
+              <Text style={styles.trainingNote}>🧪 Training on live weather now</Text>
+            ) : null}
           </View>
           <Text style={{ color: '#444', fontSize: 18 }}>›</Text>
         </View>
@@ -145,6 +154,21 @@ export default function TripsScreen() {
           renderItem={renderTrip}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.list}
+          ListHeaderComponent={
+            trainingTrips.length > 0 ? (
+              <TouchableOpacity style={styles.trainingRow} onPress={() => navigation.navigate('Training')} activeOpacity={0.8}>
+                <Text style={styles.trainingEmoji}>🧪</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.trainingTitle}>Training trips</Text>
+                  <Text style={styles.trainingSub}>
+                    {trainingRunning.length ? `${trainingRunning.length} running on live weather` : 'None running'}
+                    {trainingTrips.length > trainingRunning.length ? ` · ${trainingTrips.length - trainingRunning.length} finished` : ''}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+              </TouchableOpacity>
+            ) : undefined
+          }
           ListFooterComponent={
             archivedTrips.length > 0 ? (
               <TouchableOpacity
@@ -204,4 +228,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   archivedBtnText: { ...typography.labelMedium, color: colors.textTertiary },
+  trainingNote: { ...typography.labelMedium, color: colors.textSecondary, marginTop: 2 },
+  trainingRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, marginBottom: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  trainingEmoji: { fontSize: 18 },
+  trainingTitle: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
+  trainingSub: { ...typography.labelMedium, color: colors.textSecondary, marginTop: 2 },
 });

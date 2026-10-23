@@ -105,6 +105,10 @@ Triggers build each terrain profile (~180 KB each) and the skyline cache. Phil c
 - **In the app:** the trip shows in the list, the day maps have pins, the stop weather cards fill in, and the sun panels show light and shade.
 - **In the TEST app:** the Planner opens with the trip's cameras and plans.
 
+## 7b. Training trip (automatic)
+
+Every main trip gets a training copy once its stops are rated and it starts more than 3 days out: `training_autocreate()` (pg_cron `training-autocreate`, 09:13 UTC) calls `make_training_trip(trip)`, which copies the first 14 days to start tomorrow (`trips.training_of` = the main trip, `training_until` = start + 13; a shorter itinerary repeats via `training-roll`, 12:00 UTC). At most 3 run at once. The raw and learning planners run on it until `training_until`, and the daily review reports how each did. The learning planner needs a history fit for the station and the current month (`solver_calib_sources` maps sources to months); without one `solver-fit-live` skips the station and `solver_build_calib_all` logs the trip to `app_logs` and only the raw planner runs, so load the history (section 6) for the training months too. In the TEST app the training trips sit on their own screen (the 🧪 row at the top of the trips list). To start one by hand: `select make_training_trip('<trip>', '<start>', <days>);`.
+
 ## 8. Web viewer (optional)
 
 Copy `faroes-web/` to `<trip>-web/` and change five places: the `<title>`, `TRIP_ID`, the fallback title, the travellers line and the footer. Commit to `master`, then add a Netlify site whose base directory is the new folder. The page reads Supabase live, so there is nothing to refresh.
