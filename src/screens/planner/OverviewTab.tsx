@@ -11,6 +11,7 @@ import {
 import { FrameModal, FrameTile } from '../../components/planner/CameraView';
 import { dayBadge } from '../../components/planner/dayBadge';
 import { markBriefSeen } from '../../services/plannerSeen';
+import { cachedFrames, storeFrames, tripKey } from '../../services/cameraCache';
 
 type DayRow = { id: string; date: string; day_number: number; run?: PlanRun; best?: number; mine?: number; top?: string[] };
 
@@ -28,8 +29,19 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
   const [planning, setPlanning] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Cameras near the trip: the pictures saved on the phone first, then the
+  // server's newest (saved for next time).
+  const loadCams = useCallback(() => {
+    const key = tripKey(tripId);
+    let fresh = false;
+    cachedFrames(key).then(c => { if (!fresh && c) setCams(prev => prev ?? c); });
+    fetchTripFrames(tripId).then(r => storeFrames(key, r)).then(r => { fresh = true; setCams(r); })
+      .catch(() => setCams(prev => prev ?? []));
+  }, [tripId]);
+
   const load = useCallback(async () => {
     setError(null);
+    loadCams();
     try {
       const runs = latestByDay(await fetchDayRuns(tripId));
       const base: DayRow[] = days.map((d: any) => {
@@ -49,9 +61,8 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
       }
     } catch (e: any) { setError(String(e?.message ?? e)); }
     setLoading(false);
-    fetchTripFrames(tripId).then(setCams).catch(() => setCams([]));
     fetchClaudeSpend().then(setSpend).catch(() => {});
-  }, [tripId, days.length]);
+  }, [tripId, days.length, loadCams]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -161,7 +172,7 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
       )}
       {spend ? <Text style={styles.hint}>{spendLine(spend)}</Text> : null}
       {extra}
-      <FrameModal item={open} onClose={() => { setOpen(null); fetchTripFrames(tripId).then(setCams).catch(() => {}); }} />
+      <FrameModal item={open} onClose={() => { setOpen(null); loadCams(); }} />
     </ScrollView>
   );
 }
