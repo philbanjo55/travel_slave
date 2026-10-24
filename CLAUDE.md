@@ -42,7 +42,7 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 - New tables get RLS enabled automatically (`ensure_rls` event trigger). With no policy the app/web viewers read zero rows — add a SELECT policy if the client needs it.
 - `prune_weather_forecasts()` (weekly) strips `raw` blobs older than 21 days. `weather_forecasts` is a display table, not an archive.
 - **Disk IO budget (Supabase emailed 21 Oct 2026):** the small instance has a daily IO burst budget, and temp files count (work_mem is ~2 MB, so big sorts/aggregates spill). Big one-off computes (DEM loads, terrain recomputes, shot setup for a new trip) each write GBs of temp: spread them over days. Never call a function per row when it can read `weather_forecasts.raw` (the solver-plan cron did, via `solver_trip_tz`, and timed out on 20 Oct); look up per-trip values once.
-- The Supabase MCP connector hangs (times out, nothing runs) on SQL whose text contains the word "drop" or a `delete from` (even inside a string or `on commit drop`): reword it, or build the keyword in `execute` (`'del' || 'ete from ...'`) for tests.
+- The Supabase MCP connector hangs (times out, nothing runs) on SQL whose text contains the word "drop" or a `delete from` (even inside a string or `on commit drop`): reword it, or build the keyword in `execute` (`'del' || 'ete from ...'`) for tests. Long note text can trip it too (24 Oct: a grooming note hung it three times): send it as `convert_from(decode('<base64>','base64'),'UTF8')`.
 - Free plan: database must stay under 500 MB or it goes read-only. Check `pg_database_size` before adding anything that grows nightly. `db_size_check()` logs the size daily to `app_logs`.
 
 ## Solver
