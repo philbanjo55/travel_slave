@@ -144,7 +144,7 @@ footer { font-size: 0.85rem; color: var(--muted); }
 <div class="wrap">
 
 <header>
-  <div class="stamp"><span class="eyebrow">Philm+Frame planner</span><span class="eyebrow">As of Sun 25 Oct, 3:45 PM EDT</span></div>
+  <div class="stamp"><span class="eyebrow">Philm+Frame planner</span><span class="eyebrow">As of Sun 25 Oct, 5:10 PM EDT</span></div>
   <h1>Planner Field Report</h1>
   <p class="lede">The planner decides where you stand and when, using the forecast, the sun and how much each stop matters to you. This page shows what it does, how we're testing whether it's any good, what we've learned so far, and what's running right now.</p>
   <div class="key">
@@ -152,7 +152,7 @@ footer { font-size: 0.85rem; color: var(--muted); }
     <div class="keyrow">
       <div><div class="big num">2×</div><p class="small">more good shots than following your itinerary as written (Teton, 56 replayed trips)</p></div>
       <div><div class="big num">+1</div><p class="small">good shot is all that perfect knowledge of the weather would add in Teton. The planner is close to the ceiling there.</p></div>
-      <div><div class="big num">+5</div><p class="small">good shots perfect knowledge would add in the Faroes (early: 12 of 33 trips). Weather matters much more there.</p></div>
+      <div><div class="big num">+5</div><p class="small">good shots perfect knowledge would add in the Faroes (33 replayed trips). Weather matters much more there.</p></div>
     </div>
   </div>
 </header>
@@ -186,7 +186,7 @@ footer { font-size: 0.85rem; color: var(--muted); }
       <span class="when">The past · winters 2024–26, Mays 2024–26</span>
       <h3>Test bench</h3>
       <p>Replays your two trips on real past days, many times over. Each night it only sees the forecast that existed then.</p>
-      <ul><li>Teton: 56 replayed trips <span class="chip done">done</span></li><li>Faroes: 12 of 33 <span class="chip run">running</span></li></ul>
+      <ul><li>Teton: 56 replayed trips <span class="chip done">done</span></li><li>Faroes: 33 replayed trips <span class="chip done">done</span></li></ul>
       <p class="truth"><b>Truth:</b> satellite sunshine at each spot, plus the airport's cloud reports for hidden peaks. Now being checked against real TetonCam pictures (Part 4).</p>
     </div>
     <div class="lane">
@@ -240,10 +240,10 @@ footer { font-size: 0.85rem; color: var(--muted); }
       <div class="take"><p><b>Planner doubles your good shots</b> (8.4 vs 4.3). Perfect weather knowledge only adds about one more, so a smarter planner can't gain much here.</p><p>Tomorrow-only and 3-days-ahead get about the same number. Most of the gain over your itinerary comes from being there when the sun is right.</p></div>
     </div>
     <div class="figure">
-      <div class="head"><h3>Faroes, 15 days</h3><span class="small muted">12 of 33 replayed trips, May 2024–26 · early numbers</span></div>
+      <div class="head"><h3>Faroes, 15 days</h3><span class="small muted">33 replayed trips, May 2024–26 · final</span></div>
       <div class="legend"><span><i style="background:var(--glacier-soft)"></i>Good</span><span><i style="background:var(--glacier)"></i>of which great</span></div>
       <svg id="c-faroes" width="100%" role="img" aria-label="Bar chart of good and great shots per Faroes trip by player"></svg>
-      <div class="take"><p><b>Planner gets 2.3× your itinerary</b> (16.8 vs 7.3), and the weather adds 3 good shots over sun angles alone.</p><p>Perfect knowledge would add 5 more. In the Faroes a better forecast is worth real shots, so that's where improvements should go.</p></div>
+      <div class="take"><p><b>Planner gets 2.2× your itinerary</b> (17.7 vs 8.0) and beat it in all 33 trips. The weather adds 2 good shots over sun angles alone, and beat sun-angles-only in 26 of 33 trips.</p><p>Perfect knowledge would add 5 more. In the Faroes a better forecast is worth real shots, so that's where improvements should go. Cost: about 40 more minutes of driving a day than your itinerary.</p></div>
     </div>
   </div>
   <details><summary>Show the numbers as a table</summary>
@@ -267,8 +267,8 @@ footer { font-size: 0.85rem; color: var(--muted); }
   </div>
   <div class="figure">
     <div class="head"><h3>Camera reading progress</h3><span class="small muted">1,116 pictures, 8 AM to 4 PM Mountain time, 1 Dec – 31 Jan of both winters</span></div>
-    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="1116" aria-valuenow="40" aria-label="Pictures read"><div style="width:3.6%"></div></div>
-    <p class="small"><span class="num">about 40</span> read so far. Done around <b>6 PM</b>, for about <b>$10</b> (hard stop at $15). Only the labels are stored, not the pictures.</p>
+    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="1116" aria-valuenow="673" aria-label="Pictures read"><div style="width:60%"></div></div>
+    <p class="small"><span class="num">673</span> read so far. Done around <b>6 PM</b>, for about <b>$10</b> (hard stop at $15). Only the labels are stored, not the pictures.</p>
     <p class="small muted">The camera is about 30 km from the Grand, on the Idaho side. It's a fair judge of whether the peaks are in cloud; sun on your side of the valley can differ. If the airport and the camera often disagree, I'll re-score the Teton results with the camera.</p>
   </div>
 </section>
@@ -279,8 +279,8 @@ footer { font-size: 0.85rem; color: var(--muted); }
     <h2 id="s-now">Running right now</h2>
   </div>
   <div class="board">
-    <div class="row"><div class="what"><b>Faroes test bench</b><span>12 of 33 replayed trips done, about 1,000 of 2,475 days planned</span></div><div class="eta"><span class="chip run">running</span><br>done ≈ 5:30 PM</div></div>
-    <div class="row"><div class="what"><b>TetonCam reading</b><span>Claude reads 8 past pictures a minute</span></div><div class="eta"><span class="chip run">running</span><br>done ≈ 6 PM</div></div>
+    <div class="row"><div class="what"><b>Faroes test bench</b><span>All 33 replayed trips done</span></div><div class="eta"><span class="chip done">done</span><br>finished ≈ 5 PM</div></div>
+    <div class="row"><div class="what"><b>TetonCam reading</b><span>Claude reads 8 past pictures a minute (paused 4:40–5:05 while we checked billing)</span></div><div class="eta"><span class="chip run">running</span><br>done ≈ 6 PM</div></div>
     <div class="row"><div class="what"><b>Training trips</b><span>Faroes Live and Teton Live plan on live forecasts twice a day; I review both every night</span></div><div class="eta"><span class="chip run">daily</span><br>review 8:41 PM</div></div>
     <div class="row"><div class="what"><b>Planner on your real trips</b><span>Sun-angle plans until the dates come inside the forecast</span></div><div class="eta"><span class="chip run">twice a day</span><br>6:55 AM · 3:55 PM</div></div>
   </div>
@@ -293,7 +293,7 @@ footer { font-size: 0.85rem; color: var(--muted); }
   </div>
   <div class="meters">
     <div class="meter figure"><span class="eyebrow">Database</span><span class="v num">458 MB <span class="small muted">of 8 GB</span></span><div class="progress"><div style="width:5.6%"></div></div><p>About 6% used. A trip like Teton takes 20–25 MB. The test bench pauses itself at 2 GB.</p></div>
-    <div class="meter figure"><span class="eyebrow">Claude this month</span><span class="v num">$5.53 <span class="small muted">+ ≈ $10 camera</span></span><div class="progress sun"><div style="width:39%"></div></div><p>About $16 of the $40 cap once the camera job finishes. Labelling stops by itself at the cap.</p></div>
+    <div class="meter figure"><span class="eyebrow">Claude this month</span><span class="v num">$11.75 <span class="small muted">+ ≈ $4 to finish</span></span><div class="progress sun"><div style="width:39%"></div></div><p>About $16 of the $40 cap once the camera job finishes (matches the Claude Console). Labelling stops by itself at the cap.</p></div>
     <div class="meter figure"><span class="eyebrow">Supabase</span><span class="v">Pro · Micro</span><p>Pro plan with the spend cap on. Moved to Micro today, a free upgrade covered by the Pro credit: twice the memory.</p></div>
   </div>
 </section>
@@ -304,7 +304,7 @@ footer { font-size: 0.85rem; color: var(--muted); }
     <h2 id="s-you">What's waiting on you</h2>
   </div>
   <div class="decide">
-    <div class="d"><span class="mark">1</span><span class="q">Look-ahead fix (trust days 2–3 less)</span><span class="a">My take: skip it for Teton, where it changes less than one shot a trip. Decide after the Faroes finish, where the weather matters more.</span></div>
+    <div class="d"><span class="mark">1</span><span class="q">Look-ahead fix (trust days 2–3 less)</span><span class="a">My take: skip it. In both places planning 3 days ahead gets the same number of good shots as tomorrow-only (Faroes 17.4 vs 17.7, Teton 8.6 vs 8.4).</span></div>
     <div class="d"><span class="mark">2</span><span class="q">Re-score Teton with the camera?</span><span class="a">Only if the camera check shows the airport often gets "hidden peaks" wrong. I'll bring you the numbers around 6:30 PM.</span></div>
     <div class="d"><span class="mark">3</span><span class="q">Parking and access for the 3 new ski stops</span><span class="a">Still open from Teton planning. Needs you when you have a few minutes.</span></div>
     <div class="d"><span class="mark">4</span><span class="q">End the training trips</span><span class="a">After the verdicts on 6 Nov (Faroes) and 9 Nov (Teton). They keep running until you say.</span></div>
@@ -317,11 +317,11 @@ footer { font-size: 0.85rem; color: var(--muted); }
 <script>
 (function () {
   var data = [
-    { k: 'Perfect hindsight', t: [9.4, 6.8], f: [21.7, 4.6] },
-    { k: 'Planner, tomorrow only', me: true, t: [8.4, 5.6], f: [16.8, 3.8] },
-    { k: 'Planner, 3 days ahead', t: [8.6, 5.7], f: [16.6, 4.2] },
-    { k: 'Sun angles only', t: [7.9, 5.5], f: [13.7, 2.9] },
-    { k: 'Your itinerary', t: [4.3, 2.2], f: [7.3, 0.6] }
+    { k: 'Perfect hindsight', t: [9.4, 6.8], f: [23.1, 6.8] },
+    { k: 'Planner, tomorrow only', me: true, t: [8.4, 5.6], f: [17.7, 5.3] },
+    { k: 'Planner, 3 days ahead', t: [8.6, 5.7], f: [17.4, 5.4] },
+    { k: 'Sun angles only', t: [7.9, 5.5], f: [15.5, 4.0] },
+    { k: 'Your itinerary', t: [4.3, 2.2], f: [8.0, 0.8] }
   ];
   var NS = 'http://www.w3.org/2000/svg';
   function el(tag, attrs, parent, text) {
