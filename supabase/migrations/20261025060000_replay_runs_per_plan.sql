@@ -23,6 +23,7 @@ create or replace function replay_run_tick() returns jsonb
 language plpgsql as $$
 declare r record; v_day bigint; i int; v_started int := 0; v_built int := 0; v_cleared int := 0; k int;
   v_slots int := 6; v_kinds text[] := array['fc3', 'fc1', 'lt3', 'hs3', 'my'];
+  v_t0 timestamptz := clock_timestamp();
 begin
   -- A plan with no answer in 5 minutes: once more, then the run stops with a note.
   update replay_run_state set status = case when note = 'retry' then 'error' else 'idle' end,
@@ -75,6 +76,9 @@ begin
               and not exists (select 1 from replay_run_state s where s.run_id = x.id and s.status <> 'idle')
               and exists (select 1 from replay_run_state s where s.run_id = x.id and s.night = x.night)
             order by id loop
+    -- A Faroes truth build takes ~9 s: leave the rest for the next minute
+    -- (pg_cron cancels a tick after 2 min, and nothing it did is kept).
+    exit when clock_timestamp() - v_t0 > interval '60 seconds';
     -- Wait for the place's downloads, then refit hidden peaks on them.
     continue when exists (select 1 from replay_fetch f join replay_points p on p.point_key = f.point_key
                            where f.status in ('queued', 'sent') and (p.lat > 55) = (r.trip_id = 'e04fbc9d-86b1-42b2-bf08-fc65a18e665d'));
