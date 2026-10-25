@@ -199,6 +199,26 @@ td.num, th.num { text-align: right; }
   </section>
 
   <section>
+    <div class="step">What the route search decides</div>
+    <h2>One real day: your plan vs the planner's</h2>
+    <p>The weather part only says how good each shot would be at each moment. The route search is the part that decides: which stops, in what order, when to arrive, how long to wait for the light, and how much to drive. Here is the Teton practice trip's Day 3 (your Jenny Lake ski day), planned on the real forecast for Mon 26 Oct.</p>
+    <figure>
+      <div class="scroll"><svg class="chart" id="timeline" viewBox="0 0 900 240" role="img" aria-label="Timeline of your Day 3 against the planner's best plan for 26 October: drives, waiting and shooting."></svg></div>
+      <div class="key">
+        <span><i class="sw" style="background:var(--hist);height:8px"></i>driving</span>
+        <span><i class="sw" style="background:var(--grid);height:8px;outline:1px solid var(--line)"></i>waiting for the light</span>
+        <span><i class="sw" style="background:var(--learn);height:8px"></i>shooting (darker = better odds)</span>
+        <span><i class="sw" style="background:var(--orig);height:8px;opacity:.35"></i>skiing (the planner can't see it)</span>
+      </div>
+      <figcaption>Your day is a ski day: the planner only sees its three photo stops (all A or B tier, mid-morning light) and scores it 2. Its own best plan chases two GOD sunrise spots and two S stops in evening light, scores 33, and drives 150 minutes. It is right about the photos and wrong about your day, because it has no idea the ski is the point.</figcaption>
+    </figure>
+    <figure>
+      <svg class="chart" id="tradeoff" viewBox="0 0 860 280" role="img" aria-label="Plan value against driving minutes for the planner's five plans and your own day."></svg>
+      <figcaption>Each dot is one plan for the same day: how much photo value it adds up to against how long you drive. Plan 5 gets 70% of plan 1's value with 40 minutes less driving. Today the planner barely cares: any drive under an hour is free, so it picks plan 1.</figcaption>
+    </figure>
+  </section>
+
+  <section>
     <div class="step">The difference between the two</div>
     <h2>How often is it really clear?</h2>
     <p>The original planner assumes that when the forecast shows little low and middle cloud, the sun will be out. The learning planner replaces that with what actually happened when the forecast said the same thing: first from years of airport records, then corrected every day by the last 30 days.</p>
@@ -244,12 +264,50 @@ td.num, th.num { text-align: right; }
     </figure>
   </section>
 
+  <section>
+    <div class="step">Why it isn't beating random yet</div>
+    <h2>The test can only see one thing</h2>
+    <p>"Random hour" sounds like a low bar, but the way it's measured today, the planner can't clear it even when its plans are good:</p>
+    <div class="two">
+      <figure>
+        <svg class="chart" id="truth" viewBox="0 0 420 200" role="img" aria-label="Where the truth for each checked Faroes visit came from: mostly the Vágar airport."></svg>
+        <figcaption>89% of checked Faroes visits were judged by one cloud report at Vágar airport, whichever stop you were at. Seen from the airport, where you go changes nothing; only the hour can matter.</figcaption>
+      </figure>
+      <div style="display:grid;gap:12px;align-content:start">
+        <div class="fact"><b>1 · One judge for every stop</b><span>The airport sees its own sky, not your viewpoint 30 km away. Only 2 webcams were near enough to judge a visit.</span></div>
+        <div class="fact"><b>2 · Only timing is tested</b><span>So the test is "did the forecast pick the clear hour a day ahead?", and clear skies are exactly what the forecast gets wrong (skill −0.5).</span></div>
+        <div class="fact"><b>3 · The solver's real work isn't scored</b><span>Tiers, light direction, sunrise vs noon, how many shots, how much driving: none of it counts. A GOD stop at sunrise and a C stop at noon score the same.</span></div>
+        <div class="fact"><b>4 · Three grey days</b><span>When there's no sun anywhere, every plan scores the same as every hour.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="step">What would make it better</div>
+    <h2>Improvements, in the order I'd do them</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Change</th><th>What it fixes</th><th>Effort</th></tr></thead>
+        <tbody>
+          <tr><td><b>Fair test of the route search</b></td><td style="white-space:normal">Score whole plans the way the planner values them (tier, light, number of good shots, driving) against simple rivals on the same truth: your own day, a "nearest stop next" route, and a random order. Only then do we know if the search adds anything.</td><td>Small</td></tr>
+          <tr><td><b>Better judges</b></td><td style="white-space:normal">Judge a visit only by a webcam within a few km, and use Claude's "sun on the land" reading instead of "hills visible". Drop visits no camera can see instead of falling back to the airport.</td><td>Small</td></tr>
+          <tr><td><b>Morning re-plan</b></td><td style="white-space:normal">Re-plan at dawn with the newest forecast and the live webcams. Forecasts 0–6 hours ahead and a camera showing the sky right now are far better than a day-ahead guess.</td><td>Medium</td></tr>
+          <tr><td><b>Driving costs something</b></td><td style="white-space:normal">Today drives under an hour are free. A small cost per minute (say 1 point per 2 hours) would pick plan 5 above when it's nearly as good, and long waits could cost too.</td><td>Small</td></tr>
+          <tr><td><b>Your tiers, not mine</b></td><td style="white-space:normal">Most Teton tiers are my first guesses. GOD counts 10× a B and 5× an A, so one GOD stop outweighs five A stops. You confirm the tiers in Setup, and we can soften the steps (e.g. GOD 6, S 4, A 2, B 1).</td><td>You, 10 min</td></tr>
+          <tr><td><b>Activities as fixed blocks</b></td><td style="white-space:normal">Mark ski routes and hikes as booked time so the planner plans around them instead of replacing your ski day with a driving day.</td><td>Small</td></tr>
+          <tr><td><b>Correction per area</b></td><td style="white-space:normal">Learn cloud odds per camera area and blend the UK and US models' cloud with ECMWF, instead of one table per airport.</td><td>Medium</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="verdict">
     <h2>Where this stands</h2>
     <ul>
       <li><b>Learning is more honest.</b> Its promised chances are much closer to what happened, and its error score is lower (0.32 vs 0.37 on best plans).</li>
       <li><b>Neither picks better times yet.</b> Both land at about the random-hour level. Three grey Faroes days give them little to choose between.</li>
       <li><b>Too few visits to be sure.</b> About 30 checked visits per planner. A real difference needs a few hundred, which the two practice trips reach in early November.</li>
+      <li><b>The test measures the weather guess, not the route search.</b> Fixing the test comes first, then morning re-plans and driving costs.</li>
       <li><b>Verdicts:</b> Faroes on 6 Nov, Teton on 9 Nov. Then you decide which planner the real trips use.</li>
     </ul>
   </section>
@@ -381,5 +439,85 @@ const SK = [
       hover(r, `${name}, forecast for ${LEADS[j]}<br>skill <b>${v > 0 ? "+" : ""}${v.toFixed(2)}</b>`);
     });
   });
+})();
+// One real day (Teton Live Day 3 on 26 Oct, times in Mountain time): your day vs the planner's best.
+const hm = s => { const [h, m] = s.split(":").map(Number); return h + m / 60; };
+const MINE = [
+  { k: "ski", a: "6:15", b: "11:45", label: "Jenny Lake ski (not scored)" },
+  { k: "shoot", a: "7:30", b: "8:15", label: "Teton Glacier (A)", v: .46, p: .53, light: "front" },
+  { k: "shoot", a: "9:00", b: "9:45", label: "S. Jenny Lake (A)", v: .43, p: .49, light: "front" },
+  { k: "shoot", a: "12:15", b: "12:45", label: "Blacktail (B)", v: .38, p: 0, light: "front", note: "best at 5:30 PM: 82%" },
+];
+const BEST = [
+  { k: "drive", a: "6:00", b: "6:48" }, { k: "wait", a: "6:48", b: "7:30" },
+  { k: "shoot", a: "7:30", b: "8:45", label: "Oxbow Bend (GOD)", v: .83, p: .86, light: "front" },
+  { k: "drive", a: "8:45", b: "9:03" }, { k: "wait", a: "9:03", b: "9:15" },
+  { k: "shoot", a: "9:15", b: "12:00", label: "Snake R. Overlook (GOD)", v: .56, p: .55, light: "front" },
+  { k: "drive", a: "12:00", b: "12:15" }, { k: "wait", a: "12:15", b: "13:00" },
+  { k: "shoot", a: "13:00", b: "13:45", label: "Chapel (S)", v: .49, p: .12, light: "front" },
+  { k: "drive", a: "13:45", b: "14:12" }, { k: "wait", a: "14:12", b: "16:15" },
+  { k: "shoot", a: "16:15", b: "16:45", label: "Snake R. again (A)", v: .62, p: .82, light: "side" },
+  { k: "drive", a: "16:45", b: "17:01" }, { k: "wait", a: "17:01", b: "17:15" },
+  { k: "shoot", a: "17:15", b: "18:00", label: "Moulton Barn (S)", v: .91, p: .98, light: "side" },
+  { k: "drive", a: "18:00", b: "18:09" }, { k: "wait", a: "18:09", b: "18:15" },
+  { k: "shoot", a: "18:15", b: "19:00", label: "Glacier View (A)", v: .88, p: .94, light: "side" },
+];
+(function timeline() {
+  const svg = document.getElementById("timeline"), W = 900, L = 170, R = 16, t0 = 5.5, t1 = 19.5;
+  const x = h => L + (W - L - R) * (h - t0) / (t1 - t0);
+  const fmt = h => { const H = Math.floor(h), M = Math.round((h - H) * 60); return `${((H + 11) % 12) + 1}:${String(M).padStart(2, "0")} ${H < 12 ? "AM" : "PM"}`; };
+  for (let h = 6; h <= 19; h++) { el("line", { x1: x(h), x2: x(h), y1: 20, y2: 212, stroke: "var(--grid)" }, svg); if (h % 2 === 0) txt(svg, x(h), 230, fmt(h).replace(":00", ""), { "text-anchor": "middle" }); }
+  el("rect", { x: x(7.75) - 1, y: 18, width: 2, height: 194, fill: "var(--ink-3)", opacity: .4 }, svg);
+  txt(svg, x(7.75) + 4, 14, "sunrise ~7:45", { "font-size": 11 });
+  el("rect", { x: x(18.2) - 1, y: 18, width: 2, height: 194, fill: "var(--ink-3)", opacity: .4 }, svg);
+  txt(svg, x(18.2) - 4, 14, "sunset ~6:10", { "font-size": 11, "text-anchor": "end" });
+  const row = (items, y, name, score) => {
+    txt(svg, L - 12, y + 15, name, { "text-anchor": "end", fill: "var(--ink)", "font-size": 13, "font-weight": 600 });
+    txt(svg, L - 12, y + 31, score, { "text-anchor": "end", "font-size": 12 });
+    let flip = 0;
+    items.forEach(it => {
+      const a = hm(it.a), b = hm(it.b), w = Math.max(2, x(b) - x(a) - 1);
+      const fill = it.k === "drive" ? "var(--hist)" : it.k === "wait" ? "var(--grid)" : it.k === "ski" ? "var(--orig)" : "var(--learn)";
+      const op = it.k === "ski" ? .3 : it.k === "shoot" ? .35 + .65 * it.p : 1;
+      const r = el("rect", { x: x(a), y, width: w, height: 22, rx: 3, fill, opacity: op, stroke: it.k === "wait" ? "var(--line)" : "none" }, svg);
+      const what = it.k === "shoot" ? `<b>${it.label}</b><br>${fmt(a)}–${fmt(b)}<br>${Math.round(it.p * 100)}% chance of a good shot · ${it.light} light${it.note ? "<br>" + it.note : ""}`
+        : it.k === "drive" ? `Driving ${Math.round((b - a) * 60)} min` : it.k === "wait" ? `Waiting ${Math.round((b - a) * 60)} min for the light` : `<b>${it.label}</b><br>${fmt(a)}–${fmt(b)}`;
+      hover(r, what);
+      if (it.label) { const far = x(a) + it.label.length * 6 > W - R; txt(svg, far ? x(b) : x(a), y + 38 + flip * 14, it.label, { "font-size": 11, fill: "var(--ink-2)", "text-anchor": far ? "end" : "start" }); flip = (flip + 1) % 3; }
+    });
+  };
+  row(MINE, 40, "Your Day 3", "value 2 · 105 min driving");
+  row(BEST, 132, "Planner's best", "value 33 · 150 min driving");
+})();
+
+// Plan value vs driving for the same day.
+const PLANS = [["Plan 1", 150, 32.5], ["Plan 2", 197, 28.8], ["Plan 3", 189, 25.7], ["Plan 4", 167, 23.5], ["Plan 5", 112, 23.2], ["Your day", 105, 2.2]];
+(function tradeoff() {
+  const svg = document.getElementById("tradeoff"), W = 860, H = 280, L = 50, R = 20, T = 16, B = 40;
+  const x = m => L + (W - L - R) * m / 220, y = v => T + (H - T - B) * (1 - v / 35);
+  [0, 10, 20, 30].forEach(t => { el("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), stroke: "var(--grid)" }, svg); txt(svg, L - 8, y(t) + 4, t, { "text-anchor": "end" }); });
+  [0, 60, 120, 180].forEach(t => { el("line", { x1: x(t), x2: x(t), y1: T, y2: H - B, stroke: "var(--grid)" }, svg); txt(svg, x(t), H - B + 18, t + " min", { "text-anchor": "middle" }); });
+  txt(svg, (L + W - R) / 2, H - 4, "minutes of driving that day", { "text-anchor": "middle" });
+  txt(svg, L, T - 4, "photo value (tier-weighted)");
+  PLANS.forEach(([n, d, v]) => {
+    const mine = n === "Your day";
+    const c = el("circle", { cx: x(d), cy: y(v), r: 6, fill: mine ? "var(--ink)" : "var(--learn)", stroke: "var(--surface)", "stroke-width": 2 }, svg);
+    hover(c, `<b>${n}</b><br>value ${v} · ${d} min driving`);
+    txt(svg, x(d) + 10, y(v) + 4, n, { fill: "var(--ink-2)", "font-size": 12 });
+  });
+})();
+
+// Where the truth came from (Faroes practice trip, checked visits).
+(function truth() {
+  const svg = document.getElementById("truth"), W = 420, L = 150, R = 50, rows = [["Vágar airport", 553], ["Webcam F-42", 43], ["Webcam F-41", 26]];
+  const x = n => L + (W - L - R) * n / 600;
+  rows.forEach(([n, v], k) => {
+    const y = 30 + k * 50;
+    txt(svg, L - 10, y + 15, n, { "text-anchor": "end", fill: "var(--ink)", "font-size": 13 });
+    const r = el("rect", { x: L, y, width: x(v) - L, height: 22, rx: 3, fill: k ? "var(--learn)" : "var(--hist)" }, svg);
+    hover(r, `${n}: <b>${v}</b> checked visits`);
+    txt(svg, x(v) + 6, y + 16, v, { fill: "var(--ink)", "font-size": 13 });
+  });
+  txt(svg, L, 188, "checked visits, 22–24 Oct");
 })();
 </script>
