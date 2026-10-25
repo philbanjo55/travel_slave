@@ -1,0 +1,274 @@
+<title>Planner Test Bench</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; status board first, then what round 1 found, what round 2 changes, storage, next. */
+:root {
+  --bg: #f4f6f7;
+  --surface: #ffffff;
+  --ink: #141a1f;
+  --ink-2: #4c5862;
+  --ink-3: #7a8690;
+  --line: #d9e0e5;
+  --track: #e8edf0;
+  --fc: #2a78d6;      /* the planner with the forecast */
+  --light: #eb6834;   /* light only, no forecast */
+  --best: #1baf7a;    /* perfect knowledge (the ceiling) */
+  --mine: #7a8690;    /* Phil's own day */
+  --warn: #d4a017;
+  --crit: #e34948;
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101417; --surface: #171d22; --ink: #e9eef1; --ink-2: #b3bec6; --ink-3: #85919a; --line: #2a333a; --track: #222a30;
+    --fc: #3987e5; --light: #d95926; --best: #199e70; --mine: #85919a; --warn: #c9971a; --crit: #e66767; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101417; --surface: #171d22; --ink: #e9eef1; --ink-2: #b3bec6; --ink-3: #85919a; --line: #2a333a; --track: #222a30;
+  --fc: #3987e5; --light: #d95926; --best: #199e70; --mine: #85919a; --warn: #c9971a; --crit: #e66767; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 17px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 860px; margin: 0 auto; padding-block: 40px 64px; display: grid; gap: 44px; }
+section { display: grid; gap: 14px; min-width: 0; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+h1 { font-family: var(--f-display); font-weight: 800; font-size: clamp(32px, 6vw, 48px); line-height: 1.04; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-family: var(--f-display); font-weight: 700; font-size: clamp(22px, 3.4vw, 27px); line-height: 1.15; margin: 0; text-wrap: balance; }
+h3 { font-family: var(--f-display); font-weight: 700; font-size: 17px; margin: 0 0 4px; }
+p { margin: 0; max-width: 66ch; }
+.lede { font-size: 19px; color: var(--ink-2); }
+.muted { color: var(--ink-3); font-size: 14px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
+
+/* Status board */
+.board { display: grid; gap: 16px; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; align-items: baseline; }
+.row .name { font-weight: 600; }
+.row .when { font-family: var(--f-mono); font-size: 13px; color: var(--ink-2); text-align: right; }
+.bar { grid-column: 1 / -1; height: 12px; background: var(--track); border-radius: 6px; overflow: hidden; position: relative; }
+.bar i { display: block; height: 100%; border-radius: 6px; }
+.row .sub { grid-column: 1 / -1; font-size: 14px; color: var(--ink-2); }
+.pill { font-family: var(--f-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.run { color: var(--fc); }
+.pill.wait { color: var(--ink-3); }
+.pill.done { color: var(--best); }
+
+/* Storage gauge */
+.gauge { position: relative; height: 26px; background: var(--track); border-radius: 6px; overflow: visible; }
+.gauge .seg { position: absolute; top: 0; bottom: 0; }
+.gauge .mark { position: absolute; top: -6px; bottom: -6px; width: 2px; }
+.gauge-scale { position: relative; height: 18px; font-family: var(--f-mono); font-size: 11px; color: var(--ink-3); }
+.gauge-scale span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); }
+.key span { display: inline-flex; align-items: center; gap: 6px; }
+.key i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+/* Charts */
+.chart { width: 100%; height: auto; display: block; }
+.chart text { font-family: var(--f-body); }
+.scroll { overflow-x: auto; }
+
+/* Round 2 */
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--ink-2); font-size: 13px; }
+td:first-child { white-space: nowrap; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 8px; vertical-align: 0; }
+.note { border-left: 3px solid var(--warn); padding: 4px 0 4px 12px; font-size: 15px; color: var(--ink-2); }
+ol.next { margin: 0; padding-left: 22px; display: grid; gap: 8px; max-width: 66ch; }
+ol.next b { font-weight: 600; }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">Philm+Frame planner · test bench · 25 Oct 2026, 14:30 UTC</div>
+    <h1>Planner test bench</h1>
+    <p class="lede">The planner is being replayed on past winters and Mays, judged against what the sky actually did, before any change to the real planner. Here is where it stands.</p>
+  </header>
+
+  <section aria-labelledby="now">
+    <div class="eyebrow">Right now</div>
+    <h2 id="now">Three jobs, running on their own</h2>
+    <div class="panel board">
+      <div class="row">
+        <span class="name">Old forecasts and satellite data <span class="pill run">downloading</span></span>
+        <span class="when">done ~17:00 UTC</span>
+        <div class="bar" role="img" aria-label="476 of 778 downloads done"><i style="width:61%; background: var(--fc)"></i></div>
+        <span class="sub">476 of 778 downloads. Grand Teton is complete; these are the Faroes (30 Apr – 16 Jun, 2024–2026), including forecasts made 2 and 3 days ahead.</span>
+      </div>
+      <div class="row">
+        <span class="name">Grand Teton: 56 past trips <span class="pill run">running</span></span>
+        <span class="when">done ~17:30 UTC</span>
+        <div class="bar" role="img" aria-label="31 of 392 nights done"><i style="width:8%; background: var(--fc)"></i></div>
+        <span class="sub">31 of 392 nights replayed, about 2 a minute. Your 7 days, started every second day from 1 Dec to 25 Jan, both winters.</span>
+      </div>
+      <div class="row">
+        <span class="name">Faroes: 33 past trips <span class="pill wait">waiting</span></span>
+        <span class="when">done ~21:30 UTC</span>
+        <div class="bar" role="img" aria-label="0 of 495 nights done"><i style="width:0%"></i></div>
+        <span class="sub">495 nights. Starts when its downloads are in and Grand Teton frees the four slots.</span>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="space">
+    <div class="eyebrow">Database storage</div>
+    <h2 id="space">448 MB of 500 MB used</h2>
+    <p>The free plan turns read-only at 500 MB, which would stop the app saving. The test bench pauses itself at 470 MB. Most of the space is the live planner, not the bench.</p>
+    <div class="panel">
+      <div>
+        <div class="gauge" role="img" aria-label="448 MB used: planner scores 131, sun angles 59, terrain 79, weather shown in the app 44, forecast versions 27, test bench 21, other 87. Pause line at 470, limit 500.">
+          <div class="seg" style="left:0%; width:26.2%; background: var(--fc); border-radius: 6px 0 0 6px"></div>
+          <div class="seg" style="left:26.2%; width:11.8%; background: color-mix(in srgb, var(--fc) 55%, var(--surface))"></div>
+          <div class="seg" style="left:38%; width:15.8%; background: var(--mine)"></div>
+          <div class="seg" style="left:53.8%; width:8.8%; background: color-mix(in srgb, var(--mine) 55%, var(--surface))"></div>
+          <div class="seg" style="left:62.6%; width:5.4%; background: color-mix(in srgb, var(--best) 60%, var(--surface))"></div>
+          <div class="seg" style="left:68%; width:4.2%; background: var(--light)"></div>
+          <div class="seg" style="left:72.2%; width:17.4%; background: color-mix(in srgb, var(--ink-3) 30%, var(--surface))"></div>
+          <div class="mark" style="left:94%; background: var(--warn)"></div>
+          <div class="mark" style="left:calc(100% - 2px); background: var(--crit)"></div>
+        </div>
+        <div class="gauge-scale" aria-hidden="true">
+          <span style="left:0%; transform:none">0</span>
+          <span style="left:50%">250 MB</span>
+          <span style="left:89.6%">448</span>
+          <span style="left:100%; transform: translateX(-100%)">500</span>
+        </div>
+      </div>
+      <div class="key">
+        <span><i style="background: var(--fc)"></i>Planner scores 131</span>
+        <span><i style="background: color-mix(in srgb, var(--fc) 55%, var(--surface))"></i>Sun angles 59</span>
+        <span><i style="background: var(--mine)"></i>Terrain horizons + maps 79</span>
+        <span><i style="background: color-mix(in srgb, var(--mine) 55%, var(--surface))"></i>Weather shown in the app 44</span>
+        <span><i style="background: color-mix(in srgb, var(--best) 60%, var(--surface))"></i>Forecast versions 27</span>
+        <span><i style="background: var(--light)"></i>Test bench 21</span>
+        <span><i style="background: color-mix(in srgb, var(--ink-3) 30%, var(--surface))"></i>Everything else 87</span>
+        <span><i style="background: var(--warn)"></i>Bench pauses 470</span>
+      </div>
+      <p class="muted">The two test trips (Faroes Live, Teton Live) are about 85 MB of the planner scores and sun angles. You chose to keep them running; they come up again at their verdicts on 6 and 9 Nov.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="r1">
+    <div class="eyebrow">Round 1 · done this morning</div>
+    <h2 id="r1">One day at a time: the forecast added nothing</h2>
+    <p>117 past Grand Teton days, each planned the evening before and scored against the satellite. Points are your tiers (GOD 10, S 5, A 2, B and C 1) times how good the light was.</p>
+    <div class="panel">
+      <svg class="chart" viewBox="0 0 640 214" role="img" aria-label="Average points a day: best possible 16.3, light only 15.7, forecast 15.5, your own day 5.3">
+        <g font-size="14" fill="var(--ink)">
+          <text x="0" y="36">Best possible</text>
+          <text x="0" y="86">Light only</text>
+          <text x="0" y="136">With the forecast</text>
+          <text x="0" y="186">Your own day</text>
+        </g>
+        <g>
+          <rect x="160" y="20" width="0" height="24" fill="var(--track)"/>
+          <rect x="160" y="20" width="408" height="24" rx="4" fill="var(--best)"/>
+          <rect x="160" y="70" width="393" height="24" rx="4" fill="var(--light)"/>
+          <rect x="160" y="120" width="388" height="24" rx="4" fill="var(--fc)"/>
+          <rect x="160" y="170" width="133" height="24" rx="4" fill="var(--mine)"/>
+        </g>
+        <g font-size="13" fill="var(--ink-2)" font-family="var(--f-mono)">
+          <text x="576" y="37">16.3 · 100%</text>
+          <text x="561" y="87">15.7 · 96%</text>
+          <text x="556" y="137">15.5 · 95%</text>
+          <text x="301" y="187">5.3 · 33%</text>
+        </g>
+      </svg>
+      <p>The planner did well in absolute terms, but a plan from sun angles alone did just as well. Your own day scores low because skiing, travel and meals count as zero here.</p>
+    </div>
+    <div class="panel">
+      <h3>Why: the test was too kind to grey days</h3>
+      <svg class="chart" viewBox="0 0 640 222" role="img" aria-label="Best possible points by how sunny the day was: under 25% sun 13.1, 25 to 50% 15.6, 50 to 75% 17.6, over 75% 19.2">
+        <g stroke="var(--track)" stroke-width="1">
+          <line x1="60" y1="20" x2="620" y2="20"/><line x1="60" y1="60" x2="620" y2="60"/><line x1="60" y1="100" x2="620" y2="100"/><line x1="60" y1="140" x2="620" y2="140"/>
+        </g>
+        <line x1="60" y1="180" x2="620" y2="180" stroke="var(--line)"/>
+        <g font-size="12" fill="var(--ink-3)" font-family="var(--f-mono)" text-anchor="end">
+          <text x="52" y="24">20</text><text x="52" y="64">15</text><text x="52" y="104">10</text><text x="52" y="144">5</text><text x="52" y="184">0</text>
+        </g>
+        <g>
+          <rect x="90" y="75.2" width="90" height="104.8" rx="4" fill="var(--mine)"/>
+          <rect x="230" y="55.2" width="90" height="124.8" rx="4" fill="color-mix(in srgb, var(--best) 45%, var(--mine))"/>
+          <rect x="370" y="39.2" width="90" height="140.8" rx="4" fill="color-mix(in srgb, var(--best) 75%, var(--mine))"/>
+          <rect x="510" y="26.4" width="90" height="153.6" rx="4" fill="var(--best)"/>
+        </g>
+        <g font-size="13" fill="var(--ink)" font-family="var(--f-mono)" text-anchor="middle">
+          <text x="135" y="68">13.1</text><text x="275" y="48">15.6</text><text x="415" y="32">17.6</text><text x="555" y="19">19.2</text>
+        </g>
+        <g font-size="13" fill="var(--ink-2)" text-anchor="middle">
+          <text x="135" y="200">under 25% sun</text><text x="275" y="200">25–50%</text><text x="415" y="200">50–75%</text><text x="555" y="200">over 75% sun</text>
+        </g>
+        <g font-size="12" fill="var(--ink-3)" text-anchor="middle">
+          <text x="135" y="217">45 days</text><text x="275" y="217">11 days</text><text x="415" y="217">12 days</text><text x="555" y="217">50 days</text>
+        </g>
+      </svg>
+      <p>A grey day still scored about two-thirds of a sunny one, because the old forecasts don't say whether the Grand was hidden in cloud. When every day is worth about the same, reading the forecast can't win much.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="r2">
+    <div class="eyebrow">Round 2 · running now</div>
+    <h2 id="r2">Two fixes so the test asks the real question</h2>
+    <div class="two">
+      <div class="panel">
+        <h3>Hidden peaks count as nearly nothing</h3>
+        <p>When the airport reported cloud below the summits, the shot is worth a tenth: under 7,000 ft above Jackson (about the Grand's top), under 2,000 ft at Vágar, or fog. Each forecast's chance of hidden peaks is learned from the <em>other</em> years only, so no year grades its own homework.</p>
+        <p class="muted">Forecast says clear: peaks still hidden 10–20% of daylight hours. Forecast says overcast: hidden about 70%.</p>
+      </div>
+      <div class="panel">
+        <h3>Whole trips, the way you'd use it</h3>
+        <svg class="chart" viewBox="0 0 300 170" role="img" aria-label="Each night: plan the next 3 days, do day 1, score it against what happened, mark those shots as taken, then the next night">
+          <defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" fill="var(--ink-3)"/></marker></defs>
+          <g fill="var(--surface)" stroke="var(--line)">
+            <rect x="10" y="10" width="125" height="50" rx="8"/><rect x="165" y="10" width="125" height="50" rx="8"/>
+            <rect x="165" y="110" width="125" height="50" rx="8"/><rect x="10" y="110" width="125" height="50" rx="8"/>
+          </g>
+          <g font-size="13" fill="var(--ink)" text-anchor="middle">
+            <text x="72" y="32">Evening: plan</text><text x="72" y="49" fill="var(--ink-2)" font-size="12">next 3 days</text>
+            <text x="227" y="32">Do day 1</text><text x="227" y="49" fill="var(--ink-2)" font-size="12">as planned</text>
+            <text x="227" y="132">Score it</text><text x="227" y="149" fill="var(--ink-2)" font-size="12">vs what happened</text>
+            <text x="72" y="132">Mark shots taken</text><text x="72" y="149" fill="var(--ink-2)" font-size="12">they don't count twice</text>
+          </g>
+          <g stroke="var(--ink-3)" stroke-width="1.5" fill="none" marker-end="url(#ah)">
+            <path d="M137 35 H161"/><path d="M227 62 V106"/><path d="M163 135 H139"/><path d="M72 108 V64"/>
+          </g>
+        </svg>
+        <p>Picking <em>which day</em> gets the Grand is where the forecast should matter most. Round 1 couldn't test that.</p>
+      </div>
+    </div>
+    <div class="panel scroll">
+      <table>
+        <thead><tr><th>Plan</th><th>What it knows each evening</th></tr></thead>
+        <tbody>
+          <tr><td><span class="sw" style="background: var(--fc)"></span>Forecast, 3 days ahead</td><td>Forecasts made 1, 2 and 3 days ahead. This is the live planner.</td></tr>
+          <tr><td><span class="sw" style="background: color-mix(in srgb, var(--fc) 55%, var(--surface))"></span>Forecast, tomorrow only</td><td>Tomorrow's forecast; doesn't save anything for later days.</td></tr>
+          <tr><td><span class="sw" style="background: var(--light)"></span>Light only</td><td>Sun angles, no forecast at all. The bar to beat.</td></tr>
+          <tr><td><span class="sw" style="background: var(--best)"></span>Perfect knowledge</td><td>What the sky really did for the next 3 days. The ceiling.</td></tr>
+          <tr><td><span class="sw" style="background: var(--mine)"></span>Your own days</td><td>Your itinerary as written, at its times.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Early nights (31 so far) can't be read yet: the 3-day plans save the Grand for a better day, so they look low until each trip ends. The answer is the whole-trip total.</p>
+  </section>
+
+  <section aria-labelledby="next">
+    <div class="eyebrow">What happens next</div>
+    <h2 id="next">From here</h2>
+    <ol class="next">
+      <li><b>~17:30 UTC:</b> Grand Teton totals. You get them in plain words: does the forecast beat light only over a whole trip, and how close does it get to perfect.</li>
+      <li><b>~21:30 UTC:</b> Faroes totals, the same way.</li>
+      <li><b>Then you decide.</b> If the forecast plans don't beat light only, we test the improvements on your list one at a time on this bench: drive costs, tier weights, a morning re-plan, the corrected forecast. Each is tuned on one year and checked on another before it goes near the live planner.</li>
+    </ol>
+    <p class="muted">Backend only. Nothing in the app or on your trips has changed.</p>
+  </section>
+</main>
