@@ -39,3 +39,5 @@ on conflict do nothing;
 --   fc3     8.6   6.6
 --   lt3     7.9   6.0
 --   my      4.3   2.9
+-- The bench is idle after this, so its minute cron was removed (25 Oct 2026):
+-- select cron.unschedule('replay-run');  -- re-add from 20261025080000 to run more
