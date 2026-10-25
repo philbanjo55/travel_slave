@@ -1,0 +1,385 @@
+<title>How the Planner Works</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; each section pairs a plain explanation with one figure built from the planner's real numbers. */
+:root {
+  --bg: #f4f6f7;
+  --surface: #ffffff;
+  --ink: #141a1f;
+  --ink-2: #4c5862;
+  --ink-3: #7a8690;
+  --line: #d9e0e5;
+  --grid: #e8edf0;
+  --learn: #2a78d6;      /* categorical slot 1: the learning planner */
+  --orig: #eb6834;       /* categorical slot 2: the original planner */
+  --hist: #7a8690;       /* reference series: history */
+  --plus: #1baf7a;       /* diverging +: better than guessing */
+  --minus: #e34948;      /* diverging -: worse than guessing */
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101417; --surface: #171d22; --ink: #e9eef1; --ink-2: #b3bec6; --ink-3: #85919a; --line: #2a333a; --grid: #222a30;
+    --learn: #3987e5; --orig: #d95926; --hist: #85919a; --plus: #199e70; --minus: #e66767; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101417; --surface: #171d22; --ink: #e9eef1; --ink-2: #b3bec6; --ink-3: #85919a; --line: #2a333a; --grid: #222a30;
+  --learn: #3987e5; --orig: #d95926; --hist: #85919a; --plus: #199e70; --minus: #e66767; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 17px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px;
+}
+.col { max-width: 920px; margin: 0 auto; display: grid; gap: 44px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+h1 { font-family: var(--f-display); font-weight: 800; font-size: clamp(32px, 6vw, 52px); line-height: 1.02; letter-spacing: -.01em; margin: 6px 0 12px; text-wrap: balance; }
+h2 { font-family: var(--f-display); font-weight: 700; font-size: clamp(22px, 3.4vw, 28px); line-height: 1.15; margin: 0 0 8px; text-wrap: balance; }
+h3 { font-family: var(--f-display); font-weight: 700; font-size: 17px; margin: 0 0 6px; }
+p { margin: 0 0 12px; max-width: 66ch; }
+.lede { font-size: 19px; color: var(--ink-2); max-width: 62ch; }
+section { display: grid; gap: 14px; }
+.step { font-family: var(--f-mono); font-size: 12px; color: var(--learn); letter-spacing: .06em; text-transform: uppercase; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
+figcaption { font-size: 14px; color: var(--ink-2); max-width: 70ch; }
+.scroll { overflow-x: auto; }
+svg { display: block; max-width: 100%; height: auto; }
+.diagram { min-width: 720px; }
+.key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); }
+.key span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.two > * { min-width: 0; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.fact { border-left: 3px solid var(--line); padding: 2px 0 2px 12px; }
+.fact b { display: block; font-family: var(--f-display); font-size: 22px; font-variant-numeric: tabular-nums; }
+.fact span { font-size: 14px; color: var(--ink-2); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-weight: 600; color: var(--ink-2); font-size: 13px; }
+td.num, th.num { text-align: right; }
+.tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.verdict { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; display: grid; gap: 8px; }
+.verdict ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.muted { color: var(--ink-3); font-size: 13px; }
+.chart text { font-family: var(--f-body); }
+.tip {
+  position: fixed; pointer-events: none; background: var(--ink); color: var(--surface); font-size: 13px; line-height: 1.35;
+  padding: 6px 9px; border-radius: 6px; max-width: 260px; z-index: 20; box-shadow: 0 4px 14px rgba(0,0,0,.18);
+}
+.hit { cursor: default; }
+.hit:focus-visible { outline: 2px solid var(--learn); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="col">
+  <header>
+    <div class="eyebrow">Philm+Frame · TEST app planner · numbers as of 25 Oct 2026, 00:45 UTC</div>
+    <h1>How the Planner Works</h1>
+    <p class="lede">Twice a day the planner downloads 51 slightly different versions of the forecast, scores every one of your rated shots every 15 minutes in each version, and builds the best day from the hotel and back. The next night it checks what the sky actually did. Two versions run side by side: the original, which trusts the forecast's cloud numbers, and a learning one, which corrects them by what really happened.</p>
+  </header>
+
+  <section>
+    <div class="step">The nightly loop</div>
+    <h2>From forecast to plan, and back</h2>
+    <figure>
+      <div class="scroll">
+        <svg class="diagram" viewBox="0 0 1040 430" role="img" aria-label="Forecast feeds two scoring lanes, original and learning; each makes plans; plans and what happened meet in the scorecard; what happened also feeds the learning table, which feeds the learning lane's scoring.">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+          </defs>
+          <g fill="none" stroke="currentColor" stroke-width="1.6" style="color: var(--ink-3)">
+            <path d="M170,180 C195,180 195,80 220,80" marker-end="url(#arr)"/>
+            <path d="M170,200 C195,200 195,280 220,280" marker-end="url(#arr)"/>
+            <path d="M390,80 L440,80" marker-end="url(#arr)"/>
+            <path d="M390,280 L440,280" marker-end="url(#arr)"/>
+            <path d="M590,80 C640,80 640,165 680,165" marker-end="url(#arr)"/>
+            <path d="M590,280 C640,280 640,195 680,195" marker-end="url(#arr)"/>
+            <path d="M870,180 L830,180" marker-end="url(#arr)"/>
+            <path d="M945,220 C945,300 900,370 830,370" marker-end="url(#arr)"/>
+            <path d="M680,370 L305,370 L305,320" marker-end="url(#arr)"/>
+          </g>
+          <g font-size="12" fill="var(--ink-3)" font-family="var(--f-mono)">
+            <text x="176" y="118">51 versions</text>
+            <text x="396" y="70">scores</text>
+            <text x="396" y="270">scores</text>
+            <text x="600" y="110">plans</text>
+            <text x="600" y="262">plans</text>
+            <text x="836" y="170">truth</text>
+            <text x="900" y="330" text-anchor="end">last 30 days</text>
+            <text x="420" y="362">corrected odds of sun</text>
+          </g>
+          <g font-family="var(--f-body)">
+            <rect x="20" y="140" width="150" height="80" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+            <text x="95" y="172" text-anchor="middle" font-weight="700" font-size="15" fill="var(--ink)">Forecast</text>
+            <text x="95" y="192" text-anchor="middle" font-size="12" fill="var(--ink-2)">ECMWF, 51 versions</text>
+            <text x="95" y="208" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="var(--f-mono)">10:17 · 19:17 UTC</text>
+
+            <rect x="220" y="40" width="170" height="80" rx="8" fill="var(--surface)" stroke="var(--orig)" stroke-width="1.6"/>
+            <text x="305" y="72" text-anchor="middle" font-weight="700" font-size="15" fill="var(--ink)">Score: original</text>
+            <text x="305" y="92" text-anchor="middle" font-size="12" fill="var(--ink-2)">cloud number taken as is</text>
+            <text x="305" y="108" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="var(--f-mono)">10:41 · 19:41</text>
+
+            <rect x="220" y="240" width="170" height="80" rx="8" fill="var(--surface)" stroke="var(--learn)" stroke-width="1.6"/>
+            <text x="305" y="272" text-anchor="middle" font-weight="700" font-size="15" fill="var(--ink)">Score: learning</text>
+            <text x="305" y="292" text-anchor="middle" font-size="12" fill="var(--ink-2)">cloud number corrected</text>
+            <text x="305" y="308" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="var(--f-mono)">10:49 · 19:49</text>
+
+            <rect x="440" y="40" width="150" height="80" rx="8" fill="var(--surface)" stroke="var(--orig)" stroke-width="1.6"/>
+            <text x="515" y="72" text-anchor="middle" font-weight="700" font-size="15" fill="var(--ink)">Plan the day</text>
+            <text x="515" y="92" text-anchor="middle" font-size="12" fill="var(--ink-2)">5 plans + safest</text>
+            <text x="515" y="108" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="var(--f-mono)">10:55 · 19:55</text>
+
+            <rect x="440" y="240" width="150" height="80" rx="8" fill="var(--surface)" stroke="var(--learn)" stroke-width="1.6"/>
+            <text x="515" y="272" text-anchor="middle" font-weight="700" font-size="15" fill="var(--ink)">Plan the day</text>
+            <text x="515" y="292" text-anchor="middle" font-size="12" fill="var(--ink-2)">same search</text>
+            <text x="515" y="308" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="var(--f-mono)">11:03 · 20:03</text>
+
+            <rect x="680" y="140" width="150" height="80" rx="8" fill="var(--surface)" stroke="var(--ink-3)"/>
+            <text x="755" y="172" text-anchor="middle" font-weight="700" font-size="15" fill="var(--ink)">Scorecard</text>
+            <text x="755" y="192" text-anchor="middle" font-size="12" fill="var(--ink-2)">each visit vs truth</text>
+            <text x="755" y="208" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="var(--f-mono)">23:33</text>
+
+            <rect x="870" y="140" width="150" height="80" rx="8" fill="var(--surface)" stroke="var(--ink-3)"/>
+            <text x="945" y="172" text-anchor="middle" font-weight="700" font-size="15" fill="var(--ink)">What happened</text>
+            <text x="945" y="192" text-anchor="middle" font-size="12" fill="var(--ink-2)">airports + webcams</text>
+            <text x="945" y="208" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="var(--f-mono)">hourly</text>
+
+            <rect x="680" y="335" width="150" height="70" rx="8" fill="var(--surface)" stroke="var(--learn)" stroke-width="1.6"/>
+            <text x="755" y="364" text-anchor="middle" font-weight="700" font-size="15" fill="var(--ink)">Learn</text>
+            <text x="755" y="384" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="var(--f-mono)">10:45 · 19:45</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Both lanes use the same forecast and the same route search. The only difference is how a forecast cloud number turns into a chance of sun. "What happened" comes from the airports (Vágar, Jackson Hole) and the webcams, read by Claude or tapped by you. It feeds the scorecard every night and the learning table twice a day.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="step">Step 1 · score a shot</div>
+    <h2>One shot, 51 possible skies</h2>
+    <p>For every rated stop, the planner looks at its starred viewpoint every 15 minutes. In each of the 51 forecast versions it works out a score from 0 to 250: is the sun likely to break through the low and middle cloud, is the light coming from the direction you asked for (front, side, back or soft), and does rain, wind, fog or low cloud on the hills spoil it. A score of 150 or more counts as a good shot.</p>
+    <figure>
+      <svg class="chart" id="members" viewBox="0 0 860 260" role="img" aria-label="51 forecast versions for Chapel of the Transfiguration at 8:30 AM on 26 October, sorted from worst to best."></svg>
+      <div class="key">
+        <span><i class="dot" style="background:var(--learn)"></i>good (150 or more)</span>
+        <span><i class="dot" style="background:var(--hist)"></i>not good</span>
+      </div>
+      <figcaption>Real forecast for Chapel of the Transfiguration at 8:30 AM, Mon 26 Oct (the Teton practice trip). The versions split: about a third keep it clouded in, two thirds give a great shot. The planner keeps three numbers from this: the average, the average of the worst 11, and the share that are good.</figcaption>
+      <div class="facts" id="member-facts"></div>
+    </figure>
+  </section>
+
+  <section>
+    <div class="step">Step 2 · plan the day</div>
+    <h2>Building the best day</h2>
+    <div class="two">
+      <div>
+        <p>Starting at the night's hotel, the planner tries adding stops one at a time, with real drive times between them, and keeps the 150 most promising half-built days at each step (300 when it plans several days together). Every day ends back at a hotel.</p>
+        <p>A day's value is <b>the average across the 51 skies plus half the average of the worst 11</b>. So a day that is great in most versions but a washout in the rest scores lower than one that is solid in all of them.</p>
+      </div>
+      <div>
+        <h3>Rules it follows</h3>
+        <ul class="muted" style="font-size:15px;color:var(--ink-2);padding-left:20px;margin:0;display:grid;gap:6px">
+          <li>Tiers weigh the shots: GOD counts 10, S 5, A 2, B and C 1.</li>
+          <li>The same subject counts once: two views of one peak only add the improvement.</li>
+          <li>Drives under an hour are free; each hour beyond that on one leg costs a point.</li>
+          <li>Stops from 5:00 AM to 11:30 PM; GOD and S stops from 3:45 AM when the odds are 50% or better.</li>
+          <li>Nailed shots drop out; shots you got only count if a visit could beat them.</li>
+        </ul>
+      </div>
+    </div>
+    <p>It keeps the top 5 different plans, the safest one, and "my day": your own stops at your own times, scored the same way, so you can see what the planner would change.</p>
+  </section>
+
+  <section>
+    <div class="step">The difference between the two</div>
+    <h2>How often is it really clear?</h2>
+    <p>The original planner assumes that when the forecast shows little low and middle cloud, the sun will be out. The learning planner replaces that with what actually happened when the forecast said the same thing: first from years of airport records, then corrected every day by the last 30 days.</p>
+    <figure>
+      <div class="two">
+        <div><h3>Vágar, Faroes</h3><svg class="chart" id="cal-ekvg" viewBox="0 0 420 270" role="img" aria-label="Vágar: chance of a mostly clear sky by forecast cloud amount."></svg></div>
+        <div><h3>Jackson Hole</h3><svg class="chart" id="cal-kjac" viewBox="0 0 420 270" role="img" aria-label="Jackson Hole: chance of a mostly clear sky by forecast cloud amount."></svg></div>
+      </div>
+      <div class="key">
+        <span><i class="sw" style="background:var(--orig)"></i>Original planner assumes</span>
+        <span><i class="sw" style="background:var(--hist)"></i>History: past Octobers and Novembers at the airport</span>
+        <span><i class="sw" style="background:var(--learn)"></i>Learning planner now</span>
+      </div>
+      <figcaption>Across: forecast low or middle cloud, whichever is higher. Up: how often the airport then reported a mostly clear sky. At Vágar a forecast of almost no cloud came true only 31% of the time; the original planner treats it as 100%. Jackson is far closer to the forecast. The learning line has barely moved from history yet: only 29 Vágar and 39 Jackson hours have been added.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="step">How it's doing</div>
+    <h2>Promised vs delivered</h2>
+    <p>Every plan made the evening before is checked the next night. Each visit is scored at its planned time against the nearest truth: your webcam tap first, then Claude's reading of the camera, then the airport report. Hidden hills score 0, clear but no sun when you wanted sun 0.4, a good shot 1.</p>
+    <figure>
+      <svg class="chart" id="promise" viewBox="0 0 860 300" role="img" aria-label="For each kind of plan: the chance of a good shot each planner promised, and the share of visits that came out good."></svg>
+      <div class="key">
+        <span><i class="dot" style="background:var(--orig)"></i>Original</span>
+        <span><i class="dot" style="background:var(--learn)"></i>Learning</span>
+        <span>hollow = promised · filled = came out good</span>
+      </div>
+      <figcaption>Faroes practice trip, 22–24 Oct, plans made the day before (Teton results start tonight). The original planner promises far more than it delivers; the learning planner's promises are low, and closer to what happened. Neither yet beats picking a random daylight hour.</figcaption>
+    </figure>
+    <div class="scroll">
+      <table id="days"></table>
+    </div>
+    <p class="muted">"Random hour" is the same truth at every daylight hour that day: what you'd get by just turning up at any time. Each planner needs to beat it to earn its keep.</p>
+  </section>
+
+  <section>
+    <h2>Is the forecast itself any good?</h2>
+    <p>Separately, every forecast hour that has passed is checked against the airports and webcams. Skill above zero means the forecast beat simply guessing the usual rate; below zero means guessing would have done better.</p>
+    <figure>
+      <svg class="chart" id="skill" viewBox="0 0 860 250" role="img" aria-label="Forecast skill by event and how far ahead: rain is good, clear skies and hidden hills are worse than guessing."></svg>
+      <figcaption>Each row has three bars: the forecast for today, tomorrow and in 2 days. Last 30 days, Vágar and Jackson airports plus all webcams. Rain is forecast well. Clear skies and hills in cloud are not: the raw forecast says "mostly clear" about 45% of the time; it happened 18%. That gap is exactly what the learning planner is trying to close.</figcaption>
+    </figure>
+  </section>
+
+  <section class="verdict">
+    <h2>Where this stands</h2>
+    <ul>
+      <li><b>Learning is more honest.</b> Its promised chances are much closer to what happened, and its error score is lower (0.32 vs 0.37 on best plans).</li>
+      <li><b>Neither picks better times yet.</b> Both land at about the random-hour level. Three grey Faroes days give them little to choose between.</li>
+      <li><b>Too few visits to be sure.</b> About 30 checked visits per planner. A real difference needs a few hundred, which the two practice trips reach in early November.</li>
+      <li><b>Verdicts:</b> Faroes on 6 Nov, Teton on 9 Nov. Then you decide which planner the real trips use.</li>
+    </ul>
+  </section>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, a, p) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
+const txt = (p, x, y, s, a = {}) => { const t = el("text", Object.assign({ x, y, "font-size": 12, fill: "var(--ink-3)" }, a), p); t.textContent = s; return t; };
+const tip = document.getElementById("tip");
+function hover(node, html) {
+  node.classList.add("hit"); node.setAttribute("tabindex", "0");
+  const show = e => { tip.innerHTML = html; tip.hidden = false; const r = node.getBoundingClientRect();
+    const x = e && e.clientX ? e.clientX : r.left + r.width / 2, y = e && e.clientY ? e.clientY : r.top;
+    tip.style.left = Math.min(window.innerWidth - 270, x + 12) + "px"; tip.style.top = Math.max(8, y - 44) + "px"; };
+  node.addEventListener("pointermove", show); node.addEventListener("focus", () => show());
+  node.addEventListener("pointerleave", () => tip.hidden = true); node.addEventListener("blur", () => tip.hidden = true);
+}
+
+// Step 1: the 51 members for one real slot.
+const V = [20,221,223,213,185,232,225,216,216,19,19,232,220,232,207,232,19,224,19,19,20,212,19,221,231,20,199,178,220,220,231,232,20,210,215,218,224,220,20,19,19,220,20,218,201,19,20,197,19,15,19];
+(function members() {
+  const svg = document.getElementById("members"), W = 860, H = 260, L = 44, R = 16, T = 16, B = 34;
+  const s = V.map((v, i) => ({ v, i: i + 1 })).sort((a, b) => a.v - b.v);
+  const bw = (W - L - R) / s.length, y = v => T + (H - T - B) * (1 - v / 250);
+  [0, 50, 100, 150, 200, 250].forEach(t => {
+    el("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), stroke: t === 150 ? "var(--ink-3)" : "var(--grid)", "stroke-dasharray": t === 150 ? "4 4" : "" }, svg);
+    txt(svg, L - 8, y(t) + 4, t, { "text-anchor": "end" });
+  });
+  txt(svg, W - R, y(150) - 6, "good shot: 150", { "text-anchor": "end", fill: "var(--ink-2)" });
+  s.forEach((m, k) => {
+    const x = L + k * bw + 1, h = y(0) - y(m.v);
+    const r = el("rect", { x, y: y(m.v), width: Math.max(2, bw - 2), height: Math.max(1, h), rx: 2, fill: m.v >= 150 ? "var(--learn)" : "var(--hist)" }, svg);
+    hover(r, `Forecast version ${m.i}<br><b>${m.v}</b> of 250 · ${m.v >= 150 ? "good shot" : "not good"}`);
+  });
+  const mean = V.reduce((a, b) => a + b, 0) / V.length;
+  el("line", { x1: L, x2: W - R, y1: y(mean), y2: y(mean), stroke: "var(--ink)", "stroke-width": 1.5 }, svg);
+  txt(svg, L + 4, y(mean) - 6, `average ${Math.round(mean)}`, { fill: "var(--ink)", "font-weight": 600 });
+  el("line", { x1: L, x2: L + 11 * bw, y1: y(0) + 10, y2: y(0) + 10, stroke: "var(--ink-2)", "stroke-width": 1.5 }, svg);
+  txt(svg, L, y(0) + 26, "worst 11", { fill: "var(--ink-2)" });
+  txt(svg, W - R, y(0) + 26, "51 forecast versions, worst to best", { "text-anchor": "end" });
+  const worst = s.slice(0, 11).reduce((a, b) => a + b.v, 0) / 11, good = V.filter(v => v >= 150).length;
+  document.getElementById("member-facts").innerHTML = [
+    [Math.round(mean), "average score (of 250)"], [Math.round(worst), "average of the worst 11"],
+    [Math.round(good / V.length * 100) + "%", `chance of a good shot (${good} of 51)`], [Math.round(mean + 0.5 * worst), "what the day search adds up: average + ½ × worst 11"]
+  ].map(([b, t]) => `<div class="fact"><b>${b}</b><span>${t}</span></div>`).join("");
+})();
+
+// Calibration: P(mostly clear) by forecast max(low, mid) cloud bin.
+const BINS = ["0–10", "10–30", "30–50", "50–70", "70–90", "90–100"], MID = [5, 20, 40, 60, 80, 95];
+const ruleP = MID.map(c => Math.max(0, Math.min(1, 1 - (c - 25) / 65)));
+const CAL = {
+  "cal-ekvg": { hist: [.31, .28, .15, .10, .05, .06], learn: [.31, .28, .15, .10, .05, .05], n: [70, 92, 112, 118, 186, 293] },
+  "cal-kjac": { hist: [.91, .68, .38, .33, .22, .25], learn: [.89, .67, .39, .33, .21, .24], n: [506, 131, 152, 137, 120, 109] },
+};
+for (const id in CAL) {
+  const svg = document.getElementById(id), d = CAL[id], W = 420, H = 270, L = 42, R = 14, T = 14, B = 46;
+  const x = i => L + (W - L - R) * (i + .5) / 6, y = p => T + (H - T - B) * (1 - p);
+  [0, .25, .5, .75, 1].forEach(t => { el("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), stroke: "var(--grid)" }, svg); txt(svg, L - 6, y(t) + 4, Math.round(t * 100) + "%", { "text-anchor": "end" }); });
+  BINS.forEach((b, i) => txt(svg, x(i), H - B + 18, b + "%", { "text-anchor": "middle" }));
+  txt(svg, (L + W - R) / 2, H - 8, "forecast low/middle cloud", { "text-anchor": "middle" });
+  const series = [["orig", ruleP, "Original assumes", ""], ["hist", d.hist, "History", "5 4"], ["learn", d.learn, "Learning now", ""]];
+  series.forEach(([c, ps, , dash]) => {
+    el("polyline", { points: ps.map((p, i) => `${x(i)},${y(p)}`).join(" "), fill: "none", stroke: `var(--${c})`, "stroke-width": 2, "stroke-dasharray": dash, "stroke-linejoin": "round" }, svg);
+  });
+  series.forEach(([c, ps, name]) => ps.forEach((p, i) => {
+    const m = el("circle", { cx: x(i), cy: y(p), r: c === "learn" ? 4.5 : 4, fill: `var(--${c})`, stroke: "var(--surface)", "stroke-width": 2 }, svg);
+    hover(m, `${name}<br>Forecast cloud ${BINS[i]}%: <b>${Math.round(p * 100)}%</b> clear${c === "hist" ? ` · ${d.n[i]} hours` : ""}`);
+  }));
+  txt(svg, x(0) + 8, y(ruleP[0]) + 16, "original", { fill: "var(--ink-2)" });
+}
+
+// Promised vs delivered (Faroes Live, plans made the day before, 22-24 Oct).
+const PROM = [
+  { kind: "Best plan", o: [.33, .31, 36], l: [.10, .34, 32] },
+  { kind: "Alternatives", o: [.35, .28, 120], l: [.13, .29, 113] },
+  { kind: "Your own day", o: [.13, .38, 26], l: [.02, .38, 26] },
+  { kind: "Safest plan", o: [.12, .60, 10], l: [.07, .30, 10] },
+];
+(function promise() {
+  const svg = document.getElementById("promise"), W = 860, H = 300, L = 130, R = 20, T = 18, B = 34;
+  const x = p => L + (W - L - R) * p, rowH = (H - T - B) / PROM.length;
+  [0, .2, .4, .6, .8].forEach(t => { el("line", { x1: x(t), x2: x(t), y1: T, y2: H - B, stroke: "var(--grid)" }, svg); txt(svg, x(t), H - B + 18, Math.round(t * 100) + "%", { "text-anchor": "middle" }); });
+  PROM.forEach((r, k) => {
+    const yc = T + rowH * k + rowH / 2;
+    txt(svg, L - 12, yc + 4, r.kind, { "text-anchor": "end", fill: "var(--ink)", "font-size": 13 });
+    [["orig", r.o, -9, "Original"], ["learn", r.l, 9, "Learning"]].forEach(([c, [pr, got, n], dy, name]) => {
+      const yy = yc + dy;
+      el("line", { x1: x(pr), x2: x(got), y1: yy, y2: yy, stroke: `var(--${c})`, "stroke-width": 2, opacity: .5 }, svg);
+      const a = el("circle", { cx: x(pr), cy: yy, r: 5, fill: "var(--surface)", stroke: `var(--${c})`, "stroke-width": 2 }, svg);
+      const b = el("circle", { cx: x(got), cy: yy, r: 5.5, fill: `var(--${c})`, stroke: "var(--surface)", "stroke-width": 2 }, svg);
+      hover(a, `${name} · ${r.kind}<br>Promised <b>${Math.round(pr * 100)}%</b> chance of a good shot`);
+      hover(b, `${name} · ${r.kind}<br>Came out good <b>${Math.round(got * 100)}%</b> of ${n} checked visits`);
+    });
+  });
+  txt(svg, W - R, T - 4, "share of visits", { "text-anchor": "end" });
+})();
+
+// Day by day, best plan made the day before (Faroes Live).
+const DAYS = [
+  ["Thu 22 Oct", "Original", 8, .61, .55, .62], ["Thu 22 Oct", "Learning", 6, .26, .70, .74],
+  ["Fri 23 Oct", "Original", 7, .45, .23, .16], ["Fri 23 Oct", "Learning", 5, .22, .16, .19],
+  ["Sat 24 Oct", "Original", 13, .09, .72, .70], ["Sat 24 Oct", "Learning", 17, .01, .69, .69],
+];
+document.getElementById("days").innerHTML = `<thead><tr><th>Day</th><th>Planner</th><th class="num">Visits checked</th><th class="num">Promised</th><th class="num">How it came out</th><th class="num">Random hour</th></tr></thead><tbody>` +
+  DAYS.map(([d, p, n, pr, re, ba]) => `<tr><td>${d}</td><td><span class="tag"><i class="dot" style="background:var(--${p === "Original" ? "orig" : "learn"})"></i>${p}</span></td><td class="num">${n}</td><td class="num">${Math.round(pr * 100)}%</td><td class="num">${re.toFixed(2)}</td><td class="num">${ba.toFixed(2)}</td></tr>`).join("") + `</tbody>`;
+
+// Forecast skill (scoreboard, last 30 days).
+const SK = [
+  ["Rain (airports)", [.37, .14, .14]],
+  ["Low cloud (airports)", [-.18, -.08, -.20]],
+  ["Hills in cloud (webcams)", [-.25, -.19, -.14]],
+  ["Mostly clear sky (airports)", [-.48, -.55, -.56]],
+];
+(function skill() {
+  const svg = document.getElementById("skill"), W = 860, H = 250, L = 200, R = 20, T = 26, B = 30;
+  const lo = -.6, hi = .6, x = v => L + (W - L - R) * (v - lo) / (hi - lo), rowH = (H - T - B) / SK.length, LEADS = ["today", "tomorrow", "in 2 days"];
+  [-.6, -.3, 0, .3, .6].forEach(t => { el("line", { x1: x(t), x2: x(t), y1: T, y2: H - B, stroke: t === 0 ? "var(--ink-3)" : "var(--grid)" }, svg); txt(svg, x(t), H - B + 18, (t > 0 ? "+" : "") + t.toFixed(1), { "text-anchor": "middle" }); });
+  txt(svg, x(-.3), T - 10, "worse than guessing", { "text-anchor": "middle" });
+  txt(svg, x(.3), T - 10, "better than guessing", { "text-anchor": "middle" });
+  SK.forEach(([name, vals], k) => {
+    const y0 = T + rowH * k;
+    txt(svg, L - 12, y0 + rowH / 2 + 4, name, { "text-anchor": "end", fill: "var(--ink)", "font-size": 13 });
+    const bh = (rowH - 10) / 3;
+    vals.forEach((v, j) => {
+      const yy = y0 + 5 + j * bh;
+      const r = el("rect", { x: Math.min(x(0), x(v)), y: yy, width: Math.max(1, Math.abs(x(v) - x(0))), height: bh - 2, rx: 2, fill: v >= 0 ? "var(--plus)" : "var(--minus)", opacity: 1 - j * .22 }, svg);
+      hover(r, `${name}, forecast for ${LEADS[j]}<br>skill <b>${v > 0 ? "+" : ""}${v.toFixed(2)}</b>`);
+    });
+  });
+})();
+</script>
