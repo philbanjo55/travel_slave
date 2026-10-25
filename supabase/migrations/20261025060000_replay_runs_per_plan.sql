@@ -3,7 +3,7 @@
 -- Existing runs were moved over with: insert into replay_run_state (run_id, kind,
 -- night, state) select id, k, night, state -> k from replay_runs, unnest(kinds) k.
 -- pg_cron replay-run: 'select public.replay_run_tick();' every minute; the tick
--- itself starts nothing new over 470 MB but always clears. 6 runs at a time.
+-- itself starts nothing new over 2 GB but always clears. 6 runs at a time.
 
 -- Per plan and night of a whole-trip run (one solver-replay request each:
 -- the edge CPU limit is 2 s).
@@ -54,10 +54,11 @@ begin
     end loop;
   end loop;
 
-  -- The free plan goes read-only at 500 MB (Phil: keep an eye on it): clean
-  -- up always, start nothing new at 470 MB.
-  if pg_database_size(current_database()) > 470 * 1024 * 1024 then
-    return jsonb_build_object('paused', 'database over 470 MB', 'cleared', v_cleared);
+  -- Keep an eye on the database size (Phil): clean up always, start nothing
+  -- new over 2 GB (Pro plan since 25 Oct 2026: 8 GB disk, spend cap on; it was
+  -- 470 MB on the free plan's 500 MB).
+  if pg_database_size(current_database()) > 2048::bigint * 1024 * 1024 then
+    return jsonb_build_object('paused', 'database over 2 GB', 'cleared', v_cleared);
   end if;
 
   -- Keep 6 runs going (oldest first).
