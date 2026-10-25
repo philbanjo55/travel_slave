@@ -2,6 +2,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
 // POST {day_id, config?: {name?, tier_w?, lambda?, drive_penalty?, long_leg_min?, long_leg_penalty?, beam?}}
+//   or {run_id}: one night of a whole-trip run (replay_runs), see below.
 // Replays one past day (replay_days): plans the trip day `trip_date` on the
 // weather of `replay_date` with the same day search as solver-plan (copied
 // from solver-plan v16; keep the two in step), then scores every plan against
@@ -12,6 +13,16 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //   hindsight = planner on the truth itself: the best day possible
 // realized = tier-weighted value against the truth, same subject and shot
 // rules as the planner. Writes replay_results; never touches stops or solver_*.
+//
+// Whole-trip runs (Phil, 25 Oct 2026): the trip's days in order on past days
+// start_date, start_date + 1, ... Each night the planner plans the next 3
+// days (forecasts made 1, 2 and 3 days ahead), the first of them is done and
+// scored against what happened, and what it got counts as already shot
+// ("got", shot_value) from then on, as on the real trip. Plans per night:
+//   fc3 = forecast, 3 days ahead     fc1 = forecast, tomorrow only
+//   lt3 = light only, 3 days ahead   hs3 = the truth, 3 days ahead (ceiling)
+//   my  = the trip day's own stops at their time_labels
+// Writes replay_run_days and the run's state (what each plan has shot).
 
 let TIER_W: Record<string, number> = { GOD: 10, S: 5, A: 2, B: 1, C: 1, D: 0.5, F: 0 };
 let LAMBDA = 0.5;
@@ -109,6 +120,7 @@ function labelMinutes(label: string | null): number | null {
 }
 
 const hhmm = (s: string) => { const [h, m] = s.split(':').map(Number); return h * 60 + (m || 0); };
+const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const dayBefore = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const DEFAULTS = { TIER_W: { ...TIER_W }, LAMBDA, DRIVE_PENALTY, LONG_LEG_MIN, LONG_LEG_PENALTY };
@@ -117,11 +129,31 @@ Deno.serve(async (req) => {
   const json = (b: any, status = 200) =>
     new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-  let dayId: number | null = null;
+  let dayId: number | null = null, runId: number | null = null;
   try {
     const body = await req.json().catch(() => ({}));
-    dayId = body.day_id;
-    const cfg = body.config ?? {};
+    dayId = body.day_id ?? null;
+    runId = body.run_id ?? null;
+    // What to plan: one replay day, or the next nights of a whole-trip run.
+    let run: any = null, tripId: string;
+    let horizon: { i: number; date: string; trip_date: string; dayId: number; lead: number }[];
+    if (runId != null) {
+      run = (await db.from('replay_runs').select('*').eq('id', runId).single()).data;
+      if (!run) return json({ ok: false, error: 'replay run not found' }, 404);
+      tripId = run.trip_id;
+      const n: number = run.night;
+      const want = Array.from({ length: Math.min(3, run.nights - n) }, (_, h) => n + h)
+        .map(i => ({ i, date: addDays(run.start_date, i), trip_date: run.trip_dates[i], lead: i - n + 1 }));
+      const { data: rds } = await db.from('replay_days').select('id, replay_date').eq('trip_id', tripId).in('replay_date', want.map(w => w.date));
+      horizon = want.map(w => ({ ...w, dayId: (rds ?? []).find(r => r.replay_date === w.date)?.id }));
+      if (horizon.some(h => h.dayId == null)) return json({ ok: false, error: 'replay day missing' }, 404);
+    } else {
+      const { data: rd, error: rdErr } = await db.from('replay_days').select('id, trip_id, replay_date, trip_date').eq('id', dayId).single();
+      if (rdErr || !rd) return json({ ok: false, error: 'replay day not found' }, 404);
+      tripId = rd.trip_id;
+      horizon = [{ i: 0, date: rd.replay_date, trip_date: rd.trip_date, dayId: rd.id, lead: 1 }];
+    }
+    const cfg = (run ? run.config : body.config) ?? {};
     const cfgName: string = cfg.name ?? 'base';
     // The isolate can serve several requests: start every call from the defaults.
     TIER_W = { ...DEFAULTS.TIER_W, ...(cfg.tier_w ?? {}) };
@@ -130,45 +162,45 @@ Deno.serve(async (req) => {
     LONG_LEG_MIN = cfg.long_leg_min ?? DEFAULTS.LONG_LEG_MIN;
     LONG_LEG_PENALTY = cfg.long_leg_penalty ?? DEFAULTS.LONG_LEG_PENALTY;
     const BEAM = Math.min(Math.max(cfg.beam ?? 150, 10), 400);
-    const K = 5;
 
-    const { data: rd, error: rdErr } = await db.from('replay_days').select('id, trip_id, replay_date, trip_date').eq('id', dayId).single();
-    if (rdErr || !rd) return json({ ok: false, error: 'replay day not found' }, 404);
-    const tripId: string = rd.trip_id;
-    const latestBuild = (kind: string) => db.from('replay_builds').select('id, members').eq('replay_day_id', dayId).eq('kind', kind)
-      .order('created_at', { ascending: false }).limit(1).maybeSingle().then(r => r.data);
-    const [fcBuild, trBuild] = await Promise.all([latestBuild('forecast'), latestBuild('truth')]);
-    if (!fcBuild || !trBuild) return json({ ok: false, error: 'replay builds missing' }, 404);
+    // Latest build per day: the forecast made `lead` days ahead, and the truth.
+    const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members')
+      .in('replay_day_id', horizon.map(h => h.dayId)).order('created_at', { ascending: false });
+    const fcB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'forecast' && b.lead === h.lead));
+    const trB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'truth'));
+    if (fcB.some(b => !b) || trB.some(b => !b)) return json({ ok: false, error: 'replay builds missing' }, 404);
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
     const tz: string = trip?.timezone ?? 'UTC';
     const scoresOf = (buildId: string) => all<any>((a, b) => db.from('replay_scores').select('stop_id, slot_at, v')
       .eq('build_id', buildId).order('slot_at').order('stop_id').range(a, b));
+    const lightOf = (date: string) => all<any>((a, b) => db.rpc('solver_light_terms', { p_trip_id: tripId, p_dates: [date] }).order('slot_at').order('stop_id').range(a, b))
+      .then(rows => rows.map(r => ({
+        stop_id: r.stop_id, slot_at: r.slot_at,
+        v: SCENARIOS.map(s => Math.round(250 * Math.max(0, Math.min(1,
+          (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * (r.fog_wanted ? 0.6 : 1))))),
+      })));
 
-    const [inputs, fcScores, trScores, lightScores, stopsAll, accs, tripDays] = await Promise.all([
+    const [inputs, fcSc, trSc, ltSc, stopsAll, accs, tripDays] = await Promise.all([
       all<any>((a, b) => db.from('solver_stop_inputs')
         .select('stop_id, name, tier, star_vantage_id, duration_minutes, time_locked, day_id, shot_status, shot_value')
         .eq('trip_id', tripId).range(a, b)),
-      scoresOf(fcBuild.id), scoresOf(trBuild.id),
-      all<any>((a, b) => db.rpc('solver_light_terms', { p_trip_id: tripId, p_dates: [rd.replay_date] }).order('slot_at').order('stop_id').range(a, b))
-        .then(rows => rows.map(r => ({
-          stop_id: r.stop_id, slot_at: r.slot_at,
-          v: SCENARIOS.map(s => Math.round(250 * Math.max(0, Math.min(1,
-            (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * (r.fog_wanted ? 0.6 : 1))))),
-        }))),
+      Promise.all(fcB.map(b => scoresOf(b!.id))), Promise.all(trB.map(b => scoresOf(b!.id))),
+      Promise.all(horizon.map(h => lightOf(h.date))),
       all<any>((a, b) => db.from('stops').select('id, name, lat, lng, time_label, duration_minutes, drive_override_minutes, day_id, position, time_locked').eq('trip_id', tripId).range(a, b)),
       db.from('accommodations').select('name, lat, lng, check_in, check_out, nights').eq('trip_id', tripId).then(r => r.data ?? []),
       db.from('days').select('id, date').eq('trip_id', tripId).then(r => r.data ?? []),
     ]);
-    if (!fcScores.length || !trScores.length) return json({ ok: false, error: 'empty replay builds' }, 404);
+    if (fcSc.some(x => !x.length) || trSc.some(x => !x.length)) return json({ ok: false, error: 'empty replay builds' }, 404);
     // Shot status is about the real trip; a replay starts from nothing shot.
     for (const r of inputs) { r.shot_status = null; r.shot_value = null; }
-    const specs = [{ date: rd.replay_date as string, trip_date: rd.trip_date as string, light: false }];
+    const specs = horizon.map(h => ({ date: h.date, trip_date: h.trip_date, light: false }));
 
     const stopById = new Map(stopsAll.map(s => [s.id, s]));
 
     // Rated stops with a starred shot: the only ones that carry value.
-    const rated = inputs.filter(r => (TIER_W[r.tier] ?? 0) > 0 && r.star_vantage_id);
+    const rated = inputs.filter(r => (TIER_W[r.tier] ?? 0) > 0 && r.star_vantage_id)
+      .sort((a, b) => (a.stop_id < b.stop_id ? -1 : 1));
 
     // Same-subject groups from the starred shots' aim points.
     const vIds = [...new Set(rated.map(c => c.star_vantage_id))];
@@ -192,7 +224,7 @@ Deno.serve(async (req) => {
     const groupW = new Map<number, number>();
     rated.forEach((r, i) => groupW.set(find(i), Math.max(groupW.get(find(i)) ?? 0, TIER_W[r.tier])));
     // What a subject already has (x250): nailed = everything, got = shot_value.
-    const groupBase = new Map<number, number>();
+    let groupBase = new Map<number, number>();
     rated.forEach((r, i) => {
       const b = r.shot_status === 'nailed' ? 250 : r.shot_status === 'got' ? Math.round(250 * (r.shot_value ?? 0.5)) : 0;
       if (b > 0) groupBase.set(find(i), Math.max(groupBase.get(find(i)) ?? 0, b));
@@ -416,20 +448,17 @@ Deno.serve(async (req) => {
       ...chance(p, v.n, Math.round(v.start / SLOT)),
     }));
 
-    const day = days[0];
-    const fc = planDay({ ...day, light: false }, fcScores);
-    const lt = planDay({ ...day, light: true }, lightScores);
-    const hs = planDay({ ...day, light: false }, trScores);
-
-    // Value of a route against the truth: tier x truth V at the visit, a
-    // subject counted once (only its improvement), as the planner counts.
-    const evalVisits = (visits: { n: number; startMs: number }[]) => {
+    // Value of a route against the truth (plan `tp`, one member): tier x truth
+    // V at the visit, a subject counted once (only its improvement over what
+    // is already shot), as the planner counts.
+    const truthAt = (tp: DayPlan, v: { n: number; startMs: number }) =>
+      tp.W(v.n, Math.round((v.startMs - tp.dayStart) / (SLOT * 60000)))?.[0] ?? 0;
+    const evalVisits = (tp: DayPlan, visits: { n: number; startMs: number }[]) => {
       const best = new Map<number, number>();
       let total = 0;
       for (const v of visits) {
         if (nodes[v.n].w <= 0) continue;
-        const idx = Math.round((v.startMs - hs.dayStart) / (SLOT * 60000));
-        const w = hs.W(v.n, idx)?.[0] ?? 0;
+        const w = truthAt(tp, v);
         const g = nodes[v.n].group, prev = best.get(g);
         total += nodes[v.n].w * gain(g, w, prev) / 250;
         best.set(g, Math.max(prev ?? 0, w));
@@ -437,12 +466,145 @@ Deno.serve(async (req) => {
       return total;
     };
     const routeOf = (p: DayPlan, st: State) => st.route.map(v => ({ n: v.n, startMs: p.dayStart + v.start * 60000 }));
+    const r3 = (x: number) => Math.round(x * 1000) / 1000;
+    // The trip day's own rated stops at their time_labels.
+    const ownOf = (d: typeof days[number]) => d.own.map(s => ({ s, n: pos.get(s.id), min: labelMinutes(s.time_label) }))
+      .filter(o => o.n != null && o.min != null);
+
+    // Several days together (copied from solver-plan): each day's top routes,
+    // a subject counted once at its best day per member, >= 6 h rest between
+    // back at the hotel and leaving again, at most 3 combos per backbone.
+    const combineBest = (planned: DayPlan[]): State[] | null => {
+      if (planned.some(p => !p.routes.length)) return null;
+      if (planned.length === 1) return [planned[0].routes[0]];
+      const M = planned[0].routes[0].total.length;
+      const totalOf = (groups: Map<number, Uint8Array>) => {
+        const t = new Float32Array(M);
+        for (const [g, w] of groups) { const wt = groupW.get(g) ?? 0; for (let k = 0; k < M; k++) t[k] += wt * gain(g, w[k], undefined) / 250; }
+        return t;
+      };
+      const mergeInto = (groups: Map<number, Uint8Array>, add: Map<number, Uint8Array>) => {
+        for (const [g, w] of add) {
+          const prev = groups.get(g);
+          if (!prev) groups.set(g, w);
+          else { const nb = Uint8Array.from(prev); for (let k = 0; k < M; k++) if (w[k] > nb[k]) nb[k] = w[k]; groups.set(g, nb); }
+        }
+      };
+      type Combo = { picks: State[]; groups: Map<number, Uint8Array>; drive: number; over: number; j: number; back: number | null; date: string | null };
+      const homeLeg = (st: State, p: DayPlan) => D[st.loc][p.end];
+      const departMs = (p: DayPlan, st: State) => st.route.length ? p.dayStart + (st.route[0].start - st.route[0].drive) * 60000 : null;
+      const backMs = (p: DayPlan, st: State) => st.route.length ? p.dayStart + (st.t + homeLeg(st, p)) * 60000 : null;
+      const backbone = (st: State) => [...st.groupBest.keys()].filter(g => (groupW.get(g) ?? 0) >= 5).sort((a, b) => a - b).join('.');
+      const dayPool = (routes: State[]) => {
+        const seen = new Map<string, number>(), out: State[] = [];
+        for (const st of routes) {
+          const key = backbone(st), n = seen.get(key) ?? 0;
+          if (n >= 4) continue;
+          seen.set(key, n + 1); out.push(st);
+          if (out.length >= DAY_POOL) break;
+        }
+        return out;
+      };
+      let combos: Combo[] = [{ picks: [], groups: new Map(), drive: 0, over: 0, j: 0, back: null, date: null }];
+      for (const p of planned) {
+        const pool = dayPool(p.routes);
+        const day = p.tripDate ?? p.date;
+        const combine = (rest: boolean) => {
+          const out: Combo[] = [];
+          for (const c of combos) for (const st of pool) {
+            const dep = departMs(p, st);
+            if (rest && c.back != null && dep != null && c.date === dayBefore(day) && dep - c.back < REST_HOURS * 3600000) continue;
+            const groups = new Map(c.groups);
+            mergeInto(groups, st.groupBest);
+            const m = metric(totalOf(groups));
+            const drive = c.drive + st.drive + homeLeg(st, p), o = c.over + st.over + over(homeLeg(st, p));
+            out.push({ picks: [...c.picks, st], groups, drive, over: o, j: m.j - DRIVE_PENALTY * drive - LONG_LEG_PENALTY * o, back: backMs(p, st), date: day });
+          }
+          return out;
+        };
+        let next = combine(true);
+        if (!next.length) next = combine(false);
+        next.sort((a, b) => b.j - a.j);
+        const perBackbone = new Map<string, number>();
+        combos = [];
+        for (const c of next) {
+          const key = c.picks.map(backbone).join('|'), n = perBackbone.get(key) ?? 0;
+          if (n >= 3) continue;
+          perBackbone.set(key, n + 1);
+          combos.push(c);
+          if (combos.length >= MULTI_BEAM) break;
+        }
+      }
+      return combos.length ? combos[0].picks : null;
+    };
+
+    if (run) {
+      // ---- One night of a whole-trip run ----
+      const n: number = run.night;
+      const state: Record<string, Record<string, number>> = run.state ?? {};
+      // What a plan has shot, by group (key: the group's first stop id).
+      const keyOf = (g: number) => rated[g].stop_id;
+      const groupOfKey = new Map(rated.map((r, i) => [r.stop_id, find(i)]));
+      const baseOf = (kind: string) => {
+        const m = new Map<number, number>();
+        for (const [k, v] of Object.entries(state[kind] ?? {})) {
+          const g = groupOfKey.get(k); if (g != null) m.set(g, Math.max(m.get(g) ?? 0, v));
+        }
+        return m;
+      };
+      // What happened on the day being done.
+      const truthN = planDay({ ...days[0], light: false }, trSc[0]);
+      const rows: any[] = [];
+      const record = (kind: string, visits: { n: number; startMs: number }[], extra: any) => {
+        const realized = evalVisits(truthN, visits);
+        const shot = { ...(state[kind] ?? {}) };
+        for (const v of visits) {
+          if (nodes[v.n].w <= 0) continue;
+          const k = keyOf(nodes[v.n].group);
+          shot[k] = Math.max(shot[k] ?? 0, truthAt(truthN, v));
+        }
+        state[kind] = shot;
+        rows.push({ run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: r3(realized), ...extra });
+      };
+      const plan = (kind: string, nDays: number, scoresFor: (h: number) => any[], light: boolean, members: number) => {
+        groupBase = baseOf(kind);
+        const planned = days.slice(0, nDays).map((d, h) => planDay({ ...d, light }, scoresFor(h)));
+        const st = combineBest(planned)?.[0] ?? null, p0 = planned[0];
+        record(kind, st ? routeOf(p0, st) : [], {
+          predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
+          stats: { members, horizon: nDays, ms: planned.reduce((t, p) => t + p.ms, 0), ...(st ? {} : { error: 'no route' }) },
+        });
+      };
+      plan('fc3', days.length, h => fcSc[h], false, fcB[0]!.members);
+      plan('fc1', 1, h => fcSc[h], false, fcB[0]!.members);
+      plan('lt3', days.length, h => ltSc[h], true, 51);
+      plan('hs3', days.length, h => trSc[h], false, 1);
+      groupBase = baseOf('my');
+      const own = ownOf(days[0]);
+      record('my', own.map(o => ({ n: o.n!, startMs: zonedToUtc(days[0].date, o.min!, tz) })), {
+        drive_minutes: days[0].own.reduce((t: number, s: any) => t + (s.drive_override_minutes ?? 0), 0),
+        visits: own.map(o => ({ stop_id: o.s.id, name: o.s.name, start: new Date(zonedToUtc(days[0].date, o.min!, tz)).toISOString(), rated: nodes[o.n!].w > 0 })),
+        stats: { own_stops: days[0].own.length, rated: own.filter(o => nodes[o.n!].w > 0).length },
+      });
+      const { error: rErr } = await db.from('replay_run_days').upsert(rows, { onConflict: 'run_id,night,kind' });
+      if (rErr) throw rErr;
+      const done = n + 1 >= run.nights;
+      await db.from('replay_runs').update({ night: n + 1, state, status: done ? 'done' : 'running', note: null, updated_at: new Date().toISOString() }).eq('id', runId);
+      return json({ ok: true, run_id: runId, night: n, done, results: rows.map(r => ({ kind: r.kind, realized: r.realized, predicted: r.predicted })) });
+    }
+
+    // ---- One replay day ----
+    const fcScores = fcSc[0], trScores = trSc[0], lightScores = ltSc[0], fcBuild = fcB[0]!;
+    const day = days[0];
+    const fc = planDay({ ...day, light: false }, fcScores);
+    const lt = planDay({ ...day, light: true }, lightScores);
+    const hs = planDay({ ...day, light: false }, trScores);
     const rows: any[] = [];
     const add = (plan: string, p: DayPlan | null, st: State | null, extra: any = {}) => {
       if (!p || !st) { rows.push({ replay_day_id: dayId, config: cfgName, plan, predicted: null, realized: null, stats: { error: 'no route' } }); return; }
       rows.push({
         replay_day_id: dayId, config: cfgName, plan, predicted: Math.round(st.mean * 1000) / 1000,
-        realized: Math.round(evalVisits(routeOf(p, st)) * 1000) / 1000, drive_minutes: Math.round(st.drive),
+        realized: Math.round(evalVisits(hs, routeOf(p, st)) * 1000) / 1000, drive_minutes: Math.round(st.drive),
         visits: visitsOf(p, st), stats: { members: p === lt ? 51 : (p === hs ? 1 : fcBuild.members), ms: p.ms, routes: p.routes.length, ...extra },
       });
     };
@@ -451,8 +613,7 @@ Deno.serve(async (req) => {
     add('hindsight', hs, hs.routes[0] ?? null);
 
     // My day: the trip day's own rated stops at their time_labels.
-    const own = day.own.map(s => ({ s, n: pos.get(s.id), min: labelMinutes(s.time_label) }))
-      .filter(o => o.n != null && o.min != null);
+    const own = ownOf(day);
     const ownVisits = own.map(o => ({ n: o.n!, startMs: zonedToUtc(day.date, o.min!, tz) }));
     const fcIdx = (ms: number) => Math.round((ms - fc.dayStart) / (SLOT * 60000));
     let predicted = 0;
@@ -471,7 +632,7 @@ Deno.serve(async (req) => {
     }
     rows.push({
       replay_day_id: dayId, config: cfgName, plan: 'my_day', predicted: Math.round(predicted * 1000) / 1000,
-      realized: Math.round(evalVisits(ownVisits) * 1000) / 1000,
+      realized: Math.round(evalVisits(hs, ownVisits) * 1000) / 1000,
       drive_minutes: day.own.reduce((t: number, s: any) => t + (s.drive_override_minutes ?? 0), 0),
       visits: own.map(o => ({ stop_id: o.s.id, name: o.s.name, start: new Date(zonedToUtc(day.date, o.min!, tz)).toISOString(), rated: nodes[o.n!].w > 0 })),
       stats: { own_stops: day.own.length, rated: own.filter(o => nodes[o.n!].w > 0).length, earliest: day.earliestMin, latest: day.latestMin },
@@ -483,7 +644,8 @@ Deno.serve(async (req) => {
     return json({ ok: true, day_id: dayId, config: cfgName, results: rows.map(r => ({ plan: r.plan, predicted: r.predicted, realized: r.realized, drive: r.drive_minutes })) });
   } catch (e) {
     const msg = String((e as any)?.message ?? e);
-    if (dayId != null) await db.from('replay_days').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('id', dayId);
+    if (runId != null) await db.from('replay_runs').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('id', runId);
+    else if (dayId != null) await db.from('replay_days').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('id', dayId);
     return json({ ok: false, error: msg }, 500);
   }
 });
