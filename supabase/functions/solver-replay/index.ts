@@ -175,8 +175,13 @@ Deno.serve(async (req) => {
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
     const tz: string = trip?.timezone ?? 'UTC';
-    const scoresOf = (buildId: string) => all<any>((a, b) => db.from('replay_scores').select('stop_id, slot_at, v')
-      .eq('build_id', buildId).order('slot_at').order('stop_id').range(a, b));
+    // One row per stop (replay_scores_c): slot i = t0 + offs[i] x 15 min, v[i] = members.
+    const scoresOf = (buildId: string) => all<any>((a, b) => db.from('replay_scores_c').select('stop_id, t0, offs, v')
+      .eq('build_id', buildId).order('stop_id').range(a, b))
+      .then(rows => rows.flatMap(r => {
+        const t0 = Date.parse(r.t0);
+        return (r.offs as number[]).map((o, i) => ({ stop_id: r.stop_id, slot_at: new Date(t0 + o * SLOT * 60000).toISOString(), v: r.v[i] }));
+      }));
     const lightOf = (date: string) => all<any>((a, b) => db.rpc('solver_light_terms', { p_trip_id: tripId, p_dates: [date] }).order('slot_at').order('stop_id').range(a, b))
       .then(rows => rows.map(r => ({
         stop_id: r.stop_id, slot_at: r.slot_at,

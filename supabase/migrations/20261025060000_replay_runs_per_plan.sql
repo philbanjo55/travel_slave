@@ -2,7 +2,8 @@
 -- (a whole night in one request ran over the 2 s edge CPU limit on some nights).
 -- Existing runs were moved over with: insert into replay_run_state (run_id, kind,
 -- night, state) select id, k, night, state -> k from replay_runs, unnest(kinds) k.
--- pg_cron replay-run stays as in part 4 (pauses at 470 MB). 6 runs at a time.
+-- pg_cron replay-run: 'select public.replay_run_tick();' every minute; the tick
+-- itself starts nothing new over 470 MB but always clears. 6 runs at a time.
 
 -- Per plan and night of a whole-trip run (one solver-replay request each:
 -- the edge CPU limit is 2 s).
@@ -39,7 +40,7 @@ begin
   for r in select t.trip_id, (select min(x.start_date + x.night) from replay_runs x
                                where x.trip_id = t.trip_id and x.status in ('queued', 'running')) lo
              from replay_places t loop
-    execute 'del' || 'ete from replay_scores s using replay_builds b, replay_days d where s.build_id = b.id and d.id = b.replay_day_id '
+    execute 'del' || 'ete from replay_scores_c s using replay_builds b, replay_days d where s.build_id = b.id and d.id = b.replay_day_id '
          || 'and d.trip_id = $1 and ($2::date is null or d.replay_date < $2)' using r.trip_id, r.lo;
     get diagnostics k = row_count; v_cleared := v_cleared + k;
     execute 'del' || 'ete from replay_builds b using replay_days d where d.id = b.replay_day_id '
@@ -53,6 +54,12 @@ begin
     end loop;
   end loop;
 
+  -- The free plan goes read-only at 500 MB (Phil: keep an eye on it): clean
+  -- up always, start nothing new at 470 MB.
+  if pg_database_size(current_database()) > 470 * 1024 * 1024 then
+    return jsonb_build_object('paused', 'database over 470 MB', 'cleared', v_cleared);
+  end if;
+
   -- Keep 6 runs going (oldest first).
   update replay_runs set status = 'running', updated_at = now()
    where id in (select id from replay_runs where status = 'queued' order by id
@@ -61,8 +68,11 @@ begin
   select rr.id, kk, rr.night from replay_runs rr cross join unnest(v_kinds) kk where rr.status = 'running'
   on conflict do nothing;
 
+  -- Runs with nothing in flight and a plan still to do tonight (a plan that
+  -- got no answer is sent again on its own).
   for r in select * from replay_runs x where x.status = 'running'
-              and not exists (select 1 from replay_run_state s where s.run_id = x.id and (s.status <> 'idle' or s.night <> x.night))
+              and not exists (select 1 from replay_run_state s where s.run_id = x.id and s.status <> 'idle')
+              and exists (select 1 from replay_run_state s where s.run_id = x.id and s.night = x.night)
             order by id loop
     -- Wait for the place's downloads, then refit hidden peaks on them.
     continue when exists (select 1 from replay_fetch f join replay_points p on p.point_key = f.point_key
@@ -89,12 +99,12 @@ begin
       update replay_runs set status = 'error', note = left(sqlerrm, 300), updated_at = now() where id = r.id;
       continue;
     end;
-    update replay_run_state set status = 'planning', started_at = now(), updated_at = now() where run_id = r.id;
+    update replay_run_state set status = 'planning', started_at = now(), updated_at = now() where run_id = r.id and night = r.night;
     perform net.http_post(
       url := 'https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/solver-replay',
-      body := jsonb_build_object('run_id', r.id, 'kind', k2),
+      body := jsonb_build_object('run_id', r.id, 'kind', s2.kind),
       headers := '{"Content-Type":"application/json"}'::jsonb, timeout_milliseconds := 1000)
-      from unnest(v_kinds) k2;
+      from replay_run_state s2 where s2.run_id = r.id and s2.night = r.night;
     v_started := v_started + 1;
   end loop;
   return jsonb_build_object('started', v_started, 'built', v_built, 'cleared', v_cleared);
