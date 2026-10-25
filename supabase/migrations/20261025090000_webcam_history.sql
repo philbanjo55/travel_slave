@@ -46,3 +46,9 @@ select cron.schedule('webcam-history', '* * * * *', $c$
                        timeout_milliseconds := 1000)
    where exists (select 1 from webcam_history_labels where status = 'queued');
 $c$);
+
+-- Done 25 Oct 2026 (1,115 labelled, 1 missing file, $10.01); the cron was then
+-- removed: select cron.unschedule('webcam-history');
+-- Result vs KJAC (replay_hidden_obs, ceiling < 7000 ft): 80% of daylight hours
+-- agree; the camera saw cloud on the peaks in 179 hours the airport called
+-- clear (about 1 in 4 hidden hours), the reverse only 44.
