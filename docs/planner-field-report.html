@@ -144,13 +144,13 @@ footer { font-size: 0.85rem; color: var(--muted); }
 <div class="wrap">
 
 <header>
-  <div class="stamp"><span class="eyebrow">Philm+Frame planner</span><span class="eyebrow">As of Sun 25 Oct, 6:10 PM EDT</span></div>
+  <div class="stamp"><span class="eyebrow">Philm+Frame planner</span><span class="eyebrow">As of Sun 25 Oct, 7:30 PM EDT</span></div>
   <h1>Planner Field Report</h1>
   <p class="lede">The planner decides where you stand and when, using the forecast, the sun and how much each stop matters to you. This page shows what it does, how we're testing whether it's any good, what we've learned so far, and what's running right now.</p>
   <div class="key">
     <div class="eyebrow">What we know so far</div>
     <div class="keyrow">
-      <div><div class="big num">2×</div><p class="small">more good shots than following your itinerary as written (Teton, 56 replayed trips)</p></div>
+      <div><div class="big num">2×</div><p class="small">more good shots than following your itinerary as written (Teton, 56 replayed trips, checked against TetonCam)</p></div>
       <div><div class="big num">+1</div><p class="small">good shot is all that perfect knowledge of the weather would add in Teton. The planner is close to the ceiling there.</p></div>
       <div><div class="big num">+5</div><p class="small">good shots perfect knowledge would add in the Faroes (33 replayed trips). Weather matters much more there.</p></div>
     </div>
@@ -234,10 +234,10 @@ footer { font-size: 0.85rem; color: var(--muted); }
   </div>
   <div class="charts">
     <div class="figure">
-      <div class="head"><h3>Grand Teton, 7 days</h3><span class="small muted">56 replayed trips, Dec–Jan of two winters · final</span></div>
+      <div class="head"><h3>Grand Teton, 7 days</h3><span class="small muted">56 replayed trips, Dec–Jan of two winters · final, hidden peaks from TetonCam or the airport</span></div>
       <div class="legend"><span><i style="background:var(--glacier-soft)"></i>Good</span><span><i style="background:var(--glacier)"></i>of which great</span></div>
       <svg id="c-teton" width="100%" role="img" aria-label="Bar chart of good and great shots per Teton trip by player"></svg>
-      <div class="take"><p><b>Planner doubles your good shots</b> (8.4 vs 4.3). Perfect weather knowledge only adds about one more, so a smarter planner can't gain much here.</p><p>Tomorrow-only and 3-days-ahead get about the same number. Most of the gain over your itinerary comes from being there when the sun is right.</p></div>
+      <div class="take"><p><b>Planner gets 2.2× your good shots</b> (6.3 vs 2.9) and beat your itinerary in 49 of 56 trips. Perfect weather knowledge only adds one more, so a smarter planner can't gain much here.</p><p>Tomorrow-only and 3-days-ahead get about the same number. Most of the gain over your itinerary comes from being there when the sun is right. With the airport alone as truth the numbers were higher for everyone (planner 8.4, itinerary 4.3).</p></div>
     </div>
     <div class="figure">
       <div class="head"><h3>Faroes, 15 days</h3><span class="small muted">33 replayed trips, May 2024–26 · final</span></div>
@@ -272,7 +272,7 @@ footer { font-size: 0.85rem; color: var(--muted); }
       <tbody><tr><td>Camera: peaks clear</td><td class="r">386 ✓</td><td class="r">44</td></tr><tr><td>Camera: peaks in cloud</td><td class="r"><b>179</b></td><td class="r">482 ✓</td></tr></tbody>
     </table></div>
     <p class="small"><b>They agree 80% of the time.</b> When they disagree, it is almost always the same way: the camera sees cloud on the summits and the airport says clear (179 hours). The airport misses about 1 in 4 hidden-peak hours. These are mostly caps sitting on the high peaks above what the airport reports. Satellite sun agreed with the camera 84% of the time, and it also leans too sunny.</p>
-    <p class="small"><b>What it means for the results:</b> the test bench is a bit too generous to every player, so the real good-shot counts are lower than the charts show. Everyone is scored by the same truth, so the order is unlikely to change.</p>
+    <p class="small"><b>Re-run with the camera (done 7:20 PM):</b> all 56 Teton trips re-scored, counting the peaks as hidden when the camera or the airport says so. Everyone lost about a quarter of their good shots (planner 8.4 to 6.3, your itinerary 4.3 to 2.9), and the order didn't change. The Teton chart above uses the camera numbers.</p>
     <p class="small muted">The camera is about 30 km from the Grand, on the Idaho side. It's a fair judge of whether the peaks are in cloud; sun on your side of the valley can differ. If the airport and the camera often disagree, I'll re-score the Teton results with the camera.</p>
   </div>
 </section>
@@ -309,7 +309,7 @@ footer { font-size: 0.85rem; color: var(--muted); }
   </div>
   <div class="decide">
     <div class="d"><span class="mark">1</span><span class="q">Look-ahead fix (trust days 2–3 less)</span><span class="a">My take: skip it. In both places planning 3 days ahead gets the same number of good shots as tomorrow-only (Faroes 17.4 vs 17.7, Teton 8.6 vs 8.4).</span></div>
-    <div class="d"><span class="mark">2</span><span class="q">Re-score Teton with the camera?</span><span class="a">The airport misses 1 in 4 hidden-peak hours. Re-running the 56 Teton trips with "hidden if the camera or the airport says so" costs no Claude money and takes about an hour. It would give truer shot counts. My take: one re-run is worth it, then stop.</span></div>
+    <div class="d"><span class="mark">2</span><span class="q">Re-score Teton with the camera: done</span><span class="a">The planner still gets 2.2× your itinerary. Nothing to decide here.</span></div>
     <div class="d"><span class="mark">3</span><span class="q">Parking and access for the 3 new ski stops</span><span class="a">Still open from Teton planning. Needs you when you have a few minutes.</span></div>
     <div class="d"><span class="mark">4</span><span class="q">End the training trips</span><span class="a">After the verdicts on 6 Nov (Faroes) and 9 Nov (Teton). They keep running until you say.</span></div>
   </div>
@@ -321,11 +321,11 @@ footer { font-size: 0.85rem; color: var(--muted); }
 <script>
 (function () {
   var data = [
-    { k: 'Perfect hindsight', t: [9.4, 6.8], f: [23.1, 6.8] },
-    { k: 'Planner, tomorrow only', me: true, t: [8.4, 5.6], f: [17.7, 5.3] },
-    { k: 'Planner, 3 days ahead', t: [8.6, 5.7], f: [17.4, 5.4] },
-    { k: 'Sun angles only', t: [7.9, 5.5], f: [15.5, 4.0] },
-    { k: 'Your itinerary', t: [4.3, 2.2], f: [8.0, 0.8] }
+    { k: 'Perfect hindsight', t: [7.3, 5.4], f: [23.1, 6.8] },
+    { k: 'Planner, tomorrow only', me: true, t: [6.3, 4.5], f: [17.7, 5.3] },
+    { k: 'Planner, 3 days ahead', t: [6.6, 4.7], f: [17.4, 5.4] },
+    { k: 'Sun angles only', t: [6.0, 4.3], f: [15.5, 4.0] },
+    { k: 'Your itinerary', t: [2.9, 1.6], f: [8.0, 0.8] }
   ];
   var NS = 'http://www.w3.org/2000/svg';
   function el(tag, attrs, parent, text) {

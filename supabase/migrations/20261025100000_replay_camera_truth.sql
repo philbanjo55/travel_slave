@@ -31,3 +31,11 @@ insert into replay_runs (trip_id, start_date, trip_dates, nights, config)
 select trip_id, start_date, trip_dates, nights, '{"name": "camera"}'::jsonb
   from replay_runs where trip_id = '5e247891-d800-4d07-b5e0-8ad748ae2754' and config ->> 'name' = 'base'
 on conflict do nothing;
+
+-- Result (25 Oct 2026, 56 trips each, good shots >= 150/250 per trip):
+--   kind   base  camera
+--   hs3     9.4   7.3
+--   fc1     8.4   6.3   (beat "my" in 49 of 56 trips with camera truth)
+--   fc3     8.6   6.6
+--   lt3     7.9   6.0
+--   my      4.3   2.9
