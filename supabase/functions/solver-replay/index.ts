@@ -175,7 +175,13 @@ Deno.serve(async (req) => {
       .in('replay_day_id', horizon.map(h => h.dayId)).order('created_at', { ascending: false });
     const fcB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'forecast' && b.lead === leadOf(h.lead)));
     const trB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'truth'));
-    if (fcB.some(b => !b) || trB.some(b => !b)) return json({ ok: false, error: 'replay builds missing' }, 404);
+
+    // A run's plan loads only what it plans on (and the truth of the day it does).
+    const k0 = runId != null ? kindOf : null;
+    const nFc = k0 == null ? horizon.length : k0 === 'fc3' ? horizon.length : k0 === 'fc1' ? 1 : 0;
+    const nLt = k0 == null || k0 === 'lt3' ? horizon.length : 0;
+    const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
+    if (fcB.slice(0, nFc).some(b => !b) || trB.slice(0, nTr).some(b => !b)) return json({ ok: false, error: 'replay builds missing' }, 404);
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
     const tz: string = trip?.timezone ?? 'UTC';
@@ -193,11 +199,6 @@ Deno.serve(async (req) => {
           (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * (r.fog_wanted ? 0.6 : 1))))),
       })));
 
-    // A run's plan loads only what it plans on (and the truth of the day it does).
-    const k0 = runId != null ? kindOf : null;
-    const nFc = k0 == null ? horizon.length : k0 === 'fc3' ? horizon.length : k0 === 'fc1' ? 1 : 0;
-    const nLt = k0 == null || k0 === 'lt3' ? horizon.length : 0;
-    const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
     const [inputs, fcSc, trSc, ltSc, stopsAll, accs, tripDays] = await Promise.all([
       all<any>((a, b) => db.from('solver_stop_inputs')
         .select('stop_id, name, tier, star_vantage_id, duration_minutes, time_locked, day_id, shot_status, shot_value')
