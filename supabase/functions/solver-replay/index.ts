@@ -2,7 +2,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
 // POST {day_id, config?: {name?, tier_w?, lambda?, drive_penalty?, long_leg_min?, long_leg_penalty?, beam?}}
-//   or {run_id}: one night of a whole-trip run (replay_runs), see below.
+//   or {run_id, kind}: one plan's next night of a whole-trip run (replay_runs), see below.
 // Replays one past day (replay_days): plans the trip day `trip_date` on the
 // weather of `replay_date` with the same day search as solver-plan (copied
 // from solver-plan v16; keep the two in step), then scores every plan against
@@ -22,7 +22,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //   fc3 = forecast, 3 days ahead     fc1 = forecast, tomorrow only
 //   lt3 = light only, 3 days ahead   hs3 = the truth, 3 days ahead (ceiling)
 //   my  = the trip day's own stops at their time_labels
-// Writes replay_run_days and the run's state (what each plan has shot).
+// One request per plan and night (the edge CPU limit is 2 s); each plan's
+// night and what it has shot live in replay_run_state. replay_run_tick moves
+// the run to the next night once all five are done.
 
 let TIER_W: Record<string, number> = { GOD: 10, S: 5, A: 2, B: 1, C: 1, D: 0.5, F: 0 };
 let LAMBDA = 0.5;
@@ -129,11 +131,12 @@ Deno.serve(async (req) => {
   const json = (b: any, status = 200) =>
     new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-  let dayId: number | null = null, runId: number | null = null;
+  let dayId: number | null = null, runId: number | null = null, kindOf: string | null = null;
   try {
     const body = await req.json().catch(() => ({}));
     dayId = body.day_id ?? null;
     runId = body.run_id ?? null;
+    kindOf = body.kind ?? null;
     // What to plan: one replay day, or the next nights of a whole-trip run.
     let run: any = null, tripId: string;
     let horizon: { i: number; date: string; trip_date: string; dayId: number; lead: number }[];
@@ -181,12 +184,17 @@ Deno.serve(async (req) => {
           (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * (r.fog_wanted ? 0.6 : 1))))),
       })));
 
+    // A run's plan loads only what it plans on (and the truth of the day it does).
+    const k0 = runId != null ? kindOf : null;
+    const nFc = k0 == null ? horizon.length : k0 === 'fc3' ? horizon.length : k0 === 'fc1' ? 1 : 0;
+    const nLt = k0 == null || k0 === 'lt3' ? horizon.length : 0;
+    const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
     const [inputs, fcSc, trSc, ltSc, stopsAll, accs, tripDays] = await Promise.all([
       all<any>((a, b) => db.from('solver_stop_inputs')
         .select('stop_id, name, tier, star_vantage_id, duration_minutes, time_locked, day_id, shot_status, shot_value')
         .eq('trip_id', tripId).range(a, b)),
-      Promise.all(fcB.map(b => scoresOf(b!.id))), Promise.all(trB.map(b => scoresOf(b!.id))),
-      Promise.all(horizon.map(h => lightOf(h.date))),
+      Promise.all(fcB.slice(0, nFc).map(b => scoresOf(b!.id))), Promise.all(trB.slice(0, nTr).map(b => scoresOf(b!.id))),
+      Promise.all(horizon.slice(0, nLt).map(h => lightOf(h.date))),
       all<any>((a, b) => db.from('stops').select('id, name, lat, lng, time_label, duration_minutes, drive_override_minutes, day_id, position, time_locked').eq('trip_id', tripId).range(a, b)),
       db.from('accommodations').select('name, lat, lng, check_in, check_out, nights').eq('trip_id', tripId).then(r => r.data ?? []),
       db.from('days').select('id, date').eq('trip_id', tripId).then(r => r.data ?? []),
@@ -293,7 +301,8 @@ Deno.serve(async (req) => {
     const gain = (g: number, w: number, prev: number | undefined) => Math.max(0, w - Math.max(prev ?? 0, groupBase.get(g) ?? 0));
 
     // One day: beam over partial routes from the morning hotel to the night's.
-    const planDay = (day: typeof days[number], scores: any[]): DayPlan => {
+    // search = false: only the day's values (W), no routes (scoring against the truth).
+    const planDay = (day: typeof days[number], scores: any[], search = true): DayPlan => {
       const td0 = performance.now();
       const H0 = pos.get(day.startId!)!, H = pos.get(day.endId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
@@ -379,7 +388,7 @@ Deno.serve(async (req) => {
         total: new Float32Array(M), route: [], drive: 0, over: 0,
         j: -DRIVE_PENALTY * D[H0][H] - LONG_LEG_PENALTY * over(D[H0][H]), mean: 0, cvar: 0 };
       const pool: State[] = [];
-      let beam: State[] = [root];
+      let beam: State[] = search ? [root] : [];
       while (beam.length) {
         const children = new Map<string, State>();
         const keep = (c: State) => {
@@ -539,59 +548,64 @@ Deno.serve(async (req) => {
     };
 
     if (run) {
-      // ---- One night of a whole-trip run ----
+      // ---- One plan's night of a whole-trip run ----
+      const kind: string = body.kind;
+      const { data: ks } = await db.from('replay_run_state').select('night, state').eq('run_id', runId).eq('kind', kind).single();
+      if (!ks) return json({ ok: false, error: 'no state for this plan' }, 404);
       const n: number = run.night;
-      const state: Record<string, Record<string, number>> = run.state ?? {};
+      if (ks.night !== n) {
+        await db.from('replay_run_state').update({ status: 'idle', updated_at: new Date().toISOString() }).eq('run_id', runId).eq('kind', kind);
+        return json({ ok: true, skipped: 'already planned', run_id: runId, kind, night: ks.night });
+      }
+      const shotBefore: Record<string, number> = ks.state ?? {};
       // What a plan has shot, by group (key: the group's first stop id).
       const keyOf = (g: number) => rated[g].stop_id;
       const groupOfKey = new Map(rated.map((r, i) => [r.stop_id, find(i)]));
-      const baseOf = (kind: string) => {
-        const m = new Map<number, number>();
-        for (const [k, v] of Object.entries(state[kind] ?? {})) {
-          const g = groupOfKey.get(k); if (g != null) m.set(g, Math.max(m.get(g) ?? 0, v));
-        }
-        return m;
-      };
+      groupBase = new Map<number, number>();
+      for (const [k, v] of Object.entries(shotBefore)) {
+        const g = groupOfKey.get(k); if (g != null) groupBase.set(g, Math.max(groupBase.get(g) ?? 0, v));
+      }
       // What happened on the day being done.
-      const truthN = planDay({ ...days[0], light: false }, trSc[0]);
-      const rows: any[] = [];
-      const record = (kind: string, visits: { n: number; startMs: number }[], extra: any) => {
+      const truthN = planDay({ ...days[0], light: false }, trSc[0], false);
+      let row: any;
+      const record = (visits: { n: number; startMs: number }[], extra: any) => {
         const realized = evalVisits(truthN, visits);
-        const shot = { ...(state[kind] ?? {}) };
+        const shot = { ...shotBefore };
         for (const v of visits) {
           if (nodes[v.n].w <= 0) continue;
           const k = keyOf(nodes[v.n].group);
           shot[k] = Math.max(shot[k] ?? 0, truthAt(truthN, v));
         }
-        state[kind] = shot;
-        rows.push({ run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: r3(realized), ...extra });
+        row = { run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: r3(realized), ...extra };
+        return shot;
       };
-      const plan = (kind: string, nDays: number, scoresFor: (h: number) => any[], light: boolean, members: number) => {
-        groupBase = baseOf(kind);
+      const plan = (nDays: number, scoresFor: (h: number) => any[], light: boolean, members: number) => {
         const planned = days.slice(0, nDays).map((d, h) => planDay({ ...d, light }, scoresFor(h)));
         // A later day with no route (a booking out of reach) still leaves tomorrow's best.
         const st = (combineBest(planned) ?? (planned[0].routes.length ? [planned[0].routes[0]] : null))?.[0] ?? null, p0 = planned[0];
-        record(kind, st ? routeOf(p0, st) : [], {
+        return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members, horizon: nDays, ms: planned.reduce((t, p) => t + p.ms, 0), ...(st ? {} : { error: 'no route' }) },
         });
       };
-      plan('fc3', days.length, h => fcSc[h], false, fcB[0]!.members);
-      plan('fc1', 1, h => fcSc[h], false, fcB[0]!.members);
-      plan('lt3', days.length, h => ltSc[h], true, 51);
-      plan('hs3', days.length, h => trSc[h], false, 1);
-      groupBase = baseOf('my');
-      const own = ownOf(days[0]);
-      record('my', own.map(o => ({ n: o.n!, startMs: zonedToUtc(days[0].date, o.min!, tz) })), {
-        drive_minutes: days[0].own.reduce((t: number, s: any) => t + (s.drive_override_minutes ?? 0), 0),
-        visits: own.map(o => ({ stop_id: o.s.id, name: o.s.name, start: new Date(zonedToUtc(days[0].date, o.min!, tz)).toISOString(), rated: nodes[o.n!].w > 0 })),
-        stats: { own_stops: days[0].own.length, rated: own.filter(o => nodes[o.n!].w > 0).length },
-      });
-      const { error: rErr } = await db.from('replay_run_days').upsert(rows, { onConflict: 'run_id,night,kind' });
+      let shot: Record<string, number>;
+      if (kind === 'fc3') shot = plan(days.length, h => fcSc[h], false, fcB[0]!.members);
+      else if (kind === 'fc1') shot = plan(1, h => fcSc[h], false, fcB[0]!.members);
+      else if (kind === 'lt3') shot = plan(days.length, h => ltSc[h], true, 51);
+      else if (kind === 'hs3') shot = plan(days.length, h => trSc[h], false, 1);
+      else if (kind === 'my') {
+        const own = ownOf(days[0]);
+        shot = record(own.map(o => ({ n: o.n!, startMs: zonedToUtc(days[0].date, o.min!, tz) })), {
+          drive_minutes: days[0].own.reduce((t: number, s: any) => t + (s.drive_override_minutes ?? 0), 0),
+          visits: own.map(o => ({ stop_id: o.s.id, name: o.s.name, start: new Date(zonedToUtc(days[0].date, o.min!, tz)).toISOString(), rated: nodes[o.n!].w > 0 })),
+          stats: { own_stops: days[0].own.length, rated: own.filter(o => nodes[o.n!].w > 0).length },
+        });
+      } else return json({ ok: false, error: `unknown plan ${kind}` }, 400);
+      const { error: rErr } = await db.from('replay_run_days').upsert(row, { onConflict: 'run_id,night,kind' });
       if (rErr) throw rErr;
-      const done = n + 1 >= run.nights;
-      await db.from('replay_runs').update({ night: n + 1, state, status: done ? 'done' : 'running', note: null, updated_at: new Date().toISOString() }).eq('id', runId);
-      return json({ ok: true, run_id: runId, night: n, done, results: rows.map(r => ({ kind: r.kind, realized: r.realized, predicted: r.predicted })) });
+      await db.from('replay_run_state').update({ night: n + 1, state: shot, status: 'idle', note: null, updated_at: new Date().toISOString() })
+        .eq('run_id', runId).eq('kind', kind);
+      return json({ ok: true, run_id: runId, kind, night: n, realized: row.realized, predicted: row.predicted });
     }
 
     // ---- One replay day ----
@@ -645,7 +659,7 @@ Deno.serve(async (req) => {
     return json({ ok: true, day_id: dayId, config: cfgName, results: rows.map(r => ({ plan: r.plan, predicted: r.predicted, realized: r.realized, drive: r.drive_minutes })) });
   } catch (e) {
     const msg = String((e as any)?.message ?? e);
-    if (runId != null) await db.from('replay_runs').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('id', runId);
+    if (runId != null) await db.from('replay_run_state').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('run_id', runId).eq('kind', kindOf);
     else if (dayId != null) await db.from('replay_days').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('id', dayId);
     return json({ ok: false, error: msg }, 500);
   }
