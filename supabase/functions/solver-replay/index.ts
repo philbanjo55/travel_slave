@@ -569,7 +569,8 @@ Deno.serve(async (req) => {
       const plan = (kind: string, nDays: number, scoresFor: (h: number) => any[], light: boolean, members: number) => {
         groupBase = baseOf(kind);
         const planned = days.slice(0, nDays).map((d, h) => planDay({ ...d, light }, scoresFor(h)));
-        const st = combineBest(planned)?.[0] ?? null, p0 = planned[0];
+        // A later day with no route (a booking out of reach) still leaves tomorrow's best.
+        const st = (combineBest(planned) ?? (planned[0].routes.length ? [planned[0].routes[0]] : null))?.[0] ?? null, p0 = planned[0];
         record(kind, st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members, horizon: nDays, ms: planned.reduce((t, p) => t + p.ms, 0), ...(st ? {} : { error: 'no route' }) },

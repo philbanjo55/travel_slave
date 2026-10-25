@@ -156,4 +156,7 @@ language sql stable as $$
 $$;
 
 -- Run once: select replay_fit_hidden(); select replay_runs_setup();
--- select cron.schedule('replay-run', '* * * * *', 'select public.replay_run_tick();');
+-- The free plan goes read-only at 500 MB (Phil: keep an eye on it): the bench
+-- pauses itself at 470 MB.
+-- select cron.schedule('replay-run', '* * * * *',
+--   'select case when pg_database_size(current_database()) < 470 * 1024 * 1024 then public.replay_run_tick() end;');
