@@ -581,11 +581,13 @@ Deno.serve(async (req) => {
       const keyOf = (d: typeof days[number]) => d.tripDate ?? d.date;
       const fixed = new Set<string>(body.fixed_days ?? []);
       let sets: number[][] = days.map(d => d.own.map(s => pos.get(s.id)).filter((n): n is number => n != null && nodes[n].free));
-      const cache = new Map<string, DayPlan>();
+      // Only each day's best route is kept while searching (memory); the
+      // chosen days are planned again in full at the end.
+      const cache = new Map<string, { routes: State[]; end: number }>();
       const evalDay = (i: number, set: number[]) => {
         const k = i + '|' + [...set].sort((a, b) => a - b).join(',');
         let p = cache.get(k);
-        if (!p) { p = planDay(days[i], set); cache.set(k, p); }
+        if (!p) { const full = planDay(days[i], set); p = { routes: full.routes.slice(0, 1), end: full.end }; cache.set(k, p); }
         return p;
       };
       const weekScore = (ss: number[][]) => {
@@ -631,7 +633,7 @@ Deno.serve(async (req) => {
           if (tryIt(ss, `move ${name(n)} from ${keyOf(days[a])} to ${keyOf(days[b])}`)) { improved = true; continue search; }
         }
       }
-      planned = sets.map((set, i) => evalDay(i, set));
+      planned = sets.map((set, i) => planDay(days[i], set));
       const unplanned = sets.flatMap((set, i) => set.filter(n => !planned[i].routes[0]?.visited[n]).map(n => ({ name: name(n), trip_date: keyOf(days[i]) })));
       improve = { mode, start: r2(startScore), end: r2(best), moves, unplanned, day_plans: cache.size,
                   ms: Math.round(performance.now() - tS), finished: performance.now() - tS <= budget };

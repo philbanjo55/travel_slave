@@ -692,11 +692,13 @@ Deno.serve(async (req) => {
             else { const nb = Uint8Array.from(prev); for (let k = 0; k < M; k++) if (w[k] > nb[k]) nb[k] = w[k]; groups.set(g, nb); }
           }
         };
-        const cache = new Map<string, DayPlan>();
+        // Only each day's best route is kept: whole day plans (scores per slot)
+        // for ~200 tries ran the worker out of memory.
+        const cache = new Map<string, { routes: State[]; end: number }>();
         const evalDay = (i: number, set: number[]) => {
           const k = i + '|' + [...set].sort((a, b) => a - b).join(',');
           let p = cache.get(k);
-          if (!p) { p = planDay({ ...days[i], light: light(i) }, scoresAt(i), true, set); cache.set(k, p); }
+          if (!p) { const full = planDay({ ...days[i], light: light(i) }, scoresAt(i), true, set); p = { routes: full.routes.slice(0, 1), end: full.end }; cache.set(k, p); }
           return p;
         };
         const weekScore = (ss: number[][]) => {
@@ -734,7 +736,7 @@ Deno.serve(async (req) => {
           }
         }
         nextSets = Object.fromEntries(sets.slice(1).map((set, j) => [keyDay(j + 1), set.map(x => nodes[x].id)]));
-        const p0 = evalDay(0, sets[0]), st = p0.routes[0] ?? null;
+        const p0 = planDay({ ...days[0], light: light(0) }, scoresAt(0), true, sets[0]), st = p0.routes[0] ?? null;
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { horizon: days.length, forecast_days: nFc, moves, start: r3(startScore), end: r3(best), day_plans: cache.size,
