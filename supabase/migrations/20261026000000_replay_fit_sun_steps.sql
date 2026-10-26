@@ -105,3 +105,9 @@ end $$;
 -- Run once: select replay_fit_sun();
 -- select cron.schedule('replay-fit-sun', '* * * * *', 'select public.replay_fit_sun_step();');
 -- then the bench: select cron.schedule('replay-run', '* * * * *', 'set statement_timeout = ''10min''; select public.replay_run_tick();');
+
+-- 25 Oct 2026: all 37 steps ran in under 40 s (60,487 truth hours). The
+-- newest-run runs (day1_lead 0) were set to status 'hold' until their
+-- downloads finish, so they don't take the 8 run slots while they wait:
+--   update replay_runs set status = 'hold' where config ->> 'day1_lead' = '0' and night = 0;
+--   later: update replay_runs set status = 'queued' where status = 'hold';
