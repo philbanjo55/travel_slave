@@ -784,7 +784,8 @@ Deno.serve(async (req) => {
         // Daylight minutes on a remaining trip day, after landing / before the flight; 70% of it for stops (drives).
         // Minutes a place could use on a remaining trip day: daylight (civil dawn
         // to dusk), after landing / before the flight, ski places only between
-        // gear pickup and return; 45 min off for driving.
+        // gear pickup and return; 80% of it, less 45 min, for the place itself
+        // (a day packed to the minute does not survive drives and parking).
         const winOn = (i: number, u: number[]) => {
           const td = remaining[i], rd = addDays(run.start_date, n + i);
           if (!okOn(u, td)) return 0;
@@ -798,7 +799,7 @@ Deno.serve(async (req) => {
             if (cfg.gear?.from && td === gFrom) lo = Math.max(lo, zonedToUtc(rd, hhmm(cfg.gear.from.time), tz));
             if (cfg.gear?.to && td === gTo) hi = Math.min(hi, zonedToUtc(rd, hhmm(cfg.gear.to.time), tz));
           }
-          return Math.max(0, (hi - lo) / 60000 - 45);
+          return Math.max(0, 0.8 * (hi - lo) / 60000 - 45);
         };
         // How good each place looks on each of the next 3 days (best moment, forecast mean).
         const looks = days.map((d, h) => planDay({ ...d, light: false }, fcSc[h], false));
