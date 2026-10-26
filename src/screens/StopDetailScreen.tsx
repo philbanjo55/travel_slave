@@ -14,6 +14,7 @@ import StopWeatherCard from '../components/StopWeatherCard';
 import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
 import SunPlannerSection from '../components/sun/SunPlannerSection';
 import StopLocationEditor from '../components/StopLocationEditor';
+import StopDurationEditor from '../components/StopDurationEditor';
 import StopPlannerSection from '../components/planner/StopPlannerSection';
 import StopCameraHero, { useNearbyFrames } from '../components/planner/StopCameraHero';
 import { useDayPlanner } from '../components/planner/DayPlannerHints';
@@ -88,6 +89,7 @@ export default function StopDetailScreen() {
   const [viewerKind, setViewerKind] = useState<'reference' | 'field'>('reference');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editingLocation, setEditingLocation] = useState(false);
+  const [editingDuration, setEditingDuration] = useState(false);
 
   const day = currentTripData?.days.find((d: any) => d.id === dayId);
   const stops = day?.stops || [];
@@ -178,17 +180,17 @@ export default function StopDetailScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
-        <View style={styles.timeRow}>
+        {/* Tap the time to change how long this stop takes. */}
+        <TouchableOpacity style={styles.timeRow} onPress={() => setEditingDuration(true)} accessibilityLabel="Change time at this stop">
           <Text style={styles.timeLabel}>{stop.time_label || ''}</Text>
           {stop.duration_minutes && stop.time_label ? (
             <Text style={styles.timeEndLabel}>— {addMinutesToTimeLabel(stop.time_label, stop.duration_minutes)}</Text>
           ) : null}
-        </View>
-        {stop.duration_minutes ? (
-          <View style={styles.durBadge}>
-            <Text style={styles.durText}>{minutesToHoursMin(stop.duration_minutes).toUpperCase()}</Text>
-          </View>
-        ) : null}
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.durBadge} onPress={() => setEditingDuration(true)} hitSlop={8}>
+          <Text style={styles.durText}>{stop.duration_minutes ? minutesToHoursMin(stop.duration_minutes).toUpperCase() : 'SET TIME'}</Text>
+          <Ionicons name="pencil" size={10} color={colors.textTertiary} />
+        </TouchableOpacity>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder>
@@ -451,6 +453,7 @@ export default function StopDetailScreen() {
 
         <View style={{ height: 80 }} />
       </ScrollView>
+      <StopDurationEditor visible={editingDuration} onClose={() => setEditingDuration(false)} stop={stop} dayStops={stops} />
       <StopLocationEditor
         visible={editingLocation}
         onClose={() => setEditingLocation(false)}
@@ -497,6 +500,9 @@ const styles = StyleSheet.create({
   timeLabel: { fontSize: 13, fontWeight: '500', color: colors.textSecondary },
   timeEndLabel: { fontSize: 13, color: colors.textTertiary, marginLeft: 4 },
   durBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     borderRadius: radius.sm,

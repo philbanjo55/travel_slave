@@ -269,3 +269,54 @@ export async function recalcLegsAround(stopId: string): Promise<LegChange[]> {
   }
   return out;
 }
+
+// ─────────────────────────────────────────
+// ONE STOP'S LENGTH CHANGED
+// ─────────────────────────────────────────
+
+export type TimeShift = { id: string; name: string; from: string; to: string };
+
+const SLACK_MIN = 5;
+const isFixedTime = (s: any) => !!s.time_locked || isAnchorStop(s.name) || /\bdepart\b/i.test(s.name ?? '');
+
+/**
+ * A new length for one stop and what it does to the rest of its day.
+ * Stops right behind it (no more than 5 min of slack after the drive) move
+ * with it, longer or shorter; a stop after a real gap moves only when the
+ * new end runs into it, so open afternoons and hotel times stay put. Fixed
+ * times (flights, check-in/out, departures, time-locked stops) never move:
+ * the first one the change runs into is returned as `clash`.
+ */
+export function planDurationChange(
+  stops: any[], stopId: string, minutes: number,
+): { shifts: TimeShift[]; clash: string | null } {
+  const shifts: TimeShift[] = [];
+  stops = [...stops].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  const i = stops.findIndex(s => s.id === stopId);
+  const start = i >= 0 ? parseLabel(stops[i].time_label) : null;
+  if (start == null) return { shifts, clash: null };
+  let oldEnd = start + (stops[i].duration_minutes || 0);
+  let newEnd = start + minutes;
+  for (let j = i + 1; j < stops.length && newEnd !== oldEnd; j++) {
+    const s = stops[j];
+    const was = parseLabel(s.time_label);
+    if (was == null) break;
+    const drive = s.drive_override_minutes || 0;
+    const now = was <= oldEnd + drive + SLACK_MIN ? was + (newEnd - oldEnd) : Math.max(was, newEnd + drive);
+    if (now === was) break;
+    if (isFixedTime(s)) return { shifts, clash: now > was ? s.name : null };
+    const tilde = /^~/.test(s.time_label) ? '~' : '';
+    shifts.push({ id: s.id, name: s.name, from: s.time_label, to: tilde + addMinutesToTimeLabel(s.time_label, now - was) });
+    oldEnd = was + (s.duration_minutes || 0);
+    newEnd = now + (s.duration_minutes || 0);
+  }
+  return { shifts, clash: null };
+}
+
+function parseLabel(label: string | null | undefined): number | null {
+  const m = String(label ?? '').replace(/^~\s*/, '').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!m) return null;
+  let h = Number(m[1]) % 12;
+  if (m[3].toUpperCase() === 'PM') h += 12;
+  return h * 60 + Number(m[2]);
+}
