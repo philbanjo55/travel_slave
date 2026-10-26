@@ -1,6 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// SOLVER PLANNER (v0.3, v17: arrival / departure days)
+// SOLVER PLANNER (v0.3, v18: day blocks)
 // POST {trip_id, date?, trip_date?, light?, hotel_stop_id?, multi?, days?, k?, beam?}
 //   single day (default): plan `date` (a day in the latest score build).
 //   trip_date alone: plan that trip day. Forecast scores when the build covers
@@ -13,6 +13,13 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //          light?}]`) as one trip, so a subject shot on two days counts only
 //          its better day, with 6 h between back at night and out again.
 //   earliest / latest / earliest_sunrise: day window, "HH:MM" local.
+//   block_of: a trip date (v18, Phil 26 Oct 2026, "day blocks"): plan only
+//          that trip day's own rated stops, in the best order, on trip_date
+//          (or date): which date suits the block. Routes that visit every
+//          block stop win; if none fits, the ones that visit the most.
+//          anchor_stops: [stop ids] fixed visits at their time_label on this
+//          date (ski pickup / return). gear_stops: [stop ids] that need the
+//          rental gear, only from gear_from and done by gear_to ("HH:MM").
 //   variant: 'calib' plans from the calibrated score build (side-by-side
 //          test on 🧪 Faroes Live); stored as kind calib_day / calib_multi
 //          with stats.variant, so the app and the normal backtest skip it.
@@ -229,7 +236,11 @@ Deno.serve(async (req) => {
     const scoresByDate = byDate(scoresAll), lightByDate = byDate(lightAll);
 
     // Rated stops with a starred shot: the only ones that carry value.
-    const rated = inputs.filter(r => (TIER_W[r.tier] ?? 0) > 0 && r.star_vantage_id);
+    // Block mode: only the stops of trip day block_of.
+    const blockIds = body.block_of
+      ? new Set(stopsAll.filter(s => tripDays.some(d => d.date === body.block_of && d.id === s.day_id)).map(s => s.id))
+      : null;
+    const rated = inputs.filter(r => (TIER_W[r.tier] ?? 0) > 0 && r.star_vantage_id && (!blockIds || blockIds.has(r.stop_id)));
 
     // Same-subject groups from the starred shots' aim points.
     const vIds = [...new Set(rated.map(c => c.star_vantage_id))];
@@ -287,6 +298,9 @@ Deno.serve(async (req) => {
         .map(r => ({ r, s: stopById.get(r.stop_id), min: labelMinutes(stopById.get(r.stop_id)?.time_label) }))
         .filter(a => a.s && dayIds.has(a.s.day_id) && a.min != null && a.s.lat != null)
         .map(a => ({ id: a.r.stop_id, startMs: zonedToUtc(sp.date, a.min!, tz), dur: a.s.duration_minutes ?? 15 }))
+        .concat((specs.length === 1 ? body.anchor_stops ?? [] : []).map((id: string) => stopById.get(id))
+          .filter((s: any) => s && s.lat != null && labelMinutes(s.time_label) != null)
+          .map((s: any) => ({ id: s.id, startMs: zonedToUtc(sp.date, labelMinutes(s.time_label)!, tz), dur: s.duration_minutes ?? 15 })))
         .sort((a, b) => a.startMs - b.startMs);
       const own = stopsAll.filter(s => dayIds.has(s.day_id)).sort((a, b) => a.position - b.position);
       // Arrival / departure days: a fixed-time first or last stop is where the day starts or ends.
@@ -351,6 +365,10 @@ Deno.serve(async (req) => {
       const endBy = Math.min(dayMin, day.byMs != null ? (day.byMs - dayStart) / 60000 : Infinity);
       const winHi = Math.floor(winMin / SLOT);
       const M = scores[0]?.v.length ?? 51;
+      // Rental gear: those stops only between pickup and return.
+      const gear = new Set<string>(body.gear_stops ?? []);
+      const gearLo = body.gear_from ? Math.ceil((zonedToUtc(day.date, hhmm(body.gear_from), tz!) - dayStart) / (SLOT * 60000)) : 0;
+      const gearHiMin = body.gear_to ? (zonedToUtc(day.date, hhmm(body.gear_to), tz!) - dayStart) / 60000 : Infinity;
 
       // V per node per slot, W = best V over the visit window starting there.
       const V: (Uint8Array | null)[][] = nodes.map(() => new Array(nSlots).fill(null));
@@ -417,7 +435,7 @@ Deno.serve(async (req) => {
       const root: State = { t: t0Min, loc: H0, next: 0, visited: new Uint8Array(nodes.length), m0: 0, m1: 0, groupBest: new Map(),
         total: new Float32Array(M), route: [], drive: 0, over: 0,
         j: -DRIVE_PENALTY * D[H0][H] - LONG_LEG_PENALTY * over(D[H0][H]), mean: 0, cvar: 0 };
-      const pool: State[] = [];
+      let pool: State[] = [];
       let beam: State[] = [root];
       while (beam.length) {
         const children = new Map<string, State>();
@@ -440,8 +458,10 @@ Deno.serve(async (req) => {
             const drive = D[st.loc][s], home = D[s][H];
             if (!Number.isFinite(drive) || !Number.isFinite(home)) continue;
             const len = Math.ceil(nodes[s].dur / SLOT);
-            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), nodes[s].w >= 5 ? earlyLo : winLo);
+            const isGear = gear.has(nodes[s].id);
+            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), nodes[s].w >= 5 ? earlyLo : winLo, isGear ? gearLo : 0);
             let iMax = Math.floor((winMin - home) / SLOT) - len;
+            if (isGear) iMax = Math.min(iMax, Math.floor(gearHiMin / SLOT) - len);
             if (nextA) {
               const toA = D[s][nextA.n]; if (!Number.isFinite(toA)) continue;
               iMax = Math.min(iMax, Math.floor((nextSlot * SLOT - toA) / SLOT) - len);
@@ -465,6 +485,12 @@ Deno.serve(async (req) => {
         pool.push(...beam.filter(st => st.next === anchors.length && st.t + D[st.loc][H] <= endBy));
       }
       if (!anchors.length) pool.push(root);
+      // Block mode: the routes that visit every block stop (else the most).
+      if (blockIds) {
+        const seen = (st: State) => freeNodes.filter(n => st.visited[n]).length;
+        const most = Math.max(0, ...pool.map(seen));
+        pool = pool.filter(st => seen(st) === most);
+      }
       pool.sort((a, b) => b.j - a.j);
       return { date: day.date, tripDate: day.tripDate, light: day.light, start: H0, end: H, dayStart, nSlots, routes: pool,
                anchors: anchors.length, ms: Math.round(performance.now() - td0), winLo, winHi, W, peak };
@@ -662,6 +688,7 @@ Deno.serve(async (req) => {
       days: planned.map(p => ({ date: p.date, trip_date: p.tripDate, light_only: p.light, start_hotel: nodes[p.start].name,
                                 end_hotel: nodes[p.end].name, bookings: p.anchors, routes: p.routes.length, ms: p.ms })),
       candidates: freeNodes.length, ms: Math.round(performance.now() - t0), build_dates: buildDates,
+      ...(blockIds ? { block_of: body.block_of, block_stops: freeNodes.map(n => nodes[n].name) } : {}),
       window: { earliest: body.earliest ?? EARLIEST, latest: body.latest ?? LATEST, sunrise: body.earliest_sunrise ?? SUNRISE_EARLIEST,
                 sunrise_min_p_good: SUNRISE_MIN_P, rest_hours: REST_HOURS, rest_relaxed: restRelaxed },
     };
