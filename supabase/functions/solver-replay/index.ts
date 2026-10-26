@@ -782,15 +782,23 @@ Deno.serve(async (req) => {
         const lastDay = (u: number[]) => { for (let i = remaining.length - 1; i >= 0; i--) if (okOn(u, remaining[i])) return i; return -1; };
         const durOf = (u: number[]) => nodes[u[0]].together ? u.reduce((t, x) => t + nodes[x].dur, 0) : Math.min(...u.map(x => nodes[x].dur));
         // Daylight minutes on a remaining trip day, after landing / before the flight; 70% of it for stops (drives).
-        const capOn = (i: number) => {
+        // Minutes a place could use on a remaining trip day: daylight (civil dawn
+        // to dusk), after landing / before the flight, ski places only between
+        // gear pickup and return; 45 min off for driving.
+        const winOn = (i: number, u: number[]) => {
           const td = remaining[i], rd = addDays(run.start_date, n + i);
+          if (!okOn(u, td)) return 0;
           const ids = new Set(tripDays.filter(d => d.date === td).map(d => d.id));
           const own = stopsAll.filter(x => ids.has(x.day_id)).sort((a, b) => a.position - b.position);
           let lo = civilDawn(rd, mid.lat, mid.lng, tz), hi = civilDusk(rd, mid.lat, mid.lng, tz);
           const a = own[0], z = own.length > 1 ? own[own.length - 1] : null;
           if (a?.time_locked && labelMinutes(a.time_label) != null) lo = Math.max(lo, zonedToUtc(rd, labelMinutes(a.time_label)! + (a.duration_minutes ?? 0), tz));
           if (z?.time_locked && labelMinutes(z.time_label) != null) hi = Math.min(hi, zonedToUtc(rd, labelMinutes(z.time_label)!, tz));
-          return Math.max(0, (hi - lo) / 60000) * 0.7;
+          if (u.some(x => gear.has(nodes[x].id))) {
+            if (cfg.gear?.from && td === gFrom) lo = Math.max(lo, zonedToUtc(rd, hhmm(cfg.gear.from.time), tz));
+            if (cfg.gear?.to && td === gTo) hi = Math.min(hi, zonedToUtc(rd, hhmm(cfg.gear.to.time), tz));
+          }
+          return Math.max(0, (hi - lo) / 60000 - 45);
         };
         // How good each place looks on each of the next 3 days (best moment, forecast mean).
         const looks = days.map((d, h) => planDay({ ...d, light: false }, fcSc[h], false));
@@ -800,26 +808,34 @@ Deno.serve(async (req) => {
           return b;
         };
         const val = (u: number[], h: number) => h < days.length && okOn(u, remaining[h]) ? Math.max(...u.map(x => best(x, h))) : -1;
-        // Required tomorrow: last chance, or the days after tomorrow cannot hold what is left.
-        const req: number[][] = open.filter(u => lastDay(u) === 0);
-        const rest = () => open.filter(u => !req.includes(u) && lastDay(u) >= 1);
-        for (let guard = 0; guard < open.length; guard++) {
-          const left = rest().sort((a, b) => lastDay(a) - lastDay(b));
-          let short = false, cap = 0, need = 0;
-          for (let D = 1; D < remaining.length && !short; D++) {
-            cap += capOn(D);
-            need = left.filter(u => lastDay(u) <= D).reduce((t, u) => t + durOf(u), 0);
-            if (need > cap) short = true;
+        // Long places (>= 90 min) are spread over the days left: each on a day it
+        // fits, as many as each day holds, on the forecast days where they look
+        // best (beyond the forecast: the place's average over the forecast days).
+        // Tomorrow's share of that is required tomorrow; so is any place whose
+        // last chance is tomorrow.
+        const longs = open.filter(u => durOf(u) >= 90);
+        const prior = (u: number[]) => { const vs = days.map((_, h) => val(u, h)).filter(v => v >= 0); return vs.length ? vs.reduce((t, v) => t + v, 0) / vs.length : 0.4; };
+        const score = (u: number[], i: number) => (i < days.length ? val(u, i) : prior(u)) - 0.001 * i;
+        const win = longs.map(u => remaining.map((_, i) => winOn(i, u)));
+        const gainT = longs.map(u => remaining.map((_, i) => score(u, i)));
+        const used = remaining.map(() => 0), assign: number[] = [];
+        let bestA: number[] = [], bestS = -Infinity, calls = 0;
+        const dfs = (k: number, sc: number) => {
+          if (++calls > 200000) return;
+          if (k === longs.length) { if (sc > bestS) { bestS = sc; bestA = [...assign]; } return; }
+          const u = longs[k], d = durOf(u);
+          let any = false;
+          for (let i = 0; i < remaining.length; i++) {
+            if (used[i] + d > win[k][i]) continue;
+            used[i] += d; assign.push(i); dfs(k + 1, sc + gainT[k][i]); assign.pop(); used[i] -= d; any = true;
           }
-          const pick = left.find(u => okOn(u, remaining[0]));
-          if (!short || !pick || req.reduce((t, u) => t + durOf(u), 0) + durOf(pick) > capOn(0)) break;
-          req.push(pick);
-        }
-        // Wanted tomorrow: long places (>= 90 min) whose best of the next 3 days is tomorrow.
-        const want = open.filter(u => !req.includes(u) && okOn(u, remaining[0]) && durOf(u) >= 90 && val(u, 0) > 0 && val(u, 0) >= Math.max(val(u, 1), val(u, 2)))
-          .sort((a, b) => (val(b, 0) - Math.max(val(b, 1), val(b, 2))) - (val(a, 0) - Math.max(val(a, 1), val(a, 2))));
+          if (!any) { assign.push(-1); dfs(k + 1, sc - 10); assign.pop(); }
+        };
+        dfs(0, 0);
+        const req: number[][] = open.filter(u => durOf(u) < 90 && lastDay(u) === 0);
+        const want = longs.filter((_, k) => bestA[k] === 0).sort((a, b) => durOf(b) - durOf(a));
         const mustOf = (u: number[]) => nodes[u[0]].together ? u : [u.reduce((a, b) => (best(b, 0) > best(a, 0) ? b : a))];
-        let list = [...req, ...want], p0: DayPlan, st: State | null;
+        let list = [...req, ...want], p0: DayPlan, st: State | null;  // dropped from the end when a day cannot hold them all
         for (;;) {
           p0 = planDay({ ...days[0], light: false }, fcSc[0], true, undefined, list.flatMap(mustOf), skip);
           st = p0.routes[0] ?? null;
