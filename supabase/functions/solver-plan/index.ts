@@ -1,6 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// SOLVER PLANNER (v0.3, v18: day blocks)
+// SOLVER PLANNER (v0.3, v19: improve my week)
 // POST {trip_id, date?, trip_date?, light?, hotel_stop_id?, multi?, days?, k?, beam?}
 //   single day (default): plan `date` (a day in the latest score build).
 //   trip_date alone: plan that trip day. Forecast scores when the build covers
@@ -20,6 +20,19 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //          anchor_stops: [stop ids] fixed visits at their time_label on this
 //          date (ski pickup / return). gear_stops: [stop ids] that need the
 //          rental gear, only from gear_from and done by gear_to ("HH:MM").
+//   improve: 'blocks' | 'free' with days: [every trip day] (v19, Phil 26 Oct
+//          2026, "improve my week"): start from Phil's own week and keep any
+//          change that scores better, until none does. blocks: swap whole
+//          days between dates (fixed_days stay) and reorder each day; free:
+//          also move single stops between days (not to or from fixed_days).
+//          Every day is planned with its stops only, all of them visited
+//          when they fit; a stop that
+//          does not fit costs COVER_PENALTY x its tier weight, so the search
+//          keeps everything planned. Rank 0 is Phil's week, rank 1 the
+//          improved one (stats.improve: moves, start and end score).
+//          anchors_on: [{stop_id, date}] fixed visits on a trip date.
+//          gear: {stops, from: {date, time}, to: {date, time}}: gear stops
+//          only from pickup to return, across the week.
 //   variant: 'calib' plans from the calibrated score build (side-by-side
 //          test on 🧪 Faroes Live); stored as kind calib_day / calib_multi
 //          with stats.variant, so the app and the normal backtest skip it.
@@ -67,6 +80,9 @@ const SAME_STAND_M = 1500;
 const DAY_POOL = 60;         // routes per day carried into the multi-day combine
 const MULTI_BEAM = 150;
 const GOOD = 150;            // V >= 0.6 counts as a good shot (p_good)
+// Improve my week: a stop that no longer fits its day costs half its tier
+// weight on top of the value it loses, so the search keeps everything planned.
+const COVER_PENALTY = 0.5;
 // Day window, local time: leave the hotel no earlier, be back no later
 // (made up from Phil's own days, 05:45-22:30). Booked stops override it.
 // Body: earliest / latest as "HH:MM".
@@ -301,6 +317,9 @@ Deno.serve(async (req) => {
         .concat((specs.length === 1 ? body.anchor_stops ?? [] : []).map((id: string) => stopById.get(id))
           .filter((s: any) => s && s.lat != null && labelMinutes(s.time_label) != null)
           .map((s: any) => ({ id: s.id, startMs: zonedToUtc(sp.date, labelMinutes(s.time_label)!, tz), dur: s.duration_minutes ?? 15 })))
+        .concat(((body.anchors_on ?? []) as any[]).filter(a => a.date === (sp.trip_date ?? sp.date)).map(a => stopById.get(a.stop_id))
+          .filter((s: any) => s && s.lat != null && labelMinutes(s.time_label) != null)
+          .map((s: any) => ({ id: s.id, startMs: zonedToUtc(sp.date, labelMinutes(s.time_label)!, tz), dur: s.duration_minutes ?? 15 })))
         .sort((a, b) => a.startMs - b.startMs);
       const own = stopsAll.filter(s => dayIds.has(s.day_id)).sort((a, b) => a.position - b.position);
       // Arrival / departure days: a fixed-time first or last stop is where the day starts or ends.
@@ -341,8 +360,10 @@ Deno.serve(async (req) => {
     const gain = (g: number, w: number, prev: number | undefined) => Math.max(0, w - Math.max(prev ?? 0, groupBase.get(g) ?? 0));
 
     // One day: beam over partial routes from the morning hotel to the night's.
-    const planDay = (day: typeof days[number]): DayPlan => {
+    // only: plan just these stops (blocks, improve my week), visiting all that fit.
+    const planDay = (day: typeof days[number], only?: number[]): DayPlan => {
       const td0 = performance.now();
+      const cand = only ?? freeNodes;
       const H0 = pos.get(day.startId!)!, H = pos.get(day.endId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
       const scores = (day.light ? lightByDate : scoresByDate).get(day.date) ?? [];
@@ -366,9 +387,15 @@ Deno.serve(async (req) => {
       const winHi = Math.floor(winMin / SLOT);
       const M = scores[0]?.v.length ?? 51;
       // Rental gear: those stops only between pickup and return.
-      const gear = new Set<string>(body.gear_stops ?? []);
-      const gearLo = body.gear_from ? Math.ceil((zonedToUtc(day.date, hhmm(body.gear_from), tz!) - dayStart) / (SLOT * 60000)) : 0;
-      const gearHiMin = body.gear_to ? (zonedToUtc(day.date, hhmm(body.gear_to), tz!) - dayStart) / 60000 : Infinity;
+      // gear: one window over the week; gear_from / gear_to: this date only.
+      const gear = new Set<string>(body.gear?.stops ?? body.gear_stops ?? []);
+      const gearDate = day.tripDate ?? day.date;
+      const gFrom = body.gear?.from ?? (body.gear_from ? { date: gearDate, time: body.gear_from } : null);
+      const gTo = body.gear?.to ?? (body.gear_to ? { date: gearDate, time: body.gear_to } : null);
+      const gearLo = !gFrom ? 0 : gearDate < gFrom.date ? Infinity : gearDate > gFrom.date ? 0
+        : Math.ceil((zonedToUtc(day.date, hhmm(gFrom.time), tz!) - dayStart) / (SLOT * 60000));
+      const gearHiMin = !gTo ? Infinity : gearDate > gTo.date ? -Infinity : gearDate < gTo.date ? Infinity
+        : (zonedToUtc(day.date, hhmm(gTo.time), tz!) - dayStart) / 60000;
 
       // V per node per slot, W = best V over the visit window starting there.
       const V: (Uint8Array | null)[][] = nodes.map(() => new Array(nSlots).fill(null));
@@ -453,7 +480,7 @@ Deno.serve(async (req) => {
             if (Number.isFinite(drive) && st.t + drive <= nextSlot * SLOT) keep(extend(st, nextA.n, nextSlot, drive, true));
           }
           // A free stop, if it still leaves time for the next booking (or the night's hotel).
-          for (const s of freeNodes) {
+          for (const s of cand) {
             if (st.visited[s]) continue;
             const drive = D[st.loc][s], home = D[s][H];
             if (!Number.isFinite(drive) || !Number.isFinite(home)) continue;
@@ -486,8 +513,8 @@ Deno.serve(async (req) => {
       }
       if (!anchors.length) pool.push(root);
       // Block mode: the routes that visit every block stop (else the most).
-      if (blockIds) {
-        const seen = (st: State) => freeNodes.filter(n => st.visited[n]).length;
+      if (blockIds || only) {
+        const seen = (st: State) => cand.filter(n => st.visited[n]).length;
         const most = Math.max(0, ...pool.map(seen));
         pool = pool.filter(st => seen(st) === most);
       }
@@ -496,9 +523,87 @@ Deno.serve(async (req) => {
                anchors: anchors.length, ms: Math.round(performance.now() - td0), winLo, winHi, W, peak };
     };
 
-    const planned = days.map(planDay);
-    const missing = planned.filter(p => !p.routes.length);
-    if (missing.length) return json({ ok: false, error: 'bookings cannot all be reached', days: missing.map(p => p.date) }, 422);
+    // Members per slot (forecast builds and light scores both carry 51).
+    const M = (scoresAll[0] ?? lightAll[0])?.v.length ?? 51;
+    // A subject counts once, at its best day per member, over what is already shot.
+    const totalOf = (groups: Map<number, Uint8Array>) => {
+      const t = new Float32Array(M);
+      for (const [g, w] of groups) { const wt = groupW.get(g) ?? 0; for (let k = 0; k < M; k++) t[k] += wt * gain(g, w[k], undefined) / 250; }
+      return t;
+    };
+    const mergeInto = (groups: Map<number, Uint8Array>, add: Map<number, Uint8Array>) => {
+      for (const [g, w] of add) {
+        const prev = groups.get(g);
+        if (!prev) groups.set(g, w);
+        else { const nb = Uint8Array.from(prev); for (let k = 0; k < M; k++) if (w[k] > nb[k]) nb[k] = w[k]; groups.set(g, nb); }
+      }
+    };
+
+    let planned: DayPlan[];
+    let improve: any = null;
+    if (body.improve) {
+      // Improve my week: start from Phil's days, keep any change that scores better.
+      const mode = body.improve === 'blocks' ? 'blocks' : 'free';
+      const keyOf = (d: typeof days[number]) => d.tripDate ?? d.date;
+      const fixed = new Set<string>(body.fixed_days ?? []);
+      let sets: number[][] = days.map(d => d.own.map(s => pos.get(s.id)).filter((n): n is number => n != null && nodes[n].free));
+      const cache = new Map<string, DayPlan>();
+      const evalDay = (i: number, set: number[]) => {
+        const k = i + '|' + [...set].sort((a, b) => a - b).join(',');
+        let p = cache.get(k);
+        if (!p) { p = planDay(days[i], set); cache.set(k, p); }
+        return p;
+      };
+      const weekScore = (ss: number[][]) => {
+        const groups = new Map<number, Uint8Array>();
+        let drive = 0, o = 0, lost = 0;
+        ss.forEach((set, i) => {
+          const p = evalDay(i, set), st = p.routes[0];
+          if (!st) { for (const n of set) lost += nodes[n].w; return; }
+          mergeInto(groups, st.groupBest);
+          drive += st.drive + D[st.loc][p.end]; o += st.over + over(D[st.loc][p.end]);
+          for (const n of set) if (!st.visited[n]) lost += nodes[n].w;
+        });
+        return metric(totalOf(groups)).j - DRIVE_PENALTY * drive - LONG_LEG_PENALTY * o - COVER_PENALTY * lost;
+      };
+      const tS = performance.now(), budget = Math.min(Number(body.budget_ms ?? 1200), 1500);
+      const startScore = weekScore(sets);
+      let best = startScore;
+      const moves: string[] = [];
+      const name = (n: number) => nodes[n].name;
+      const tryIt = (ss: number[][], what: string) => {
+        const v = weekScore(ss);
+        if (v > best + 1e-6) { sets = ss; best = v; moves.push(what); return true; }
+        return false;
+      };
+      let improved = true;
+      search: while (improved) {
+        improved = false;
+        // Swap two days (their whole stop lists).
+        for (let a = 0; a < days.length; a++) for (let b = a + 1; b < days.length; b++) {
+          if (performance.now() - tS > budget) break search;
+          if (fixed.has(keyOf(days[a])) || fixed.has(keyOf(days[b]))) continue;
+          const ss = sets.slice(); [ss[a], ss[b]] = [ss[b], ss[a]];
+          if (tryIt(ss, `swap ${keyOf(days[a])} and ${keyOf(days[b])}`)) { improved = true; continue search; }
+        }
+        if (mode === 'blocks') break;
+        // Move one stop to another day (fixed days keep their stops).
+        for (let a = 0; a < days.length; a++) for (const n of sets[a]) for (let b = 0; b < days.length; b++) {
+          if (a === b || fixed.has(keyOf(days[a])) || fixed.has(keyOf(days[b]))) continue;
+          if (performance.now() - tS > budget) break search;
+          const ss = sets.map(x => x.slice()); ss[a] = ss[a].filter(x => x !== n); ss[b].push(n);
+          if (tryIt(ss, `move ${name(n)} from ${keyOf(days[a])} to ${keyOf(days[b])}`)) { improved = true; continue search; }
+        }
+      }
+      planned = sets.map((set, i) => evalDay(i, set));
+      const unplanned = sets.flatMap((set, i) => set.filter(n => !planned[i].routes[0]?.visited[n]).map(n => ({ name: name(n), trip_date: keyOf(days[i]) })));
+      improve = { mode, start: r2(startScore), end: r2(best), moves, unplanned, day_plans: cache.size,
+                  ms: Math.round(performance.now() - tS), finished: performance.now() - tS <= budget };
+    } else {
+      planned = days.map(d => planDay(d));
+      const missing = planned.filter(p => !p.routes.length);
+      if (missing.length) return json({ ok: false, error: 'bookings cannot all be reached', days: missing.map(p => p.date) }, 422);
+    }
 
     const iso = (p: DayPlan, min: number) => new Date(p.dayStart + min * 60000).toISOString();
     // Chance for a visit starting at a slot: mean V and share of members
@@ -526,20 +631,6 @@ Deno.serve(async (req) => {
       for (const x of b) if (!a.has(x)) uni += keyW(x);
       return uni ? 1 - inter / uni : 0;
     };
-    const M = planned[0].routes[0].total.length;
-    // A subject counts once, at its best day per member, over what is already shot.
-    const totalOf = (groups: Map<number, Uint8Array>) => {
-      const t = new Float32Array(M);
-      for (const [g, w] of groups) { const wt = groupW.get(g) ?? 0; for (let k = 0; k < M; k++) t[k] += wt * gain(g, w[k], undefined) / 250; }
-      return t;
-    };
-    const mergeInto = (groups: Map<number, Uint8Array>, add: Map<number, Uint8Array>) => {
-      for (const [g, w] of add) {
-        const prev = groups.get(g);
-        if (!prev) groups.set(g, w);
-        else { const nb = Uint8Array.from(prev); for (let k = 0; k < M; k++) if (w[k] > nb[k]) nb[k] = w[k]; groups.set(g, nb); }
-      }
-    };
 
     type Combo = { picks: State[]; groups: Map<number, Uint8Array>; total: Float32Array; drive: number; over: number; j: number;
                    mean: number; cvar: number; back: number | null; date: string | null };
@@ -549,7 +640,18 @@ Deno.serve(async (req) => {
     const backMs = (p: DayPlan, st: State) => st.route.length ? p.dayStart + (st.t + homeLeg(st, p)) * 60000 : null;
     const restRelaxed: string[] = [];
     let combos: Combo[];
-    if (planned.length === 1) {
+    if (improve) {
+      // The improved week as one plan.
+      if (planned.some(p => !p.routes[0])) return json({ ok: false, error: 'a day cannot be planned', improve }, 422);
+      const picks = planned.map(p => p.routes[0]);
+      const groups = new Map<number, Uint8Array>();
+      for (const st of picks) mergeInto(groups, st.groupBest);
+      const total = totalOf(groups), m = metric(total);
+      const drive = planned.reduce((t, p) => t + (p.routes[0] ? p.routes[0].drive + homeLeg(p.routes[0], p) : 0), 0);
+      const o = planned.reduce((t, p) => t + (p.routes[0] ? p.routes[0].over + over(homeLeg(p.routes[0], p)) : 0), 0);
+      combos = [{ picks, groups, total, drive, over: o, mean: m.mean, cvar: m.cvar,
+                  j: m.j - DRIVE_PENALTY * drive - LONG_LEG_PENALTY * o, back: null, date: null }];
+    } else if (planned.length === 1) {
       combos = planned[0].routes.map(st => ({ picks: [st], groups: st.groupBest, total: st.total, drive: st.drive, over: st.over, j: st.j,
                                               mean: st.mean, cvar: st.cvar, back: null, date: null }));
     } else {
@@ -689,6 +791,7 @@ Deno.serve(async (req) => {
                                 end_hotel: nodes[p.end].name, bookings: p.anchors, routes: p.routes.length, ms: p.ms })),
       candidates: freeNodes.length, ms: Math.round(performance.now() - t0), build_dates: buildDates,
       ...(blockIds ? { block_of: body.block_of, block_stops: freeNodes.map(n => nodes[n].name) } : {}),
+      ...(improve ? { improve } : {}),
       window: { earliest: body.earliest ?? EARLIEST, latest: body.latest ?? LATEST, sunrise: body.earliest_sunrise ?? SUNRISE_EARLIEST,
                 sunrise_min_p_good: SUNRISE_MIN_P, rest_hours: REST_HOURS, rest_relaxed: restRelaxed },
     };
