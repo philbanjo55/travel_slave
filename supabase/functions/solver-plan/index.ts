@@ -1,6 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// SOLVER PLANNER (v0.3, v16: variant)
+// SOLVER PLANNER (v0.3, v17: arrival / departure days)
 // POST {trip_id, date?, trip_date?, light?, hotel_stop_id?, multi?, days?, k?, beam?}
 //   single day (default): plan `date` (a day in the latest score build).
 //   trip_date alone: plan that trip day. Forecast scores when the build covers
@@ -29,7 +29,10 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // day and across days. Shot status: a 'got' subject is worth only the
 // improvement over its shot_value; a 'nailed' one is not planned and is worth
 // nothing more. A day starts at the previous night's accommodation and ends
-// at that night's, so move days run hotel to hotel. Booked stops are fixed
+// at that night's, so move days run hotel to hotel. A day whose first own
+// stop has a fixed time (stops.time_locked: landing at JAC) starts there, no
+// earlier than that stop ends; a day whose last own stop has one (the flight
+// home) ends there by its time. Booked stops are fixed
 // visits at their time_label; free stops must still reach the next booking in
 // time. Each day is a beam over partial routes from the hotel; multi-day
 // combines the top routes of each day with a second beam.
@@ -213,7 +216,7 @@ Deno.serve(async (req) => {
                 (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * (r.fog_wanted ? 0.6 : 1))))),
             })))
         : Promise.resolve([] as any[]),
-      all<any>((a, b) => db.from('stops').select('id, name, lat, lng, time_label, duration_minutes, drive_override_minutes, day_id, position').eq('trip_id', tripId).range(a, b)),
+      all<any>((a, b) => db.from('stops').select('id, name, lat, lng, time_label, duration_minutes, drive_override_minutes, day_id, position, time_locked').eq('trip_id', tripId).range(a, b)),
       db.from('accommodations').select('name, lat, lng, check_in, check_out, nights').eq('trip_id', tripId).then(r => r.data ?? []),
       db.from('days').select('id, date').eq('trip_id', tripId).then(r => r.data ?? []),
     ]);
@@ -286,7 +289,14 @@ Deno.serve(async (req) => {
         .map(a => ({ id: a.r.stop_id, startMs: zonedToUtc(sp.date, a.min!, tz), dur: a.s.duration_minutes ?? 15 }))
         .sort((a, b) => a.startMs - b.startMs);
       const own = stopsAll.filter(s => dayIds.has(s.day_id)).sort((a, b) => a.position - b.position);
-      return { date: sp.date, light: sp.light, tripDate, startId: override ?? h.start, endId: override ?? h.end, anchors, own };
+      // Arrival / departure days: a fixed-time first or last stop is where the day starts or ends.
+      const edge = (s: any) => s && s.time_locked && s.lat != null && labelMinutes(s.time_label) != null ? s : null;
+      const arrive = edge(own[0]), leave = own.length > 1 ? edge(own[own.length - 1]) : null;
+      const notBeforeMs = arrive ? zonedToUtc(sp.date, labelMinutes(arrive.time_label)! + (arrive.duration_minutes ?? 0), tz) : null;
+      const byMs = leave ? zonedToUtc(sp.date, labelMinutes(leave.time_label)!, tz) : null;
+      return { date: sp.date, light: sp.light, tripDate, own, notBeforeMs, byMs,
+               anchors: anchors.filter(a => a.id !== arrive?.id && a.id !== leave?.id),
+               startId: override ?? arrive?.id ?? h.start, endId: override ?? leave?.id ?? h.end };
     });
     if (days.some(d => !d.startId || !d.endId)) return json({ ok: false, error: 'no hotel: pass hotel_stop_id' }, 400);
     const noScores = days.filter(d => !(d.light ? lightByDate : scoresByDate).get(d.date)?.length).map(d => d.date);
@@ -336,7 +346,9 @@ Deno.serve(async (req) => {
       // Free stops stay inside the window even when a booking stretches the day.
       const winLo = Math.max(0, Math.ceil((winStart - dayStart) / (SLOT * 60000)));
       const earlyLo = Math.max(0, Math.ceil((earlyStart - dayStart) / (SLOT * 60000)));
-      const winMin = Math.min(dayMin, (winEnd - dayStart) / 60000);
+      // A flight home: be back at the airport by its time.
+      const winMin = Math.min(dayMin, (winEnd - dayStart) / 60000, day.byMs != null ? (day.byMs - dayStart) / 60000 : Infinity);
+      const endBy = Math.min(dayMin, day.byMs != null ? (day.byMs - dayStart) / 60000 : Infinity);
       const winHi = Math.floor(winMin / SLOT);
       const M = scores[0]?.v.length ?? 51;
 
@@ -400,7 +412,9 @@ Deno.serve(async (req) => {
         };
       };
 
-      const root: State = { t: 0, loc: H0, next: 0, visited: new Uint8Array(nodes.length), m0: 0, m1: 0, groupBest: new Map(),
+      // Landing: nothing before the arrival stop ends.
+      const t0Min = day.notBeforeMs != null ? Math.max(0, (day.notBeforeMs - dayStart) / 60000) : 0;
+      const root: State = { t: t0Min, loc: H0, next: 0, visited: new Uint8Array(nodes.length), m0: 0, m1: 0, groupBest: new Map(),
         total: new Float32Array(M), route: [], drive: 0, over: 0,
         j: -DRIVE_PENALTY * D[H0][H] - LONG_LEG_PENALTY * over(D[H0][H]), mean: 0, cvar: 0 };
       const pool: State[] = [];
@@ -448,7 +462,7 @@ Deno.serve(async (req) => {
         }
         beam = [...children.values()].sort((a, b) => b.j - a.j).slice(0, BEAM);
         // Only routes that made every booking are plans.
-        pool.push(...beam.filter(st => st.next === anchors.length && st.t + D[st.loc][H] <= dayMin));
+        pool.push(...beam.filter(st => st.next === anchors.length && st.t + D[st.loc][H] <= endBy));
       }
       if (!anchors.length) pool.push(root);
       pool.sort((a, b) => b.j - a.j);
