@@ -34,3 +34,7 @@ end $$;
 -- select solver_fit_calibration_months('KJAC', 'history_octnov', array[10, 11]);
 -- select solver_fit_calibration_months('KJAC', 'history_winter', array[12, 1]);
 -- select solver_fit_live_all();
+
+-- Ran 25 Oct 2026 ~10:15 PM EDT (each call a few seconds). KJAC low cloud
+-- after the refit (history_winter, lead 0): ECMWF low cloud <10% -> peaks
+-- hidden 32% of hours (was 9%), 10-30% -> 80% (was 29%), 30-50% -> 88%.
