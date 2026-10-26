@@ -1,6 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// SOLVER PLANNER (v0.3, v19: improve my week)
+// SOLVER PLANNER (v0.3, v20: improve my week, done by dark, keep together)
 // POST {trip_id, date?, trip_date?, light?, hotel_stop_id?, multi?, days?, k?, beam?}
 //   single day (default): plan `date` (a day in the latest score build).
 //   trip_date alone: plan that trip day. Forecast scores when the build covers
@@ -33,6 +33,11 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //          anchors_on: [{stop_id, date}] fixed visits on a trip date.
 //          gear: {stops, from: {date, time}, to: {date, time}}: gear stops
 //          only from pickup to return, across the week.
+//   Rules for every plan (v20, Phil 26 Oct 2026): done by dark, every free
+//          stop ends by civil dusk (sun 6 deg below the horizon) at the trip's
+//          middle; keep together, stops with the same
+//          solver_stop_settings.together key are planned on one day, all of
+//          them or none, and improve my week moves them as one.
 //   variant: 'calib' plans from the calibrated score build (side-by-side
 //          test on 🧪 Faroes Live); stored as kind calib_day / calib_multi
 //          with stats.variant, so the app and the normal backtest skip it.
@@ -99,7 +104,7 @@ const REST_HOURS = 6;
 // as SQL solver_light_scores; solver_light_terms gives dir/soft per slot.
 const SCENARIOS = Array.from({ length: 51 }, (_, k) => (k / 50) ** 2);
 
-type PlanNode = { id: string; name: string; w: number; dur: number; group: number; free: boolean };
+type PlanNode = { id: string; name: string; w: number; dur: number; group: number; free: boolean; together: string | null };
 type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
 type State = {
   t: number; loc: number; next: number; visited: Uint8Array; m0: number; m1: number; groupBest: Map<number, Uint8Array>;
@@ -128,6 +133,22 @@ function metersApart(a: { lat: number; lng: number }, b: { lat: number; lng: num
   const dLat = (b.lat - a.lat) * Math.PI / 180, dLng = (b.lng - a.lng) * Math.PI / 180;
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
   return 12742000 * Math.asin(Math.sqrt(h));
+}
+
+// Sun height in degrees (NOAA low-precision formulas, about a minute off).
+function sunAlt(lat: number, lng: number, ms: number) {
+  const rad = Math.PI / 180, d = ms / 86400000 - 10957.5;
+  const g = (357.529 + 0.98560028 * d) * rad, q = 280.459 + 0.98564736 * d;
+  const L = (q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad, e = (23.439 - 0.00000036 * d) * rad;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)), dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const ha = ((18.697374558 + 24.06570982441908 * d) * 15 + lng) * rad - ra;
+  return Math.asin(Math.sin(lat * rad) * Math.sin(dec) + Math.cos(lat * rad) * Math.cos(dec) * Math.cos(ha)) / rad;
+}
+// Civil dusk after local noon on a date (UTC ms): when it is too dark to be out shooting.
+function civilDusk(date: string, lat: number, lng: number, tz: string) {
+  let t = zonedToUtc(date, 12 * 60, tz);
+  for (let i = 0; i < 144 && sunAlt(lat, lng, t) >= -6; i++) t += 5 * 60000;
+  return t;
 }
 
 async function all<T>(q: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>): Promise<T[]> {
@@ -279,6 +300,12 @@ Deno.serve(async (req) => {
     }
     const groupW = new Map<number, number>();
     rated.forEach((r, i) => groupW.set(find(i), Math.max(groupW.get(find(i)) ?? 0, TIER_W[r.tier])));
+    // Keep together (stops that go on one day) and the trip's middle (done by dark).
+    const { data: tg } = await db.from('solver_stop_settings').select('stop_id, together')
+      .in('stop_id', rated.map(r => r.stop_id)).not('together', 'is', null);
+    const togetherOf = new Map((tg ?? []).map(r => [r.stop_id, r.together as string]));
+    const placed = stopsAll.filter(s => s.lat != null && rated.some(r => r.stop_id === s.id));
+    const mid = { lat: placed.reduce((t, s) => t + s.lat, 0) / (placed.length || 1), lng: placed.reduce((t, s) => t + s.lng, 0) / (placed.length || 1) };
     // What a subject already has (x250): nailed = everything, got = shot_value.
     const groupBase = new Map<number, number>();
     rated.forEach((r, i) => {
@@ -351,7 +378,7 @@ Deno.serve(async (req) => {
         id, name: s?.name ?? id, w: r ? TIER_W[r.tier] : 0,
         dur: Math.max(r?.duration_minutes ?? s?.duration_minutes ?? 60, SLOT),
         group: ri != null ? find(ri) : -1 - (pos.get(id) ?? 0),
-        free: !!r && !r.time_locked && r.shot_status !== 'nailed',
+        free: !!r && !r.time_locked && r.shot_status !== 'nailed', together: togetherOf.get(id) ?? null,
       };
     });
     const freeNodes = nodes.map((n, i) => (n.free ? i : -1)).filter(i => i >= 0);
@@ -396,6 +423,8 @@ Deno.serve(async (req) => {
         : Math.ceil((zonedToUtc(day.date, hhmm(gFrom.time), tz!) - dayStart) / (SLOT * 60000));
       const gearHiMin = !gTo ? Infinity : gearDate > gTo.date ? -Infinity : gearDate < gTo.date ? Infinity
         : (zonedToUtc(day.date, hhmm(gTo.time), tz!) - dayStart) / 60000;
+      // Done by dark: free stops end by civil dusk.
+      const darkMin = placed.length ? (civilDusk(day.date, mid.lat, mid.lng, tz!) - dayStart) / 60000 : Infinity;
 
       // V per node per slot, W = best V over the visit window starting there.
       const V: (Uint8Array | null)[][] = nodes.map(() => new Array(nSlots).fill(null));
@@ -487,7 +516,7 @@ Deno.serve(async (req) => {
             const len = Math.ceil(nodes[s].dur / SLOT);
             const isGear = gear.has(nodes[s].id);
             const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), nodes[s].w >= 5 ? earlyLo : winLo, isGear ? gearLo : 0);
-            let iMax = Math.floor((winMin - home) / SLOT) - len;
+            let iMax = Math.min(Math.floor((winMin - home) / SLOT), Math.floor(darkMin / SLOT)) - len;
             if (isGear) iMax = Math.min(iMax, Math.floor(gearHiMin / SLOT) - len);
             if (nextA) {
               const toA = D[s][nextA.n]; if (!Number.isFinite(toA)) continue;
@@ -512,6 +541,11 @@ Deno.serve(async (req) => {
         pool.push(...beam.filter(st => st.next === anchors.length && st.t + D[st.loc][H] <= endBy));
       }
       if (!anchors.length) pool.push(root);
+      // Keep together: all of a group or none of it.
+      const groups = new Map<string, number[]>();
+      for (const n of cand) { const k = nodes[n].together; if (k) groups.set(k, [...(groups.get(k) ?? []), n]); }
+      const split = [...groups.values()].filter(g => g.length > 1);
+      if (split.length) pool = pool.filter(st => split.every(g => g.every(n => st.visited[n]) || g.every(n => !st.visited[n])));
       // Block mode: the routes that visit every block stop (else the most).
       if (blockIds || only) {
         const seen = (st: State) => cand.filter(n => st.visited[n]).length;
@@ -587,11 +621,13 @@ Deno.serve(async (req) => {
           if (tryIt(ss, `swap ${keyOf(days[a])} and ${keyOf(days[b])}`)) { improved = true; continue search; }
         }
         if (mode === 'blocks') break;
-        // Move one stop to another day (fixed days keep their stops).
+        // Move one stop (or its keep-together group) to another day; fixed days keep their stops.
         for (let a = 0; a < days.length; a++) for (const n of sets[a]) for (let b = 0; b < days.length; b++) {
           if (a === b || fixed.has(keyOf(days[a])) || fixed.has(keyOf(days[b]))) continue;
+          const k = nodes[n].together, unit = k ? sets[a].filter(x => nodes[x].together === k) : [n];
+          if (unit[0] !== n) continue;
           if (performance.now() - tS > budget) break search;
-          const ss = sets.map(x => x.slice()); ss[a] = ss[a].filter(x => x !== n); ss[b].push(n);
+          const ss = sets.map(x => x.slice()); ss[a] = ss[a].filter(x => !unit.includes(x)); ss[b].push(...unit);
           if (tryIt(ss, `move ${name(n)} from ${keyOf(days[a])} to ${keyOf(days[b])}`)) { improved = true; continue search; }
         }
       }

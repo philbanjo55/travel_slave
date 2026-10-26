@@ -22,6 +22,16 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //   fc3 = forecast, 3 days ahead     fc1 = forecast, tomorrow only
 //   lt3 = light only, 3 days ahead   hs3 = the truth, 3 days ahead (ceiling)
 //   my  = the trip day's own stops at their time_labels
+//   blk = improve my week, day blocks: the trip's remaining days with Phil's
+//         stops on them, whole days swapped between dates and each day put in
+//         order (solver-plan v20 improve 'blocks'); forecast 1-3 days ahead,
+//         light only beyond; tomorrow is done, the rest carry to the next night
+//   imp = improve my week, free: also single stops (or keep-together groups)
+//         moved between days (solver-plan improve 'free')
+// Run config (26 Oct 2026, the four-way test): fixed_days, anchors_on, gear as
+// in solver-plan; budget_ms for the week search. Every plan obeys done by dark
+// and keep together (solver-plan v20); 'my' is Phil's schedule as written.
+// Each visit stores truth (V at that time against what happened).
 // One request per plan and night (the edge CPU limit is 2 s); each plan's
 // night and what it has shot live in replay_run_state. replay_run_tick moves
 // the run to the next night once all five are done.
@@ -44,6 +54,8 @@ const SAME_STAND_M = 1500;
 const DAY_POOL = 60;         // routes per day carried into the multi-day combine
 const MULTI_BEAM = 150;
 const GOOD = 150;            // V >= 0.6 counts as a good shot (p_good)
+// Week plans: a stop that no longer fits its day costs half its tier weight.
+const COVER_PENALTY = 0.5;
 // Day window, local time: leave the hotel no earlier, be back no later
 // (made up from Phil's own days, 05:45-22:30). Booked stops override it.
 // Body: earliest / latest as "HH:MM".
@@ -60,7 +72,7 @@ const REST_HOURS = 6;
 // as SQL solver_light_scores; solver_light_terms gives dir/soft per slot.
 const SCENARIOS = Array.from({ length: 51 }, (_, k) => (k / 50) ** 2);
 
-type PlanNode = { id: string; name: string; w: number; dur: number; group: number; free: boolean };
+type PlanNode = { id: string; name: string; w: number; dur: number; group: number; free: boolean; together: string | null };
 type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
 type State = {
   t: number; loc: number; next: number; visited: Uint8Array; m0: number; m1: number; groupBest: Map<number, Uint8Array>;
@@ -89,6 +101,22 @@ function metersApart(a: { lat: number; lng: number }, b: { lat: number; lng: num
   const dLat = (b.lat - a.lat) * Math.PI / 180, dLng = (b.lng - a.lng) * Math.PI / 180;
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
   return 12742000 * Math.asin(Math.sqrt(h));
+}
+
+// Sun height in degrees (NOAA low-precision formulas, about a minute off).
+function sunAlt(lat: number, lng: number, ms: number) {
+  const rad = Math.PI / 180, d = ms / 86400000 - 10957.5;
+  const g = (357.529 + 0.98560028 * d) * rad, q = 280.459 + 0.98564736 * d;
+  const L = (q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad, e = (23.439 - 0.00000036 * d) * rad;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)), dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const ha = ((18.697374558 + 24.06570982441908 * d) * 15 + lng) * rad - ra;
+  return Math.asin(Math.sin(lat * rad) * Math.sin(dec) + Math.cos(lat * rad) * Math.cos(dec) * Math.cos(ha)) / rad;
+}
+// Civil dusk after local noon on a date (UTC ms): when it is too dark to be out shooting.
+function civilDusk(date: string, lat: number, lng: number, tz: string) {
+  let t = zonedToUtc(date, 12 * 60, tz);
+  for (let i = 0; i < 144 && sunAlt(lat, lng, t) >= -6; i++) t += 5 * 60000;
+  return t;
 }
 
 async function all<T>(q: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>): Promise<T[]> {
@@ -139,17 +167,18 @@ Deno.serve(async (req) => {
     kindOf = body.kind ?? null;
     // What to plan: one replay day, or the next nights of a whole-trip run.
     let run: any = null, tripId: string;
+    const week = kindOf === 'blk' || kindOf === 'imp';
     let horizon: { i: number; date: string; trip_date: string; dayId: number; lead: number }[];
     if (runId != null) {
       run = (await db.from('replay_runs').select('*').eq('id', runId).single()).data;
       if (!run) return json({ ok: false, error: 'replay run not found' }, 404);
       tripId = run.trip_id;
       const n: number = run.night;
-      const want = Array.from({ length: Math.min(3, run.nights - n) }, (_, h) => n + h)
+      const want = Array.from({ length: Math.min(week ? Infinity : 3, run.nights - n) }, (_, h) => n + h)
         .map(i => ({ i, date: addDays(run.start_date, i), trip_date: run.trip_dates[i], lead: i - n + 1 }));
       const { data: rds } = await db.from('replay_days').select('id, replay_date').eq('trip_id', tripId).in('replay_date', want.map(w => w.date));
       horizon = want.map(w => ({ ...w, dayId: (rds ?? []).find(r => r.replay_date === w.date)?.id }));
-      if (horizon.some(h => h.dayId == null)) return json({ ok: false, error: 'replay day missing' }, 404);
+      if (horizon.some(h => h.dayId == null && h.lead <= 3)) return json({ ok: false, error: 'replay day missing' }, 404);
     } else {
       const { data: rd, error: rdErr } = await db.from('replay_days').select('id, trip_id, replay_date, trip_date').eq('id', dayId).single();
       if (rdErr || !rd) return json({ ok: false, error: 'replay day not found' }, 404);
@@ -178,8 +207,8 @@ Deno.serve(async (req) => {
 
     // A run's plan loads only what it plans on (and the truth of the day it does).
     const k0 = runId != null ? kindOf : null;
-    const nFc = k0 == null ? horizon.length : k0 === 'fc3' ? horizon.length : k0 === 'fc1' ? 1 : 0;
-    const nLt = k0 == null || k0 === 'lt3' ? horizon.length : 0;
+    const nFc = k0 == null ? horizon.length : k0 === 'fc3' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(3, horizon.length) : 0;
+    const needLt = (h: number) => k0 == null || k0 === 'lt3' || (week && h >= nFc);
     const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
     if (fcB.slice(0, nFc).some(b => !b) || trB.slice(0, nTr).some(b => !b)) return json({ ok: false, error: 'replay builds missing' }, 404);
 
@@ -204,12 +233,19 @@ Deno.serve(async (req) => {
         .select('stop_id, name, tier, star_vantage_id, duration_minutes, time_locked, day_id, shot_status, shot_value')
         .eq('trip_id', tripId).range(a, b)),
       Promise.all(fcB.slice(0, nFc).map(b => scoresOf(b!.id))), Promise.all(trB.slice(0, nTr).map(b => scoresOf(b!.id))),
-      Promise.all(horizon.slice(0, nLt).map(h => lightOf(h.date))),
+      Promise.all(horizon.map((h, i) => needLt(i) ? lightOf(h.date) : Promise.resolve([] as any[]))),
       all<any>((a, b) => db.from('stops').select('id, name, lat, lng, time_label, duration_minutes, drive_override_minutes, day_id, position, time_locked').eq('trip_id', tripId).range(a, b)),
       db.from('accommodations').select('name, lat, lng, check_in, check_out, nights').eq('trip_id', tripId).then(r => r.data ?? []),
       db.from('days').select('id, date').eq('trip_id', tripId).then(r => r.data ?? []),
     ]);
     if (fcSc.some(x => !x.length) || trSc.some(x => !x.length)) return json({ ok: false, error: 'empty replay builds' }, 404);
+    if (week && ltSc.some((x, i) => needLt(i) && !x.length)) return json({ ok: false, error: 'no light geometry for a later day' }, 404);
+    // A week mixes forecast days (one member per model) with light-only days
+    // (51 scenarios): each model stands for an equal share of the 51.
+    if (week) for (const day of fcSc) for (const r of day) {
+      const m = r.v.length; if (m === 51) continue;
+      r.v = Array.from({ length: 51 }, (_, k) => r.v[Math.floor(k * m / 51)]);
+    }
     // Shot status is about the real trip; a replay starts from nothing shot.
     for (const r of inputs) { r.shot_status = null; r.shot_value = null; }
     const specs = horizon.map(h => ({ date: h.date, trip_date: h.trip_date, light: false }));
@@ -241,6 +277,12 @@ Deno.serve(async (req) => {
     }
     const groupW = new Map<number, number>();
     rated.forEach((r, i) => groupW.set(find(i), Math.max(groupW.get(find(i)) ?? 0, TIER_W[r.tier])));
+    // Keep together (stops that go on one day) and the trip's middle (done by dark).
+    const { data: tg } = await db.from('solver_stop_settings').select('stop_id, together')
+      .in('stop_id', rated.map(r => r.stop_id)).not('together', 'is', null);
+    const togetherOf = new Map((tg ?? []).map(r => [r.stop_id, r.together as string]));
+    const placed = stopsAll.filter(s => s.lat != null && rated.some(r => r.stop_id === s.id));
+    const mid = { lat: placed.reduce((t, s) => t + s.lat, 0) / (placed.length || 1), lng: placed.reduce((t, s) => t + s.lng, 0) / (placed.length || 1) };
     // What a subject already has (x250): nailed = everything, got = shot_value.
     let groupBase = new Map<number, number>();
     rated.forEach((r, i) => {
@@ -276,6 +318,9 @@ Deno.serve(async (req) => {
         .map(r => ({ r, s: stopById.get(r.stop_id), min: labelMinutes(stopById.get(r.stop_id)?.time_label) }))
         .filter(a => a.s && dayIds.has(a.s.day_id) && a.min != null && a.s.lat != null)
         .map(a => ({ id: a.r.stop_id, startMs: zonedToUtc(sp.date, a.min!, tz), dur: a.s.duration_minutes ?? 15 }))
+        .concat(((cfg.anchors_on ?? []) as any[]).filter(a => a.date === tripDate).map(a => stopById.get(a.stop_id))
+          .filter((s: any) => s && s.lat != null && labelMinutes(s.time_label) != null)
+          .map((s: any) => ({ id: s.id, startMs: zonedToUtc(sp.date, labelMinutes(s.time_label)!, tz), dur: s.duration_minutes ?? 15 })))
         .sort((a, b) => a.startMs - b.startMs);
       const own = stopsAll.filter(s => dayIds.has(s.day_id)).sort((a, b) => a.position - b.position);
       // Travel days: a booked arrival opens the day, a booked departure at the
@@ -302,7 +347,7 @@ Deno.serve(async (req) => {
         id, name: s?.name ?? id, w: r ? TIER_W[r.tier] : 0,
         dur: Math.max(r?.duration_minutes ?? s?.duration_minutes ?? 60, SLOT),
         group: ri != null ? find(ri) : -1 - (pos.get(id) ?? 0),
-        free: !!r && !r.time_locked && r.shot_status !== 'nailed',
+        free: !!r && !r.time_locked && r.shot_status !== 'nailed', together: togetherOf.get(id) ?? null,
       };
     });
     const freeNodes = nodes.map((n, i) => (n.free ? i : -1)).filter(i => i >= 0);
@@ -312,8 +357,11 @@ Deno.serve(async (req) => {
 
     // One day: beam over partial routes from the morning hotel to the night's.
     // search = false: only the day's values (W), no routes (scoring against the truth).
-    const planDay = (day: typeof days[number], scores: any[], search = true): DayPlan => {
+    // only: plan just these stops (the week plans), visiting all that fit.
+    const gear = new Set<string>(cfg.gear?.stops ?? []);
+    const planDay = (day: typeof days[number], scores: any[], search = true, only?: number[]): DayPlan => {
       const td0 = performance.now();
+      const cand = only ?? freeNodes;
       const H0 = pos.get(day.startId!)!, H = pos.get(day.endId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
       const slotMs = scores.map(r => Date.parse(r.slot_at));
@@ -333,6 +381,14 @@ Deno.serve(async (req) => {
       const winMin = Math.min(dayMin, (winEnd - dayStart) / 60000);
       const winHi = Math.floor(winMin / SLOT);
       const M = scores[0]?.v.length ?? 51;
+      // Rental gear: those stops only between pickup and return (trip dates).
+      const gearDate = day.tripDate ?? day.date, gFrom = cfg.gear?.from, gTo = cfg.gear?.to;
+      const gearLo = !gFrom ? 0 : gearDate < gFrom.date ? Infinity : gearDate > gFrom.date ? 0
+        : Math.ceil((zonedToUtc(day.date, hhmm(gFrom.time), tz!) - dayStart) / (SLOT * 60000));
+      const gearHiMin = !gTo ? Infinity : gearDate > gTo.date ? -Infinity : gearDate < gTo.date ? Infinity
+        : (zonedToUtc(day.date, hhmm(gTo.time), tz!) - dayStart) / 60000;
+      // Done by dark: free stops end by civil dusk.
+      const darkMin = placed.length ? (civilDusk(day.date, mid.lat, mid.lng, tz!) - dayStart) / 60000 : Infinity;
 
       // V per node per slot, W = best V over the visit window starting there.
       const V: (Uint8Array | null)[][] = nodes.map(() => new Array(nSlots).fill(null));
@@ -397,7 +453,7 @@ Deno.serve(async (req) => {
       const root: State = { t: 0, loc: H0, next: 0, visited: new Uint8Array(nodes.length), m0: 0, m1: 0, groupBest: new Map(),
         total: new Float32Array(M), route: [], drive: 0, over: 0,
         j: -DRIVE_PENALTY * D[H0][H] - LONG_LEG_PENALTY * over(D[H0][H]), mean: 0, cvar: 0 };
-      const pool: State[] = [];
+      let pool: State[] = [];
       let beam: State[] = search ? [root] : [];
       while (beam.length) {
         const children = new Map<string, State>();
@@ -415,13 +471,15 @@ Deno.serve(async (req) => {
             if (Number.isFinite(drive) && st.t + drive <= nextSlot * SLOT) keep(extend(st, nextA.n, nextSlot, drive, true));
           }
           // A free stop, if it still leaves time for the next booking (or the night's hotel).
-          for (const s of freeNodes) {
+          for (const s of cand) {
             if (st.visited[s]) continue;
             const drive = D[st.loc][s], home = D[s][H];
             if (!Number.isFinite(drive) || !Number.isFinite(home)) continue;
             const len = Math.ceil(nodes[s].dur / SLOT);
-            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), nodes[s].w >= 5 ? earlyLo : winLo);
-            let iMax = Math.floor((winMin - home) / SLOT) - len;
+            const isGear = gear.has(nodes[s].id);
+            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), nodes[s].w >= 5 ? earlyLo : winLo, isGear ? gearLo : 0);
+            let iMax = Math.min(Math.floor((winMin - home) / SLOT), Math.floor(darkMin / SLOT)) - len;
+            if (isGear) iMax = Math.min(iMax, Math.floor(gearHiMin / SLOT) - len);
             if (nextA) {
               const toA = D[s][nextA.n]; if (!Number.isFinite(toA)) continue;
               iMax = Math.min(iMax, Math.floor((nextSlot * SLOT - toA) / SLOT) - len);
@@ -445,6 +503,17 @@ Deno.serve(async (req) => {
         pool.push(...beam.filter(st => st.next === anchors.length && st.t + D[st.loc][H] <= dayMin));
       }
       if (!anchors.length) pool.push(root);
+      // Keep together: all of a group or none of it.
+      const groups = new Map<string, number[]>();
+      for (const n of cand) { const k = nodes[n].together; if (k) groups.set(k, [...(groups.get(k) ?? []), n]); }
+      const split = [...groups.values()].filter(g => g.length > 1);
+      if (split.length) pool = pool.filter(st => split.every(g => g.every(n => st.visited[n]) || g.every(n => !st.visited[n])));
+      // Week plans: the routes that visit the most of the day's stops.
+      if (only) {
+        const seen = (st: State) => cand.filter(n => st.visited[n]).length;
+        const most = Math.max(0, ...pool.map(seen));
+        pool = pool.filter(st => seen(st) === most);
+      }
       pool.sort((a, b) => b.j - a.j);
       return { date: day.date, tripDate: day.tripDate, light: day.light, start: H0, end: H, dayStart, nSlots, routes: pool,
                anchors: anchors.length, ms: Math.round(performance.now() - td0), winLo, winHi, W, peak };
@@ -560,7 +629,7 @@ Deno.serve(async (req) => {
     if (run) {
       // ---- One plan's night of a whole-trip run ----
       const kind: string = body.kind;
-      const { data: ks } = await db.from('replay_run_state').select('night, state').eq('run_id', runId).eq('kind', kind).single();
+      const { data: ks } = await db.from('replay_run_state').select('night, state, sets').eq('run_id', runId).eq('kind', kind).single();
       if (!ks) return json({ ok: false, error: 'no state for this plan' }, 404);
       const n: number = run.night;
       if (ks.night !== n) {
@@ -587,6 +656,8 @@ Deno.serve(async (req) => {
           shot[k] = Math.max(shot[k] ?? 0, truthAt(truthN, v));
         }
         row = { run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: r3(realized), ...extra };
+        // What each visit got against what happened.
+        if (row.visits?.length === visits.length) row.visits = row.visits.map((v: any, i: number) => ({ ...v, truth: r2(truthAt(truthN, visits[i]) / 250) }));
         return shot;
       };
       const plan = (nDays: number, scoresFor: (h: number) => any[], light: boolean, members: number) => {
@@ -598,8 +669,84 @@ Deno.serve(async (req) => {
           stats: { members, horizon: nDays, ms: planned.reduce((t, p) => t + p.ms, 0), ...(st ? {} : { error: 'no route' }) },
         });
       };
+      // Improve my week (blk / imp): the remaining days' stop sets, carried
+      // night to night; the search starts from them and keeps what scores better.
+      let nextSets: Record<string, string[]> | null = null;
+      const improveWeek = (mode: 'blocks' | 'free') => {
+        const M = 51, light = (i: number) => i >= nFc;
+        const scoresAt = (i: number) => light(i) ? ltSc[i] : fcSc[i];
+        const keyDay = (i: number) => days[i].tripDate ?? days[i].date;
+        const fixed = new Set<string>(cfg.fixed_days ?? []);
+        const saved: Record<string, string[]> | null = ks.sets ?? null;
+        let sets: number[][] = days.map((d, i) => (saved ? (saved[keyDay(i)] ?? []).map(id => pos.get(id)) : d.own.map((x: any) => pos.get(x.id)))
+          .filter((x): x is number => x != null && nodes[x].free));
+        const totalOf = (groups: Map<number, Uint8Array>) => {
+          const t = new Float32Array(M);
+          for (const [g, w] of groups) { const wt = groupW.get(g) ?? 0; for (let k = 0; k < M; k++) t[k] += wt * gain(g, w[k], undefined) / 250; }
+          return t;
+        };
+        const mergeInto = (groups: Map<number, Uint8Array>, add: Map<number, Uint8Array>) => {
+          for (const [g, w] of add) {
+            const prev = groups.get(g);
+            if (!prev) groups.set(g, w);
+            else { const nb = Uint8Array.from(prev); for (let k = 0; k < M; k++) if (w[k] > nb[k]) nb[k] = w[k]; groups.set(g, nb); }
+          }
+        };
+        const cache = new Map<string, DayPlan>();
+        const evalDay = (i: number, set: number[]) => {
+          const k = i + '|' + [...set].sort((a, b) => a - b).join(',');
+          let p = cache.get(k);
+          if (!p) { p = planDay({ ...days[i], light: light(i) }, scoresAt(i), true, set); cache.set(k, p); }
+          return p;
+        };
+        const weekScore = (ss: number[][]) => {
+          const groups = new Map<number, Uint8Array>();
+          let drive = 0, o = 0, lost = 0;
+          ss.forEach((set, i) => {
+            const p = evalDay(i, set), st = p.routes[0];
+            if (!st) { for (const x of set) lost += nodes[x].w; return; }
+            mergeInto(groups, st.groupBest);
+            drive += st.drive + D[st.loc][p.end]; o += st.over + over(D[st.loc][p.end]);
+            for (const x of set) if (!st.visited[x]) lost += nodes[x].w;
+          });
+          return metric(totalOf(groups)).j - DRIVE_PENALTY * drive - LONG_LEG_PENALTY * o - COVER_PENALTY * lost;
+        };
+        const tS = performance.now(), budget = Math.min(Number(cfg.budget_ms ?? 700), 1200);
+        const startScore = weekScore(sets);
+        let best = startScore, moves = 0, improved = true;
+        const tryIt = (ss: number[][]) => { const v = weekScore(ss); if (v > best + 1e-6) { sets = ss; best = v; moves++; return true; } return false; };
+        search: while (improved) {
+          improved = false;
+          for (let a = 0; a < days.length; a++) for (let b = a + 1; b < days.length; b++) {
+            if (performance.now() - tS > budget) break search;
+            if (fixed.has(keyDay(a)) || fixed.has(keyDay(b))) continue;
+            const ss = sets.slice(); [ss[a], ss[b]] = [ss[b], ss[a]];
+            if (tryIt(ss)) { improved = true; continue search; }
+          }
+          if (mode === 'blocks') break;
+          for (let a = 0; a < days.length; a++) for (const x of sets[a]) for (let b = 0; b < days.length; b++) {
+            if (a === b || fixed.has(keyDay(a)) || fixed.has(keyDay(b))) continue;
+            const k = nodes[x].together, unit = k ? sets[a].filter(y => nodes[y].together === k) : [x];
+            if (unit[0] !== x) continue;
+            if (performance.now() - tS > budget) break search;
+            const ss = sets.map(y => y.slice()); ss[a] = ss[a].filter(y => !unit.includes(y)); ss[b].push(...unit);
+            if (tryIt(ss)) { improved = true; continue search; }
+          }
+        }
+        nextSets = Object.fromEntries(sets.slice(1).map((set, j) => [keyDay(j + 1), set.map(x => nodes[x].id)]));
+        const p0 = evalDay(0, sets[0]), st = p0.routes[0] ?? null;
+        return record(st ? routeOf(p0, st) : [], {
+          predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
+          stats: { horizon: days.length, forecast_days: nFc, moves, start: r3(startScore), end: r3(best), day_plans: cache.size,
+                   ms: Math.round(performance.now() - tS), finished: performance.now() - tS <= budget,
+                   planned: sets[0].length, unplanned: st ? sets[0].filter(x => !st.visited[x]).map(x => nodes[x].name) : sets[0].map(x => nodes[x].name),
+                   ...(st ? {} : { error: 'no route' }) },
+        });
+      };
       let shot: Record<string, number>;
-      if (kind === 'fc3') shot = plan(days.length, h => fcSc[h], false, fcB[0]!.members);
+      if (kind === 'blk') shot = improveWeek('blocks');
+      else if (kind === 'imp') shot = improveWeek('free');
+      else if (kind === 'fc3') shot = plan(days.length, h => fcSc[h], false, fcB[0]!.members);
       else if (kind === 'fc1') shot = plan(1, h => fcSc[h], false, fcB[0]!.members);
       else if (kind === 'lt3') shot = plan(days.length, h => ltSc[h], true, 51);
       else if (kind === 'hs3') shot = plan(days.length, h => trSc[h], false, 1);
@@ -613,7 +760,7 @@ Deno.serve(async (req) => {
       } else return json({ ok: false, error: `unknown plan ${kind}` }, 400);
       const { error: rErr } = await db.from('replay_run_days').upsert(row, { onConflict: 'run_id,night,kind' });
       if (rErr) throw rErr;
-      await db.from('replay_run_state').update({ night: n + 1, state: shot, status: 'idle', note: null, updated_at: new Date().toISOString() })
+      await db.from('replay_run_state').update({ night: n + 1, state: shot, ...(nextSets ? { sets: nextSets } : {}), status: 'idle', note: null, updated_at: new Date().toISOString() })
         .eq('run_id', runId).eq('kind', kind);
       return json({ ok: true, run_id: runId, kind, night: n, realized: row.realized, predicted: row.predicted });
     }
