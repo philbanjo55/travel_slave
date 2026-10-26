@@ -145,3 +145,7 @@ end $$;
 
 
 revoke execute on function public.training_sync(uuid, boolean) from public, anon, authenticated;
+
+-- Phil, 26 Oct 2026: "Barns are repeatable": the two Moulton barns are not once-only.
+update public.solver_stop_settings set once = false
+ where stop_id in ('8200fc29-f054-481f-bdae-5a1031a1d703', 'cd94b8ce-8b9e-46e7-979b-50d2c241dcf0');
