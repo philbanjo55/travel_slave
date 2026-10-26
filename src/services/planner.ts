@@ -102,8 +102,9 @@ export async function fetchScores(runIds: string[]): Promise<Map<string, { best?
   return out;
 }
 
-export async function planDay(tripId: string, tripDate: string, preview = false): Promise<string> {
-  const j = await solverAction<{ run_id: string }>({ action: 'plan', trip_id: tripId, trip_date: tripDate, preview });
+// refresh: rebuild the scores first if a setting or shot changed since the last build.
+export async function planDay(tripId: string, tripDate: string, preview = false, refresh = false): Promise<string> {
+  const j = await solverAction<{ run_id: string }>({ action: 'plan', trip_id: tripId, trip_date: tripDate, preview, refresh });
   return j.run_id;
 }
 

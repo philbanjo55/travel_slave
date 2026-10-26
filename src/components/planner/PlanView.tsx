@@ -44,8 +44,8 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
         runId = (pv ? latest.preview : (latest.forecast ?? latest.light))?.id ?? null;
       }
       if (!runId) {
-        setBusy(pv ? "Planning with this week's weather…" : 'Planning this day…');
-        runId = await planDay(tripId, tripDate, pv);
+        setBusy(replan ? 'Planning again with your latest changes…' : pv ? "Planning with this week's weather…" : 'Planning this day…');
+        runId = await planDay(tripId, tripDate, pv, replan);
       }
       const r = (await fetchDayRuns(tripId, 40)).find(x => x.id === runId) ?? null;
       setRun(r); setPlans(await fetchPlans(runId));
@@ -69,7 +69,8 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
           </TouchableOpacity>
         ))}
         <TouchableOpacity onPress={() => load(preview, true)} style={styles.replan} disabled={!!busy} accessibilityLabel="Plan again">
-          <Ionicons name="refresh" size={18} color={colors.textSecondary} />
+          <Ionicons name="refresh" size={16} color={colors.textSecondary} />
+          <Text style={styles.replanText}>Plan again</Text>
         </TouchableOpacity>
       </View>
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
@@ -117,7 +118,8 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
           A subject counts once, on its best day, with 6 h between back at night and out again.
         </Text>
         <TouchableOpacity onPress={() => load(true)} style={styles.replan} disabled={!!busy} accessibilityLabel="Plan again">
-          <Ionicons name="refresh" size={18} color={colors.textSecondary} />
+          <Ionicons name="refresh" size={16} color={colors.textSecondary} />
+          <Text style={styles.replanText}>Plan again</Text>
         </TouchableOpacity>
       </View>
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
@@ -275,7 +277,9 @@ const styles = StyleSheet.create({
   modeOn: { backgroundColor: colors.accent },
   modeText: { fontSize: 13, color: colors.textSecondary },
   modeTextOn: { color: colors.textInverse, fontWeight: '700' },
-  replan: { width: 40, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  replan: { flexDirection: 'row', gap: 4, paddingHorizontal: 10, minHeight: 36, alignItems: 'center', justifyContent: 'center',
+            borderRadius: radius.full, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  replanText: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   center: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingVertical: spacing.xxl },
   hint: { fontSize: 12, color: colors.textTertiary, lineHeight: 17 },
   error: { fontSize: 13, color: '#e74c3c' },

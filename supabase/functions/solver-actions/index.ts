@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import postgres from 'npm:postgres@3.4.4';
 
 // SOLVER ACTIONS: the TEST app's one door for writes and webcam images.
 // POST {action, ...}
@@ -27,7 +28,10 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //                (solver_subject_grid: forecast inside the score build, else light only)
 //   plan         {trip_id, trip_date, preview?}  plan a trip day now: light-only
 //                past the forecast; preview: this week's forecast as that day;
-//                {trip_id, trip_dates: [up to 3]} plans those days together
+//                {trip_id, trip_dates: [up to 3]} plans those days together;
+//                refresh: true first rebuilds the trip's scores (solver_nightly,
+//                ~6-10 s) when a rating, light, fog or shot changed since the
+//                last build, so "Plan again" uses Phil's latest changes
 //   apply_preview {run_id, rank}  what applying a plan would change
 //   apply        {run_id, rank}  test-bed trip only until Phil signs off the
 //                solver; the real trip gets the preview
@@ -44,6 +48,28 @@ const MAX_CAMERA_KM = 50;
 // Templated archives (TetonCam) upload each 15-min file a few minutes late.
 const LIVE_LAG_MIN = 10;
 const TEMPLATE_STEP_MIN = 15;
+// "Plan again" rebuilds at most this often per trip.
+const REBUILD_MIN_GAP_MIN = 2;
+
+// Rebuild the trip's scores when its settings or shots changed after the
+// newest build (the nightly build only runs at 10:41 / 19:41 UTC).
+async function refreshBuild(db: any, tripId: string): Promise<boolean> {
+  const { data: b } = await db.from('solver_score_builds').select('built_at').eq('trip_id', tripId).eq('variant', 'raw')
+    .order('built_at', { ascending: false }).limit(1).maybeSingle();
+  const built = b ? Date.parse(b.built_at) : 0;
+  if (Date.now() - built < REBUILD_MIN_GAP_MIN * 60_000) return false;
+  const latest = async (table: string, col: string) => {
+    const { data } = await db.from(table).select(`${col}, stops!inner(trip_id)`).eq('stops.trip_id', tripId)
+      .order(col, { ascending: false }).limit(1).maybeSingle();
+    return data ? Date.parse(data[col]) : 0;
+  };
+  const changed = Math.max(await latest('solver_stop_settings', 'updated_at'), await latest('stop_sun_pairs', 'created_at'));
+  if (changed <= built) return false;
+  // Direct connection: the API's 8 s statement limit is too short for a build (~6-10 s).
+  const sql = postgres(Deno.env.get('SUPABASE_DB_URL')!, { max: 1, prepare: false });
+  try { await sql`select public.solver_nightly(${tripId}::uuid)`; } finally { await sql.end(); }
+  return true;
+}
 
 function liveUrl(c: { image_url: string; tz: string | null }, now: Date): { url: string; time: string | null } {
   if (!c.image_url.includes('{')) return { url: c.image_url, time: null };
@@ -214,12 +240,13 @@ Deno.serve(async (req) => {
           ? { trip_id: body.trip_id, days: dates.map(d => ({ trip_date: d })), k: 4 }
           : { trip_id: body.trip_id, trip_date: body.trip_date, k: 4 };
         if (body.preview && !dates) planBody.date = new Date().toISOString().slice(0, 10);
+        const refreshed = body.refresh ? await refreshBuild(db, body.trip_id) : false;
         const r = await fetch(`${url}/functions/v1/solver-plan`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(planBody),
         });
         const j = await r.json().catch(() => null);
         if (!r.ok || !j?.ok) return json({ ok: false, error: j?.error ?? `planner ${r.status}`, detail: j }, 200);
-        return json({ ok: true, run_id: j.run_id });
+        return json({ ok: true, run_id: j.run_id, refreshed });
       }
 
       case 'apply_preview':
