@@ -28,6 +28,12 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //         light only beyond; tomorrow is done, the rest carry to the next night
 //   imp = improve my week, free: also single stops (or keep-together groups)
 //         moved between days (solver-plan improve 'free')
+//   fm1 = the old planner (tomorrow only) that also plans every rated place at
+//         least once (Phil, 26 Oct 2026: "each stop is technically a must
+//         do"): a long place goes on the day of the next 3 whose forecast
+//         suits it best, or tomorrow when its last possible day is tomorrow or
+//         the days left would not fit everything still to do; once-only stops
+//         (solver_stop_settings.once: ski/snowshoe outings) are not repeated.
 // Run config (26 Oct 2026, the four-way test): fixed_days, anchors_on, gear as
 // in solver-plan; budget_ms for the week search. Every plan obeys done by dark
 // and keep together (solver-plan v20); 'my' is Phil's schedule as written.
@@ -56,6 +62,8 @@ const MULTI_BEAM = 150;
 const GOOD = 150;            // V >= 0.6 counts as a good shot (p_good)
 // Week plans: a stop that no longer fits its day costs half its tier weight.
 const COVER_PENALTY = 0.5;
+// fm1: required stops rank first in the day search (ranking only, not value).
+const MUST_BONUS = 1000;
 // Day window, local time: leave the hotel no earlier, be back no later
 // (made up from Phil's own days, 05:45-22:30). Booked stops override it.
 // Body: earliest / latest as "HH:MM".
@@ -72,11 +80,11 @@ const REST_HOURS = 6;
 // as SQL solver_light_scores; solver_light_terms gives dir/soft per slot.
 const SCENARIOS = Array.from({ length: 51 }, (_, k) => (k / 50) ** 2);
 
-type PlanNode = { id: string; name: string; w: number; dur: number; group: number; free: boolean; together: string | null };
+type PlanNode = { id: string; name: string; w: number; dur: number; group: number; free: boolean; together: string | null; once: boolean };
 type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
 type State = {
   t: number; loc: number; next: number; visited: Uint8Array; m0: number; m1: number; groupBest: Map<number, Uint8Array>;
-  total: Float32Array; route: Visit[]; drive: number; over: number; j: number; mean: number; cvar: number;
+  total: Float32Array; route: Visit[]; drive: number; over: number; j: number; mean: number; cvar: number; mc: number;
 };
 type DayPlan = {
   date: string; tripDate: string | null; light: boolean; start: number; end: number; dayStart: number; nSlots: number;
@@ -116,6 +124,13 @@ function sunAlt(lat: number, lng: number, ms: number) {
 function civilDusk(date: string, lat: number, lng: number, tz: string) {
   let t = zonedToUtc(date, 12 * 60, tz);
   for (let i = 0; i < 144 && sunAlt(lat, lng, t) >= -6; i++) t += 5 * 60000;
+  return t;
+}
+
+// Civil dawn before local noon on a date (UTC ms).
+function civilDawn(date: string, lat: number, lng: number, tz: string) {
+  let t = zonedToUtc(date, 12 * 60, tz);
+  for (let i = 0; i < 144 && sunAlt(lat, lng, t) >= -6; i++) t -= 5 * 60000;
   return t;
 }
 
@@ -207,7 +222,7 @@ Deno.serve(async (req) => {
 
     // A run's plan loads only what it plans on (and the truth of the day it does).
     const k0 = runId != null ? kindOf : null;
-    const nFc = k0 == null ? horizon.length : k0 === 'fc3' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(3, horizon.length) : 0;
+    const nFc = k0 == null ? horizon.length : k0 === 'fc3' || k0 === 'fm1' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(3, horizon.length) : 0;
     const needLt = (h: number) => k0 == null || k0 === 'lt3' || (week && h >= nFc);
     const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
     if (fcB.slice(0, nFc).some(b => !b) || trB.slice(0, nTr).some(b => !b)) return json({ ok: false, error: 'replay builds missing' }, 404);
@@ -278,9 +293,10 @@ Deno.serve(async (req) => {
     const groupW = new Map<number, number>();
     rated.forEach((r, i) => groupW.set(find(i), Math.max(groupW.get(find(i)) ?? 0, TIER_W[r.tier])));
     // Keep together (stops that go on one day) and the trip's middle (done by dark).
-    const { data: tg } = await db.from('solver_stop_settings').select('stop_id, together')
-      .in('stop_id', rated.map(r => r.stop_id)).not('together', 'is', null);
-    const togetherOf = new Map((tg ?? []).map(r => [r.stop_id, r.together as string]));
+    const { data: tg } = await db.from('solver_stop_settings').select('stop_id, together, once')
+      .in('stop_id', rated.map(r => r.stop_id)).or('together.not.is.null,once.eq.true');
+    const togetherOf = new Map((tg ?? []).filter(r => r.together).map(r => [r.stop_id, r.together as string]));
+    const onceIds = new Set((tg ?? []).filter(r => r.once).map(r => r.stop_id as string));
     const placed = stopsAll.filter(s => s.lat != null && rated.some(r => r.stop_id === s.id));
     const mid = { lat: placed.reduce((t, s) => t + s.lat, 0) / (placed.length || 1), lng: placed.reduce((t, s) => t + s.lng, 0) / (placed.length || 1) };
     // What a subject already has (x250): nailed = everything, got = shot_value.
@@ -347,7 +363,7 @@ Deno.serve(async (req) => {
         id, name: s?.name ?? id, w: r ? TIER_W[r.tier] : 0,
         dur: Math.max(r?.duration_minutes ?? s?.duration_minutes ?? 60, SLOT),
         group: ri != null ? find(ri) : -1 - (pos.get(id) ?? 0),
-        free: !!r && !r.time_locked && r.shot_status !== 'nailed', together: togetherOf.get(id) ?? null,
+        free: !!r && !r.time_locked && r.shot_status !== 'nailed', together: togetherOf.get(id) ?? null, once: onceIds.has(id),
       };
     });
     const freeNodes = nodes.map((n, i) => (n.free ? i : -1)).filter(i => i >= 0);
@@ -359,9 +375,11 @@ Deno.serve(async (req) => {
     // search = false: only the day's values (W), no routes (scoring against the truth).
     // only: plan just these stops (the week plans), visiting all that fit.
     const gear = new Set<string>(cfg.gear?.stops ?? []);
-    const planDay = (day: typeof days[number], scores: any[], search = true, only?: number[]): DayPlan => {
+    // must: stops the route has to include (fm1); skip: stops left out (once-only, done).
+    const planDay = (day: typeof days[number], scores: any[], search = true, only?: number[], must?: number[], skip?: Set<number>): DayPlan => {
       const td0 = performance.now();
-      const cand = only ?? freeNodes;
+      const cand = (only ?? freeNodes).filter(n => !skip?.has(n));
+      const mustSet = new Set(must ?? []);
       const H0 = pos.get(day.startId!)!, H = pos.get(day.endId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
       const slotMs = scores.map(r => Date.parse(r.slot_at));
@@ -442,16 +460,16 @@ Deno.serve(async (req) => {
         // Visited set as a 64-bit mask (two ints) for the dedupe key.
         const m0 = n < 32 ? (st.m0 | (1 << n)) >>> 0 : st.m0, m1 = n >= 32 ? (st.m1 | (1 << (n - 32))) >>> 0 : st.m1;
         const m = metric(total);
-        const d = st.drive + drive, o = st.over + over(drive);
+        const d = st.drive + drive, o = st.over + over(drive), mc = st.mc + (mustSet.has(n) ? 1 : 0);
         return {
-          t: (i + len) * SLOT, loc: n, next: st.next + (anchor ? 1 : 0), visited, m0, m1, groupBest, total, drive: d, over: o,
+          t: (i + len) * SLOT, loc: n, next: st.next + (anchor ? 1 : 0), visited, m0, m1, groupBest, total, drive: d, over: o, mc,
           route: [...st.route, { n, arrive: st.t + drive, start: i * SLOT, end: (i + len) * SLOT, drive, anchor }],
-          mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * (d + D[n][H]) - LONG_LEG_PENALTY * (o + over(D[n][H])),
+          mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * (d + D[n][H]) - LONG_LEG_PENALTY * (o + over(D[n][H])) + MUST_BONUS * mc,
         };
       };
 
       const root: State = { t: 0, loc: H0, next: 0, visited: new Uint8Array(nodes.length), m0: 0, m1: 0, groupBest: new Map(),
-        total: new Float32Array(M), route: [], drive: 0, over: 0,
+        total: new Float32Array(M), route: [], drive: 0, over: 0, mc: 0,
         j: -DRIVE_PENALTY * D[H0][H] - LONG_LEG_PENALTY * over(D[H0][H]), mean: 0, cvar: 0 };
       let pool: State[] = [];
       let beam: State[] = search ? [root] : [];
@@ -514,6 +532,8 @@ Deno.serve(async (req) => {
         const most = Math.max(0, ...pool.map(seen));
         pool = pool.filter(st => seen(st) === most);
       }
+      // fm1: only routes with every required stop count.
+      if (mustSet.size) pool = pool.filter(st => st.mc === mustSet.size);
       pool.sort((a, b) => b.j - a.j);
       return { date: day.date, tripDate: day.tripDate, light: day.light, start: H0, end: H, dayStart, nSlots, routes: pool,
                anchors: anchors.length, ms: Math.round(performance.now() - td0), winLo, winHi, W, peak };
@@ -671,7 +691,7 @@ Deno.serve(async (req) => {
       };
       // Improve my week (blk / imp): the remaining days' stop sets, carried
       // night to night; the search starts from them and keeps what scores better.
-      let nextSets: Record<string, string[]> | null = null;
+      let nextSets: Record<string, string[]> | null = null;  // blk / imp: day sets; fm1: {seen}
       const improveWeek = (mode: 'blocks' | 'free') => {
         const M = 51, light = (i: number) => i >= nFc;
         const scoresAt = (i: number) => light(i) ? ltSc[i] : fcSc[i];
@@ -745,8 +765,78 @@ Deno.serve(async (req) => {
                    ...(st ? {} : { error: 'no route' }) },
         });
       };
+      // fm1: tomorrow only, every rated place at least once over the trip.
+      const coverPlan = () => {
+        const seenIds = new Set<string>((ks.sets as any)?.seen ?? []);
+        const done = (x: number) => seenIds.has(nodes[x].id);
+        // A place: a keep-together group (all of it), else a subject (any of its stops).
+        const unitKey = (x: number) => nodes[x].together ? 't:' + nodes[x].together : 'g:' + nodes[x].group;
+        const unitsAll = new Map<string, number[]>();
+        for (const x of freeNodes) unitsAll.set(unitKey(x), [...(unitsAll.get(unitKey(x)) ?? []), x]);
+        const covered = (u: number[]) => nodes[u[0]].together ? u.every(done) : u.some(done);
+        const open = [...unitsAll.values()].filter(u => !covered(u));
+        const skip = new Set(freeNodes.filter(x => nodes[x].once && done(x)));
+        const remaining: string[] = (run.trip_dates as string[]).slice(n);
+        const gFrom = cfg.gear?.from?.date, gTo = cfg.gear?.to?.date;
+        const okOn = (u: number[], td: string) => !u.some(x => gear.has(nodes[x].id)) || ((!gFrom || td >= gFrom) && (!gTo || td <= gTo));
+        const lastDay = (u: number[]) => { for (let i = remaining.length - 1; i >= 0; i--) if (okOn(u, remaining[i])) return i; return -1; };
+        const durOf = (u: number[]) => nodes[u[0]].together ? u.reduce((t, x) => t + nodes[x].dur, 0) : Math.min(...u.map(x => nodes[x].dur));
+        // Daylight minutes on a remaining trip day, after landing / before the flight; 70% of it for stops (drives).
+        const capOn = (i: number) => {
+          const td = remaining[i], rd = addDays(run.start_date, n + i);
+          const ids = new Set(tripDays.filter(d => d.date === td).map(d => d.id));
+          const own = stopsAll.filter(x => ids.has(x.day_id)).sort((a, b) => a.position - b.position);
+          let lo = civilDawn(rd, mid.lat, mid.lng, tz), hi = civilDusk(rd, mid.lat, mid.lng, tz);
+          const a = own[0], z = own.length > 1 ? own[own.length - 1] : null;
+          if (a?.time_locked && labelMinutes(a.time_label) != null) lo = Math.max(lo, zonedToUtc(rd, labelMinutes(a.time_label)! + (a.duration_minutes ?? 0), tz));
+          if (z?.time_locked && labelMinutes(z.time_label) != null) hi = Math.min(hi, zonedToUtc(rd, labelMinutes(z.time_label)!, tz));
+          return Math.max(0, (hi - lo) / 60000) * 0.7;
+        };
+        // How good each place looks on each of the next 3 days (best moment, forecast mean).
+        const looks = days.map((d, h) => planDay({ ...d, light: false }, fcSc[h], false));
+        const best = (x: number, h: number) => {
+          const p = looks[h]; let b = 0;
+          for (let i = p.winLo; i <= p.winHi; i++) { const w = p.W(x, i); if (!w) continue; let t = 0; for (const v of w) t += v; b = Math.max(b, t / w.length / 250); }
+          return b;
+        };
+        const val = (u: number[], h: number) => h < days.length && okOn(u, remaining[h]) ? Math.max(...u.map(x => best(x, h))) : -1;
+        // Required tomorrow: last chance, or the days after tomorrow cannot hold what is left.
+        const req: number[][] = open.filter(u => lastDay(u) === 0);
+        const rest = () => open.filter(u => !req.includes(u) && lastDay(u) >= 1);
+        for (let guard = 0; guard < open.length; guard++) {
+          const left = rest().sort((a, b) => lastDay(a) - lastDay(b));
+          let short = false, cap = 0, need = 0;
+          for (let D = 1; D < remaining.length && !short; D++) {
+            cap += capOn(D);
+            need = left.filter(u => lastDay(u) <= D).reduce((t, u) => t + durOf(u), 0);
+            if (need > cap) short = true;
+          }
+          const pick = left.find(u => okOn(u, remaining[0]));
+          if (!short || !pick || req.reduce((t, u) => t + durOf(u), 0) + durOf(pick) > capOn(0)) break;
+          req.push(pick);
+        }
+        // Wanted tomorrow: long places (>= 90 min) whose best of the next 3 days is tomorrow.
+        const want = open.filter(u => !req.includes(u) && okOn(u, remaining[0]) && durOf(u) >= 90 && val(u, 0) > 0 && val(u, 0) >= Math.max(val(u, 1), val(u, 2)))
+          .sort((a, b) => (val(b, 0) - Math.max(val(b, 1), val(b, 2))) - (val(a, 0) - Math.max(val(a, 1), val(a, 2))));
+        const mustOf = (u: number[]) => nodes[u[0]].together ? u : [u.reduce((a, b) => (best(b, 0) > best(a, 0) ? b : a))];
+        let list = [...req, ...want], p0: DayPlan, st: State | null;
+        for (;;) {
+          p0 = planDay({ ...days[0], light: false }, fcSc[0], true, undefined, list.flatMap(mustOf), skip);
+          st = p0.routes[0] ?? null;
+          if (st || !list.length) break;
+          list = list.slice(0, -1);
+        }
+        if (st) for (const v of st.route) seenIds.add(nodes[v.n].id);
+        nextSets = { seen: [...seenIds] };
+        return record(st ? routeOf(p0, st) : [], {
+          predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
+          stats: { members: fcB[0]!.members, required: req.length, wanted: want.length, kept: list.length, open: open.length,
+                   ms: p0.ms, ...(st ? {} : { error: 'no route' }) },
+        });
+      };
       let shot: Record<string, number>;
-      if (kind === 'blk') shot = improveWeek('blocks');
+      if (kind === 'fm1') shot = coverPlan();
+      else if (kind === 'blk') shot = improveWeek('blocks');
       else if (kind === 'imp') shot = improveWeek('free');
       else if (kind === 'fc3') shot = plan(days.length, h => fcSc[h], false, fcB[0]!.members);
       else if (kind === 'fc1') shot = plan(1, h => fcSc[h], false, fcB[0]!.members);
