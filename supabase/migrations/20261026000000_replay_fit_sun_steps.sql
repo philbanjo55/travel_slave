@@ -111,3 +111,10 @@ end $$;
 -- downloads finish, so they don't take the 8 run slots while they wait:
 --   update replay_runs set status = 'hold' where config ->> 'day1_lead' = '0' and night = 0;
 --   later: update replay_runs set status = 'queued' where status = 'hold';
+
+-- Faroes results (26 Oct 2026, 33 trips each, kind fc1, good shots >= 150/250
+-- per 15-day trip; hindsight 23.1): base 17.7 | calsun 17.4 (14 better / 16
+-- worse) | morning (newest run for the next day) 19.1 (18 / 9) |
+-- morning_calsun 18.6 (19 / 8). Tier points: base 2311, morning 2346 (+1.5%):
+-- the extra good shots are mostly lower tiers. The bench crons (replay-run,
+-- replay-fit-sun, replay-fetch) were removed afterwards.
