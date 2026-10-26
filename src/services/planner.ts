@@ -164,10 +164,10 @@ export async function saveStopSettings(stopId: string, patch: Partial<Pick<StopS
   return j.setting;
 }
 
-export type TripSetting = StopSettings & { stop_id: string };
+export type TripSetting = StopSettings & { stop_id: string; updated_at?: string };
 export async function fetchTripSettings(tripId: string): Promise<TripSetting[]> {
   const { data, error } = await supabase.from('solver_stop_settings')
-    .select('stop_id, tier, light_wanted, fog_wanted, star_vantage_id, shot_status, source, stops!inner(trip_id)')
+    .select('stop_id, tier, light_wanted, fog_wanted, star_vantage_id, shot_status, source, updated_at, stops!inner(trip_id)')
     .eq('stops.trip_id', tripId);
   if (error) throw error;
   return (data ?? []) as any;

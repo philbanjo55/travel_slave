@@ -5,6 +5,7 @@ import {
   Light, LIGHT_CHOICES, ShotStatus, StopSettings, StopShot, TIER_CHOICES,
   fetchStopSettings, markShot, saveStopSettings,
 } from '../../services/planner';
+import { forgetTiers } from './DayPlannerHints';
 
 const STATES: { key: ShotStatus; text: string }[] = [
   { key: null, text: 'Not shot' },
@@ -39,7 +40,7 @@ export default function SettingsEditor({ stopId, initial, onChange }: {
   const apply = (s: StopSettings) => { setSetting(s); onChange?.(s); };
   const run = async (fn: () => Promise<StopSettings | null>) => {
     setSaving(true); setError(null);
-    try { const s = await fn(); if (s) apply(s); }
+    try { const s = await fn(); forgetTiers(); if (s) apply(s); }
     catch (e: any) { setError(/network|fetch/i.test(String(e?.message)) ? 'No connection. Try again when you have signal.' : String(e?.message ?? e)); }
     setSaving(false);
   };

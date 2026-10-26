@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { colors, spacing, radius, typography } from '../../theme';
 import { GridCell, Plan, PlanRun, PlanVisit, TripSetting, fetchDayRuns, fetchPlans, fetchSubjectGrid, fetchTripSettings, hhmm, latestByDay, LIGHT_WORDS } from '../../services/planner';
 
@@ -10,6 +10,8 @@ export type DayPlanner = {
   byStop: Map<string, PlanVisit>;
   betterDay: Map<string, { date: string; dayNumber: number; p_good: number }>;
   tiers: Map<string, string>;
+  // Stops Phil changed after this plan was made: its chance is from before.
+  changed: Set<string>;
 };
 
 // The subject grid takes ~2 s; keep one per trip for 10 minutes.
@@ -22,7 +24,8 @@ function tripGrid(tripId: string) {
   return cells;
 }
 
-// Tiers change only when Phil edits them; one read per trip per 10 minutes.
+// Tiers change only when Phil edits them; one read per trip per 10 minutes,
+// dropped when he saves a setting (SettingsEditor calls forgetTiers).
 const tierCache = new Map<string, { at: number; rows: Promise<TripSetting[]> }>();
 function tripTiers(tripId: string) {
   const hit = tierCache.get(tripId);
@@ -31,9 +34,24 @@ function tripTiers(tripId: string) {
   tierCache.set(tripId, { at: Date.now(), rows });
   return rows;
 }
+const tierListeners = new Set<() => void>();
+export function forgetTiers() { tierCache.clear(); tierListeners.forEach(f => f()); }
+
+function tierState(rows: TripSetting[], run: PlanRun | null) {
+  const tiers = new Map(rows.filter(t => t.tier).map(t => [t.stop_id, t.tier as string]));
+  const changed = new Set(rows.filter(t => run && t.source === 'phil' && t.updated_at && Date.parse(t.updated_at) > Date.parse(run.created_at)).map(t => t.stop_id));
+  return { tiers, changed };
+}
 
 export function useDayPlanner(tripId: string | null, date: string | null | undefined, days: any[]): DayPlanner | null {
   const [state, setState] = useState<DayPlanner | null>(null);
+  const focused = useIsFocused();
+  const [saves, setSaves] = useState(0);
+  useEffect(() => {
+    const f = () => setSaves(n => n + 1);
+    tierListeners.add(f);
+    return () => { tierListeners.delete(f); };
+  }, []);
   useEffect(() => {
     if (!tripId || !date) { setState(null); return; }
     let alive = true;
@@ -55,12 +73,19 @@ export function useDayPlanner(tripId: string | null, date: string | null | undef
             betterDay.set(stopId, { date: other.trip_date, dayNumber: dayNo.get(other.trip_date)!, p_good: other.p_good });
           }
         }
-        const tiers = new Map((await tripTiers(tripId)).filter(t => t.tier).map(t => [t.stop_id, t.tier as string]));
-        if (alive) setState({ run, mine, best, byStop, betterDay, tiers });
+        const ts = tierState(await tripTiers(tripId), run);
+        if (alive) setState({ run, mine, best, byStop, betterDay, ...ts });
       } catch { if (alive) setState(null); }
     })();
     return () => { alive = false; };
   }, [tripId, date]);
+  // After a save, and back on the screen: read tiers again.
+  useEffect(() => {
+    if (!tripId || !focused) return;
+    let alive = true;
+    tripTiers(tripId).then(rows => { if (alive) setState(s => s && { ...s, ...tierState(rows, s.run) }); });
+    return () => { alive = false; };
+  }, [tripId, focused, saves]);
   return state;
 }
 
@@ -87,12 +112,13 @@ export function DayPlannerBanner({ tripId, date, planner }: { tripId: string; da
 
 // A stop's chance at its time on the shown day, its light, and one hint:
 // a better time that day, else a better trip day.
-export type StopHint = { p: number; light: string | null; chip: string | null };
+export type StopHint = { p: number; light: string | null; chip: string | null; changed?: boolean };
 export function stopHint(stopId: string, planner: DayPlanner | null): StopHint | null {
   const v = planner?.byStop.get(stopId);
   if (!v || v.p_good == null) return null;
   const tz: string | undefined = planner?.run?.params?.tz;
   const light = v.light ? LIGHT_WORDS[v.light] ?? v.light : null;
+  if (planner?.changed.has(stopId)) return { p: v.p_good, light, chip: null, changed: true };
   const better = planner?.betterDay.get(stopId);
   const tryAt = v.best && v.best.p_good > v.p_good + 0.1 ? v.best : null;
   const chip = tryAt ? `Try ${hhmm(tryAt.start, tz)} · ${Math.round(tryAt.p_good * 100)}%`
@@ -104,11 +130,12 @@ export function stopHint(stopId: string, planner: DayPlanner | null): StopHint |
 export function ChanceLine({ hint, label }: { hint: StopHint; label?: boolean }) {
   const pct = Math.round(hint.p * 100);
   return (
-    <View style={styles.chanceRow} accessibilityLabel={`Chance ${pct}%${hint.light ? `, ${hint.light}` : ''}${hint.chip ? `. ${hint.chip}` : ''}`}>
+    <View style={styles.chanceRow} accessibilityLabel={`Chance ${pct}%${hint.changed ? ', from before your change' : ''}${hint.light ? `, ${hint.light}` : ''}${hint.chip ? `. ${hint.chip}` : ''}`}>
       {label ? <Text style={styles.label}>CHANCE</Text> : null}
       <View style={styles.bar}><View style={[styles.barFill, { width: `${Math.max(pct, 2)}%` }, pct >= 40 && styles.barGood]} /></View>
       <Text style={styles.pct}>{pct}%</Text>
-      {hint.light ? <Text style={styles.hintText} numberOfLines={1}>{hint.light}</Text> : null}
+      {hint.changed ? <Text style={styles.hintText} numberOfLines={1}>you changed it · new chance after the next plan</Text>
+        : hint.light ? <Text style={styles.hintText} numberOfLines={1}>{hint.light}</Text> : null}
       {hint.chip ? <Text style={styles.chip}>{hint.chip}</Text> : null}
     </View>
   );
