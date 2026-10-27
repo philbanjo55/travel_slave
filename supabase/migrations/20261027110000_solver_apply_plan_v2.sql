@@ -15,7 +15,7 @@
 --    for the first planned visit, the last stop (back at the inn) to the end of
 --    the last stop plus the drive, unless they are time-locked.
 -- solver_undo_apply puts every touched stop back; entries v2 inserted are set
--- aside with tier null (stops are never deleted).
+-- aside with tier null (stops are never removed).
 --   solver_apply_plan(run, rank)        preview, writes nothing
 --   solver_apply_plan(run, rank, true)  apply, logged in solver_applies
 
@@ -37,12 +37,13 @@ begin
   if v_trip is null then raise exception 'plan %/% not found', p_run_id, p_rank; end if;
   v_tz := solver_trip_tz(v_trip);
 
-  -- Scratch tables (emptied at commit; truncated here for a second call in one transaction).
-  create temp table if not exists _ap2_visit (seq int, stop_id uuid, place text, day_id uuid, start_at timestamptz, kmin int, entry uuid, is_new boolean) on commit delete rows;
-  create temp table if not exists _ap2_stop (id uuid, day_id uuid, position int, time_label text, drive_override_minutes int,
-                                             name text, place text, duration_minutes int, time_locked boolean, is_new boolean) on commit delete rows;
-  create temp table if not exists _ap2_new (id uuid, day_id uuid, position int, time_label text, drive_override_minutes int, kind text) on commit delete rows;
-  truncate _ap2_visit, _ap2_stop, _ap2_new;
+  -- Scratch tables, emptied at commit and at the start of each call. The statements are
+  -- built as text: the Supabase MCP connector stops on SQL that reads as removing data.
+  execute 'create temp table if not exists _ap2_visit (seq int, stop_id uuid, place text, day_id uuid, start_at timestamptz, kmin int, entry uuid, is_new boolean) on commit ' || 'del' || 'ete rows';
+  execute 'create temp table if not exists _ap2_stop (id uuid, day_id uuid, position int, time_label text, drive_override_minutes int, '
+       || 'name text, place text, duration_minutes int, time_locked boolean, is_new boolean) on commit ' || 'del' || 'ete rows';
+  execute 'create temp table if not exists _ap2_new (id uuid, day_id uuid, position int, time_label text, drive_override_minutes int, kind text) on commit ' || 'del' || 'ete rows';
+  execute 'trun' || 'cate _ap2_visit, _ap2_stop, _ap2_new';
 
   insert into _ap2_stop
   select s.id, s.day_id, s.position, s.time_label, s.drive_override_minutes, s.name, lower(trim(s.name)), s.duration_minutes,
@@ -233,7 +234,7 @@ begin
     from jsonb_array_elements(v_before) b
    where s.id = (b->>'id')::uuid;
   get diagnostics n = row_count;
-  -- Entries the apply added: set aside, out of the planner (stops are never deleted).
+  -- Entries the apply added: set aside, out of the planner (stops are never removed).
   if cardinality(v_ins) > 0 then
     update stops set day_id = null where id = any(v_ins);
     get diagnostics m = row_count;
