@@ -814,7 +814,8 @@ Deno.serve(async (req) => {
         // best (beyond the forecast: the place's average over the forecast days).
         // Tomorrow's share of that is required tomorrow; so is any place whose
         // last chance is tomorrow.
-        const longs = open.filter(u => durOf(u) >= 90);
+        // Only once-only outings (skis) need a protected day: repeatable places get many chances.
+        const longs = open.filter(u => durOf(u) >= 90 && u.some(x => nodes[x].once));
         const prior = (u: number[]) => { const vs = days.map((_, h) => val(u, h)).filter(v => v >= 0); return vs.length ? vs.reduce((t, v) => t + v, 0) / vs.length : 0.4; };
         const score = (u: number[], i: number) => (i < days.length ? val(u, i) : prior(u)) - 0.001 * i;
         const win = longs.map(u => remaining.map((_, i) => winOn(i, u)));
@@ -833,8 +834,10 @@ Deno.serve(async (req) => {
           if (!any) { assign.push(-1); dfs(k + 1, sc - 10); assign.pop(); }
         };
         dfs(0, 0);
-        const req: number[][] = open.filter(u => durOf(u) < 90 && lastDay(u) === 0);
-        const want = longs.filter((_, k) => bestA[k] === 0).sort((a, b) => durOf(b) - durOf(a));
+        const req: number[][] = open.filter(u => !longs.includes(u) && lastDay(u) === 0);
+        // When a day cannot hold them all, the most urgent stays: fewest days left that fit it, then the longest.
+        const daysLeft = (u: number[]) => { const k = longs.indexOf(u); return win[k].filter(w => w >= durOf(u)).length; };
+        const want = longs.filter((_, k) => bestA[k] === 0).sort((a, b) => daysLeft(a) - daysLeft(b) || durOf(b) - durOf(a));
         const mustOf = (u: number[]) => nodes[u[0]].together ? u : [u.reduce((a, b) => (best(b, 0) > best(a, 0) ? b : a))];
         let list = [...req, ...want], p0: DayPlan, st: State | null;  // dropped from the end when a day cannot hold them all
         for (;;) {
