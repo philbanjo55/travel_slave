@@ -68,7 +68,10 @@ begin
   for r in select * from _ap2_visit order by seq loop
     select s.id into v_entry from _ap2_stop s
      where s.place = r.place and not s.time_locked and not exists (select 1 from _ap2_visit u where u.entry = s.id)
-     order by (s.day_id = r.day_id) desc nulls last, (s.id = r.stop_id) desc, (s.day_id is null) desc,
+       -- An entry longer than the planned visit would overrun it: use a new entry instead.
+       and coalesce(s.duration_minutes, 0) <= coalesce((select p.duration_minutes from _ap2_stop p where p.id = r.stop_id), 0)
+     order by (s.day_id = r.day_id and coalesce(s.duration_minutes, 0) <= coalesce((select p.duration_minutes from _ap2_stop p where p.id = r.stop_id), 0)) desc nulls last,
+              (s.id = r.stop_id) desc, (s.day_id is null) desc,
               abs(coalesce(solver_label_minutes(s.time_label), r.kmin) - r.kmin), s.id
      limit 1;
     if v_entry is null then
