@@ -38,4 +38,4 @@ begin
 end $function$;
 
 select public.replay_fit_hidden();
-update public.replay_places set fitted_at = now();
+update public.replay_places set fitted_at = now() where trip_id is not null;
