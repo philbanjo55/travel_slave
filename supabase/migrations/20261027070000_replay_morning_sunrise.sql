@@ -35,19 +35,22 @@ declare n int;
 begin
   truncate replay_morning_counts;
   insert into replay_morning_counts (trip_id, season, model, m8, bin, n, hits)
-  with hrs as (
-    select distinct p.trip_id, t.timezone tz, o.hr, o.hidden, (o.hr at time zone t.timezone)::date ld
+  with tr as materialized (
+    -- Every report on a forecast day (the view is costly: read it once).
+    select p.trip_id, t.timezone tz, o.hr, o.hidden, (o.hr at time zone t.timezone)::date ld, s.lat, s.lng
       from replay_places p
       join trips t on t.id = p.trip_id
       join replay_hidden_truth o on o.trip_id = p.trip_id
       join metar_stations s on s.icao = p.station
      where exists (select 1 from replay_wx_day w where w.point_key = p.fc_point and w.day = (o.hr at time zone 'UTC')::date)
-       and (select sp.altitude from sun_position(o.hr, s.lat, s.lng) sp) > 0
+  ), hrs as (
+    select distinct trip_id, tz, hr, hidden, ld from tr
+     where (select sp.altitude from sun_position(tr.hr, tr.lat, tr.lng) sp) > 0
   ), days as (
     select d.trip_id, d.ld, replay_look_at(d.trip_id, d.ld) look from (select distinct trip_id, ld from hrs) d
   ), looks as (
     select d.trip_id, d.ld, d.look,
-           (select o.hidden from replay_hidden_truth o
+           (select o.hidden from tr o
              where o.trip_id = d.trip_id and o.hr between d.look - interval '1 hour' and d.look
              order by o.hr desc limit 1) m8
       from days d
