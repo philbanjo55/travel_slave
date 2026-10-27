@@ -953,22 +953,34 @@ Deno.serve(async (req) => {
           return { p: pp, st: ss, list: l };
         };
         let { p: p0, st, list } = planList([...req, ...want]);
-        let mcStats: any = null, mrStats: any = null, exStats: any = null;
-        if (cfg.exact_k && st) {
-          // Proof check (run config exact_k, stats only, the plan is unchanged):
-          // tomorrow's night plan vs a near-exhaustive search over its own stops
-          // plus the next best ones up to exact_k (keep-together partners added
-          // whole). A higher exact score means the beam missed a better day.
-          const mustN = list.flatMap(mustOf);
-          const E = new Set<number>([...st.route.filter(v => nodes[v.n].free).map(v => v.n), ...mustN]);
+        let mcStats: any = null, mrStats: any = null, exStats: any = null, polStats: any = null;
+        // The near-exhaustive search (planDay exact) over a plan's own stops, the
+        // required ones and the next best places up to k (keep-together partners
+        // added whole); more than 9 stops is not tried.
+        const exactOver = (scores: any[], s: State, mustN: number[], k: number, from?: From) => {
+          const E = new Set<number>([...s.route.filter(v => nodes[v.n].free).map(v => v.n), ...mustN]);
           const addUnit = (x: number) => { for (const y of freeNodes) if (y === x || (nodes[x].together && nodes[y].together === nodes[x].together)) E.add(y); };
           [...E].forEach(addUnit);
           const others = freeNodes.filter(x => !E.has(x) && !skip.has(x)).sort((a, b) => best(b, 0) - best(a, 0));
-          for (const x of others) { if (E.size >= Number(cfg.exact_k)) break; addUnit(x); }
-          if (E.size > 9) exStats = { skipped: `${E.size} stops` };
+          for (const x of others) { if (E.size >= k) break; addUnit(x); }
+          if (E.size > 9) return { E, pe: null, se: null };
+          const pe = planDay({ ...days[0], light: false }, scores, true, undefined, mustN, skip, from, [...E]);
+          return { E, pe, se: pe.routes[0] ?? null };
+        };
+        // Polish (run config polish_k, 27 Oct 2026: the exact7 check found a better
+        // day than the beam on 78% of days): keep the exact search's day when it
+        // scores higher with the same required places.
+        const polish = (scores: any[], p: DayPlan, s: State, mustN: number[], from?: From) => {
+          const r = exactOver(scores, s, mustN, Number(cfg.polish_k), from);
+          return r.se && r.pe && r.se.j > s.j + 1e-6 ? { p: r.pe, st: r.se, gain: r3(r.se.j - s.j) } : { p, st: s, gain: 0 };
+        };
+        if (cfg.exact_k && st) {
+          // Proof check (run config exact_k, stats only, the plan is unchanged):
+          // tomorrow's night plan vs the near-exhaustive search. A higher exact
+          // score means the beam missed a better day.
+          const { E, pe, se } = exactOver(fcSc[0], st, list.flatMap(mustOf), Number(cfg.exact_k));
+          if (!pe) exStats = { skipped: `${E.size} stops` };
           else {
-            const pe = planDay({ ...days[0], light: false }, fcSc[0], true, undefined, mustN, skip, undefined, [...E]);
-            const se = pe.routes[0] ?? null;
             const names = (s: State) => s.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name + ' ' + new Date(p0.dayStart + v.start * 60000).toISOString().slice(11, 16));
             exStats = { k: E.size, beam_j: r3(st.j), exact_j: se ? r3(se.j) : null, gain: se ? r3(se.j - st.j) : null,
                         same_stops: se ? se.route.length === st.route.length && se.route.every(v => st.visited[v.n]) : null,
@@ -1066,6 +1078,10 @@ Deno.serve(async (req) => {
                       chose: pick.c.tag, ms: Math.round(performance.now() - tMc) };
           p0 = pick.c.p; st = pick.c.st; list = pick.c.list;
         }
+        if (cfg.polish_k && st) {
+          const r = polish(fcSc[0], p0, st, list.flatMap(mustOf));
+          polStats = { night: r.gain }; p0 = r.p; st = r.st;
+        }
         if ((kind === 'mr1' || kind === 'mrmc') && st) {
           // Morning-of replan (Phil, 27 Oct 2026): the night's plan (v3, or the one
           // Monte Carlo chose) stands up to 30 min before sunrise; then the planner
@@ -1088,6 +1104,10 @@ Deno.serve(async (req) => {
             if (sm || !l.length) break;
             l = l.slice(0, -1);
           }
+          if (cfg.polish_k && sm && pm) {
+            const r = polish(mSc, pm, sm, l.flatMap(mustOf), { visits: before, atMs });
+            polStats = { ...(polStats ?? {}), morning: r.gain }; pm = r.p; sm = r.st;
+          }
           const { data: look } = await db.from('replay_hidden_truth').select('hr, hidden').eq('trip_id', tripId)
             .gte('hr', new Date(atMs - 3600000).toISOString()).lte('hr', new Date(atMs).toISOString()).order('hr', { ascending: false }).limit(1);
           const show = (p: DayPlan, s: State) => s.route.filter(v => nodes[v.n].w > 0)
@@ -1104,7 +1124,7 @@ Deno.serve(async (req) => {
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members: fcB[0]!.members, required: req.length, wanted: want.length, kept: list.length, open: open.length,
-                   ms: p0.ms, ...(exStats ? { exact: exStats } : {}), ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route' }) },
+                   ms: p0.ms, ...(exStats ? { exact: exStats } : {}), ...(polStats ? { polish: polStats } : {}), ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route' }) },
         });
       };
       let shot: Record<string, number>;
