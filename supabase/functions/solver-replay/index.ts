@@ -34,6 +34,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //         suits it best, or tomorrow when its last possible day is tomorrow or
 //         the days left would not fit everything still to do; once-only stops
 //         (solver_stop_settings.once: ski/snowshoe outings) are not repeated.
+// fc_days (27 Oct 2026): forecast days ahead for fm1 / blk / imp, 1-7 (default 3).
 // Run config (26 Oct 2026, the four-way test): fixed_days, anchors_on, gear as
 // in solver-plan; budget_ms for the week search. Every plan obeys done by dark
 // and keep together (solver-plan v20); 'my' is Phil's schedule as written.
@@ -183,17 +184,20 @@ Deno.serve(async (req) => {
     // What to plan: one replay day, or the next nights of a whole-trip run.
     let run: any = null, tripId: string;
     const week = kindOf === 'blk' || kindOf === 'imp';
+    // Forecast days ahead the week plans see (run config fc_days, 1-7; Previous Runs keeps 7).
+    let fcDays = 3;
     let horizon: { i: number; date: string; trip_date: string; dayId: number; lead: number }[];
     if (runId != null) {
       run = (await db.from('replay_runs').select('*').eq('id', runId).single()).data;
       if (!run) return json({ ok: false, error: 'replay run not found' }, 404);
       tripId = run.trip_id;
       const n: number = run.night;
-      const want = Array.from({ length: Math.min(week ? Infinity : 3, run.nights - n) }, (_, h) => n + h)
+      fcDays = Math.min(Math.max(Number(run.config?.fc_days ?? 3), 1), 7);
+      const want = Array.from({ length: Math.min(week ? Infinity : kindOf === 'fm1' ? fcDays : 3, run.nights - n) }, (_, h) => n + h)
         .map(i => ({ i, date: addDays(run.start_date, i), trip_date: run.trip_dates[i], lead: i - n + 1 }));
       const { data: rds } = await db.from('replay_days').select('id, replay_date').eq('trip_id', tripId).in('replay_date', want.map(w => w.date));
       horizon = want.map(w => ({ ...w, dayId: (rds ?? []).find(r => r.replay_date === w.date)?.id }));
-      if (horizon.some(h => h.dayId == null && h.lead <= 3)) return json({ ok: false, error: 'replay day missing' }, 404);
+      if (horizon.some(h => h.dayId == null && h.lead <= (week || kindOf === 'fm1' ? fcDays : 3))) return json({ ok: false, error: 'replay day missing' }, 404);
     } else {
       const { data: rd, error: rdErr } = await db.from('replay_days').select('id, trip_id, replay_date, trip_date').eq('id', dayId).single();
       if (rdErr || !rd) return json({ ok: false, error: 'replay day not found' }, 404);
@@ -222,7 +226,7 @@ Deno.serve(async (req) => {
 
     // A run's plan loads only what it plans on (and the truth of the day it does).
     const k0 = runId != null ? kindOf : null;
-    const nFc = k0 == null ? horizon.length : k0 === 'fc3' || k0 === 'fm1' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(3, horizon.length) : 0;
+    const nFc = k0 == null ? horizon.length : k0 === 'fc3' || k0 === 'fm1' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(fcDays, horizon.length) : 0;
     const needLt = (h: number) => k0 == null || k0 === 'lt3' || (week && h >= nFc);
     const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
     if (fcB.slice(0, nFc).some(b => !b) || trB.slice(0, nTr).some(b => !b)) return json({ ok: false, error: 'replay builds missing' }, 404);
