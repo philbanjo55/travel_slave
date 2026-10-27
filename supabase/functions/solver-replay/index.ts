@@ -987,10 +987,10 @@ Deno.serve(async (req) => {
           const ok = cands.filter(c => fitsLater(c.st));
           const pool = ok.length ? ok : cands.slice(0, 1);
           const scored = pool.map(c => ({ c, m: scoreCand(c) }));
-          const win = scored.reduce((a, b) => (b.m.j > a.m.j ? b : a));
+          const pick = scored.reduce((a, b) => (b.m.j > a.m.j ? b : a));
           mcStats = { dropped: cands.length - pool.length, cands: scored.map(x => ({ tag: x.c.tag, j: r3(x.m.j), mean: r3(x.m.mean), stops: x.c.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name) })),
-                      chose: win.c.tag, ms: Math.round(performance.now() - tMc) };
-          p0 = win.c.p; st = win.c.st;
+                      chose: pick.c.tag, ms: Math.round(performance.now() - tMc) };
+          p0 = pick.c.p; st = pick.c.st;
         }
         if (st) for (const v of st.route) seenIds.add(nodes[v.n].id);
         nextSets = { seen: [...seenIds] };
