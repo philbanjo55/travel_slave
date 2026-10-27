@@ -265,6 +265,9 @@ Deno.serve(async (req) => {
       db.from('days').select('id, date').eq('trip_id', tripId).then(r => r.data ?? []),
     ]);
     const stopById = new Map(stopsAll.map(s => [s.id, s]));
+    // A rated stop locked in the itinerary (stops.time_locked: Glacier View on the
+    // way to the flight, Phil 27 Oct 2026) is a booking too, not a free stop.
+    for (const r of inputs) if (stopById.get(r.stop_id)?.time_locked) r.time_locked = true;
     const byDate = (rows: any[]) => {
       const m = new Map<string, any[]>();
       for (const r of rows) { const d = slotDate(r.slot_at); if (!m.has(d)) m.set(d, []); m.get(d)!.push(r); }
