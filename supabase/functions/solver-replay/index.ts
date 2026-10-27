@@ -68,6 +68,8 @@ const GOOD = 150;            // V >= 0.6 counts as a good shot (p_good)
 const COVER_PENALTY = 0.5;
 // fm1: required stops rank first in the day search (ranking only, not value).
 const MUST_BONUS = 1000;
+// mc1: a ski outing the played-out week never fits costs 5 x its tier weight.
+const MISS_PENALTY = 5;
 // Day window, local time: leave the hotel no earlier, be back no later
 // (made up from Phil's own days, 05:45-22:30). Booked stops override it.
 // Body: earliest / latest as "HH:MM".
@@ -908,7 +910,9 @@ Deno.serve(async (req) => {
           // shuffled per day. In each version a quick stand-in fills every later
           // day with the best places per minute that fit its daylight (ski
           // outings once, gear window kept); a ski outing never done costs
-          // COVER_PENALTY x its tier weight. Best mean + 0.5 x CVaR wins.
+          // MISS_PENALTY x its tier weight, and a candidate after which the days
+          // left cannot hold every open ski outing is dropped first. Best mean
+          // + 0.5 x CVaR wins.
           const tMc = performance.now(), S = 51;
           const cands: { p: DayPlan; st: State; tag: string }[] = [{ p: p0, st, tag: 'fm1' }];
           const sameSet = (a: State, b: State) => a.route.length === b.route.length && a.route.every(v => b.visited[v.n]);
@@ -957,14 +961,34 @@ Deno.serve(async (req) => {
                   const g = nodes[o.x].group; bestG.set(g, Math.max(bestG.get(g) ?? 0, vb[h].get(o.x)![k]));
                 }
               }
-              for (const u of onceUnits) if (!u.every(x => did.has(x))) v -= COVER_PENALTY * u.reduce((t, x) => t + nodes[x].w, 0) / u.length;
+              for (const u of onceUnits) if (!u.every(x => did.has(x))) v -= MISS_PENALTY * u.reduce((t, x) => t + nodes[x].w, 0);
               tot[k] = v;
             }
             return metric(tot);
           };
-          const scored = cands.map(c => ({ c, m: scoreCand(c) }));
+          // Every ski outing must still fit after tomorrow: a candidate that leaves
+          // more outings than the days after it can hold is out (Phil: every place
+          // is a must-do), whatever the weather says.
+          const fitsLater = (st: State) => {
+            const left = longs.filter(u => !u.every(x => st.visited[x]));
+            const used = remaining.map(() => 0);
+            const place = (k: number): boolean => {
+              if (k === left.length) return true;
+              const u = left[k], d = durOf(u), wk = win[longs.indexOf(u)];
+              for (let i = 1; i < remaining.length; i++) {
+                if (used[i] + d > wk[i]) continue;
+                used[i] += d; const ok = place(k + 1); used[i] -= d;
+                if (ok) return true;
+              }
+              return false;
+            };
+            return place(0);
+          };
+          const ok = cands.filter(c => fitsLater(c.st));
+          const pool = ok.length ? ok : cands.slice(0, 1);
+          const scored = pool.map(c => ({ c, m: scoreCand(c) }));
           const win = scored.reduce((a, b) => (b.m.j > a.m.j ? b : a));
-          mcStats = { cands: scored.map(x => ({ tag: x.c.tag, j: r3(x.m.j), mean: r3(x.m.mean), stops: x.c.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name) })),
+          mcStats = { dropped: cands.length - pool.length, cands: scored.map(x => ({ tag: x.c.tag, j: r3(x.m.j), mean: r3(x.m.mean), stops: x.c.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name) })),
                       chose: win.c.tag, ms: Math.round(performance.now() - tMc) };
           p0 = win.c.p; st = win.c.st;
         }
