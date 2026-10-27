@@ -818,8 +818,13 @@ Deno.serve(async (req) => {
         // best (beyond the forecast: the place's average over the forecast days).
         // Tomorrow's share of that is required tomorrow; so is any place whose
         // last chance is tomorrow.
+        // fm_version (run config, default 3) keeps the older versions runnable
+        // for the proof step: 1 = cover1 (best of the next 3 days, capacity
+        // check without the gear window), 2 = cover2 (every long place gets a
+        // day), 3 = cover3 (only once-only outings, most urgent kept).
+        const fmv = Number(cfg.fm_version ?? 3);
         // Only once-only outings (skis) need a protected day: repeatable places get many chances.
-        const longs = open.filter(u => durOf(u) >= 90 && u.some(x => nodes[x].once));
+        const longs = open.filter(u => durOf(u) >= 90 && (fmv < 3 || u.some(x => nodes[x].once)));
         const prior = (u: number[]) => { const vs = days.map((_, h) => val(u, h)).filter(v => v >= 0); return vs.length ? vs.reduce((t, v) => t + v, 0) / vs.length : 0.4; };
         const score = (u: number[], i: number) => (i < days.length ? val(u, i) : prior(u)) - 0.001 * i;
         const win = longs.map(u => remaining.map((_, i) => winOn(i, u)));
@@ -838,10 +843,44 @@ Deno.serve(async (req) => {
           if (!any) { assign.push(-1); dfs(k + 1, sc - 10); assign.pop(); }
         };
         dfs(0, 0);
-        const req: number[][] = open.filter(u => !longs.includes(u) && lastDay(u) === 0);
-        // When a day cannot hold them all, the most urgent stays: fewest days left that fit it, then the longest.
-        const daysLeft = (u: number[]) => { const k = longs.indexOf(u); return win[k].filter(w => w >= durOf(u)).length; };
-        const want = longs.filter((_, k) => bestA[k] === 0).sort((a, b) => daysLeft(a) - daysLeft(b) || durOf(b) - durOf(a));
+        let req: number[][], want: number[][];
+        if (fmv >= 3) {
+          req = open.filter(u => !longs.includes(u) && lastDay(u) === 0);
+          // When a day cannot hold them all, the most urgent stays: fewest days left that fit it, then the longest.
+          const daysLeft = (u: number[]) => { const k = longs.indexOf(u); return win[k].filter(w => w >= durOf(u)).length; };
+          want = longs.filter((_, k) => bestA[k] === 0).sort((a, b) => daysLeft(a) - daysLeft(b) || durOf(b) - durOf(a));
+        } else if (fmv === 2) {
+          req = open.filter(u => durOf(u) < 90 && lastDay(u) === 0);
+          want = longs.filter((_, k) => bestA[k] === 0).sort((a, b) => durOf(b) - durOf(a));
+        } else {
+          // v1: 70% of plain daylight (no gear window), forced only when the days after tomorrow cannot hold what is left.
+          const capOn = (i: number) => {
+            const td = remaining[i], rd = addDays(run.start_date, n + i);
+            const ids = new Set(tripDays.filter(d => d.date === td).map(d => d.id));
+            const own = stopsAll.filter(x => ids.has(x.day_id)).sort((a, b) => a.position - b.position);
+            let lo = civilDawn(rd, mid.lat, mid.lng, tz), hi = civilDusk(rd, mid.lat, mid.lng, tz);
+            const a0 = own[0], z = own.length > 1 ? own[own.length - 1] : null;
+            if (a0?.time_locked && labelMinutes(a0.time_label) != null) lo = Math.max(lo, zonedToUtc(rd, labelMinutes(a0.time_label)! + (a0.duration_minutes ?? 0), tz));
+            if (z?.time_locked && labelMinutes(z.time_label) != null) hi = Math.min(hi, zonedToUtc(rd, labelMinutes(z.time_label)!, tz));
+            return Math.max(0, (hi - lo) / 60000) * 0.7;
+          };
+          req = open.filter(u => lastDay(u) === 0);
+          const rest = () => open.filter(u => !req.includes(u) && lastDay(u) >= 1);
+          for (let guard = 0; guard < open.length; guard++) {
+            const left = rest().sort((a, b) => lastDay(a) - lastDay(b));
+            let short = false, cap = 0, need = 0;
+            for (let D = 1; D < remaining.length && !short; D++) {
+              cap += capOn(D);
+              need = left.filter(u => lastDay(u) <= D).reduce((t, u) => t + durOf(u), 0);
+              if (need > cap) short = true;
+            }
+            const pick = left.find(u => okOn(u, remaining[0]));
+            if (!short || !pick || req.reduce((t, u) => t + durOf(u), 0) + durOf(pick) > capOn(0)) break;
+            req.push(pick);
+          }
+          want = open.filter(u => !req.includes(u) && okOn(u, remaining[0]) && durOf(u) >= 90 && val(u, 0) > 0 && val(u, 0) >= Math.max(val(u, 1), val(u, 2)))
+            .sort((a, b) => (val(b, 0) - Math.max(val(b, 1), val(b, 2))) - (val(a, 0) - Math.max(val(a, 1), val(a, 2))));
+        }
         const mustOf = (u: number[]) => nodes[u[0]].together ? u : [u.reduce((a, b) => (best(b, 0) > best(a, 0) ? b : a))];
         let list = [...req, ...want], p0: DayPlan, st: State | null;  // dropped from the end when a day cannot hold them all
         for (;;) {
