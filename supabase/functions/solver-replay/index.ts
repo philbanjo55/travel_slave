@@ -256,17 +256,19 @@ Deno.serve(async (req) => {
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
     const tz: string = trip?.timezone ?? 'UTC';
     // One row per stop (replay_scores_c): slot i = t0 + offs[i] x 15 min, v[i] = members.
+    // Kept compact (27 Oct 2026, the bench ran out of memory with several plans
+    // in one worker): slot time as ms, values (0-250) as bytes; the plans are unchanged.
     const scoresOf = (buildId: string) => all<any>((a, b) => db.from('replay_scores_c').select('stop_id, t0, offs, v')
       .eq('build_id', buildId).order('stop_id').range(a, b))
       .then(rows => rows.flatMap(r => {
         const t0 = Date.parse(r.t0);
-        return (r.offs as number[]).map((o, i) => ({ stop_id: r.stop_id, slot_at: new Date(t0 + o * SLOT * 60000).toISOString(), v: r.v[i] }));
+        return (r.offs as number[]).map((o, i) => ({ stop_id: r.stop_id, ms: t0 + o * SLOT * 60000, v: Uint8Array.from(r.v[i]) }));
       }));
     const lightOf = (date: string) => all<any>((a, b) => db.rpc('solver_light_terms', { p_trip_id: tripId, p_dates: [date] }).order('slot_at').order('stop_id').range(a, b))
       .then(rows => rows.map(r => ({
-        stop_id: r.stop_id, slot_at: r.slot_at,
-        v: SCENARIOS.map(s => Math.round(250 * Math.max(0, Math.min(1,
-          (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * (r.fog_wanted ? 0.6 : 1))))),
+        stop_id: r.stop_id, ms: Date.parse(r.slot_at),
+        v: Uint8Array.from(SCENARIOS.map(s => Math.round(250 * Math.max(0, Math.min(1,
+          (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * (r.fog_wanted ? 0.6 : 1)))))),
       })));
 
     const [inputs, fcSc, trSc, ltSc, stopsAll, accs, tripDays] = await Promise.all([
@@ -287,7 +289,7 @@ Deno.serve(async (req) => {
     // (51 scenarios): each model stands for an equal share of the 51.
     if (week) for (const day of fcSc) for (const r of day) {
       const m = r.v.length; if (m === 51) continue;
-      r.v = Array.from({ length: 51 }, (_, k) => r.v[Math.floor(k * m / 51)]);
+      const src = r.v; r.v = Uint8Array.from({ length: 51 }, (_, k) => src[Math.floor(k * m / 51)]);
     }
     // Shot status is about the real trip; a replay starts from nothing shot.
     for (const r of inputs) { r.shot_status = null; r.shot_value = null; }
@@ -412,7 +414,7 @@ Deno.serve(async (req) => {
       const mustSet = new Set(must ?? []);
       const H0 = pos.get(day.startId!)!, H = pos.get(day.endId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
-      const slotMs = scores.map(r => Date.parse(r.slot_at));
+      const slotMs = scores.map(r => r.ms);
       // From 90 min before the first light (else the window opens), to an
       // hour after the last (else it closes); bookings always fit.
       const winStart = zonedToUtc(day.date, day.earliestMin ?? hhmm(EARLIEST), tz!), winEnd = zonedToUtc(day.date, day.latestMin ?? hhmm(LATEST), tz!);
@@ -442,8 +444,8 @@ Deno.serve(async (req) => {
       const V: (Uint8Array | null)[][] = nodes.map(() => new Array(nSlots).fill(null));
       for (const r of scores) {
         const ni = pos.get(r.stop_id); if (ni == null) continue;
-        const ti = Math.round((Date.parse(r.slot_at) - dayStart) / (SLOT * 60000));
-        if (ti >= 0 && ti < nSlots) V[ni][ti] = Uint8Array.from(r.v);
+        const ti = Math.round((r.ms - dayStart) / (SLOT * 60000));
+        if (ti >= 0 && ti < nSlots) V[ni][ti] = r.v;  // read only (W copies before merging)
       }
       const wCache = new Map<number, Uint8Array | null>();
       const W = (ni: number, start: number): Uint8Array | null => {
@@ -1026,7 +1028,12 @@ Deno.serve(async (req) => {
           // the morning build, with the same required places (dropped from the
           // end only if they no longer fit).
           const atMs = sunrise(days[0].date, mid.lat, mid.lng, tz) - LOOK_BEFORE_SUNRISE_MIN * 60000;
-          const before = st.route.filter(v => p0.dayStart + v.start * 60000 < atMs)
+          // mr_commit 'departure' (27 Oct 2026, the first full test lost the sunrise
+          // shot on 50 of 97 clear mornings): a visit you have already left for at
+          // the look is kept too; without it the replan restarts from where you were.
+          const leftBy = (v: { start: number; arrive: number; drive: number }) =>
+            cfg.mr_commit === 'departure' ? p0.dayStart + (v.arrive - v.drive) * 60000 < atMs : false;
+          const before = st.route.filter(v => p0.dayStart + v.start * 60000 < atMs || leftBy(v))
             .map(v => ({ n: v.n, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor }));
           let l = list, pm: DayPlan | null = null, sm: State | null = null;
           for (;;) {
