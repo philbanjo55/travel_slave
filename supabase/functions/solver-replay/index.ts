@@ -28,6 +28,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //         light only beyond; tomorrow is done, the rest carry to the next night
 //   imp = improve my week, free: also single stops (or keep-together groups)
 //         moved between days (solver-plan improve 'free')
+//   mc1 = fm1 plus a Monte Carlo choice between candidate plans for
+//         tomorrow, each scored with the rest of the week played out in 51
+//         weather versions (see coverPlan); loads the whole week like blk/imp
 //   fm1 = the old planner (tomorrow only) that also plans every rated place at
 //         least once (Phil, 26 Oct 2026: "each stop is technically a must
 //         do"): a long place goes on the day of the next 3 whose forecast
@@ -183,7 +186,7 @@ Deno.serve(async (req) => {
     kindOf = body.kind ?? null;
     // What to plan: one replay day, or the next nights of a whole-trip run.
     let run: any = null, tripId: string;
-    const week = kindOf === 'blk' || kindOf === 'imp';
+    const week = kindOf === 'blk' || kindOf === 'imp' || kindOf === 'mc1';
     // Forecast days ahead the week plans see (run config fc_days, 1-7; Previous Runs keeps 7).
     let fcDays = 3;
     let horizon: { i: number; date: string; trip_date: string; dayId: number; lead: number }[];
@@ -806,7 +809,8 @@ Deno.serve(async (req) => {
           return Math.max(0, 0.8 * (hi - lo) / 60000 - 45);
         };
         // How good each place looks on each of the next 3 days (best moment, forecast mean).
-        const looks = days.map((d, h) => planDay({ ...d, light: false }, fcSc[h], false));
+        const atH = (h: number) => (h < nFc ? fcSc[h] : ltSc[h]);
+        const looks = days.map((d, h) => planDay({ ...d, light: h >= nFc }, atH(h), false));
         const best = (x: number, h: number) => {
           const p = looks[h]; let b = 0;
           for (let i = p.winLo; i <= p.winHi; i++) { const w = p.W(x, i); if (!w) continue; let t = 0; for (const v of w) t += v; b = Math.max(b, t / w.length / 250); }
@@ -882,23 +886,98 @@ Deno.serve(async (req) => {
             .sort((a, b) => (val(b, 0) - Math.max(val(b, 1), val(b, 2))) - (val(a, 0) - Math.max(val(a, 1), val(a, 2))));
         }
         const mustOf = (u: number[]) => nodes[u[0]].together ? u : [u.reduce((a, b) => (best(b, 0) > best(a, 0) ? b : a))];
-        let list = [...req, ...want], p0: DayPlan, st: State | null;  // dropped from the end when a day cannot hold them all
-        for (;;) {
-          p0 = planDay({ ...days[0], light: false }, fcSc[0], true, undefined, list.flatMap(mustOf), skip);
-          st = p0.routes[0] ?? null;
-          if (st || !list.length) break;
-          list = list.slice(0, -1);
+        // Plan tomorrow with these places required, dropping from the end when a day cannot hold them all.
+        const planList = (l0: number[][]) => {
+          let l = l0, pp: DayPlan, ss: State | null;
+          for (;;) {
+            pp = planDay({ ...days[0], light: false }, fcSc[0], true, undefined, l.flatMap(mustOf), skip);
+            ss = pp.routes[0] ?? null;
+            if (ss || !l.length) break;
+            l = l.slice(0, -1);
+          }
+          return { p: pp, st: ss, list: l };
+        };
+        let { p: p0, st, list } = planList([...req, ...want]);
+        let mcStats: any = null;
+        if (kind === 'mc1' && st) {
+          // Monte Carlo (Phil, 27 Oct 2026): a few candidate plans for tomorrow
+          // (the fm1 plan, its next-best routes, and tomorrow with each open ski
+          // outing or none), each scored as tomorrow plus the rest of the week
+          // played out in 51 weather versions: forecast days in the forecast's
+          // own versions (one model each), later days in light-only versions
+          // shuffled per day. In each version a quick stand-in fills every later
+          // day with the best places per minute that fit its daylight (ski
+          // outings once, gear window kept); a ski outing never done costs
+          // COVER_PENALTY x its tier weight. Best mean + 0.5 x CVaR wins.
+          const tMc = performance.now(), S = 51;
+          const cands: { p: DayPlan; st: State; tag: string }[] = [{ p: p0, st, tag: 'fm1' }];
+          const sameSet = (a: State, b: State) => a.route.length === b.route.length && a.route.every(v => b.visited[v.n]);
+          for (const alt of p0.routes.slice(1, 6)) {
+            if (cands.length >= 3) break;
+            if (!cands.some(c => sameSet(c.st, alt))) cands.push({ p: p0, st: alt, tag: 'alt' });
+          }
+          const tryList = (l: number[][], tag: string) => {
+            const r = planList(l);
+            if (r.st && !cands.some(c => sameSet(c.st, r.st!))) cands.push({ p: r.p, st: r.st, tag });
+          };
+          tryList([...req], 'no outing');
+          for (const u of longs) if (!want.includes(u) && okOn(u, remaining[0])) tryList([...req, u], 'outing ' + nodes[u[0]].name);
+          // Best V per free node per later day per version (0-250), versions shuffled beyond the forecast.
+          const vb = days.map((_, h) => {
+            const p = looks[h], m = new Map<number, Uint8Array>();
+            for (const x of freeNodes) {
+              const b = new Uint8Array(S);
+              for (let i = p.winLo; i <= p.winHi; i++) { const w = p.W(x, i); if (!w) continue; for (let k = 0; k < S; k++) { const v = w[k % w.length]; if (v > b[k]) b[k] = v; } }
+              if (h >= nFc) { const sh = new Uint8Array(S); for (let k = 0; k < S; k++) sh[k] = b[(k * 7 + h * 13) % S]; m.set(x, sh); } else m.set(x, b);
+            }
+            return m;
+          });
+          const cap = days.map((_, h) => freeNodes.map(x => (h === 0 ? 0 : winOn(h, [x]))));
+          const onceUnits = [...unitsAll.values()].filter(u => u.some(x => nodes[x].once) && !covered(u));
+          const scoreCand = (c: { p: DayPlan; st: State }) => {
+            const tot = new Float32Array(S);
+            for (let k = 0; k < S; k++) {
+              const bestG = new Map<number, number>(groupBase);
+              const did = new Set<number>(freeNodes.filter(x => done(x)));
+              let v = 0;
+              for (const r of c.st.route) {
+                const x = r.n; if (nodes[x].w <= 0) continue;
+                const w = c.p.W(x, Math.round(r.start / SLOT)); const val0 = w ? w[k % w.length] : 0;
+                const g = nodes[x].group, prev = bestG.get(g) ?? 0;
+                v += nodes[x].w * Math.max(0, val0 - prev) / 250; bestG.set(g, Math.max(prev, val0)); did.add(x);
+              }
+              for (let h = 1; h < days.length; h++) {
+                const opts = freeNodes.map((x, j) => ({ x, j })).filter(o => !skip.has(o.x) && !(nodes[o.x].once && did.has(o.x)) && cap[h][o.j] > 0)
+                  .map(o => { const g = nodes[o.x].group, gain = nodes[o.x].w * Math.max(0, vb[h].get(o.x)![k] - (bestG.get(g) ?? 0)) / 250; return { ...o, gain, r: gain / (nodes[o.x].dur + 30) }; })
+                  .filter(o => o.gain > 0 || nodes[o.x].once).sort((a, b) => b.r - a.r);
+                let used = 0;
+                for (const o of opts) {
+                  const d = nodes[o.x].dur + 30; if (used + d > cap[h][o.j]) continue;
+                  used += d; did.add(o.x); v += o.gain;
+                  const g = nodes[o.x].group; bestG.set(g, Math.max(bestG.get(g) ?? 0, vb[h].get(o.x)![k]));
+                }
+              }
+              for (const u of onceUnits) if (!u.every(x => did.has(x))) v -= COVER_PENALTY * u.reduce((t, x) => t + nodes[x].w, 0) / u.length;
+              tot[k] = v;
+            }
+            return metric(tot);
+          };
+          const scored = cands.map(c => ({ c, m: scoreCand(c) }));
+          const win = scored.reduce((a, b) => (b.m.j > a.m.j ? b : a));
+          mcStats = { cands: scored.map(x => ({ tag: x.c.tag, j: r3(x.m.j), mean: r3(x.m.mean), stops: x.c.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name) })),
+                      chose: win.c.tag, ms: Math.round(performance.now() - tMc) };
+          p0 = win.c.p; st = win.c.st;
         }
         if (st) for (const v of st.route) seenIds.add(nodes[v.n].id);
         nextSets = { seen: [...seenIds] };
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members: fcB[0]!.members, required: req.length, wanted: want.length, kept: list.length, open: open.length,
-                   ms: p0.ms, ...(st ? {} : { error: 'no route' }) },
+                   ms: p0.ms, ...(mcStats ? { mc: mcStats } : {}), ...(st ? {} : { error: 'no route' }) },
         });
       };
       let shot: Record<string, number>;
-      if (kind === 'fm1') shot = coverPlan();
+      if (kind === 'fm1' || kind === 'mc1') shot = coverPlan();
       else if (kind === 'blk') shot = improveWeek('blocks');
       else if (kind === 'imp') shot = improveWeek('free');
       else if (kind === 'fc3') shot = plan(days.length, h => fcSc[h], false, fcB[0]!.members);
