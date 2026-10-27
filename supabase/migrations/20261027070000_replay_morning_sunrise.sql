@@ -46,9 +46,10 @@ begin
   ), hrs as (
     select distinct trip_id, tz, hr, hidden, ld from tr
      where (select sp.altitude from sun_position(tr.hr, tr.lat, tr.lng) sp) > 0
-  ), days as (
+  ), days as materialized (
+    -- Once per day (inlined, the look was recomputed for every joined row: 10+ min).
     select d.trip_id, d.ld, replay_look_at(d.trip_id, d.ld) look from (select distinct trip_id, ld from hrs) d
-  ), looks as (
+  ), looks as materialized (
     select d.trip_id, d.ld, d.look,
            (select o.hidden from tr o
              where o.trip_id = d.trip_id and o.hr between d.look - interval '1 hour' and d.look
