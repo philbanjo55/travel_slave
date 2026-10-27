@@ -100,7 +100,7 @@ type State = {
 };
 type DayPlan = {
   date: string; tripDate: string | null; light: boolean; start: number; end: number; dayStart: number; nSlots: number;
-  routes: State[]; anchors: number; ms: number; winLo: number; winHi: number;
+  routes: State[]; anchors: number; ms: number; winLo: number; winHi: number; extends?: number; capped?: boolean;
   W: (n: number, slot: number) => Uint8Array | null;
   peak: (n: number, slot: number) => number;
 };
@@ -296,6 +296,9 @@ Deno.serve(async (req) => {
     const specs = horizon.map(h => ({ date: h.date, trip_date: h.trip_date, light: false }));
 
     const stopById = new Map(stopsAll.map(s => [s.id, s]));
+    // A rated stop locked in the itinerary (stops.time_locked: Glacier View on the
+    // way to the flight, Phil 27 Oct 2026) is a booking too, not a free stop.
+    for (const r of inputs) if (stopById.get(r.stop_id)?.time_locked) r.time_locked = true;
 
     // Rated stops with a starred shot: the only ones that carry value.
     const rated = inputs.filter(r => (TIER_W[r.tier] ?? 0) > 0 && r.star_vantage_id)
@@ -413,9 +416,15 @@ Deno.serve(async (req) => {
     // must: stops the route has to include (fm1); skip: stops left out (once-only, done).
     // from (mr1): the visits already under way at atMs stay; the route goes on from there, no earlier than atMs.
     type From = { visits: { n: number; startMs: number; drive: number; anchor: boolean }[]; atMs: number };
-    const planDay = (day: typeof days[number], scores: any[], search = true, only?: number[], must?: number[], skip?: Set<number>, from?: From): DayPlan => {
+    // exact (proof check, Phil's #8): plan only these stops with no beam cut, every
+    // start slot, and every (stops, place) state kept unless another reached it no
+    // later with a higher score: near-exhaustive (the score is not additive, so a
+    // kept-best state can still hide a better one in rare cases).
+    const EXACT_MAX_EXTENDS = 1_500_000;
+    const planDay = (day: typeof days[number], scores: any[], search = true, only?: number[], must?: number[], skip?: Set<number>, from?: From, exact?: number[]): DayPlan => {
       const td0 = performance.now();
-      const cand = (only ?? freeNodes).filter(n => !skip?.has(n));
+      const cand = (exact ?? only ?? freeNodes).filter(n => !skip?.has(n));
+      let nExt = 0, capped = false;
       const mustSet = new Set(must ?? []);
       const H0 = pos.get(day.startId!)!, H = pos.get(day.endId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
@@ -483,6 +492,7 @@ Deno.serve(async (req) => {
       const anchorSlot = anchors.map(a => Math.round((a.startMs - dayStart) / (SLOT * 60000)));
 
       const extend = (st: State, n: number, i: number, drive: number, anchor: boolean): State => {
+        nExt++;
         const len = Math.ceil(nodes[n].dur / SLOT);
         const w = nodes[n].w > 0 ? W(n, i) : null;
         const total = Float32Array.from(st.total);
@@ -517,12 +527,20 @@ Deno.serve(async (req) => {
       let beam: State[] = search ? [start] : [];
       while (beam.length) {
         const children = new Map<string, State>();
+        const front = new Map<string, State[]>();  // exact: per key, states no other beats on both time and score
         const keep = (c: State) => {
           const key = nodes.length <= 64 ? `${c.m0},${c.m1},${c.loc}` : `${c.visited.join('')}|${c.loc}`;
+          if (exact) {
+            const f = front.get(key) ?? [];
+            if (f.some(s => s.t <= c.t && s.j >= c.j)) return;
+            front.set(key, [...f.filter(s => !(c.t <= s.t && c.j >= s.j)), c]);
+            return;
+          }
           const have = children.get(key);
           if (!have || have.j < c.j || (have.j === c.j && have.t > c.t)) children.set(key, c);
         };
         for (const st of beam) {
+          if (exact && nExt > EXACT_MAX_EXTENDS) { capped = true; break; }
           const nextA = st.next < anchors.length ? anchors[st.next] : null;
           const nextSlot = nextA ? anchorSlot[st.next] : Infinity;
           // The next booking, at its fixed time.
@@ -546,6 +564,7 @@ Deno.serve(async (req) => {
             }
             if (i0 > iMax) continue;
             const opts = new Set<number>([i0]);
+            if (exact) for (let i = i0 + 1; i <= Math.min(iMax, nSlots - 1); i++) opts.add(i);
             let bWait = -1, bWaitI = -1, bDay = -1, bDayI = -1;
             for (let i = i0; i <= Math.min(iMax, nSlots - 1); i++) {
               if (i < winLo && !startOk(s, i)) continue;
@@ -558,7 +577,7 @@ Deno.serve(async (req) => {
             for (const i of opts) if (W(s, i) && startOk(s, i)) keep(extend(st, s, i, drive, false));
           }
         }
-        beam = [...children.values()].sort((a, b) => b.j - a.j).slice(0, BEAM);
+        beam = exact ? [...front.values()].flat() : [...children.values()].sort((a, b) => b.j - a.j).slice(0, BEAM);
         // Only routes that made every booking are plans.
         pool.push(...beam.filter(st => st.next === anchors.length && st.t + D[st.loc][H] <= dayMin));
       }
@@ -578,7 +597,8 @@ Deno.serve(async (req) => {
       if (mustSet.size) pool = pool.filter(st => st.mc === mustSet.size);
       pool.sort((a, b) => b.j - a.j);
       return { date: day.date, tripDate: day.tripDate, light: day.light, start: H0, end: H, dayStart, nSlots, routes: pool,
-               anchors: anchors.length, ms: Math.round(performance.now() - td0), winLo, winHi, W, peak };
+               anchors: anchors.length, ms: Math.round(performance.now() - td0), winLo, winHi, W, peak,
+               ...(exact ? { extends: nExt, capped } : {}) };
     };
 
     const iso = (p: DayPlan, min: number) => new Date(p.dayStart + min * 60000).toISOString();
@@ -933,7 +953,28 @@ Deno.serve(async (req) => {
           return { p: pp, st: ss, list: l };
         };
         let { p: p0, st, list } = planList([...req, ...want]);
-        let mcStats: any = null, mrStats: any = null;
+        let mcStats: any = null, mrStats: any = null, exStats: any = null;
+        if (cfg.exact_k && st) {
+          // Proof check (run config exact_k, stats only, the plan is unchanged):
+          // tomorrow's night plan vs a near-exhaustive search over its own stops
+          // plus the next best ones up to exact_k (keep-together partners added
+          // whole). A higher exact score means the beam missed a better day.
+          const mustN = list.flatMap(mustOf);
+          const E = new Set<number>([...st.route.filter(v => nodes[v.n].free).map(v => v.n), ...mustN]);
+          const addUnit = (x: number) => { for (const y of freeNodes) if (y === x || (nodes[x].together && nodes[y].together === nodes[x].together)) E.add(y); };
+          [...E].forEach(addUnit);
+          const others = freeNodes.filter(x => !E.has(x) && !skip.has(x)).sort((a, b) => best(b, 0) - best(a, 0));
+          for (const x of others) { if (E.size >= Number(cfg.exact_k)) break; addUnit(x); }
+          if (E.size > 9) exStats = { skipped: `${E.size} stops` };
+          else {
+            const pe = planDay({ ...days[0], light: false }, fcSc[0], true, undefined, mustN, skip, undefined, [...E]);
+            const se = pe.routes[0] ?? null;
+            const names = (s: State) => s.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name + ' ' + new Date(p0.dayStart + v.start * 60000).toISOString().slice(11, 16));
+            exStats = { k: E.size, beam_j: r3(st.j), exact_j: se ? r3(se.j) : null, gain: se ? r3(se.j - st.j) : null,
+                        same_stops: se ? se.route.length === st.route.length && se.route.every(v => st.visited[v.n]) : null,
+                        exact: se ? names(se) : null, beam: names(st), ms: pe.ms, extends: pe.extends, capped: pe.capped };
+          }
+        }
         if ((kind === 'mc1' || kind === 'mrmc') && st) {
           // Monte Carlo (Phil, 27 Oct 2026): a few candidate plans for tomorrow
           // (the fm1 plan, its next-best routes, and tomorrow with each open ski
@@ -1063,7 +1104,7 @@ Deno.serve(async (req) => {
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members: fcB[0]!.members, required: req.length, wanted: want.length, kept: list.length, open: open.length,
-                   ms: p0.ms, ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route' }) },
+                   ms: p0.ms, ...(exStats ? { exact: exStats } : {}), ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route' }) },
         });
       };
       let shot: Record<string, number>;
