@@ -31,9 +31,10 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //   mc1 = fm1 plus a Monte Carlo choice between candidate plans for
 //         tomorrow, each scored with the rest of the week played out in 51
 //         weather versions (see coverPlan); loads the whole week like blk/imp
-//   mr1 = fm1 plus the morning-of replan (27 Oct 2026): at 08:00 the planner
-//         sees whether the peaks are hidden and re-plans the rest of the day
-//         on the morning build (replay_build kind 'morning')
+//   mr1 = fm1 plus the morning-of replan (27 Oct 2026): 30 min before sunrise
+//         the planner sees whether the peaks are hidden and re-plans the rest
+//         of the day on the morning build (replay_build kind 'morning')
+//   mrmc = mc1 plus the same morning replan of the plan Monte Carlo chose
 //   fm1 = the old planner (tomorrow only) that also plans every rated place at
 //         least once (Phil, 26 Oct 2026: "each stop is technically a must
 //         do"): a long place goes on the day of the next 3 whose forecast
@@ -85,8 +86,8 @@ const SUNRISE_EARLIEST = '03:45';
 const SUNRISE_MIN_P = 0.5;
 // Multi-day: at least 6 h from back at the hotel to leaving again.
 const REST_HOURS = 6;
-// Morning-of replan (mr1): the planner looks at the peaks at 08:00 local and re-plans the rest of the day.
-const MORNING_MIN = 8 * 60;
+// Morning-of replan (mr1 / mrmc): the planner looks at the peaks this long before sunrise and re-plans the rest of the day.
+const LOOK_BEFORE_SUNRISE_MIN = 30;
 // Light-only scenarios: sun visibility (k/50)^2, k = 0..50. Same expansion
 // as SQL solver_light_scores; solver_light_terms gives dir/soft per slot.
 const SCENARIOS = Array.from({ length: 51 }, (_, k) => (k / 50) ** 2);
@@ -135,6 +136,13 @@ function sunAlt(lat: number, lng: number, ms: number) {
 function civilDusk(date: string, lat: number, lng: number, tz: string) {
   let t = zonedToUtc(date, 12 * 60, tz);
   for (let i = 0; i < 144 && sunAlt(lat, lng, t) >= -6; i++) t += 5 * 60000;
+  return t;
+}
+
+// Sunrise on a date (UTC ms, to the minute): the first minute from 03:00 local with the sun up.
+function sunrise(date: string, lat: number, lng: number, tz: string) {
+  let t = zonedToUtc(date, 3 * 60, tz);
+  for (let i = 0; i < 540 && sunAlt(lat, lng, t) <= -0.833; i++) t += 60000;
   return t;
 }
 
@@ -193,7 +201,7 @@ Deno.serve(async (req) => {
     kindOf = body.kind ?? null;
     // What to plan: one replay day, or the next nights of a whole-trip run.
     let run: any = null, tripId: string;
-    const week = kindOf === 'blk' || kindOf === 'imp' || kindOf === 'mc1';
+    const week = kindOf === 'blk' || kindOf === 'imp' || kindOf === 'mc1' || kindOf === 'mrmc';
     // Forecast days ahead the week plans see (run config fc_days, 1-7; Previous Runs keeps 7).
     let fcDays = 3;
     let horizon: { i: number; date: string; trip_date: string; dayId: number; lead: number }[];
@@ -240,9 +248,10 @@ Deno.serve(async (req) => {
     const needLt = (h: number) => k0 == null || k0 === 'lt3' || (week && h >= nFc);
     const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
     if (fcB.slice(0, nFc).some(b => !b) || trB.slice(0, nTr).some(b => !b)) return json({ ok: false, error: 'replay builds missing' }, 404);
-    // mr1: tomorrow's forecast with the 08:00 look at the peaks (replay_build kind 'morning').
-    const mB = k0 === 'mr1' ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === 'morning') : undefined;
-    if (k0 === 'mr1' && !mB) return json({ ok: false, error: 'morning build missing' }, 404);
+    // mr1 / mrmc: tomorrow's forecast with the look at the peaks before sunrise (replay_build kind 'morning').
+    const morning = k0 === 'mr1' || k0 === 'mrmc';
+    const mB = morning ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === 'morning') : undefined;
+    if (morning && !mB) return json({ ok: false, error: 'morning build missing' }, 404);
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
     const tz: string = trip?.timezone ?? 'UTC';
@@ -918,34 +927,7 @@ Deno.serve(async (req) => {
         };
         let { p: p0, st, list } = planList([...req, ...want]);
         let mcStats: any = null, mrStats: any = null;
-        if (kind === 'mr1' && st) {
-          // Morning-of replan (Phil, 27 Oct 2026): the night's plan up to 08:00
-          // stands; at 08:00 the planner sees whether the peaks are hidden (the
-          // airport or the camera, the latest report from 07:00-08:00) and
-          // re-plans the rest of the day on the morning build, with the same
-          // required places (dropped from the end only if they no longer fit).
-          const atMs = zonedToUtc(days[0].date, MORNING_MIN, tz);
-          const before = st.route.filter(v => p0.dayStart + v.start * 60000 < atMs)
-            .map(v => ({ n: v.n, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor }));
-          let l = list, pm: DayPlan | null = null, sm: State | null = null;
-          for (;;) {
-            pm = planDay({ ...days[0], light: false }, mSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
-            sm = pm.routes[0] ?? null;
-            if (sm || !l.length) break;
-            l = l.slice(0, -1);
-          }
-          const { data: look } = await db.from('replay_hidden_truth').select('hr, hidden').eq('trip_id', tripId)
-            .gte('hr', new Date(atMs - 3600000).toISOString()).lte('hr', new Date(atMs).toISOString()).order('hr', { ascending: false }).limit(1);
-          const show = (p: DayPlan, s: State) => s.route.filter(v => nodes[v.n].w > 0)
-            .map(v => nodes[v.n].name + ' ' + new Date(p.dayStart + v.start * 60000).toISOString().slice(11, 16));
-          mrStats = { hidden_at_8: look?.[0]?.hidden ?? null, kept: before.length, night: show(p0, st) };
-          if (sm && pm) {
-            const morning = show(pm, sm);
-            mrStats = { ...mrStats, morning, changed: morning.join('|') !== mrStats.night.join('|'), dropped: list.length - l.length };
-            p0 = pm; st = sm;
-          } else mrStats.error = 'no morning route: the night plan stands';
-        }
-        if (kind === 'mc1' && st) {
+        if ((kind === 'mc1' || kind === 'mrmc') && st) {
           // Monte Carlo (Phil, 27 Oct 2026): a few candidate plans for tomorrow
           // (the fm1 plan, its next-best routes, and tomorrow with each open ski
           // outing or none), each scored as tomorrow plus the rest of the week
@@ -958,15 +940,15 @@ Deno.serve(async (req) => {
           // left cannot hold every open ski outing is dropped first. Best mean
           // + 0.5 x CVaR wins.
           const tMc = performance.now(), S = 51;
-          const cands: { p: DayPlan; st: State; tag: string }[] = [{ p: p0, st, tag: 'fm1' }];
+          const cands: { p: DayPlan; st: State; tag: string; list: number[][] }[] = [{ p: p0, st, tag: 'fm1', list }];
           const sameSet = (a: State, b: State) => a.route.length === b.route.length && a.route.every(v => b.visited[v.n]);
           for (const alt of p0.routes.slice(1, 6)) {
             if (cands.length >= 3) break;
-            if (!cands.some(c => sameSet(c.st, alt))) cands.push({ p: p0, st: alt, tag: 'alt' });
+            if (!cands.some(c => sameSet(c.st, alt))) cands.push({ p: p0, st: alt, tag: 'alt', list });
           }
           const tryList = (l: number[][], tag: string) => {
             const r = planList(l);
-            if (r.st && !cands.some(c => sameSet(c.st, r.st!))) cands.push({ p: r.p, st: r.st, tag });
+            if (r.st && !cands.some(c => sameSet(c.st, r.st!))) cands.push({ p: r.p, st: r.st, tag, list: r.list });
           };
           tryList([...req], 'no outing');
           for (const u of longs) if (!want.includes(u) && okOn(u, remaining[0])) tryList([...req, u], 'outing ' + nodes[u[0]].name);
@@ -1034,7 +1016,35 @@ Deno.serve(async (req) => {
           const pick = scored.reduce((a, b) => (b.m.j > a.m.j ? b : a));
           mcStats = { dropped: cands.length - pool.length, cands: scored.map(x => ({ tag: x.c.tag, j: r3(x.m.j), mean: r3(x.m.mean), stops: x.c.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name) })),
                       chose: pick.c.tag, ms: Math.round(performance.now() - tMc) };
-          p0 = pick.c.p; st = pick.c.st;
+          p0 = pick.c.p; st = pick.c.st; list = pick.c.list;
+        }
+        if ((kind === 'mr1' || kind === 'mrmc') && st) {
+          // Morning-of replan (Phil, 27 Oct 2026): the night's plan (v3, or the one
+          // Monte Carlo chose) stands up to 30 min before sunrise; then the planner
+          // sees whether the peaks are hidden (the airport or the camera, the
+          // latest report in the hour before) and re-plans the rest of the day on
+          // the morning build, with the same required places (dropped from the
+          // end only if they no longer fit).
+          const atMs = sunrise(days[0].date, mid.lat, mid.lng, tz) - LOOK_BEFORE_SUNRISE_MIN * 60000;
+          const before = st.route.filter(v => p0.dayStart + v.start * 60000 < atMs)
+            .map(v => ({ n: v.n, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor }));
+          let l = list, pm: DayPlan | null = null, sm: State | null = null;
+          for (;;) {
+            pm = planDay({ ...days[0], light: false }, mSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
+            sm = pm.routes[0] ?? null;
+            if (sm || !l.length) break;
+            l = l.slice(0, -1);
+          }
+          const { data: look } = await db.from('replay_hidden_truth').select('hr, hidden').eq('trip_id', tripId)
+            .gte('hr', new Date(atMs - 3600000).toISOString()).lte('hr', new Date(atMs).toISOString()).order('hr', { ascending: false }).limit(1);
+          const show = (p: DayPlan, s: State) => s.route.filter(v => nodes[v.n].w > 0)
+            .map(v => nodes[v.n].name + ' ' + new Date(p.dayStart + v.start * 60000).toISOString().slice(11, 16));
+          mrStats = { look_at: new Date(atMs).toISOString(), hidden: look?.[0]?.hidden ?? null, kept: before.length, night: show(p0, st) };
+          if (sm && pm) {
+            const morning = show(pm, sm);
+            mrStats = { ...mrStats, morning, changed: morning.join('|') !== mrStats.night.join('|'), dropped: list.length - l.length };
+            p0 = pm; st = sm;
+          } else mrStats.error = 'no morning route: the night plan stands';
         }
         if (st) for (const v of st.route) seenIds.add(nodes[v.n].id);
         nextSets = { seen: [...seenIds] };
@@ -1045,7 +1055,7 @@ Deno.serve(async (req) => {
         });
       };
       let shot: Record<string, number>;
-      if (kind === 'fm1' || kind === 'mc1' || kind === 'mr1') shot = await coverPlan();
+      if (kind === 'fm1' || kind === 'mc1' || kind === 'mr1' || kind === 'mrmc') shot = await coverPlan();
       else if (kind === 'blk') shot = improveWeek('blocks');
       else if (kind === 'imp') shot = improveWeek('free');
       else if (kind === 'fc3') shot = plan(days.length, h => fcSc[h], false, fcB[0]!.members);
