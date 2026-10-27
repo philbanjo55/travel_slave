@@ -325,8 +325,12 @@ Deno.serve(async (req) => {
     // Keep together (stops that go on one day) and the trip's middle (done by dark).
     const { data: tg } = await db.from('solver_stop_settings').select('stop_id, together, once')
       .in('stop_id', rated.map(r => r.stop_id)).or('together.not.is.null,once.eq.true');
-    const togetherOf = new Map((tg ?? []).filter(r => r.together).map(r => [r.stop_id, r.together as string]));
-    const onceIds = new Set((tg ?? []).filter(r => r.once).map(r => r.stop_id as string));
+    // Proof-step switches (run config, Phil 27 Oct 2026: how much each input matters):
+    // no_together / no_once / no_dark turn a rule off; cap_frac / cap_minus move the
+    // big-outing day size (80% of daylight less 45 min); miss_penalty the Monte Carlo
+    // cost of a never-done ski outing (5). Absent = as before.
+    const togetherOf = new Map(cfg.no_together ? [] : (tg ?? []).filter(r => r.together).map(r => [r.stop_id, r.together as string]));
+    const onceIds = new Set(cfg.no_once ? [] : (tg ?? []).filter(r => r.once).map(r => r.stop_id as string));
     const placed = stopsAll.filter(s => s.lat != null && rated.some(r => r.stop_id === s.id));
     const mid = { lat: placed.reduce((t, s) => t + s.lat, 0) / (placed.length || 1), lng: placed.reduce((t, s) => t + s.lng, 0) / (placed.length || 1) };
     // What a subject already has (x250): nailed = everything, got = shot_value.
@@ -438,7 +442,7 @@ Deno.serve(async (req) => {
       const gearHiMin = !gTo ? Infinity : gearDate > gTo.date ? -Infinity : gearDate < gTo.date ? Infinity
         : (zonedToUtc(day.date, hhmm(gTo.time), tz!) - dayStart) / 60000;
       // Done by dark: free stops end by civil dusk.
-      const darkMin = placed.length ? (civilDusk(day.date, mid.lat, mid.lng, tz!) - dayStart) / 60000 : Infinity;
+      const darkMin = placed.length && !cfg.no_dark ? (civilDusk(day.date, mid.lat, mid.lng, tz!) - dayStart) / 60000 : Infinity;
 
       // V per node per slot, W = best V over the visit window starting there.
       const V: (Uint8Array | null)[][] = nodes.map(() => new Array(nSlots).fill(null));
@@ -836,7 +840,7 @@ Deno.serve(async (req) => {
             if (cfg.gear?.from && td === gFrom) lo = Math.max(lo, zonedToUtc(rd, hhmm(cfg.gear.from.time), tz));
             if (cfg.gear?.to && td === gTo) hi = Math.min(hi, zonedToUtc(rd, hhmm(cfg.gear.to.time), tz));
           }
-          return Math.max(0, 0.8 * (hi - lo) / 60000 - 45);
+          return Math.max(0, Number(cfg.cap_frac ?? 0.8) * (hi - lo) / 60000 - Number(cfg.cap_minus ?? 45));
         };
         // How good each place looks on each of the next 3 days (best moment, forecast mean).
         const atH = (h: number) => (h < nFc ? fcSc[h] : ltSc[h]);
@@ -989,7 +993,7 @@ Deno.serve(async (req) => {
                   const g = nodes[o.x].group; bestG.set(g, Math.max(bestG.get(g) ?? 0, vb[h].get(o.x)![k]));
                 }
               }
-              for (const u of onceUnits) if (!u.every(x => did.has(x))) v -= MISS_PENALTY * u.reduce((t, x) => t + nodes[x].w, 0);
+              for (const u of onceUnits) if (!u.every(x => did.has(x))) v -= Number(cfg.miss_penalty ?? MISS_PENALTY) * u.reduce((t, x) => t + nodes[x].w, 0);
               tot[k] = v;
             }
             return metric(tot);
