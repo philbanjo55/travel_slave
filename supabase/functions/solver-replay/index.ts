@@ -92,7 +92,7 @@ const LOOK_BEFORE_SUNRISE_MIN = 30;
 // as SQL solver_light_scores; solver_light_terms gives dir/soft per slot.
 const SCENARIOS = Array.from({ length: 51 }, (_, k) => (k / 50) ** 2);
 
-type PlanNode = { id: string; name: string; w: number; dur: number; group: number; free: boolean; together: string | null; once: boolean };
+type PlanNode = { id: string; name: string; w: number; ws: number; dur: number; group: number; free: boolean; together: string | null; once: boolean };
 type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
 type State = {
   t: number; loc: number; next: number; visited: Uint8Array; m0: number; m1: number; groupBest: Map<number, Uint8Array>;
@@ -394,7 +394,8 @@ Deno.serve(async (req) => {
     const nodes: PlanNode[] = ids.map(id => {
       const ri = ratedIdx.get(id), r = ri != null ? rated[ri] : null, s = stopById.get(id);
       return {
-        id, name: s?.name ?? id, w: r ? TIER_W[r.tier] : 0,
+        // w plans (run config tier_w can change it); ws scores against the truth (always the default weights).
+        id, name: s?.name ?? id, w: r ? TIER_W[r.tier] : 0, ws: r ? (DEFAULTS.TIER_W[r.tier] ?? 0) : 0,
         dur: Math.max(r?.duration_minutes ?? s?.duration_minutes ?? 60, SLOT),
         group: ri != null ? find(ri) : -1 - (pos.get(id) ?? 0),
         free: !!r && !r.time_locked && r.shot_status !== 'nailed', together: togetherOf.get(id) ?? null, once: onceIds.has(id),
@@ -606,10 +607,10 @@ Deno.serve(async (req) => {
       const best = new Map<number, number>();
       let total = 0;
       for (const v of visits) {
-        if (nodes[v.n].w <= 0) continue;
+        if (nodes[v.n].ws <= 0) continue;
         const w = truthAt(tp, v);
         const g = nodes[v.n].group, prev = best.get(g);
-        total += nodes[v.n].w * gain(g, w, prev) / 250;
+        total += nodes[v.n].ws * gain(g, w, prev) / 250;
         best.set(g, Math.max(prev ?? 0, w));
       }
       return total;
