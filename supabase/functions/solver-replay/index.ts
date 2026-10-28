@@ -1200,17 +1200,26 @@ Deno.serve(async (req) => {
               await mark('cands');
               return await saveMc(cs, todo);
             }
-            // As many steps per request as fit in mc_budget_ms (default 600) of work; the
-            // steps do not depend on how they are grouped, so results are the same.
+            // Each day search is its own step (planList's retries with one place fewer
+            // included, same order), and a request starts another only while the
+            // slowest so far still fits in mc_budget_ms (default 800). The steps do not
+            // depend on how they are grouped, so results are the same.
             const cs = pend.cands as any[], todo = pend.todo as any[];
-            const tB = performance.now(), budget = Number(cfg.mc_budget_ms ?? 600);
+            const tB = performance.now(), budget = Number(cfg.mc_budget_ms ?? 800);
             let vbL: Map<number, Uint8Array>[] | null = null;
             const getVb = () => (vbL ??= makeVb());
             for (const c of cs) if (!c.m) scoreLite(c, getVb());
-            let k = 0;
-            while (k < todo.length && performance.now() - tB < budget) {
-              const r = planList((todo[k].units as string[][]).map(u => u.map(id => pos.get(id)!)));
-              if (r.st && !cs.some(c => sameIds(c, r.st!))) { const c = ser(r.p, r.st, r.list, todo[k].tag); scoreLite(c, getVb()); cs.push(c); }
+            const unitIds = (l: number[][]) => l.map(u => u.map(x => nodes[x].id));
+            let k = 0, searched = 0, slowest = 0;
+            while (k < todo.length) {
+              if (searched && performance.now() - tB + slowest > budget) break;
+              const l = (todo[k].units as string[][]).map(u => u.map(id => pos.get(id)!));
+              const t1 = performance.now();
+              const pp = planDay({ ...days[0], light: false }, fcSc[0], true, undefined, l.flatMap(mustOf), skip);
+              searched++; slowest = Math.max(slowest, performance.now() - t1);
+              const ss = pp.routes[0] ?? null;
+              if (!ss && l.length) { todo[k] = { ...todo[k], units: unitIds(l.slice(0, -1)) }; continue; }
+              if (ss && !cs.some(c => sameIds(c, ss))) { const c = ser(pp, ss, l, todo[k].tag); scoreLite(c, getVb()); cs.push(c); }
               k++;
             }
             await mark('fits');
