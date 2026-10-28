@@ -954,8 +954,22 @@ Deno.serve(async (req) => {
           }
           return { p: pp, st: ss, list: l };
         };
-        let { p: p0, st, list } = planList([...req, ...want]);
-        let mcStats: any = null, mrStats: any = null, exStats: any = null, polStats: any = null;
+        // split_morning (run config, 28 Oct 2026): the heaviest nights (Monte Carlo
+        // + polish + morning re-plan, mostly the gear-pickup day) ran out of the
+        // worker's CPU time. With it, the night plan is one request and the morning
+        // re-plan the next: the night plan is saved in sets.pending and rebuilt
+        // exactly (same visits, same scores) before the morning step. Same results.
+        const split = !!cfg.split_morning && (kind === 'mr1' || kind === 'mrmc');
+        const pend = (ks.sets as any)?.pending;
+        const phase2 = split && pend?.night === n;
+        let p0: DayPlan, st: State | null, list: number[][];
+        if (phase2) {
+          const vis = (pend.visits as any[]).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
+          p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, undefined, undefined, { visits: vis, atMs: 0 });
+          st = p0.routes[0] ?? null;
+          list = (pend.units as string[][]).map(ids => ids.map(id => pos.get(id)!));
+        } else ({ p: p0, st, list } = planList([...req, ...want]));
+        let mcStats: any = phase2 ? pend.mc : null, mrStats: any = null, exStats: any = phase2 ? pend.ex : null, polStats: any = phase2 ? pend.pol : null;
         // The near-exhaustive search (planDay exact) over a plan's own stops, the
         // required ones and the next best places up to k (keep-together partners
         // added whole); more than 9 stops is not tried.
@@ -976,7 +990,7 @@ Deno.serve(async (req) => {
           const r = exactOver(scores, s, mustN, Number(cfg.polish_k), from);
           return r.se && r.pe && r.se.j > s.j + 1e-6 ? { p: r.pe, st: r.se, gain: r3(r.se.j - s.j) } : { p, st: s, gain: 0 };
         };
-        if (cfg.exact_k && st) {
+        if (cfg.exact_k && st && !phase2) {
           // Proof check (run config exact_k, stats only, the plan is unchanged):
           // tomorrow's night plan vs the near-exhaustive search. A higher exact
           // score means the beam missed a better day.
@@ -989,7 +1003,7 @@ Deno.serve(async (req) => {
                         exact: se ? names(se) : null, beam: names(st), ms: pe.ms, extends: pe.extends, capped: pe.capped };
           }
         }
-        if ((kind === 'mc1' || kind === 'mrmc') && st) {
+        if ((kind === 'mc1' || kind === 'mrmc') && st && !phase2) {
           // Monte Carlo (Phil, 27 Oct 2026): a few candidate plans for tomorrow
           // (the fm1 plan, its next-best routes, and tomorrow with each open ski
           // outing or none), each scored as tomorrow plus the rest of the week
@@ -1080,9 +1094,16 @@ Deno.serve(async (req) => {
                       chose: pick.c.tag, ms: Math.round(performance.now() - tMc) };
           p0 = pick.c.p; st = pick.c.st; list = pick.c.list;
         }
-        if (cfg.polish_k && st) {
+        if (cfg.polish_k && st && !phase2) {
           const r = polish(fcSc[0], p0, st, list.flatMap(mustOf));
           polStats = { night: r.gain }; p0 = r.p; st = r.st;
+        }
+        if (split && !phase2 && st) {
+          const pending = { night: n, visits: st.route.map(v => ({ id: nodes[v.n].id, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
+                            units: list.map(u => mustOf(u).map(x => nodes[x].id)), mc: mcStats, ex: exStats, pol: polStats };
+          await db.from('replay_run_state').update({ sets: { ...(ks.sets ?? {}), pending }, status: 'idle', note: null, updated_at: new Date().toISOString() })
+            .eq('run_id', runId).eq('kind', kind);
+          return null;
         }
         if ((kind === 'mr1' || kind === 'mrmc') && st) {
           // Morning-of replan (Phil, 27 Oct 2026): the night's plan (v3, or the one
@@ -1130,7 +1151,11 @@ Deno.serve(async (req) => {
         });
       };
       let shot: Record<string, number>;
-      if (kind === 'fm1' || kind === 'mc1' || kind === 'mr1' || kind === 'mrmc') shot = await coverPlan();
+      if (kind === 'fm1' || kind === 'mc1' || kind === 'mr1' || kind === 'mrmc') {
+        const cs = await coverPlan();
+        if (!cs) return json({ ok: true, partial: 'night plan saved; the morning step comes next', run_id: runId, kind, night: n });
+        shot = cs;
+      }
       else if (kind === 'blk') shot = improveWeek('blocks');
       else if (kind === 'imp') shot = improveWeek('free');
       else if (kind === 'fc3') shot = plan(days.length, h => fcSc[h], false, fcB[0]!.members);
