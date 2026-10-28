@@ -231,6 +231,15 @@ Deno.serve(async (req) => {
     }
     const cfg = (run ? run.config : body.config) ?? {};
     const cfgName: string = cfg.name ?? 'base';
+    // trace (run config, 28 Oct 2026): progress marks in app_logs, to see how far a
+    // night that runs out of CPU got (ms = wall since the request, wait = DB waits after the load).
+    const mark = async (stage: string) => {
+      if (!cfg.trace || runId == null) return;
+      const t = performance.now();
+      await db.from('app_logs').insert({ level: 'trace', message: 'solver-replay', data: { run_id: runId, kind: kindOf, stage,
+        ms: Math.round(t - tReq), loaded: Math.round(tLoaded - tReq), wait: Math.round(tWait) } });
+      tWait += performance.now() - t;
+    };
     // The isolate can serve several requests: start every call from the defaults.
     TIER_W = { ...DEFAULTS.TIER_W, ...(cfg.tier_w ?? {}) };
     LAMBDA = cfg.lambda ?? DEFAULTS.LAMBDA;
@@ -358,6 +367,7 @@ Deno.serve(async (req) => {
     const { data: tg } = await db.from('solver_stop_settings').select('stop_id, together, once')
       .in('stop_id', rated.map(r => r.stop_id)).or('together.not.is.null,once.eq.true');
     tLoaded = performance.now();
+    await mark('loaded');
     // Proof-step switches (run config, Phil 27 Oct 2026: how much each input matters):
     // no_together / no_once / no_dark turn a rule off; cap_frac / cap_minus move the
     // big-outing day size (80% of daylight less 45 min); miss_penalty the Monte Carlo
@@ -756,6 +766,7 @@ Deno.serve(async (req) => {
         await db.from('replay_run_state').update({ status: 'idle', updated_at: new Date().toISOString() }).eq('run_id', runId).eq('kind', kind);
         return json({ ok: true, skipped: 'already planned', run_id: runId, kind, night: ks.night });
       }
+      await mark('state');
       const shotBefore: Record<string, number> = ks.state ?? {};
       // What a plan has shot, by group (key: the group's first stop id).
       const keyOf = (g: number) => rated[g].stop_id;
@@ -766,6 +777,7 @@ Deno.serve(async (req) => {
       }
       // What happened on the day being done.
       const truthN = planDay({ ...days[0], light: false }, trSc[0], false);
+      await mark('truth');
       let row: any;
       const record = (visits: { n: number; startMs: number }[], extra: any) => {
         const realized = evalVisits(truthN, visits);
@@ -940,6 +952,7 @@ Deno.serve(async (req) => {
           if (!any) { assign.push(-1); dfs(k + 1, sc - 10); assign.pop(); }
         };
         dfs(0, 0);
+        await mark('dfs');
         let req: number[][], want: number[][];
         if (fmv >= 3) {
           req = open.filter(u => !longs.includes(u) && lastDay(u) === 0);
@@ -1009,6 +1022,7 @@ Deno.serve(async (req) => {
           p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, list.flatMap(u => u), undefined, { visits: vis, atMs: 0 });
           st = p0.routes[0] ?? null;
         } else ({ p: p0, st, list } = planList([...req, ...want]));
+        await mark('plan0');
         let mcStats: any = phase2 ? pend.mc : null, mrStats: any = null, exStats: any = phase2 ? pend.ex : null, polStats: any = phase2 ? pend.pol : null;
         // The near-exhaustive search (planDay exact) over a plan's own stops, the
         // required ones and the next best places up to k (keep-together partners
@@ -1139,6 +1153,7 @@ Deno.serve(async (req) => {
           mcStats = { dropped: cands.length - pool.length, cands: scored.map(x => ({ tag: x.c.tag, j: r3(x.m.j), mean: r3(x.m.mean), stops: x.c.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name) })),
                       chose: pick.c.tag, ms: Math.round(performance.now() - tMc) };
           p0 = pick.c.p; st = pick.c.st; list = pick.c.list;
+          await mark('mc');
         }
         const save = async (stg: string) => {
           const pending = { night: n, stage: stg, visits: st!.route.map(v => ({ id: nodes[v.n].id, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
@@ -1179,6 +1194,7 @@ Deno.serve(async (req) => {
             const r = polish(mSc, pm, sm, l.flatMap(mustOf), { visits: before, atMs });
             polStats = { ...(polStats ?? {}), morning: r.gain }; pm = r.p; sm = r.st;
           }
+          await mark('morning');
           const { data: look } = await db.from('replay_hidden_truth').select('hr, hidden').eq('trip_id', tripId)
             .gte('hr', new Date(atMs - 3600000).toISOString()).lte('hr', new Date(atMs).toISOString()).order('hr', { ascending: false }).limit(1);
           const show = (p: DayPlan, s: State) => s.route.filter(v => nodes[v.n].w > 0)
@@ -1204,8 +1220,8 @@ Deno.serve(async (req) => {
         if (!cs) return json({ ok: true, partial: 'night plan saved; the morning step comes next', run_id: runId, kind, night: n });
         shot = cs;
       }
-      else if (kind === 'blk') shot = improveWeek('blocks');
-      else if (kind === 'imp') shot = improveWeek('free');
+      else if (kind === 'blk') { await mark('climb'); shot = improveWeek('blocks'); }
+      else if (kind === 'imp') { await mark('climb'); shot = improveWeek('free'); }
       else if (kind === 'fc3') shot = plan(days.length, h => fcSc[h], false, fcB[0]!.members);
       else if (kind === 'fc1') shot = plan(1, h => fcSc[h], false, fcB[0]!.members);
       else if (kind === 'lt3') shot = plan(days.length, h => ltSc[h], true, 51);
