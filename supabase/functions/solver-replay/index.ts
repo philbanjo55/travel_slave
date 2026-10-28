@@ -1200,19 +1200,21 @@ Deno.serve(async (req) => {
               await mark('cands');
               return await saveMc(cs, todo);
             }
+            // As many steps per request as fit in mc_budget_ms (default 600) of work; the
+            // steps do not depend on how they are grouped, so results are the same.
             const cs = pend.cands as any[], todo = pend.todo as any[];
-            if (cs.some(c => !c.m)) {
-              const vb = makeVb();
-              for (const c of cs) if (!c.m) scoreLite(c, vb);
-              await mark('fits');
-              return await saveMc(cs, todo);
+            const tB = performance.now(), budget = Number(cfg.mc_budget_ms ?? 600);
+            let vbL: Map<number, Uint8Array>[] | null = null;
+            const getVb = () => (vbL ??= makeVb());
+            for (const c of cs) if (!c.m) scoreLite(c, getVb());
+            let k = 0;
+            while (k < todo.length && performance.now() - tB < budget) {
+              const r = planList((todo[k].units as string[][]).map(u => u.map(id => pos.get(id)!)));
+              if (r.st && !cs.some(c => sameIds(c, r.st!))) { const c = ser(r.p, r.st, r.list, todo[k].tag); scoreLite(c, getVb()); cs.push(c); }
+              k++;
             }
-            if (todo.length) {
-              const r = planList((todo[0].units as string[][]).map(u => u.map(id => pos.get(id)!)));
-              if (r.st && !cs.some(c => sameIds(c, r.st!))) { const c = ser(r.p, r.st, r.list, todo[0].tag); scoreLite(c, makeVb()); cs.push(c); }
-              await mark('fits');
-              return await saveMc(cs, todo.slice(1));
-            }
+            await mark('fits');
+            if (k < todo.length) return await saveMc(cs, todo.slice(k));
             const ok = cs.filter(c => c.fits);
             const pool = ok.length ? ok : cs.slice(0, 1);
             const pick = pool.reduce((a, b) => (b.m.j > a.m.j ? b : a));
