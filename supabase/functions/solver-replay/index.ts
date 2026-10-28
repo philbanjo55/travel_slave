@@ -299,6 +299,9 @@ Deno.serve(async (req) => {
     const specs = horizon.map(h => ({ date: h.date, trip_date: h.trip_date, light: false }));
 
     const stopById = new Map(stopsAll.map(s => [s.id, s]));
+    // locked_add [stop_id] (28 Oct 2026, #9 Faroes): stops treated as stops.time_locked
+    // (the flights, so arrival / departure days start and end at them).
+    for (const id of (cfg.locked_add ?? []) as string[]) { const s = stopById.get(id); if (s) s.time_locked = true; }
     // A rated stop locked in the itinerary (stops.time_locked: Glacier View on the
     // way to the flight, Phil 27 Oct 2026) is a booking too, not a free stop.
     // Rated only (a tier): the JAC arrive / depart logistics stops are locked too and
