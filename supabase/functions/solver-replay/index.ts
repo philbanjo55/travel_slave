@@ -337,8 +337,12 @@ Deno.serve(async (req) => {
     // no_together / no_once / no_dark turn a rule off; cap_frac / cap_minus move the
     // big-outing day size (80% of daylight less 45 min); miss_penalty the Monte Carlo
     // cost of a never-done ski outing (5). Absent = as before.
-    const togetherOf = new Map(cfg.no_together ? [] : (tg ?? []).filter(r => r.together).map(r => [r.stop_id, r.together as string]));
-    const onceIds = new Set(cfg.no_once ? [] : (tg ?? []).filter(r => r.once).map(r => r.stop_id as string));
+    // together_add {stop_id: key} / once_add [stop_id] (28 Oct 2026, #9 Faroes): guessed
+    // rules for a trip Phil has not set yet, kept in the run config so the trip is untouched.
+    const togetherOf = new Map([...(cfg.no_together ? [] : (tg ?? []).filter(r => r.together).map(r => [r.stop_id, r.together as string] as [string, string])),
+      ...(cfg.no_together ? [] : Object.entries((cfg.together_add ?? {}) as Record<string, string>))]);
+    const onceIds = new Set([...(cfg.no_once ? [] : (tg ?? []).filter(r => r.once).map(r => r.stop_id as string)),
+      ...(cfg.no_once ? [] : (cfg.once_add ?? []) as string[])]);
     const placed = stopsAll.filter(s => s.lat != null && rated.some(r => r.stop_id === s.id));
     const mid = { lat: placed.reduce((t, s) => t + s.lat, 0) / (placed.length || 1), lng: placed.reduce((t, s) => t + s.lng, 0) / (placed.length || 1) };
     // What a subject already has (x250): nailed = everything, got = shot_value.
