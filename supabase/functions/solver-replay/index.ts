@@ -196,7 +196,7 @@ Deno.serve(async (req) => {
   let dayId: number | null = null, runId: number | null = null, kindOf: string | null = null;
   // Timing (28 Oct 2026, Faroes nights ran out of CPU): stats.t = ms to data loaded / to done.
   const tReq = performance.now();
-  let tLoaded = 0;
+  let tLoaded = 0, tWait = 0;
   try {
     const body = await req.json().catch(() => ({}));
     dayId = body.day_id ?? null;
@@ -402,8 +402,10 @@ Deno.serve(async (req) => {
     if (days.some(d => !d.startId || !d.endId)) return json({ ok: false, error: 'no hotel: pass hotel_stop_id' }, 400);
     // Drive minutes between every stop any day can use.
     const ids = [...new Set([...rated.map(r => r.stop_id), ...days.flatMap(d => [d.startId!, d.endId!, ...d.anchors.map(a => a.id)])])];
+    const tDm = performance.now();
     const dm = await all<any>((a, b) => db.from('solver_drive_matrix').select('from_stop_id, to_stop_id, minutes')
       .eq('trip_id', tripId).in('from_stop_id', ids).in('to_stop_id', ids).range(a, b));
+    tWait += performance.now() - tDm;
     const pos = new Map(ids.map((id, i) => [id, i]));
     const D = Array.from({ length: ids.length }, () => new Float64Array(ids.length).fill(Infinity));
     for (let i = 0; i < ids.length; i++) D[i][i] = 0;
@@ -727,7 +729,9 @@ Deno.serve(async (req) => {
     if (run) {
       // ---- One plan's night of a whole-trip run ----
       const kind: string = body.kind;
+      const tKs = performance.now();
       const { data: ks } = await db.from('replay_run_state').select('night, state, sets').eq('run_id', runId).eq('kind', kind).single();
+      tWait += performance.now() - tKs;
       if (!ks) return json({ ok: false, error: 'no state for this plan' }, 404);
       const n: number = run.night;
       if (ks.night !== n) {
@@ -1196,7 +1200,7 @@ Deno.serve(async (req) => {
           stats: { own_stops: days[0].own.length, rated: own.filter(o => nodes[o.n!].w > 0).length },
         });
       } else return json({ ok: false, error: `unknown plan ${kind}` }, 400);
-      row.stats = { ...(row.stats ?? {}), t: { loaded: Math.round(tLoaded - tReq), done: Math.round(performance.now() - tReq) } };
+      row.stats = { ...(row.stats ?? {}), t: { loaded: Math.round(tLoaded - tReq), wait: Math.round(tWait), done: Math.round(performance.now() - tReq) } };
       const { error: rErr } = await db.from('replay_run_days').upsert(row, { onConflict: 'run_id,night,kind' });
       if (rErr) throw rErr;
       await db.from('replay_run_state').update({ night: n + 1, state: shot, ...(nextSets ? { sets: nextSets } : {}), status: 'idle', note: null, updated_at: new Date().toISOString() })
