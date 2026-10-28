@@ -1010,12 +1010,14 @@ Deno.serve(async (req) => {
         // exactly (same visits, same scores) before the morning step. Same results.
         // With polish on, the night plan is split once more (28 Oct: one night died
         // in the night half): stage 'mc' = Monte Carlo done, 'night' = polish done.
-        const split = !!cfg.split_morning && (kind === 'mr1' || kind === 'mrmc');
+        // split_mc (run config, 28 Oct 2026, the Faroes Monte Carlo nights ran out of
+        // CPU): Monte Carlo too is spread over requests (stage 'cands', see below).
+        const split = (!!cfg.split_morning && (kind === 'mr1' || kind === 'mrmc')) || (!!cfg.split_mc && (kind === 'mc1' || kind === 'mrmc'));
         const pend = (ks.sets as any)?.pending;
         const stage: string | null = split && pend?.night === n ? (pend.stage ?? 'night') : null;
-        const phase2 = stage != null;
+        const phase2 = stage != null && stage !== 'cands';
         let p0: DayPlan, st: State | null, list: number[][];
-        if (phase2) {
+        if (stage != null) {
           const vis = (pend.visits as any[]).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
           list = (pend.units as string[][]).map(ids => ids.map(id => pos.get(id)!));
           // Rebuilt with the same required places, so its score (j) is the original's.
@@ -1070,26 +1072,13 @@ Deno.serve(async (req) => {
           // left cannot hold every open ski outing is dropped first. Best mean
           // + 0.5 x CVaR wins.
           const tMc = performance.now(), S = 51;
-          const cands: { p: DayPlan; st: State; tag: string; list: number[][] }[] = [{ p: p0, st, tag: 'fm1', list }];
-          const sameSet = (a: State, b: State) => a.route.length === b.route.length && a.route.every(v => b.visited[v.n]);
-          for (const alt of p0.routes.slice(1, 6)) {
-            if (cands.length >= 3) break;
-            if (!cands.some(c => sameSet(c.st, alt))) cands.push({ p: p0, st: alt, tag: 'alt', list });
-          }
-          const tryList = (l: number[][], tag: string) => {
-            const r = planList(l);
-            if (r.st && !cands.some(c => sameSet(c.st, r.st!))) cands.push({ p: r.p, st: r.st, tag, list: r.list });
-          };
-          tryList([...req], 'no outing');
-          // At most mc_outings (default 6) outing candidates, the best tomorrow, in their
-          // usual order (28 Oct 2026: 17 guessed Faroes outings ran out of CPU; Teton has 5).
+          // Run config mc_outings caps the outing candidates (the best tomorrow, in their
+          // usual order); default: every open outing.
           const outs = longs.filter(u => !want.includes(u) && okOn(u, remaining[0]));
-          const nOut = Number(cfg.mc_outings ?? 6);
+          const nOut = Number(cfg.mc_outings ?? Infinity);
           const keepOut = new Set([...outs].sort((a, b) => gainT[longs.indexOf(b)][0] - gainT[longs.indexOf(a)][0]).slice(0, nOut));
-          for (const u of outs) if (keepOut.has(u)) tryList([...req, u], 'outing ' + nodes[u[0]].name);
-          await mark('cands');
           // Best V per free node per later day per version (0-250), versions shuffled beyond the forecast.
-          const vb = days.map((_, h) => {
+          const makeVb = () => days.map((_, h) => {
             const p = looks[h], m = new Map<number, Uint8Array>();
             for (const x of freeNodes) {
               const b = new Uint8Array(S);
@@ -1100,7 +1089,7 @@ Deno.serve(async (req) => {
           });
           const cap = days.map((_, h) => freeNodes.map(x => (h === 0 ? 0 : winOn(h, [x]))));
           const onceUnits = [...unitsAll.values()].filter(u => u.some(x => nodes[x].once) && !covered(u));
-          const scoreCand = (c: { p: DayPlan; st: State }) => {
+          const scoreCand = (c: { p: DayPlan; st: State }, vb: Map<number, Uint8Array>[]) => {
             const tot = new Float32Array(S);
             for (let k = 0; k < S; k++) {
               const bestG = new Map<number, number>(groupBase);
@@ -1148,15 +1137,92 @@ Deno.serve(async (req) => {
             };
             return place(0);
           };
-          await mark('vb');
-          const ok = cands.filter(c => fitsLater(c.st));
-          await mark('fits');
-          const pool = ok.length ? ok : cands.slice(0, 1);
-          const scored = pool.map(c => ({ c, m: scoreCand(c) }));
-          const pick = scored.reduce((a, b) => (b.m.j > a.m.j ? b : a));
-          mcStats = { dropped: cands.length - pool.length, cands: scored.map(x => ({ tag: x.c.tag, j: r3(x.m.j), mean: r3(x.m.mean), stops: x.c.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name) })),
-                      chose: pick.c.tag, ms: Math.round(performance.now() - tMc) };
-          p0 = pick.c.p; st = pick.c.st; list = pick.c.list;
+          if (!cfg.split_mc) {
+            const cands: { p: DayPlan; st: State; tag: string; list: number[][] }[] = [{ p: p0, st, tag: 'fm1', list }];
+            const sameSet = (a: State, b: State) => a.route.length === b.route.length && a.route.every(v => b.visited[v.n]);
+            for (const alt of p0.routes.slice(1, 6)) {
+              if (cands.length >= 3) break;
+              if (!cands.some(c => sameSet(c.st, alt))) cands.push({ p: p0, st: alt, tag: 'alt', list });
+            }
+            const tryList = (l: number[][], tag: string) => {
+              const r = planList(l);
+              if (r.st && !cands.some(c => sameSet(c.st, r.st!))) cands.push({ p: r.p, st: r.st, tag, list: r.list });
+            };
+            tryList([...req], 'no outing');
+            for (const u of outs) if (keepOut.has(u)) tryList([...req, u], 'outing ' + nodes[u[0]].name);
+            await mark('cands');
+            const vb = makeVb();
+            await mark('vb');
+            const ok = cands.filter(c => fitsLater(c.st));
+            await mark('fits');
+            const pool = ok.length ? ok : cands.slice(0, 1);
+            const scored = pool.map(c => ({ c, m: scoreCand(c, vb) }));
+            const pick = scored.reduce((a, b) => (b.m.j > a.m.j ? b : a));
+            mcStats = { dropped: cands.length - pool.length, cands: scored.map(x => ({ tag: x.c.tag, j: r3(x.m.j), mean: r3(x.m.mean), stops: x.c.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name) })),
+                        chose: pick.c.tag, ms: Math.round(performance.now() - tMc) };
+            p0 = pick.c.p; st = pick.c.st; list = pick.c.list;
+          } else {
+            // split_mc: the same candidates in the same order, one heavy step per request,
+            // kept in sets.pending (stage 'cands'): first the fm1 plan and its next-best
+            // routes, then their scores, then each other candidate (planned and scored),
+            // then the pick, rebuilt exactly from its visits. Scores use tomorrow's
+            // values (looks[0], the same day and forecast as every candidate's plan).
+            const ser = (p: DayPlan, s: State, l: number[][], tag: string) => ({ tag,
+              visits: s.route.map(v => ({ id: nodes[v.n].id, startMs: p.dayStart + v.start * 60000, start: v.start, drive: v.drive, anchor: v.anchor })),
+              units: l.map(u => mustOf(u).map(x => nodes[x].id)) });
+            const lite = (c: any) => {
+              const visited: boolean[] = new Array(nodes.length).fill(false);
+              const route = (c.visits as any[]).map(v => { const x = pos.get(v.id)!; visited[x] = true; return { n: x, start: v.start }; });
+              return { p: looks[0], st: { route, visited } as unknown as State };
+            };
+            const sameIds = (c: any, s: State) => c.visits.length === s.route.length && s.route.every(v => (c.visits as any[]).some(w => w.id === nodes[v.n].id));
+            const saveMc = async (cs: any[], todo: any[]) => {
+              const pending = { night: n, stage: 'cands', visits: st!.route.map(v => ({ id: nodes[v.n].id, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
+                                units: list.map(u => mustOf(u).map(x => nodes[x].id)), cands: cs, todo, ms: (stage === 'cands' ? pend.ms ?? 0 : 0) + Math.round(performance.now() - tMc) };
+              await db.from('replay_run_state').update({ sets: { ...(ks.sets ?? {}), pending }, status: 'idle', note: null, updated_at: new Date().toISOString() })
+                .eq('run_id', runId).eq('kind', kind);
+              return null;
+            };
+            const scoreLite = (c: any, vb: Map<number, Uint8Array>[]) => {
+              const l = lite(c), m = scoreCand(l, vb);
+              c.fits = fitsLater(l.st); c.m = { j: m.j, mean: m.mean };
+              c.stops = l.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name);
+            };
+            if (stage !== 'cands') {
+              const cs = [ser(p0, st, list, 'fm1')];
+              for (const alt of p0.routes.slice(1, 6)) {
+                if (cs.length >= 3) break;
+                if (!cs.some(c => sameIds(c, alt))) cs.push(ser(p0, alt, list, 'alt'));
+              }
+              const ids = (l: number[][]) => l.map(u => u.map(x => nodes[x].id));
+              const todo = [{ tag: 'no outing', units: ids([...req]) },
+                ...outs.filter(u => keepOut.has(u)).map(u => ({ tag: 'outing ' + nodes[u[0]].name, units: ids([...req, u]) }))];
+              await mark('cands');
+              return await saveMc(cs, todo);
+            }
+            const cs = pend.cands as any[], todo = pend.todo as any[];
+            if (cs.some(c => !c.m)) {
+              const vb = makeVb();
+              for (const c of cs) if (!c.m) scoreLite(c, vb);
+              await mark('fits');
+              return await saveMc(cs, todo);
+            }
+            if (todo.length) {
+              const r = planList((todo[0].units as string[][]).map(u => u.map(id => pos.get(id)!)));
+              if (r.st && !cs.some(c => sameIds(c, r.st!))) { const c = ser(r.p, r.st, r.list, todo[0].tag); scoreLite(c, makeVb()); cs.push(c); }
+              await mark('fits');
+              return await saveMc(cs, todo.slice(1));
+            }
+            const ok = cs.filter(c => c.fits);
+            const pool = ok.length ? ok : cs.slice(0, 1);
+            const pick = pool.reduce((a, b) => (b.m.j > a.m.j ? b : a));
+            mcStats = { dropped: cs.length - pool.length, cands: pool.map(c => ({ tag: c.tag, j: r3(c.m.j), mean: r3(c.m.mean), stops: c.stops })),
+                        chose: pick.tag, ms: (pend.ms ?? 0) + Math.round(performance.now() - tMc) };
+            const vis = (pick.visits as any[]).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
+            list = (pick.units as string[][]).map(u => u.map(id => pos.get(id)!));
+            p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, list.flatMap(u => u), undefined, { visits: vis, atMs: 0 });
+            st = p0.routes[0] ?? null;
+          }
           await mark('mc');
         }
         const save = async (stg: string) => {
