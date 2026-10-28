@@ -1041,7 +1041,12 @@ Deno.serve(async (req) => {
             if (r.st && !cands.some(c => sameSet(c.st, r.st!))) cands.push({ p: r.p, st: r.st, tag, list: r.list });
           };
           tryList([...req], 'no outing');
-          for (const u of longs) if (!want.includes(u) && okOn(u, remaining[0])) tryList([...req, u], 'outing ' + nodes[u[0]].name);
+          // At most mc_outings (default 6) outing candidates, the best tomorrow, in their
+          // usual order (28 Oct 2026: 17 guessed Faroes outings ran out of CPU; Teton has 5).
+          const outs = longs.filter(u => !want.includes(u) && okOn(u, remaining[0]));
+          const nOut = Number(cfg.mc_outings ?? 6);
+          const keepOut = new Set([...outs].sort((a, b) => gainT[longs.indexOf(b)][0] - gainT[longs.indexOf(a)][0]).slice(0, nOut));
+          for (const u of outs) if (keepOut.has(u)) tryList([...req, u], 'outing ' + nodes[u[0]].name);
           // Best V per free node per later day per version (0-250), versions shuffled beyond the forecast.
           const vb = days.map((_, h) => {
             const p = looks[h], m = new Map<number, Uint8Array>();
@@ -1088,8 +1093,9 @@ Deno.serve(async (req) => {
           const fitsLater = (st: State) => {
             const left = longs.filter(u => !u.every(x => st.visited[x]));
             const used = remaining.map(() => 0);
+            let steps = 0;  // same 200k cap as the outing-day search; past it, keep the candidate
             const place = (k: number): boolean => {
-              if (k === left.length) return true;
+              if (k === left.length || ++steps > 200000) return true;
               const u = left[k], d = durOf(u), wk = win[longs.indexOf(u)];
               for (let i = 1; i < remaining.length; i++) {
                 if (used[i] + d > wk[i]) continue;
