@@ -959,15 +959,19 @@ Deno.serve(async (req) => {
         // worker's CPU time. With it, the night plan is one request and the morning
         // re-plan the next: the night plan is saved in sets.pending and rebuilt
         // exactly (same visits, same scores) before the morning step. Same results.
+        // With polish on, the night plan is split once more (28 Oct: one night died
+        // in the night half): stage 'mc' = Monte Carlo done, 'night' = polish done.
         const split = !!cfg.split_morning && (kind === 'mr1' || kind === 'mrmc');
         const pend = (ks.sets as any)?.pending;
-        const phase2 = split && pend?.night === n;
+        const stage: string | null = split && pend?.night === n ? (pend.stage ?? 'night') : null;
+        const phase2 = stage != null;
         let p0: DayPlan, st: State | null, list: number[][];
         if (phase2) {
           const vis = (pend.visits as any[]).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
-          p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, undefined, undefined, { visits: vis, atMs: 0 });
-          st = p0.routes[0] ?? null;
           list = (pend.units as string[][]).map(ids => ids.map(id => pos.get(id)!));
+          // Rebuilt with the same required places, so its score (j) is the original's.
+          p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, list.flatMap(u => u), undefined, { visits: vis, atMs: 0 });
+          st = p0.routes[0] ?? null;
         } else ({ p: p0, st, list } = planList([...req, ...want]));
         let mcStats: any = phase2 ? pend.mc : null, mrStats: any = null, exStats: any = phase2 ? pend.ex : null, polStats: any = phase2 ? pend.pol : null;
         // The near-exhaustive search (planDay exact) over a plan's own stops, the
@@ -1094,17 +1098,19 @@ Deno.serve(async (req) => {
                       chose: pick.c.tag, ms: Math.round(performance.now() - tMc) };
           p0 = pick.c.p; st = pick.c.st; list = pick.c.list;
         }
-        if (cfg.polish_k && st && !phase2) {
-          const r = polish(fcSc[0], p0, st, list.flatMap(mustOf));
-          polStats = { night: r.gain }; p0 = r.p; st = r.st;
-        }
-        if (split && !phase2 && st) {
-          const pending = { night: n, visits: st.route.map(v => ({ id: nodes[v.n].id, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
+        const save = async (stg: string) => {
+          const pending = { night: n, stage: stg, visits: st!.route.map(v => ({ id: nodes[v.n].id, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
                             units: list.map(u => mustOf(u).map(x => nodes[x].id)), mc: mcStats, ex: exStats, pol: polStats };
           await db.from('replay_run_state').update({ sets: { ...(ks.sets ?? {}), pending }, status: 'idle', note: null, updated_at: new Date().toISOString() })
             .eq('run_id', runId).eq('kind', kind);
           return null;
+        };
+        if (split && !phase2 && cfg.polish_k && st) return await save('mc');
+        if (cfg.polish_k && st && stage !== 'night') {
+          const r = polish(fcSc[0], p0, st, list.flatMap(mustOf));
+          polStats = { night: r.gain }; p0 = r.p; st = r.st;
         }
+        if (split && stage !== 'night' && st) return await save('night');
         if ((kind === 'mr1' || kind === 'mrmc') && st) {
           // Morning-of replan (Phil, 27 Oct 2026): the night's plan (v3, or the one
           // Monte Carlo chose) stands up to 30 min before sunrise; then the planner
