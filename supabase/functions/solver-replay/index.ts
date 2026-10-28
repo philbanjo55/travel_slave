@@ -194,6 +194,9 @@ Deno.serve(async (req) => {
     new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   let dayId: number | null = null, runId: number | null = null, kindOf: string | null = null;
+  // Timing (28 Oct 2026, Faroes nights ran out of CPU): stats.t = ms to data loaded / to done.
+  const tReq = performance.now();
+  let tLoaded = 0;
   try {
     const body = await req.json().catch(() => ({}));
     dayId = body.day_id ?? null;
@@ -336,6 +339,7 @@ Deno.serve(async (req) => {
     // Keep together (stops that go on one day) and the trip's middle (done by dark).
     const { data: tg } = await db.from('solver_stop_settings').select('stop_id, together, once')
       .in('stop_id', rated.map(r => r.stop_id)).or('together.not.is.null,once.eq.true');
+    tLoaded = performance.now();
     // Proof-step switches (run config, Phil 27 Oct 2026: how much each input matters):
     // no_together / no_once / no_dark turn a rule off; cap_frac / cap_minus move the
     // big-outing day size (80% of daylight less 45 min); miss_penalty the Monte Carlo
@@ -1192,6 +1196,7 @@ Deno.serve(async (req) => {
           stats: { own_stops: days[0].own.length, rated: own.filter(o => nodes[o.n!].w > 0).length },
         });
       } else return json({ ok: false, error: `unknown plan ${kind}` }, 400);
+      row.stats = { ...(row.stats ?? {}), t: { loaded: Math.round(tLoaded - tReq), done: Math.round(performance.now() - tReq) } };
       const { error: rErr } = await db.from('replay_run_days').upsert(row, { onConflict: 'run_id,night,kind' });
       if (rErr) throw rErr;
       await db.from('replay_run_state').update({ night: n + 1, state: shot, ...(nextSets ? { sets: nextSets } : {}), status: 'idle', note: null, updated_at: new Date().toISOString() })
