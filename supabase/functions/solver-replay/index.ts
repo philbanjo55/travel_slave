@@ -91,6 +91,10 @@ const LOOK_BEFORE_SUNRISE_MIN = 30;
 // Light-only scenarios: sun visibility (k/50)^2, k = 0..50. Same expansion
 // as SQL solver_light_scores; solver_light_terms gives dir/soft per slot.
 const SCENARIOS = Array.from({ length: 51 }, (_, k) => (k / 50) ** 2);
+// Light-only scores per trip day, kept in the isolate for 10 min (28 Oct 2026: the
+// Faroes week plans re-read and re-expanded 12 light days every night and ran out
+// of CPU). Read-only once built; same values as before.
+const LIGHT_CACHE = new Map<string, { at: number; rows: any[] }>();
 
 type PlanNode = { id: string; name: string; w: number; ws: number; dur: number; group: number; free: boolean; together: string | null; once: boolean };
 type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
@@ -196,7 +200,7 @@ Deno.serve(async (req) => {
   let dayId: number | null = null, runId: number | null = null, kindOf: string | null = null;
   // Timing (28 Oct 2026, Faroes nights ran out of CPU): stats.t = ms to data loaded / to done.
   const tReq = performance.now();
-  let tLoaded = 0, tWait = 0;
+  let tLoaded = 0, tWait = 0, tLight = 0;
   try {
     const body = await req.json().catch(() => ({}));
     dayId = body.day_id ?? null;
@@ -270,12 +274,26 @@ Deno.serve(async (req) => {
         const t0 = Date.parse(r.t0);
         return (r.offs as number[]).map((o, i) => ({ stop_id: r.stop_id, ms: t0 + o * SLOT * 60000, v: Uint8Array.from(r.v[i]) }));
       }));
-    const lightOf = (date: string) => all<any>((a, b) => db.rpc('solver_light_terms', { p_trip_id: tripId, p_dates: [date] }).order('slot_at').order('stop_id').range(a, b))
-      .then(rows => rows.map(r => ({
-        stop_id: r.stop_id, ms: Date.parse(r.slot_at),
-        v: Uint8Array.from(SCENARIOS.map(s => Math.round(250 * Math.max(0, Math.min(1,
-          (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * (r.fog_wanted ? 0.6 : 1)))))),
-      })));
+    const lightOf = (date: string) => {
+      const key = `${tripId}|${date}`, hit = LIGHT_CACHE.get(key);
+      if (hit && Date.now() - hit.at < 600000) return Promise.resolve(hit.rows);
+      return all<any>((a, b) => db.rpc('solver_light_terms', { p_trip_id: tripId, p_dates: [date] }).order('slot_at').order('stop_id').range(a, b))
+        .then(rows => {
+          const t = performance.now();
+          const out = rows.map(r => {
+            const v = new Uint8Array(51), f = r.fog_wanted ? 0.6 : 1;
+            for (let k = 0; k < 51; k++) {
+              const s = SCENARIOS[k];
+              v[k] = Math.round(250 * Math.max(0, Math.min(1, (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * f)));
+            }
+            return { stop_id: r.stop_id, ms: Date.parse(r.slot_at), v };
+          });
+          tLight += performance.now() - t;
+          if (LIGHT_CACHE.size >= 60) LIGHT_CACHE.clear();
+          LIGHT_CACHE.set(key, { at: Date.now(), rows: out });
+          return out;
+        });
+    };
 
     const [inputs, fcSc, trSc, ltSc, stopsAll, accs, tripDays] = await Promise.all([
       all<any>((a, b) => db.from('solver_stop_inputs')
@@ -1200,7 +1218,7 @@ Deno.serve(async (req) => {
           stats: { own_stops: days[0].own.length, rated: own.filter(o => nodes[o.n!].w > 0).length },
         });
       } else return json({ ok: false, error: `unknown plan ${kind}` }, 400);
-      row.stats = { ...(row.stats ?? {}), t: { loaded: Math.round(tLoaded - tReq), wait: Math.round(tWait), done: Math.round(performance.now() - tReq) } };
+      row.stats = { ...(row.stats ?? {}), t: { loaded: Math.round(tLoaded - tReq), wait: Math.round(tWait), light: Math.round(tLight), done: Math.round(performance.now() - tReq) } };
       const { error: rErr } = await db.from('replay_run_days').upsert(row, { onConflict: 'run_id,night,kind' });
       if (rErr) throw rErr;
       await db.from('replay_run_state').update({ night: n + 1, state: shot, ...(nextSets ? { sets: nextSets } : {}), status: 'idle', note: null, updated_at: new Date().toISOString() })
