@@ -249,8 +249,11 @@ Deno.serve(async (req) => {
     const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
     if (fcB.slice(0, nFc).some(b => !b) || trB.slice(0, nTr).some(b => !b)) return json({ ok: false, error: 'replay builds missing' }, 404);
     // mr1 / mrmc: tomorrow's forecast with the look at the peaks before sunrise (replay_build kind 'morning').
+    // morning_fresh (run config, 28 Oct 2026, board b06): the morning build also swaps
+    // ECMWF's night-before forecast for its overnight (00 UTC) run, ready before the look.
     const morning = k0 === 'mr1' || k0 === 'mrmc';
-    const mB = morning ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === 'morning') : undefined;
+    const mKind = cfg.morning_fresh ? 'morningf' : 'morning';
+    const mB = morning ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === mKind) : undefined;
     if (morning && !mB) return json({ ok: false, error: 'morning build missing' }, 404);
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
