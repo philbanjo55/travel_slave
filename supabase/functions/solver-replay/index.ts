@@ -1087,6 +1087,7 @@ Deno.serve(async (req) => {
           const nOut = Number(cfg.mc_outings ?? 6);
           const keepOut = new Set([...outs].sort((a, b) => gainT[longs.indexOf(b)][0] - gainT[longs.indexOf(a)][0]).slice(0, nOut));
           for (const u of outs) if (keepOut.has(u)) tryList([...req, u], 'outing ' + nodes[u[0]].name);
+          await mark('cands');
           // Best V per free node per later day per version (0-250), versions shuffled beyond the forecast.
           const vb = days.map((_, h) => {
             const p = looks[h], m = new Map<number, Uint8Array>();
@@ -1133,9 +1134,10 @@ Deno.serve(async (req) => {
           const fitsLater = (st: State) => {
             const left = longs.filter(u => !u.every(x => st.visited[x]));
             const used = remaining.map(() => 0);
-            let steps = 0;  // same 200k cap as the outing-day search; past it, keep the candidate
+            // Same 200k cap as the outing-day search (run config mc_fit_steps); past it, keep the candidate.
+            let steps = 0;
             const place = (k: number): boolean => {
-              if (k === left.length || ++steps > 200000) return true;
+              if (k === left.length || ++steps > Number(cfg.mc_fit_steps ?? 200000)) return true;
               const u = left[k], d = durOf(u), wk = win[longs.indexOf(u)];
               for (let i = 1; i < remaining.length; i++) {
                 if (used[i] + d > wk[i]) continue;
@@ -1146,7 +1148,9 @@ Deno.serve(async (req) => {
             };
             return place(0);
           };
+          await mark('vb');
           const ok = cands.filter(c => fitsLater(c.st));
+          await mark('fits');
           const pool = ok.length ? ok : cands.slice(0, 1);
           const scored = pool.map(c => ({ c, m: scoreCand(c) }));
           const pick = scored.reduce((a, b) => (b.m.j > a.m.j ? b : a));
