@@ -216,7 +216,8 @@ Deno.serve(async (req) => {
       run = (await db.from('replay_runs').select('*').eq('id', runId).single()).data;
       if (!run) return json({ ok: false, error: 'replay run not found' }, 404);
       tripId = run.trip_id;
-      const n: number = run.night;
+      // rescore (live runs): body.night is a night already planned whose truth came in.
+      const n: number = body.rescore ? Number(body.night) : run.night;
       fcDays = Math.min(Math.max(Number(run.config?.fc_days ?? 3), 1), 7);
       const want = Array.from({ length: Math.min(week ? Infinity : kindOf === 'fm1' || kindOf === 'mr1' ? fcDays : 3, run.nights - n) }, (_, h) => n + h)
         .map(i => ({ i, date: addDays(run.start_date, i), trip_date: run.trip_dates[i], lead: i - n + 1 }));
@@ -263,14 +264,17 @@ Deno.serve(async (req) => {
     const nFc = k0 == null ? horizon.length : k0 === 'fc3' || k0 === 'fm1' || k0 === 'mr1' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(fcDays, horizon.length) : 0;
     const needLt = (h: number) => k0 == null || k0 === 'lt3' || (week && h >= nFc);
     const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
-    if (fcB.slice(0, nFc).some(b => !b) || trB.slice(0, nTr).some(b => !b)) return json({ ok: false, error: 'replay builds missing' }, 404);
+    // live (run config, 29 Oct 2026): real upcoming dates planned as the trip's days, so the
+    // day's truth comes later (the night is scored by a rescore request once it is in).
+    const live = !!cfg.live;
+    if (fcB.slice(0, nFc).some(b => !b) || trB.slice(0, nTr).some(b => !b) && !live) return json({ ok: false, error: 'replay builds missing' }, 404);
     // mr1 / mrmc: tomorrow's forecast with the look at the peaks before sunrise (replay_build kind 'morning').
     // morning_fresh (run config, 28 Oct 2026, board b06): the morning build also swaps
     // ECMWF's night-before forecast for its overnight (00 UTC) run, ready before the look.
     const morning = k0 === 'mr1' || k0 === 'mrmc';
     const mKind = cfg.morning_fresh ? 'morningf' : 'morning';
     const mB = morning ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === mKind) : undefined;
-    if (morning && !mB) return json({ ok: false, error: 'morning build missing' }, 404);
+    if (morning && !mB && !live) return json({ ok: false, error: 'morning build missing' }, 404);
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
     const tz: string = trip?.timezone ?? 'UTC';
@@ -308,13 +312,13 @@ Deno.serve(async (req) => {
       all<any>((a, b) => db.from('solver_stop_inputs')
         .select('stop_id, name, tier, star_vantage_id, duration_minutes, time_locked, day_id, shot_status, shot_value')
         .eq('trip_id', tripId).range(a, b)),
-      Promise.all(fcB.slice(0, nFc).map(b => scoresOf(b!.id))), Promise.all(trB.slice(0, nTr).map(b => scoresOf(b!.id))),
+      Promise.all(fcB.slice(0, nFc).map(b => scoresOf(b!.id))), Promise.all(trB.slice(0, nTr).map(b => b ? scoresOf(b.id) : Promise.resolve([] as any[]))),
       Promise.all(horizon.map((h, i) => needLt(i) ? lightOf(h.date) : Promise.resolve([] as any[]))),
       all<any>((a, b) => db.from('stops').select('id, name, lat, lng, time_label, duration_minutes, drive_override_minutes, day_id, position, time_locked').eq('trip_id', tripId).range(a, b)),
       db.from('accommodations').select('name, lat, lng, check_in, check_out, nights').eq('trip_id', tripId).then(r => r.data ?? []),
       db.from('days').select('id, date').eq('trip_id', tripId).then(r => r.data ?? []),
     ]);
-    if (fcSc.some(x => !x.length) || trSc.some(x => !x.length)) return json({ ok: false, error: 'empty replay builds' }, 404);
+    if (fcSc.some(x => !x.length) || trSc.some((x, i) => !x.length && !(live && !trB[i]))) return json({ ok: false, error: 'empty replay builds' }, 404);
     const mSc = mB ? await scoresOf(mB.id) : [];
     if (mB && !mSc.length) return json({ ok: false, error: 'empty morning build' }, 404);
     if (week && ltSc.some((x, i) => needLt(i) && !x.length)) return json({ ok: false, error: 'no light geometry for a later day' }, 404);
@@ -761,7 +765,20 @@ Deno.serve(async (req) => {
       const { data: ks } = await db.from('replay_run_state').select('night, state, sets').eq('run_id', runId).eq('kind', kind).single();
       tWait += performance.now() - tKs;
       if (!ks) return json({ ok: false, error: 'no state for this plan' }, 404);
-      const n: number = run.night;
+      const n: number = body.rescore ? Number(body.night) : run.night;
+      if (body.rescore) {
+        // Live: score a night already planned against the truth that has come in since.
+        if (!trSc[0].length) return json({ ok: false, error: 'no truth yet' }, 404);
+        const tN = planDay({ ...days[0], light: false }, trSc[0], false);
+        const { data: rd } = await db.from('replay_run_days').select('visits').eq('run_id', runId).eq('night', n).eq('kind', kind).single();
+        if (!rd) return json({ ok: false, error: 'night not planned' }, 404);
+        const vs = ((rd.visits ?? []) as any[]).filter(v => pos.has(v.stop_id) && v.start);
+        const visits = vs.map(v => ({ n: pos.get(v.stop_id)!, startMs: Date.parse(v.start) }));
+        const realized = r3(evalVisits(tN, visits));
+        const scored = ((rd.visits ?? []) as any[]).map(v => pos.has(v.stop_id) && v.start ? { ...v, truth: r2(truthAt(tN, { n: pos.get(v.stop_id)!, startMs: Date.parse(v.start) }) / 250) } : v);
+        await db.from('replay_run_days').update({ realized, visits: scored }).eq('run_id', runId).eq('night', n).eq('kind', kind);
+        return json({ ok: true, rescored: true, run_id: runId, kind, night: n, realized });
+      }
       if (ks.night !== n) {
         await db.from('replay_run_state').update({ status: 'idle', updated_at: new Date().toISOString() }).eq('run_id', runId).eq('kind', kind);
         return json({ ok: true, skipped: 'already planned', run_id: runId, kind, night: ks.night });
@@ -775,21 +792,27 @@ Deno.serve(async (req) => {
       for (const [k, v] of Object.entries(shotBefore)) {
         const g = groupOfKey.get(k); if (g != null) groupBase.set(g, Math.max(groupBase.get(g) ?? 0, v));
       }
-      // What happened on the day being done.
-      const truthN = planDay({ ...days[0], light: false }, trSc[0], false);
+      // What happened on the day being done (live: not known yet, scored later; what a
+      // visit got is counted as the forecast's mean until then).
+      const truthN = trSc[0].length ? planDay({ ...days[0], light: false }, trSc[0], false) : null;
+      const fcN = truthN ? null : planDay({ ...days[0], light: false }, fcSc[0], false);
+      const meanAt = (tp: DayPlan, v: { n: number; startMs: number }) => {
+        const w = tp.W(v.n, Math.round((v.startMs - tp.dayStart) / (SLOT * 60000))); if (!w) return 0;
+        let t = 0; for (const x of w) t += x; return t / w.length;
+      };
       await mark('truth');
       let row: any;
       const record = (visits: { n: number; startMs: number }[], extra: any) => {
-        const realized = evalVisits(truthN, visits);
+        const realized = truthN ? evalVisits(truthN, visits) : null;
         const shot = { ...shotBefore };
         for (const v of visits) {
           if (nodes[v.n].w <= 0) continue;
           const k = keyOf(nodes[v.n].group);
-          shot[k] = Math.max(shot[k] ?? 0, truthAt(truthN, v));
+          shot[k] = Math.max(shot[k] ?? 0, truthN ? truthAt(truthN, v) : meanAt(fcN!, v));
         }
-        row = { run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: r3(realized), ...extra };
+        row = { run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: realized == null ? null : r3(realized), ...extra };
         // What each visit got against what happened.
-        if (row.visits?.length === visits.length) row.visits = row.visits.map((v: any, i: number) => ({ ...v, truth: r2(truthAt(truthN, visits[i]) / 250) }));
+        if (truthN && row.visits?.length === visits.length) row.visits = row.visits.map((v: any, i: number) => ({ ...v, truth: r2(truthAt(truthN, visits[i]) / 250) }));
         return shot;
       };
       const plan = (nDays: number, scoresFor: (h: number) => any[], light: boolean, members: number) => {
@@ -1256,6 +1279,7 @@ Deno.serve(async (req) => {
           // latest report in the hour before) and re-plans the rest of the day on
           // the morning build, with the same required places (dropped from the
           // end only if they no longer fit).
+          if (!mSc.length) throw new Error('morning build missing');
           const atMs = sunrise(days[0].date, mid.lat, mid.lng, tz) - LOOK_BEFORE_SUNRISE_MIN * 60000;
           // mr_commit 'departure' (27 Oct 2026, the first full test lost the sunrise
           // shot on 50 of 97 clear mornings): a visit you have already left for at
