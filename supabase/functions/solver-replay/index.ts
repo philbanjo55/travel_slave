@@ -475,6 +475,15 @@ Deno.serve(async (req) => {
       };
     });
     const freeNodes = nodes.map((n, i) => (n.free ? i : -1)).filter(i => i >= 0);
+    // Why a day has no route (30 Oct 2026, the Faroes bench's last two days): its ends, bookings and window.
+    const whyNot = (d: typeof days[number]) => {
+      const nm = (id?: string) => stopById.get(id ?? '')?.name ?? id;
+      const hm = (ms: number) => new Date(ms).toISOString().slice(11, 16);
+      return { start: nm(d.startId), end: nm(d.endId), earliest: d.earliestMin, latest: d.latestMin,
+               bookings: d.anchors.map(a => `${nm(a.id)} ${hm(a.startMs)} ${a.dur}m`),
+               legs: d.anchors.map((a, i) => { const f = pos.get(i ? d.anchors[i - 1].id : d.startId!), t = pos.get(a.id); return f != null && t != null ? D[f][t] : null; })
+                 .concat([(() => { const f = pos.get(d.anchors.length ? d.anchors[d.anchors.length - 1].id : d.startId!), t = pos.get(d.endId!); return f != null && t != null ? D[f][t] : null; })()]) };
+    };
 
     // Value of seeing subject g at w after prev, over what is already shot.
     const gain = (g: number, w: number, prev: number | undefined) => Math.max(0, w - Math.max(prev ?? 0, groupBase.get(g) ?? 0));
@@ -1348,7 +1357,7 @@ Deno.serve(async (req) => {
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members: fcB[0]!.members, required: req.length, wanted: want.length, kept: list.length, open: open.length,
-                   ms: p0.ms, ...(exStats ? { exact: exStats } : {}), ...(polStats ? { polish: polStats } : {}), ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route' }) },
+                   ms: p0.ms, ...(exStats ? { exact: exStats } : {}), ...(polStats ? { polish: polStats } : {}), ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route', why: whyNot(days[0]) }) },
         });
       };
       let shot: Record<string, number>;
