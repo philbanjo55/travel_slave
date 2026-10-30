@@ -449,7 +449,11 @@ Deno.serve(async (req) => {
       const lockedMin = (re: RegExp) => own.filter(s => s.time_locked && re.test(s.name)).map(s => labelMinutes(s.time_label)).filter(m => m != null) as number[];
       const arrive = lockedMin(/arriv/i), depart = own.length && own[own.length - 1].time_locked && /depart/i.test(own[own.length - 1].name) ? lockedMin(/depart/i) : [];
       const earliestMin = arrive.length ? Math.max(...arrive) : null, latestMin = depart.length ? Math.min(...depart) : null;
-      return { date: sp.date, light: sp.light, tripDate, startId: override ?? h.start, endId: override ?? h.end, anchors, own, earliestMin, latestMin };
+      // A day whose last stop is its last booking (the flight home, 30 Oct 2026: the Faroes
+      // flight day had no route, every plan had to drive 85 min back to the hotel after it) ends there.
+      const lastOwn = own[own.length - 1];
+      const endAt = anchors.length && lastOwn && anchors[anchors.length - 1].id === lastOwn.id ? lastOwn.id : undefined;
+      return { date: sp.date, light: sp.light, tripDate, startId: override ?? h.start, endId: override ?? endAt ?? h.end, anchors, own, earliestMin, latestMin };
     });
     if (days.some(d => !d.startId || !d.endId)) return json({ ok: false, error: 'no hotel: pass hotel_stop_id' }, 400);
     // Drive minutes between every stop any day can use.
@@ -625,7 +629,10 @@ Deno.serve(async (req) => {
           // The next booking, at its fixed time.
           if (nextA) {
             const drive = D[st.loc][nextA.n];
-            if (Number.isFinite(drive) && st.t + drive <= nextSlot * SLOT) keep(extend(st, nextA.n, nextSlot, drive, true));
+            // Back-to-back bookings keep the itinerary's times (30 Oct 2026: a ferry stop's length
+            // already holds the crossing, which the drive table adds again).
+            const afterBooking = st.next > 0 && st.route.length > 0 && st.route[st.route.length - 1].anchor;
+            if (Number.isFinite(drive) && (st.t + drive <= nextSlot * SLOT || afterBooking)) keep(extend(st, nextA.n, nextSlot, drive, true));
           }
           // A free stop, if it still leaves time for the next booking (or the night's hotel).
           for (const s of cand) {
