@@ -1071,7 +1071,9 @@ Deno.serve(async (req) => {
           const vis = (pend.visits as any[]).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
           list = (pend.units as string[][]).map(ids => ids.map(id => pos.get(id)!));
           // Rebuilt with the same required places, so its score (j) is the original's.
-          p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, list.flatMap(u => u), undefined, { visits: vis, atMs: 0 });
+          // skip too (30 Oct 2026): without it a keep-together pair whose once-only half was
+          // done earlier failed the all-or-none check and the night came back 'no route'.
+          p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
           st = p0.routes[0] ?? null;
         } else ({ p: p0, st, list } = planList([...req, ...want]));
         await mark('plan0');
@@ -1283,7 +1285,7 @@ Deno.serve(async (req) => {
                         chose: pick.tag, ms: (pend?.ms ?? 0) + Math.round(performance.now() - tMc) };
             const vis = (pick.visits as any[]).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
             list = (pick.units as string[][]).map(u => u.map(id => pos.get(id)!));
-            p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, list.flatMap(u => u), undefined, { visits: vis, atMs: 0 });
+            p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
             st = p0.routes[0] ?? null;
           }
           await mark('mc');
