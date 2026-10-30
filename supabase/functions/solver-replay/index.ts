@@ -255,7 +255,7 @@ Deno.serve(async (req) => {
     // the build with each model's sun calibrated (stored as lead + 10).
     const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0);
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members')
-      .in('replay_day_id', horizon.map(h => h.dayId)).order('created_at', { ascending: false });
+      .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
     const fcB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'forecast' && b.lead === leadOf(h.lead)));
     const trB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'truth'));
 
