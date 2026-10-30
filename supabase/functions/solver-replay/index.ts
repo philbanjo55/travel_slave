@@ -95,6 +95,9 @@ const SCENARIOS = Array.from({ length: 51 }, (_, k) => (k / 50) ** 2);
 // Faroes week plans re-read and re-expanded 12 light days every night and ran out
 // of CPU). Read-only once built; same values as before.
 const LIGHT_CACHE = new Map<string, { at: number; rows: any[] }>();
+// Score builds read in the isolate, kept 10 min (30 Oct 2026: every step of a night
+// re-read the same builds). A build never changes once made; rows are read only.
+const SCORE_CACHE = new Map<string, { at: number; rows: any[] }>();
 
 type PlanNode = { id: string; name: string; w: number; ws: number; dur: number; group: number; free: boolean; together: string | null; once: boolean };
 type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
@@ -281,12 +284,29 @@ Deno.serve(async (req) => {
     // One row per stop (replay_scores_c): slot i = t0 + offs[i] x 15 min, v[i] = members.
     // Kept compact (27 Oct 2026, the bench ran out of memory with several plans
     // in one worker): slot time as ms, values (0-250) as bytes; the plans are unchanged.
-    const scoresOf = (buildId: string) => all<any>((a, b) => db.from('replay_scores_c').select('stop_id, t0, offs, v')
-      .eq('build_id', buildId).order('stop_id').range(a, b))
-      .then(rows => rows.flatMap(r => {
-        const t0 = Date.parse(r.t0);
-        return (r.offs as number[]).map((o, i) => ({ stop_id: r.stop_id, ms: t0 + o * SLOT * 60000, v: Uint8Array.from(r.v[i]) }));
-      }));
+    // to51: a week plan's forecast days, each model standing for an equal share of 51 versions
+    // (done here, once per cached build, instead of on the rows after loading).
+    const scoresOf = (buildId: string, to51 = false) => {
+      const key = `${buildId}|${to51 ? 51 : 0}`, hit = SCORE_CACHE.get(key);
+      if (hit && Date.now() - hit.at < 600000) return Promise.resolve(hit.rows);
+      return all<any>((a, b) => db.from('replay_scores_c').select('stop_id, t0, offs, v')
+        .eq('build_id', buildId).order('stop_id').range(a, b))
+        .then(rows => {
+          const out = rows.flatMap(r => {
+            const t0 = Date.parse(r.t0);
+            return (r.offs as number[]).map((o, i) => {
+              const src = r.v[i] as number[], m = src.length;
+              const v = to51 && m !== 51 ? Uint8Array.from({ length: 51 }, (_, k) => src[Math.floor(k * m / 51)]) : Uint8Array.from(src);
+              return { stop_id: r.stop_id, ms: t0 + o * SLOT * 60000, v };
+            });
+          });
+          if (out.length) {
+            if (SCORE_CACHE.size >= 24) SCORE_CACHE.clear();
+            SCORE_CACHE.set(key, { at: Date.now(), rows: out });
+          }
+          return out;
+        });
+    };
     const lightOf = (date: string) => {
       const key = `${tripId}|${date}`, hit = LIGHT_CACHE.get(key);
       if (hit && Date.now() - hit.at < 600000) return Promise.resolve(hit.rows);
@@ -312,7 +332,7 @@ Deno.serve(async (req) => {
       all<any>((a, b) => db.from('solver_stop_inputs')
         .select('stop_id, name, tier, star_vantage_id, duration_minutes, time_locked, day_id, shot_status, shot_value')
         .eq('trip_id', tripId).range(a, b)),
-      Promise.all(fcB.slice(0, nFc).map(b => scoresOf(b!.id))), Promise.all(trB.slice(0, nTr).map(b => b ? scoresOf(b.id) : Promise.resolve([] as any[]))),
+      Promise.all(fcB.slice(0, nFc).map(b => scoresOf(b!.id, week))),Promise.all(trB.slice(0, nTr).map(b => b ? scoresOf(b.id) : Promise.resolve([] as any[]))),
       Promise.all(horizon.map((h, i) => needLt(i) ? lightOf(h.date) : Promise.resolve([] as any[]))),
       all<any>((a, b) => db.from('stops').select('id, name, lat, lng, time_label, duration_minutes, drive_override_minutes, day_id, position, time_locked').eq('trip_id', tripId).range(a, b)),
       db.from('accommodations').select('name, lat, lng, check_in, check_out, nights').eq('trip_id', tripId).then(r => r.data ?? []),
@@ -762,7 +782,7 @@ Deno.serve(async (req) => {
       // ---- One plan's night of a whole-trip run ----
       const kind: string = body.kind;
       const tKs = performance.now();
-      const { data: ks } = await db.from('replay_run_state').select('night, state, sets').eq('run_id', runId).eq('kind', kind).single();
+      const { data: ks } = await db.from('replay_run_state').select('night, state, sets, note').eq('run_id', runId).eq('kind', kind).single();
       tWait += performance.now() - tKs;
       if (!ks) return json({ ok: false, error: 'no state for this plan' }, 404);
       const n: number = body.rescore ? Number(body.night) : run.night;
@@ -1036,6 +1056,13 @@ Deno.serve(async (req) => {
         // split_mc (run config, 28 Oct 2026, the Faroes Monte Carlo nights ran out of
         // CPU): Monte Carlo too is spread over requests (stage 'cands', see below).
         const split = (!!cfg.split_morning && (kind === 'mr1' || kind === 'mrmc')) || (!!cfg.split_mc && (kind === 'mc1' || kind === 'mrmc'));
+        // req_budget_ms (run config, 30 Oct 2026: a Teton night took 4-5 requests 20 s
+        // apart): a request goes on to the next step while its work so far (wall time
+        // after loading, less DB waits) is under the budget. Steps give the same results
+        // however they are grouped (each split point saves what the next one rebuilds
+        // exactly). A retry after a request that never answered goes one step at a time.
+        const reqBudget = ks.note === 'retry' ? 0 : Number(cfg.req_budget_ms ?? 0);
+        const goOn = () => reqBudget > 0 && performance.now() - tLoaded - tWait < reqBudget;
         const pend = (ks.sets as any)?.pending;
         const stage: string | null = split && pend?.night === n ? (pend.stage ?? 'night') : null;
         const phase2 = stage != null && stage !== 'cands';
@@ -1211,23 +1238,25 @@ Deno.serve(async (req) => {
               c.fits = fitsLater(l.st); c.m = { j: m.j, mean: m.mean };
               c.stops = l.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name);
             };
+            let cs: any[], todo: any[];
             if (stage !== 'cands') {
-              const cs = [ser(p0, st, list, 'fm1')];
+              cs = [ser(p0, st, list, 'fm1')];
               for (const alt of p0.routes.slice(1, 6)) {
                 if (cs.length >= 3) break;
                 if (!cs.some(c => sameIds(c, alt))) cs.push(ser(p0, alt, list, 'alt'));
               }
               const ids = (l: number[][]) => l.map(u => u.map(x => nodes[x].id));
-              const todo = [{ tag: 'no outing', units: ids([...req]) },
+              todo = [{ tag: 'no outing', units: ids([...req]) },
                 ...outs.filter(u => keepOut.has(u)).map(u => ({ tag: 'outing ' + nodes[u[0]].name, units: ids([...req, u]) }))];
               await mark('cands');
-              return await saveMc(cs, todo);
-            }
+              // Round-trip through JSON so the next step sees exactly what a saved stage holds.
+              if (!goOn()) return await saveMc(cs, todo);
+              cs = JSON.parse(JSON.stringify(cs)); todo = JSON.parse(JSON.stringify(todo));
+            } else { cs = pend.cands as any[]; todo = pend.todo as any[]; }
             // Each day search is its own step (planList's retries with one place fewer
             // included, same order), and a request starts another only while the
             // slowest so far still fits in mc_budget_ms (default 800). The steps do not
             // depend on how they are grouped, so results are the same.
-            const cs = pend.cands as any[], todo = pend.todo as any[];
             const tB = performance.now(), budget = Number(cfg.mc_budget_ms ?? 800);
             let vbL: Map<number, Uint8Array>[] | null = null;
             const getVb = () => (vbL ??= makeVb());
@@ -1251,7 +1280,7 @@ Deno.serve(async (req) => {
             const pool = ok.length ? ok : cs.slice(0, 1);
             const pick = pool.reduce((a, b) => (b.m.j > a.m.j ? b : a));
             mcStats = { dropped: cs.length - pool.length, cands: pool.map(c => ({ tag: c.tag, j: r3(c.m.j), mean: r3(c.m.mean), stops: c.stops })),
-                        chose: pick.tag, ms: (pend.ms ?? 0) + Math.round(performance.now() - tMc) };
+                        chose: pick.tag, ms: (pend?.ms ?? 0) + Math.round(performance.now() - tMc) };
             const vis = (pick.visits as any[]).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
             list = (pick.units as string[][]).map(u => u.map(id => pos.get(id)!));
             p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, list.flatMap(u => u), undefined, { visits: vis, atMs: 0 });
@@ -1266,12 +1295,13 @@ Deno.serve(async (req) => {
             .eq('run_id', runId).eq('kind', kind);
           return null;
         };
-        if (split && !phase2 && cfg.polish_k && st) return await save('mc');
+        if (split && !phase2 && cfg.polish_k && st && !goOn()) return await save('mc');
         if (cfg.polish_k && st && stage !== 'night') {
           const r = polish(fcSc[0], p0, st, list.flatMap(mustOf));
           polStats = { night: r.gain }; p0 = r.p; st = r.st;
         }
-        if (split && stage !== 'night' && st) return await save('night');
+        // Live: the morning step comes hours later, so the night plan is always saved here.
+        if (split && stage !== 'night' && st && (live || !goOn())) return await save('night');
         if ((kind === 'mr1' || kind === 'mrmc') && st) {
           // Morning-of replan (Phil, 27 Oct 2026): the night's plan (v3, or the one
           // Monte Carlo chose) stands up to 30 min before sunrise; then the planner
