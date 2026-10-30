@@ -62,6 +62,7 @@ Spec: `SOLVER_SPEC.md` (in Phil's uploads). Review and corrected build order: `d
     - Q/R/S (K/L/M + it): no change.
     - T (N + it): winters +1.3 ± 0.5 vs L, October tie (-0.2 ± 1.3).
     - L stays winner, T contender; recheck as new weeks come in.
+    - **30 Oct 2026 (Phil): T is the winner** (registry + board). Faroes, 19 of 33 periods: T +5.5 ± 2.2 vs L, same places (37 vs 36), ties N (-0.2 ± 1.0); the 14 heaviest fo_T periods and all other held bench runs were stopped (status `stopped`). Live side by side (configs `live_old`, `live_L`, `live_T`, `replay_live_queue` / `replay_live_roll`) keeps checking T on new days. Bench runs sharing one edge worker share its CPU limit: never restart many heavy (Faroes, polish) runs at once.
   - **Faroes bench** (configs `fo_*`, 33 May periods): my guessed rules live only in run config (`once_add`, `together_add`, `locked_add` = flights), the trip is untouched.
   - **Bench limits:**
     - 6 runs at a time (`replay_run_tick` v_slots), since 12 ran the API connection pool dry.
