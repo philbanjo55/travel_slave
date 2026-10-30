@@ -504,6 +504,10 @@ Deno.serve(async (req) => {
     // later with a higher score: near-exhaustive (the score is not additive, so a
     // kept-best state can still hide a better one in rare cases).
     const EXACT_MAX_EXTENDS = 1_500_000;
+    // Polish stops sooner (run config polish_cap, default 250k; 30 Oct 2026: on the Faroes one
+    // polish could take ~6 s and every retry of that night died; the most a Teton polish has
+    // needed is ~150k). A capped search keeps the best full day it found.
+    let exactCap = EXACT_MAX_EXTENDS;
     const planDay = (day: typeof days[number], scores: any[], search = true, only?: number[], must?: number[], skip?: Set<number>, from?: From, exact?: number[]): DayPlan => {
       const td0 = performance.now();
       const cand = (exact ?? only ?? freeNodes).filter(n => !skip?.has(n));
@@ -623,7 +627,7 @@ Deno.serve(async (req) => {
           if (!have || have.j < c.j || (have.j === c.j && have.t > c.t)) children.set(key, c);
         };
         for (const st of beam) {
-          if (exact && nExt > EXACT_MAX_EXTENDS) { capped = true; break; }
+          if (exact && nExt > exactCap) { capped = true; break; }
           const nextA = st.next < anchors.length ? anchors[st.next] : null;
           const nextSlot = nextA ? anchorSlot[st.next] : Infinity;
           // The next booking, at its fixed time.
@@ -1097,22 +1101,24 @@ Deno.serve(async (req) => {
         // The near-exhaustive search (planDay exact) over a plan's own stops, the
         // required ones and the next best places up to k (keep-together partners
         // added whole); more than 9 stops is not tried.
-        const exactOver = (scores: any[], s: State, mustN: number[], k: number, from?: From) => {
+        const exactOver = (scores: any[], s: State, mustN: number[], k: number, from?: From, cap = EXACT_MAX_EXTENDS) => {
           const E = new Set<number>([...s.route.filter(v => nodes[v.n].free).map(v => v.n), ...mustN]);
           const addUnit = (x: number) => { for (const y of freeNodes) if (y === x || (nodes[x].together && nodes[y].together === nodes[x].together)) E.add(y); };
           [...E].forEach(addUnit);
           const others = freeNodes.filter(x => !E.has(x) && !skip.has(x)).sort((a, b) => best(b, 0) - best(a, 0));
           for (const x of others) { if (E.size >= k) break; addUnit(x); }
           if (E.size > 9) return { E, pe: null, se: null };
+          exactCap = cap;
           const pe = planDay({ ...days[0], light: false }, scores, true, undefined, mustN, skip, from, [...E]);
+          exactCap = EXACT_MAX_EXTENDS;
           return { E, pe, se: pe.routes[0] ?? null };
         };
         // Polish (run config polish_k, 27 Oct 2026: the exact7 check found a better
         // day than the beam on 78% of days): keep the exact search's day when it
         // scores higher with the same required places.
         const polish = (scores: any[], p: DayPlan, s: State, mustN: number[], from?: From) => {
-          const r = exactOver(scores, s, mustN, Number(cfg.polish_k), from);
-          return r.se && r.pe && r.se.j > s.j + 1e-6 ? { p: r.pe, st: r.se, gain: r3(r.se.j - s.j) } : { p, st: s, gain: 0 };
+          const r = exactOver(scores, s, mustN, Number(cfg.polish_k), from, Number(cfg.polish_cap ?? 250_000));
+          return r.se && r.pe && r.se.j > s.j + 1e-6 ? { p: r.pe, st: r.se, gain: r3(r.se.j - s.j), capped: !!r.pe.capped } : { p, st: s, gain: 0, capped: !!r.pe?.capped };
         };
         if (cfg.exact_k && st && !phase2) {
           // Proof check (run config exact_k, stats only, the plan is unchanged):
@@ -1316,7 +1322,7 @@ Deno.serve(async (req) => {
         if (split && !phase2 && cfg.polish_k && st && !goOn()) return await save('mc');
         if (cfg.polish_k && st && stage !== 'night') {
           const r = polish(fcSc[0], p0, st, list.flatMap(mustOf));
-          polStats = { night: r.gain }; p0 = r.p; st = r.st;
+          polStats = { night: r.gain, ...(r.capped ? { night_capped: true } : {}) }; p0 = r.p; st = r.st;
         }
         // Live: the morning step comes hours later, so the night plan is always saved here.
         if (split && stage !== 'night' && st && (live || !goOn())) return await save('night');
@@ -1345,7 +1351,7 @@ Deno.serve(async (req) => {
           }
           if (cfg.polish_k && sm && pm) {
             const r = polish(mSc, pm, sm, l.flatMap(mustOf), { visits: before, atMs });
-            polStats = { ...(polStats ?? {}), morning: r.gain }; pm = r.p; sm = r.st;
+            polStats = { ...(polStats ?? {}), morning: r.gain, ...(r.capped ? { morning_capped: true } : {}) }; pm = r.p; sm = r.st;
           }
           await mark('morning');
           const { data: look } = await db.from('replay_hidden_truth').select('hr, hidden').eq('trip_id', tripId)
