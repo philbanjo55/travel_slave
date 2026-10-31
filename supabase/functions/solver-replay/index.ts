@@ -264,7 +264,11 @@ Deno.serve(async (req) => {
 
     // A run's plan loads only what it plans on (and the truth of the day it does).
     const k0 = runId != null ? kindOf : null;
-    const nFc = k0 == null ? horizon.length : k0 === 'fc3' || k0 === 'fm1' || k0 === 'mr1' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(fcDays, horizon.length) : 0;
+    // draft (run config, Phil 31 Oct 2026: T plans every trip day in the TEST app): the whole
+    // remaining trip planned night after night from light only (no forecast reaches it yet), no
+    // morning step, the day's expected value counted as shot; published as the week draft.
+    const draft = !!cfg.draft;
+    const nFc = draft ? 0 : k0 == null ? horizon.length : k0 === 'fc3' || k0 === 'fm1' || k0 === 'mr1' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(fcDays, horizon.length) : 0;
     const needLt = (h: number) => k0 == null || k0 === 'lt3' || (week && h >= nFc);
     const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
     // live (run config, 29 Oct 2026): real upcoming dates planned as the trip's days, so the
@@ -274,7 +278,7 @@ Deno.serve(async (req) => {
     // mr1 / mrmc: tomorrow's forecast with the look at the peaks before sunrise (replay_build kind 'morning').
     // morning_fresh (run config, 28 Oct 2026, board b06): the morning build also swaps
     // ECMWF's night-before forecast for its overnight (00 UTC) run, ready before the look.
-    const morning = k0 === 'mr1' || k0 === 'mrmc';
+    const morning = (k0 === 'mr1' || k0 === 'mrmc') && !draft;
     const mKind = cfg.morning_fresh ? 'morningf' : 'morning';
     const mB = morning ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === mKind) : undefined;
     if (morning && !mB && !live) return json({ ok: false, error: 'morning build missing' }, 404);
@@ -342,6 +346,8 @@ Deno.serve(async (req) => {
     const mSc = mB ? await scoresOf(mB.id) : [];
     if (mB && !mSc.length) return json({ ok: false, error: 'empty morning build' }, 404);
     if (week && ltSc.some((x, i) => needLt(i) && !x.length)) return json({ ok: false, error: 'no light geometry for a later day' }, 404);
+    // A draft plans tomorrow on light only too.
+    if (draft) fcSc[0] = ltSc[0];
     // A week mixes forecast days (one member per model) with light-only days
     // (51 scenarios): each model stands for an equal share of the 51.
     if (week) for (const day of fcSc) for (const r of day) {
@@ -835,7 +841,7 @@ Deno.serve(async (req) => {
       // What happened on the day being done (live: not known yet, scored later; what a
       // visit got is counted as the forecast's mean until then).
       const truthN = trSc[0].length ? planDay({ ...days[0], light: false }, trSc[0], false) : null;
-      const fcN = truthN ? null : planDay({ ...days[0], light: false }, fcSc[0], false);
+      const fcN = truthN ? null : planDay({ ...days[0], light: draft }, fcSc[0], false);
       const meanAt = (tp: DayPlan, v: { n: number; startMs: number }) => {
         const w = tp.W(v.n, Math.round((v.startMs - tp.dayStart) / (SLOT * 60000))); if (!w) return 0;
         let t = 0; for (const x of w) t += x; return t / w.length;
@@ -945,19 +951,19 @@ Deno.serve(async (req) => {
       // (or training) trip also writes its evening plan and its morning re-plan to
       // solver_runs / solver_plans (stats.planner 'T', variant 'T', rank 1), which the
       // app reads; the backtest scores them like any plan.
-      const publish = async (step: 'night' | 'morning', visits: any[], s: State, extra: any = {}) => {
+      const publish = async (step: 'night' | 'morning' | 'week', visits: any[], s: State, extra: any = {}) => {
         if (!cfg.publish || !live) return;
         const d0 = days[0];
         const { data: sr, error: e1 } = await db.from('solver_runs').insert({
           trip_id: tripId, plan_date: d0.date, params: { planner: 'T', replay_run: runId, night: n, step, tz },
           stats: { kind: 'day', planner: 'T', variant: 'T', step, ...extra,
-                   days: [{ date: d0.date, trip_date: d0.tripDate, light_only: false,
+                   days: [{ date: d0.date, trip_date: d0.tripDate, light_only: draft,
                             start_hotel: stopById.get(d0.startId ?? '')?.name ?? null, end_hotel: stopById.get(d0.endId ?? '')?.name ?? null }] },
         }).select('id').single();
         if (e1) throw e1;
         const { error: e2 } = await db.from('solver_plans').insert({
           run_id: sr.id, rank: 1, objective: r3(s.j), mean: r3(s.mean), cvar11: r3(s.cvar), drive_minutes: Math.round(s.drive),
-          visits, note: step === 'night' ? 'T: evening plan' : 'T: morning re-plan',
+          visits, note: step === 'night' ? 'T: evening plan' : step === 'week' ? 'T: week draft' : 'T: morning re-plan',
         });
         if (e2) throw e2;
       };
@@ -1079,7 +1085,7 @@ Deno.serve(async (req) => {
         const planList = (l0: number[][]) => {
           let l = l0, pp: DayPlan, ss: State | null;
           for (;;) {
-            pp = planDay({ ...days[0], light: false }, fcSc[0], true, undefined, l.flatMap(mustOf), skip);
+            pp = planDay({ ...days[0], light: draft }, fcSc[0], true, undefined, l.flatMap(mustOf), skip);
             ss = pp.routes[0] ?? null;
             if (ss || !l.length) break;
             l = l.slice(0, -1);
@@ -1113,7 +1119,7 @@ Deno.serve(async (req) => {
           // Rebuilt with the same required places, so its score (j) is the original's.
           // skip too (30 Oct 2026): without it a keep-together pair whose once-only half was
           // done earlier failed the all-or-none check and the night came back 'no route'.
-          p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
+          p0 = planDay({ ...days[0], light: draft }, fcSc[0], false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
           st = p0.routes[0] ?? null;
         } else ({ p: p0, st, list } = planList([...req, ...want]));
         await mark('plan0');
@@ -1129,7 +1135,7 @@ Deno.serve(async (req) => {
           for (const x of others) { if (E.size >= k) break; addUnit(x); }
           if (E.size > 9) return { E, pe: null, se: null };
           exactCap = cap;
-          const pe = planDay({ ...days[0], light: false }, scores, true, undefined, mustN, skip, from, [...E]);
+          const pe = planDay({ ...days[0], light: draft }, scores, true, undefined, mustN, skip, from, [...E]);
           exactCap = EXACT_MAX_EXTENDS;
           return { E, pe, se: pe.routes[0] ?? null };
         };
@@ -1311,7 +1317,7 @@ Deno.serve(async (req) => {
               if (searched && performance.now() - tB + slowest > budget) break;
               const l = (todo[k].units as string[][]).map(u => u.map(id => pos.get(id)!));
               const t1 = performance.now();
-              const pp = planDay({ ...days[0], light: false }, fcSc[0], true, undefined, l.flatMap(mustOf), skip);
+              const pp = planDay({ ...days[0], light: draft }, fcSc[0], true, undefined, l.flatMap(mustOf), skip);
               searched++; slowest = Math.max(slowest, performance.now() - t1);
               const ss = pp.routes[0] ?? null;
               if (!ss && l.length) { todo[k] = { ...todo[k], units: unitIds(l.slice(0, -1)) }; continue; }
@@ -1327,7 +1333,7 @@ Deno.serve(async (req) => {
                         chose: pick.tag, ms: (pend?.ms ?? 0) + Math.round(performance.now() - tMc) };
             const vis = (pick.visits as any[]).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
             list = (pick.units as string[][]).map(u => u.map(id => pos.get(id)!));
-            p0 = planDay({ ...days[0], light: false }, fcSc[0], false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
+            p0 = planDay({ ...days[0], light: draft }, fcSc[0], false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
             st = p0.routes[0] ?? null;
           }
           await mark('mc');
@@ -1345,8 +1351,8 @@ Deno.serve(async (req) => {
           polStats = { night: r.gain, ...(r.capped ? { night_capped: true } : {}) }; p0 = r.p; st = r.st;
         }
         // Live: the morning step comes hours later, so the night plan is always saved here.
-        if (split && stage !== 'night' && st && (live || !goOn())) { await publish('night', visitsOf(p0, st), st); return await save('night'); }
-        if ((kind === 'mr1' || kind === 'mrmc') && st) {
+        if (split && stage !== 'night' && st && ((live && !draft) || !goOn())) { await publish('night', visitsOf(p0, st), st); return await save('night'); }
+        if ((kind === 'mr1' || kind === 'mrmc') && st && !draft) {
           // Morning-of replan (Phil, 27 Oct 2026): the night's plan (v3, or the one
           // Monte Carlo chose) stands up to 30 min before sunrise; then the planner
           // sees whether the peaks are hidden (the airport or the camera, the
@@ -1387,10 +1393,10 @@ Deno.serve(async (req) => {
         }
         if (st) for (const v of st.route) seenIds.add(nodes[v.n].id);
         nextSets = { seen: [...seenIds] };
-        if (st) await publish('morning', visitsOf(p0, st), st, mrStats ? { mr: mrStats } : {});
+        if (st) await publish(draft ? 'week' : 'morning', visitsOf(p0, st), st, mrStats ? { mr: mrStats } : {});
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
-          stats: { members: fcB[0]!.members, required: req.length, wanted: want.length, kept: list.length, open: open.length,
+          stats: { members: fcB[0]?.members ?? 51, required: req.length, wanted: want.length, kept: list.length, open: open.length,
                    ms: p0.ms, ...(exStats ? { exact: exStats } : {}), ...(polStats ? { polish: polStats } : {}), ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route', why: whyNot(days[0]) }) },
         });
       };
