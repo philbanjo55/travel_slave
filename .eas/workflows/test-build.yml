@@ -1,0 +1,29 @@
+name: Test APK (Philm+Frame TEST, side by side)
+
+# Builds the `test` profile: separate package id (com.philmframe.app.test)
+# and channel `test`, so it installs next to the real app and never receives
+# the real app's updates. Only runs from the work branch, never from `update`.
+
+on:
+  push:
+    branches:
+      - ccr-dba965ff-afy6cz
+    # App files only, so backend/docs commits on this branch don't build an APK.
+    paths:
+      - 'src/**'
+      - 'App.tsx'
+      - 'app.json'
+      - 'app.config.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'eas.json'
+      - 'babel.config.js'
+      - 'tsconfig.json'
+
+jobs:
+  build:
+    name: Build TEST APK
+    type: build
+    params:
+      platform: android
+      profile: test
