@@ -52,13 +52,18 @@ export function runTripDate(run: PlanRun): string | null {
   return d?.trip_date ?? null;
 }
 
+// Planner T (Phil, 31 Oct 2026: T only): when T has planned a trip, the app shows only
+// T's plans; the old planner keeps running in the background for the comparison.
+export const isT = (r: PlanRun) => r.stats?.planner === 'T';
+
 // Single-day runs for a trip, newest first (no plan bodies: they're large).
 export async function fetchDayRuns(tripId: string, limit = 150): Promise<PlanRun[]> {
   const { data, error } = await supabase.from('solver_runs')
     .select('id, created_at, plan_date, params, stats')
     .eq('trip_id', tripId).order('created_at', { ascending: false }).limit(limit);
   if (error) throw error;
-  return (data ?? []).filter((r: any) => r.stats?.kind === 'day');
+  const runs = (data ?? []).filter((r: any) => r.stats?.kind === 'day') as PlanRun[];
+  return runs.some(isT) ? runs.filter(isT) : runs;
 }
 
 // The newest run per trip day and mode.
@@ -139,7 +144,8 @@ export async function confirmAllSettings(tripId: string): Promise<number> {
 }
 
 export const planTitle = (p: Plan) =>
-  p.rank === 0 ? 'My day' : p.note?.startsWith('safest') ? 'Safest' : p.rank === 1 ? 'Best' : `Alt ${p.rank}`;
+  p.note?.startsWith('T: ') ? (p.note.includes('morning') ? 'Morning re-plan' : 'Evening plan')
+  : p.rank === 0 ? 'My day' : p.note?.startsWith('safest') ? 'Safest' : p.rank === 1 ? 'Best' : `Alt ${p.rank}`;
 
 export type ShotStatus = 'got' | 'nailed' | null;
 
