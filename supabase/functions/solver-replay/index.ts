@@ -941,6 +941,26 @@ Deno.serve(async (req) => {
         });
       };
       // fm1: tomorrow only, every rated place at least once over the trip.
+      // publish (run config, Phil 31 Oct 2026: T in the TEST app): a live run on a real
+      // (or training) trip also writes its evening plan and its morning re-plan to
+      // solver_runs / solver_plans (stats.planner 'T', variant 'T', rank 1), which the
+      // app reads; the backtest scores them like any plan.
+      const publish = async (step: 'night' | 'morning', visits: any[], s: State, extra: any = {}) => {
+        if (!cfg.publish || !live) return;
+        const d0 = days[0];
+        const { data: sr, error: e1 } = await db.from('solver_runs').insert({
+          trip_id: tripId, plan_date: d0.date, params: { planner: 'T', replay_run: runId, night: n, step, tz },
+          stats: { kind: 'day', planner: 'T', variant: 'T', step, ...extra,
+                   days: [{ date: d0.date, trip_date: d0.tripDate, light_only: false,
+                            start_hotel: stopById.get(d0.startId ?? '')?.name ?? null, end_hotel: stopById.get(d0.endId ?? '')?.name ?? null }] },
+        }).select('id').single();
+        if (e1) throw e1;
+        const { error: e2 } = await db.from('solver_plans').insert({
+          run_id: sr.id, rank: 1, objective: r3(s.j), mean: r3(s.mean), cvar11: r3(s.cvar), drive_minutes: Math.round(s.drive),
+          visits, note: step === 'night' ? 'T: evening plan' : 'T: morning re-plan',
+        });
+        if (e2) throw e2;
+      };
       const coverPlan = async () => {
         const seenIds = new Set<string>((ks.sets as any)?.seen ?? []);
         const done = (x: number) => seenIds.has(nodes[x].id);
@@ -1325,7 +1345,7 @@ Deno.serve(async (req) => {
           polStats = { night: r.gain, ...(r.capped ? { night_capped: true } : {}) }; p0 = r.p; st = r.st;
         }
         // Live: the morning step comes hours later, so the night plan is always saved here.
-        if (split && stage !== 'night' && st && (live || !goOn())) return await save('night');
+        if (split && stage !== 'night' && st && (live || !goOn())) { await publish('night', visitsOf(p0, st), st); return await save('night'); }
         if ((kind === 'mr1' || kind === 'mrmc') && st) {
           // Morning-of replan (Phil, 27 Oct 2026): the night's plan (v3, or the one
           // Monte Carlo chose) stands up to 30 min before sunrise; then the planner
@@ -1367,6 +1387,7 @@ Deno.serve(async (req) => {
         }
         if (st) for (const v of st.route) seenIds.add(nodes[v.n].id);
         nextSets = { seen: [...seenIds] };
+        if (st) await publish('morning', visitsOf(p0, st), st, mrStats ? { mr: mrStats } : {});
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members: fcB[0]!.members, required: req.length, wanted: want.length, kept: list.length, open: open.length,
