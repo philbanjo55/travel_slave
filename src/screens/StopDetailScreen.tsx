@@ -91,15 +91,18 @@ export default function StopDetailScreen() {
   const stop = stops[stopIndex];
   const prevStop = stopIndex > 0 ? stops[stopIndex - 1] : null;
 
+  // Linked repeat visits (Bøur, Drangarnir, ...) share one photo pool. Every hook runs before
+  // the early return below: a stop that leaves its day while open (reload, move, a practice
+  // trip rolling its days) otherwise renders one hook fewer and crashes the screen.
+  const groupStops = photoGroupStops(currentTripData, stop);
+  const { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error } = usePhotoUpload(stop?.id ?? '', groupStops.map((s: any) => s.id));
+
   if (!stop) return null;
 
-  // Linked repeat visits (Bøur, Drangarnir, ...) share one photo pool.
-  const groupStops = photoGroupStops(currentTripData, stop);
   const allPhotos = photoGroupPhotos(groupStops);
   const byPosition = (a: any, b: any) => (a.position ?? 1e9) - (b.position ?? 1e9);
   const refPhotos = allPhotos.filter((p: any) => !p.photo_type || p.photo_type === 'reference').sort(byPosition);
   const fieldPhotos = allPhotos.filter((p: any) => p.photo_type === 'field').sort(byPosition);
-  const { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error } = usePhotoUpload(stop.id, groupStops.map((s: any) => s.id));
 
   const handlePhotoLongPress = (photoId: string, type: string, after?: () => void) => {
     Alert.alert('Delete Photo', `Remove this ${type} photo?`, [
