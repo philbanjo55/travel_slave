@@ -6,13 +6,15 @@ import { format, parseISO } from 'date-fns';
 import { colors, spacing, radius, typography } from '../../theme';
 import {
   Plan, PlanRun, PlanVisit, applyPreview, fetchDayRuns, fetchMultiRuns, fetchPlans, hhmm, ago, latestByDay,
-  planDay, planDays, planTitle, runTripDates, LIGHT_WORDS,
+  planDay, planDays, planTitle, runTripDates, LIGHT_WORDS, usesT, replanT, latestT, waitForT, fetchTDays,
 } from '../../services/planner';
 import { useTripStore } from '../../store/tripStore';
 import { dayBadge } from './dayBadge';
 
 const MODE_TEXT: Record<string, string> = {
   forecast: 'Forecast for this day',
+  tforecast: "T's plan from the forecast for this day",
+  tlight: "T's week draft: real sun for this date, no forecast reaches it yet",
   light: 'Light only: real sun for this date, typical (mostly cloudy) weather',
   preview: "Preview: this week's forecast played as this day (today's sun, not the trip's)",
 };
@@ -34,8 +36,27 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
   const [plans, setPlans] = useState<Plan[]>([]);
   const [busy, setBusy] = useState<string | null>('Loading…');
   const [error, setError] = useState<string | null>(null);
+  const [t, setT] = useState<boolean | null>(null);
+
+  // Trips T plans: its newest plan for the day; Plan again rebuilds T's week draft.
+  const loadT = useCallback(async (replan = false) => {
+    setError(null); setBusy('Loading…');
+    try {
+      let r: PlanRun | null = null;
+      if (replan) {
+        const since = await replanT(tripId);
+        setBusy('T is planning the trip again… (about 2–4 minutes; you can leave this screen)');
+        r = await waitForT(tripId, tripDate, since);
+        if (!r) throw new Error("T is still planning, or doesn't re-plan this day (today is re-planned each morning). Check back in a few minutes.");
+      } else r = await latestT(tripId, tripDate);
+      setRun(r); setPlans(r ? await fetchPlans(r.id) : []);
+      if (!r) setError("T hasn't planned this day yet. Tap Plan again.");
+    } catch (e: any) { setError(String(e?.message ?? e)); }
+    setBusy(null);
+  }, [tripId, tripDate]);
 
   const load = useCallback(async (pv: boolean, replan = false) => {
+    if (t) return loadT(replan);
     setError(null); setBusy('Loading…');
     try {
       let runId: string | null = null;
@@ -51,17 +72,18 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
       setRun(r); setPlans(await fetchPlans(runId));
     } catch (e: any) { setError(String(e?.message ?? e)); }
     setBusy(null);
-  }, [tripId, tripDate]);
+  }, [tripId, tripDate, t, loadT]);
 
-  useEffect(() => { load(preview); }, [preview, tripDate]);
+  useEffect(() => { usesT(tripId).then(setT).catch(() => setT(false)); }, [tripId]);
+  useEffect(() => { if (t !== null) load(preview); }, [preview, tripDate, t]);
 
   const badge = dayBadge(tripDate);
   const runDay = run?.stats?.days?.[0];
-  const kind = runDay?.light_only ? 'light' : runDay && runDay.date !== runDay.trip_date ? 'preview' : 'forecast';
+  const kind = (t ? 't' : '') + (runDay?.light_only ? 'light' : runDay && runDay.date !== runDay.trip_date ? 'preview' : 'forecast');
   return (
     <View style={{ gap: spacing.sm }}>
       <View style={styles.modeRow}>
-        {[false, true].map(pv => (
+        {(t ? [false] : [false, true]).map(pv => (
           <TouchableOpacity key={String(pv)} onPress={() => setPreview(pv)} style={[styles.modeBtn, preview === pv && styles.modeOn]}>
             <Text style={[styles.modeText, preview === pv && styles.modeTextOn]}>
               {!pv ? (badge.text === 'LIGHT ONLY' ? 'Light only' : 'This day') : "This week's weather"}
@@ -94,8 +116,26 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
   const [busy, setBusy] = useState<string | null>('Loading…');
   const [error, setError] = useState<string | null>(null);
   const key = tripDates.join(',');
+  const [t, setT] = useState<boolean | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const loadT = useCallback(async (replan = false) => {
+    setError(null); setBusy('Loading…'); setNote(null);
+    try {
+      if (replan) {
+        const since = await replanT(tripId);
+        setBusy('T is planning the trip again… (about 2–4 minutes; you can leave this screen)');
+        await waitForT(tripId, tripDates[tripDates.length - 1], since);
+      }
+      const j = await fetchTDays(tripId, tripDates);
+      setRun(j.run); setPlans(j.plans);
+      if (j.missing.length) setNote(`T has no plan yet for ${j.missing.map(d => format(parseISO(d), 'EEE d MMM')).join(', ')}.`);
+    } catch (e: any) { setError(String(e?.message ?? e)); }
+    setBusy(null);
+  }, [tripId, key]);
 
   const load = useCallback(async (replan = false) => {
+    if (t) return loadT(replan);
     setError(null); setBusy('Loading…');
     try {
       let r = replan ? undefined : (await fetchMultiRuns(tripId)).find(x => runTripDates(x).join(',') === key);
@@ -107,15 +147,17 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
       setRun(r ?? null); setPlans(r ? await fetchPlans(r.id) : []);
     } catch (e: any) { setError(String(e?.message ?? e)); }
     setBusy(null);
-  }, [tripId, key]);
+  }, [tripId, key, t, loadT]);
 
-  useEffect(() => { load(); }, [key]);
+  useEffect(() => { usesT(tripId).then(setT).catch(() => setT(false)); }, [tripId]);
+  useEffect(() => { if (t !== null) load(); }, [key, t]);
 
   return (
     <View style={{ gap: spacing.sm }}>
       <View style={styles.modeRow}>
         <Text style={[styles.hint, { flex: 1, paddingHorizontal: spacing.sm }]}>
-          A subject counts once, on its best day, with 6 h between back at night and out again.
+          {t ? "T's plan for each day: the forecast plan where there is one, else the week draft."
+             : 'A subject counts once, on its best day, with 6 h between back at night and out again.'}
         </Text>
         <TouchableOpacity onPress={() => load(true)} style={styles.replan} disabled={!!busy} accessibilityLabel="Plan again">
           <Ionicons name="refresh" size={16} color={colors.textSecondary} />
@@ -124,7 +166,7 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
       </View>
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>
-          {run ? <Text style={styles.hint}>Planned {ago(run.created_at)}</Text> : null}
+          {run ? <Text style={styles.hint}>Planned {ago(run.created_at)}{note ? `\n${note}` : ''}</Text> : note ? <Text style={styles.hint}>{note}</Text> : null}
           <PlanBody run={run} plans={plans} byDay />
         </>
       )}

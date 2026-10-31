@@ -56,6 +56,51 @@ export function runTripDate(run: PlanRun): string | null {
 // T's plans; the old planner keeps running in the background for the comparison.
 export const isT = (r: PlanRun) => r.stats?.planner === 'T';
 
+// Does T plan this trip (planner_t_trips)? Then "Plan again" runs T, never the old planner.
+export async function usesT(tripId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('planner_t_trip', { p_trip: tripId });
+  return !error && !!data;
+}
+
+// Plan again with T: a new week draft from tomorrow (one started in the last 2 min is reused).
+export async function replanT(tripId: string): Promise<string> {
+  const { data, error } = await supabase.rpc('planner_t_replan', { p_trip: tripId });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error ?? 'T could not start');
+  return data.since as string;
+}
+
+// T's newest plan for a trip day: the evening plan / morning re-plan, else the week draft.
+export async function latestT(tripId: string, tripDate: string): Promise<PlanRun | null> {
+  const m = latestByDay(await fetchDayRuns(tripId)).get(tripDate) ?? {};
+  return m.forecast ?? m.light ?? null;
+}
+
+// Waits for a T plan of the day made after `since` (every 6 s, up to 6 min).
+export async function waitForT(tripId: string, tripDate: string, since: string): Promise<PlanRun | null> {
+  const t0 = Date.now(), after = new Date(since).getTime();
+  while (Date.now() - t0 < 6 * 60000) {
+    const r = (await fetchDayRuns(tripId)).find(x => runTripDate(x) === tripDate && new Date(x.created_at).getTime() >= after);
+    if (r) return r;
+    await new Promise(res => setTimeout(res, 6000));
+  }
+  return null;
+}
+
+// Several trip days of T's plans shown together (each day's newest T plan, joined).
+export async function fetchTDays(tripId: string, tripDates: string[]): Promise<{ run: PlanRun | null; plans: Plan[]; missing: string[] }> {
+  const latest = latestByDay(await fetchDayRuns(tripId));
+  const runs = tripDates.map(d => { const m = latest.get(d) ?? {}; return m.forecast ?? m.light ?? null; });
+  const missing = tripDates.filter((_, i) => !runs[i]);
+  const plans = await Promise.all(runs.map(r => (r ? fetchPlans(r.id) : Promise.resolve([] as Plan[]))));
+  const best = plans.map(ps => ps.find(p => p.rank === 1)).filter((p): p is Plan => !!p);
+  if (!best.length) return { run: null, plans: [], missing };
+  const sum = (k: 'objective' | 'mean' | 'cvar11' | 'drive_minutes') => best.reduce((t, p) => t + (p[k] ?? 0), 0);
+  const joined: Plan = { rank: 1, objective: sum('objective'), mean: sum('mean'), cvar11: sum('cvar11'), drive_minutes: sum('drive_minutes'),
+                         long_leg_minutes: null, note: 'T: days together', visits: best.flatMap(p => p.visits) };
+  return { run: runs.find(r => !!r) ?? null, plans: [joined], missing };
+}
+
 // Single-day runs for a trip, newest first (no plan bodies: they're large).
 export async function fetchDayRuns(tripId: string, limit = 150): Promise<PlanRun[]> {
   const { data, error } = await supabase.from('solver_runs')
@@ -144,7 +189,8 @@ export async function confirmAllSettings(tripId: string): Promise<number> {
 }
 
 export const planTitle = (p: Plan) =>
-  p.note?.startsWith('T: ') ? (p.note.includes('morning') ? 'Morning re-plan' : 'Evening plan')
+  p.note?.startsWith('T: ') ? (p.note.includes('morning') ? 'Morning re-plan' : p.note.includes('draft') ? 'Week draft'
+    : p.note.includes('together') ? 'T plan' : 'Evening plan')
   : p.rank === 0 ? 'My day' : p.note?.startsWith('safest') ? 'Safest' : p.rank === 1 ? 'Best' : `Alt ${p.rank}`;
 
 export type ShotStatus = 'got' | 'nailed' | null;

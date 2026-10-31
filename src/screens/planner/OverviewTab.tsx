@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,7 +6,7 @@ import { format, parseISO, differenceInCalendarDays } from 'date-fns';
 import { colors, spacing, radius, typography } from '../../theme';
 import {
   Brief, CameraFrame, ClaudeSpend, PlanRun, TripSetting, fetchBrief, fetchClaudeSpend, fetchDayRuns, fetchScores,
-  fetchTripFrames, fetchTripSettings, latestByDay, planDay, spendLine,
+  fetchTripFrames, fetchTripSettings, latestByDay, planDay, spendLine, usesT, replanT, waitForT,
 } from '../../services/planner';
 import { FrameModal, FrameTile } from '../../components/planner/CameraView';
 import { dayBadge } from '../../components/planner/dayBadge';
@@ -65,9 +65,20 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  // Plans every trip day that has none yet (light only before the forecast).
+  const [usesTPlanner, setUsesT] = useState(false);
+  useEffect(() => { usesT(tripId).then(setUsesT).catch(() => {}); }, [tripId]);
+
+  // Plans every trip day that has none yet (light only before the forecast). Trips T plans:
+  // one new T week draft covers every day from tomorrow.
   const planMissing = async () => {
     const todo = rows.filter(r => !r.run && differenceInCalendarDays(parseISO(r.date), new Date()) >= 0);
+    if (usesTPlanner) {
+      setPlanning({ done: 0, total: 1 });
+      try { const since = await replanT(tripId); if (todo.length) await waitForT(tripId, todo[todo.length - 1].date, since); } catch { /* shown on reload */ }
+      setPlanning(null);
+      load();
+      return;
+    }
     setPlanning({ done: 0, total: todo.length });
     for (let i = 0; i < todo.length; i++) {
       try { await planDay(tripId, todo[i].date); } catch { /* keep going */ }
