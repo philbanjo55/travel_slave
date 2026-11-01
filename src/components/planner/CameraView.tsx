@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Modal, ActivityIndicator, AppState } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { CameraFrame, PhilLabel, labelFrame, frameSummary, ago, solverAction } from '../../services/planner';
@@ -45,10 +46,19 @@ const LIVE_REFRESH_MS = 30_000;
 // Live view: the camera's picture now, reloaded every 30 s while open. The new
 // picture is downloaded first and swapped in, so it doesn't blink. Templated
 // archives (TetonCam) ask the server for their newest file each time.
+// It only downloads while it can be seen: never with the screen covered by another one, or
+// with the app in the background (Phil, 1 Nov 2026: no downloading in the background).
 export function useLive(camera: CameraFrame['camera'] | undefined, on: boolean, everyMs = LIVE_REFRESH_MS) {
   const [state, setState] = useState<{ uri: string; at: Date; picture: string | null; failed: boolean } | null>(null);
+  const focused = useIsFocused();
+  const [active, setActive] = useState(AppState.currentState === 'active');
   useEffect(() => {
-    if (!on || !camera) { setState(null); return; }
+    const sub = AppState.addEventListener('change', s => setActive(s === 'active'));
+    return () => sub.remove();
+  }, []);
+  const run = on && focused && active;
+  useEffect(() => {
+    if (!run || !camera) { if (!on || !camera) setState(null); return; }
     let alive = true;
     const load = async () => {
       let url = camera.live_url ?? camera.image_url;
@@ -69,7 +79,7 @@ export function useLive(camera: CameraFrame['camera'] | undefined, on: boolean, 
     load();
     const id = setInterval(load, everyMs);
     return () => { alive = false; clearInterval(id); };
-  }, [on, camera?.code, everyMs]);
+  }, [run, camera?.code, everyMs]);
   return state;
 }
 

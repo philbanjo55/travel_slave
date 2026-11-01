@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useIsFocused } from '@react-navigation/native';
+import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PlanningStatus, fetchPlanningStatus, replanT } from './planner';
 
@@ -61,7 +62,8 @@ function schedule(tripId: string) {
   if (!listeners.get(tripId)?.size) { timers.delete(tripId); return; }
   const e = entry(tripId);
   const fast = active(e.status) || Date.now() - e.kicked < 30_000;
-  timers.set(tripId, setTimeout(() => { refresh(tripId); }, fast ? 10_000 : 60_000));
+  // No network while the app is in the background; it checks again on the next tick back.
+  timers.set(tripId, setTimeout(() => { if (AppState.currentState === 'active') refresh(tripId); else schedule(tripId); }, fast ? 10_000 : 60_000));
 }
 
 export async function ack(tripId: string, made?: string | null) {
