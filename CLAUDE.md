@@ -91,7 +91,7 @@ Spec: `SOLVER_SPEC.md` (in Phil's uploads). Review and corrected build order: `d
   - **E-all b stop section** (`StopPlannerSection`): a chance header, then Today / Trip / Settings tabs.
     - Today: the stop's 15-min chances, from solver-actions `stop_curve` -> `solver_stop_curve(stop, date)` (newest raw ECMWF build, else light only, `20261101020000`).
     - Trip: the subject grid. Settings: `SettingsEditor`, plus "Plan again" after a save.
-- **Shot status** (`solver_stop_settings.shot_status` got/nailed, `shot_value`; set with `solver_mark_shot(stop, status, at?, value?)`, or the TEST stop page's Settings tab: Not shot / Got it / Nailed it): nailed subjects drop out, got ones count only the improvement over shot_value.
+- **Shot status** (`solver_stop_settings.shot_status` got/nailed, `shot_value`; set with `solver_mark_shot(stop, status, at?, value?)`, or the TEST stop page's Settings tab, Phil's words since 1 Nov 2026: Missed it (null) / Go back for better (got) / Nailed it): nailed subjects drop out, got ones count only the improvement over shot_value.
   - **T goes by the ticks** (Phil, 1 Nov 2026; solver-replay v53, `20261101030000`). On the plans the app shows (run config `publish`: live T runs and week drafts), the days already done count only through the ticks: nailed = done for the rest of the trip, got = only a clearly better shot is worth going back for, not shot = still wanted, even where T had planned it.
   - Before v53, T assumed its own plan happened and wiped the ticks. The bench still does, on purpose: replays start from nothing shot.
   - A week draft starts empty (`planner_t_week` no longer copies the live run's state); it counts only its own earlier draft days.

@@ -8,13 +8,15 @@ import {
 import { forgetTiers } from './DayPlannerHints';
 
 const STATES: { key: ShotStatus; text: string }[] = [
-  { key: null, text: 'Not shot' },
-  { key: 'got', text: 'Got it' },
+  // Phil's words (1 Nov 2026). Missed it = still a must-do, at full value; go back for better =
+  // T returns only when a clearly better shot than the one you have is likely; nailed it = done.
+  { key: null, text: 'Missed it' },
+  { key: 'got', text: 'Go back for better' },
   { key: 'nailed', text: 'Nailed it' },
 ];
-const STATUS_TEXT: Record<string, string> = { got: 'got it', nailed: 'nailed it' };
+const STATUS_TEXT: Record<string, string> = { got: 'go back for better', nailed: 'nailed it' };
 
-// One line for a stop's planner settings: "front, side light · fog good · got it".
+// One line for a stop's planner settings: "front, side light · fog good · go back for better".
 export function settingsSummary(s: Pick<StopSettings, 'light_wanted' | 'fog_wanted' | 'shot_status'> | null): string {
   if (!s) return '';
   const lights = (s.light_wanted ?? []).join(', ');

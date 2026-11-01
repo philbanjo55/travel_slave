@@ -172,7 +172,7 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
         {[['GOD', god], ['S', sTier]].map(([t, c]: any) => (
           <View key={t} style={styles.subjCard}>
             <Text style={styles.subjTier}>{t} <Text style={styles.subjCount}>{c.n}</Text></Text>
-            <Text style={styles.subjLine}>{c.nailed} nailed · {c.got} got · {c.n - c.nailed - c.got} to go</Text>
+            <Text style={styles.subjLine}>{c.nailed} nailed · {c.got} go back · {c.n - c.nailed - c.got} to go</Text>
           </View>
         ))}
       </TouchableOpacity>
