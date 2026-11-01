@@ -4,7 +4,8 @@ import { colors, spacing, radius } from '../../theme';
 import { CameraFrame, ago, fetchFrames } from '../../services/planner';
 import { cachedNear, storeFrames } from '../../services/cameraCache';
 import { WeatherRow, conditionsText, tempText, windText, visibilityText, kmhToMph } from '../../services/weather';
-import { FrameModal } from './CameraView';
+import { format } from 'date-fns';
+import { FrameModal, useLive } from './CameraView';
 
 // The nearest cameras with a stored daylight frame: null while loading,
 // [] when none is within 50 km (or the stop has no location). The nearest
@@ -36,6 +37,11 @@ export default function StopCameraHero({ cams, weather, timeLabel, onClosed }: {
 }) {
   const [page, setPage] = useState(0);
   const [open, setOpen] = useState<CameraFrame | null>(null);
+  // Phil (1 Nov 2026): the stop page shows the camera live, day and night (the shown camera
+  // only, every 60 s), not the saved frame (up to an hour old); the saved picture only when
+  // the camera doesn't answer.
+  const cur = cams?.[page];
+  const live = useLive(cur?.camera, !!cur && !open, 60_000);
   if (cams == null) {
     return <View style={[styles.box, styles.loading]}><ActivityIndicator color={colors.textTertiary} /></View>;
   }
@@ -55,12 +61,15 @@ export default function StopCameraHero({ cams, weather, timeLabel, onClosed }: {
         {cams.map(c => (
           <TouchableOpacity key={c.camera.code} activeOpacity={0.9} onPress={() => setOpen(c)}
             accessibilityLabel={`Camera ${c.camera.name}. Tap for the full picture and Live.`}>
-            <Image source={{ uri: c.frame!.url! }} style={styles.image} resizeMode="cover" />
+            <Image source={{ uri: c === cur && live && !live.failed ? live.uri : c.frame!.url! }} style={styles.image} resizeMode="cover" />
             <View style={styles.topRow}>
               <Text style={styles.chip} numberOfLines={1}>
                 {c.camera.code} · {c.camera.name}{c.camera.distance_km != null ? ` · ${c.camera.distance_km} km` : ''}
               </Text>
-              <Text style={[styles.chip, styles.chipTime]}>{ago(c.frame!.taken_at ?? c.frame!.captured_at)}</Text>
+              <Text style={[styles.chip, styles.chipTime, c === cur && live && !live.failed && styles.chipLive]}>
+                {c === cur && live && !live.failed ? `● live · ${format(live.at, 'h:mm a')}`
+                  : `saved · ${ago(c.frame!.taken_at ?? c.frame!.captured_at)}`}
+              </Text>
             </View>
           </TouchableOpacity>
         ))}
@@ -97,6 +106,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4, overflow: 'hidden',
   },
   chipTime: { flexShrink: 0, marginLeft: 'auto' },
+  chipLive: { backgroundColor: 'rgba(90,170,122,0.85)' },
   pic: { width: W, height: H },
   forecast: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: 12, paddingVertical: 8,

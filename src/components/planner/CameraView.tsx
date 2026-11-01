@@ -45,7 +45,7 @@ const LIVE_REFRESH_MS = 30_000;
 // Live view: the camera's picture now, reloaded every 30 s while open. The new
 // picture is downloaded first and swapped in, so it doesn't blink. Templated
 // archives (TetonCam) ask the server for their newest file each time.
-function useLive(camera: CameraFrame['camera'] | undefined, on: boolean) {
+export function useLive(camera: CameraFrame['camera'] | undefined, on: boolean, everyMs = LIVE_REFRESH_MS) {
   const [state, setState] = useState<{ uri: string; at: Date; picture: string | null; failed: boolean } | null>(null);
   useEffect(() => {
     if (!on || !camera) { setState(null); return; }
@@ -67,9 +67,9 @@ function useLive(camera: CameraFrame['camera'] | undefined, on: boolean) {
       setState(prev => ok || !prev ? { uri, at: new Date(), picture, failed: !ok } : { ...prev, failed: true });
     };
     load();
-    const id = setInterval(load, LIVE_REFRESH_MS);
+    const id = setInterval(load, everyMs);
     return () => { alive = false; clearInterval(id); };
-  }, [on, camera?.code]);
+  }, [on, camera?.code, everyMs]);
   return state;
 }
 
