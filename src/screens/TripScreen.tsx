@@ -66,6 +66,7 @@ export default function TripScreen() {
   const [pop, setPop] = useState<string | null>(null);
   const [ghostPreview, setGhostPreview] = useState<any | null>(null);
   const [accepting, setAccepting] = useState(false);
+  const [ghostDetails, setGhostDetails] = useState(false);
   useEffect(() => { setGhost(false); setPop(null); }, [activeDay, planner?.run?.id]);
   // What applying also does (set aside, tight connections), shown before Accept.
   useEffect(() => {
@@ -389,21 +390,27 @@ export default function TripScreen() {
         </View>
       )}
 
-      <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />
+      {/* Real app: the day weather stays above the stops. TEST app (Phil, 1 Nov 2026: "crowded, I
+          can't see the timeline"): it and the T card scroll away with the timeline instead. */}
+      {IS_TEST_APP ? null : <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />}
 
       {/* TEST (mockup E5): the timeline shows each drive, so no totals row. */}
       {IS_TEST_APP ? null : <DaySummary stops={stops} />}
-
-      {IS_TEST_APP && day?.date ? (
-        <DayScoreCard tripId={tripId} date={day.date} planner={planner} score={score}
-          onShowChanges={() => { setPop(null); setGhost(true); }} />
-      ) : null}
 
       <FlatList
         data={ghostRows ? ghostRows.map(r => r.item) : stops}
         keyExtractor={(item: any) => item.id}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.stopList, ghostRows ? { paddingBottom: 160 } : null]}
+        ListHeaderComponent={IS_TEST_APP ? (
+          <View style={styles.listHead}>
+            <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />
+            {day?.date ? (
+              <DayScoreCard tripId={tripId} date={day.date} planner={planner} score={score}
+                onShowChanges={() => { setPop(null); setGhost(true); }} />
+            ) : null}
+          </View>
+        ) : undefined}
+        contentContainerStyle={[styles.stopList, ghostRows ? { paddingBottom: ghostDetails ? 260 : 130 } : null]}
         renderItem={({ item, index }: { item: any; index: number }) => IS_TEST_APP ? (
           <TimelineRow item={item} index={index} isLast={index === (ghostRows ?? stops).length - 1} weather={dayWeather[item.id]}
             planner={planner} ghost={ghostRows ? ghostRows[index]?.tag : null}
@@ -528,22 +535,35 @@ export default function TripScreen() {
 
       {IS_TEST_APP && ghostRows ? (
         <View style={styles.ghostBar}>
-          {ghostPreview ? (() => {
-            // Accepting this day also takes stops from the days T moved them off (they lose them).
-            const here = (ghostPreview.days ?? []).find((d: any) => d.date === day?.date);
-            const from = [...new Set<string>((here?.stops ?? []).map((x: any) => x.moved_from).filter(Boolean))]
-              .map(dt => (currentTripData?.days ?? []).find((d: any) => d.date === dt)?.day_number).filter(Boolean);
-            return (
-              <Text style={styles.ghostNote} numberOfLines={2}>
-                {ghostPreview.stops_changed ?? 0} stops change in all{from.length ? ` · takes stops from Day ${from.join(', ')}` : ''}
+          {/* One line of what accepting does; the lists behind Details (the timeline stays visible). */}
+          <TouchableOpacity onPress={() => setGhostDetails(v => !v)} style={styles.ghostSummary} accessibilityRole="button"
+            accessibilityState={{ expanded: ghostDetails }}>
+            {ghostPreview ? (
+              <Text style={styles.ghostNote} numberOfLines={1}>
+                {ghostPreview.stops_changed ?? 0} stops change
+                {ghostPreview.set_aside?.length ? ` · ${ghostPreview.set_aside.length} set aside` : ''}
+                {ghostPreview.clashes?.length ? ` · ${ghostPreview.clashes.length} tight` : ''}
               </Text>
-            );
-          })() : <ActivityIndicator size="small" color={colors.textTertiary} />}
-          {ghostPreview?.set_aside?.length ? (
-            <Text style={styles.ghostNote} numberOfLines={2}>Also sets aside: {ghostPreview.set_aside.map((x: any) => x.name).join(', ')}</Text>
-          ) : null}
-          {ghostPreview?.clashes?.length ? (
-            <Text style={styles.ghostNote} numberOfLines={2}>Tight: {ghostPreview.clashes.map((x: any) => `${x.name} into ${x.next_name} (${x.late_min} min)`).join('; ')}</Text>
+            ) : <ActivityIndicator size="small" color={colors.textTertiary} />}
+            <Text style={styles.ghostDetailsLink}>{ghostDetails ? 'Hide' : 'Details'} {ghostDetails ? '▾' : '▸'}</Text>
+          </TouchableOpacity>
+          {ghostDetails ? (
+            <View style={{ gap: 4 }}>
+              <Text style={styles.ghostNote}>{changesLine(changes)}</Text>
+              {ghostPreview ? (() => {
+                // Accepting this day also takes stops from the days T moved them off (they lose them).
+                const here = (ghostPreview.days ?? []).find((d: any) => d.date === day?.date);
+                const from = [...new Set<string>((here?.stops ?? []).map((x: any) => x.moved_from).filter(Boolean))]
+                  .map(dt => (currentTripData?.days ?? []).find((d: any) => d.date === dt)?.day_number).filter(Boolean);
+                return from.length ? <Text style={styles.ghostNote}>Takes stops from Day {from.join(', ')}</Text> : null;
+              })() : null}
+              {ghostPreview?.set_aside?.length ? (
+                <Text style={styles.ghostNote}>Sets aside: {ghostPreview.set_aside.map((x: any) => x.name).join(', ')}</Text>
+              ) : null}
+              {ghostPreview?.clashes?.length ? (
+                <Text style={styles.ghostNote}>Tight: {ghostPreview.clashes.map((x: any) => `${x.name} into ${x.next_name} (${x.late_min} min)`).join('; ')}</Text>
+              ) : null}
+            </View>
           ) : null}
           <View style={styles.ghostBtns}>
             {canApply(tripId) ? (
@@ -564,7 +584,6 @@ export default function TripScreen() {
               <Text style={styles.ghostNoText}>Not now</Text>
             </TouchableOpacity>
           </View>
-          <Text style={styles.ghostNote} numberOfLines={2}>{changesLine(changes)}</Text>
         </View>
       ) : null}
     </SafeAreaView>
@@ -652,10 +671,13 @@ const styles = StyleSheet.create({
   popNo: { minHeight: 36, paddingHorizontal: spacing.md, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   popNoText: { fontSize: 13, color: colors.textSecondary },
   ghostBar: {
-    position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xl, gap: 6,
+    position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg, gap: 6,
     backgroundColor: '#0d0d0d', borderTopWidth: 1, borderTopColor: colors.signalOk,
   },
   ghostBtns: { flexDirection: 'row', gap: spacing.sm },
+  ghostSummary: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 28 },
+  ghostDetailsLink: { marginLeft: 'auto', fontSize: 12, fontWeight: '700', color: colors.signalOk },
+  listHead: { marginHorizontal: -spacing.xl, marginBottom: spacing.xs },
   ghostAccept: { flex: 1, minHeight: 48, borderRadius: radius.sm, backgroundColor: colors.signalOk, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm },
   ghostAcceptText: { fontSize: 14, fontWeight: '800', color: colors.background },
   ghostPreviewOnly: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.border },
