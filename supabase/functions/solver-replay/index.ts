@@ -354,8 +354,13 @@ Deno.serve(async (req) => {
       const m = r.v.length; if (m === 51) continue;
       const src = r.v; r.v = Uint8Array.from({ length: 51 }, (_, k) => src[Math.floor(k * m / 51)]);
     }
-    // Shot status is about the real trip; a replay starts from nothing shot.
-    for (const r of inputs) { r.shot_status = null; r.shot_value = null; }
+    // Shot status is about the real trip; a replay starts from nothing shot. v53 (Phil, 1 Nov
+    // 2026): the plans the app shows (publish) go by Phil's ticks instead: nailed = done for the
+    // rest of the trip, got = only a clearly better shot is worth going back for, not shot =
+    // still wanted, even where T had planned it before.
+    const ticks = !!cfg.publish;
+    if (!ticks) for (const r of inputs) { r.shot_status = null; r.shot_value = null; }
+    const tickedIds = new Set<string>(inputs.filter((r: any) => r.shot_status === 'got' || r.shot_status === 'nailed').map((r: any) => r.stop_id));
     const specs = horizon.map(h => ({ date: h.date, trip_date: h.trip_date, light: false }));
 
     const stopById = new Map(stopsAll.map(s => [s.id, s]));
@@ -416,6 +421,7 @@ Deno.serve(async (req) => {
       const b = r.shot_status === 'nailed' ? 250 : r.shot_status === 'got' ? Math.round(250 * (r.shot_value ?? 0.5)) : 0;
       if (b > 0) groupBase.set(find(i), Math.max(groupBase.get(find(i)) ?? 0, b));
     });
+    const tickBase = new Map(groupBase);
 
     // Accommodation -> a stop named after it (else the nearest stop).
     const accStop = (acc: any): string | undefined => {
@@ -830,11 +836,13 @@ Deno.serve(async (req) => {
         return json({ ok: true, skipped: 'already planned', run_id: runId, kind, night: ks.night });
       }
       await mark('state');
-      const shotBefore: Record<string, number> = ks.state ?? {};
-      // What a plan has shot, by group (key: the group's first stop id).
+      // What a plan has shot, by group (key: the group's first stop id). The app's plans (ticks):
+      // the days already done count only through Phil's ticks, not through what T planned for
+      // them; a week draft still counts its own earlier draft days (its state from night 0 on).
+      const shotBefore: Record<string, number> = ticks && !draft ? {} : (ks.state ?? {});
       const keyOf = (g: number) => rated[g].stop_id;
       const groupOfKey = new Map(rated.map((r, i) => [r.stop_id, find(i)]));
-      groupBase = new Map<number, number>();
+      groupBase = new Map<number, number>(ticks ? tickBase : []);
       for (const [k, v] of Object.entries(shotBefore)) {
         const g = groupOfKey.get(k); if (g != null) groupBase.set(g, Math.max(groupBase.get(g) ?? 0, v));
       }
@@ -1010,7 +1018,9 @@ Deno.serve(async (req) => {
         if (e2) throw e2;
       };
       const coverPlan = async () => {
-        const seenIds = new Set<string>((ks.sets as any)?.seen ?? []);
+        // Places done: the app's plans go by Phil's ticks (got / nailed) for the days already
+        // done, plus a draft's own earlier draft days; the bench by what its plans visited.
+        const seenIds = new Set<string>([...(ticks && !draft ? [] : ((ks.sets as any)?.seen ?? [])), ...(ticks ? tickedIds : [])]);
         const done = (x: number) => seenIds.has(nodes[x].id);
         // A place: a keep-together group (all of it), else a subject (any of its stops).
         const unitKey = (x: number) => nodes[x].together ? 't:' + nodes[x].together : 'g:' + nodes[x].group;
