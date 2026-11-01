@@ -951,20 +951,62 @@ Deno.serve(async (req) => {
       // (or training) trip also writes its evening plan and its morning re-plan to
       // solver_runs / solver_plans (stats.planner 'T', variant 'T', rank 1), which the
       // app reads; the backtest scores them like any plan.
-      const publish = async (step: 'night' | 'morning' | 'week', visits: any[], s: State, extra: any = {}) => {
+      // v51 (Phil, 1 Nov 2026: one score scale in the app): rank 0 = Phil's own day (the trip
+      // day's own stops at their time_labels) on the same weather versions and already-shot
+      // values as T's plan, and stats.ceiling = the most the day could add (every rated place
+      // in either plan seen perfectly, over what is already shot). The app shows each plan's
+      // mean as a % of that ceiling. v52: a week draft counts its own earlier days as shot (to
+      // plan the week), which made "your day" worth ~0 wherever T went earlier: drafts score
+      // both plans and the ceiling on the day's own merit (live nights keep the real shots).
+      const publish = async (step: 'night' | 'morning' | 'week', p: DayPlan, s: State, extra: any = {}) => {
         if (!cfg.publish || !live) return;
         const d0 = days[0];
+        const visits = visitsOf(p, s);
+        const slotOf = (ms: number) => Math.round((ms - p.dayStart) / (SLOT * 60000));
+        const M = s.total.length;
+        const base = draft ? new Map<number, number>() : groupBase;
+        const gainB = (g: number, w: number, prev: number | undefined) => Math.max(0, w - Math.max(prev ?? 0, base.get(g) ?? 0));
+        const scoreRoute = (route: { n: number; ms: number }[]) => {
+          const tot = new Float32Array(M), seen = new Map<number, Uint8Array>();
+          for (const { n: n0, ms } of route) {
+            if (nodes[n0].w <= 0) continue;
+            const w = p.W(n0, slotOf(ms));
+            if (!w || w.length !== M) continue;
+            const g = nodes[n0].group, prev = seen.get(g);
+            for (let k = 0; k < M; k++) tot[k] += nodes[n0].w * gainB(g, w[k], prev?.[k]) / 250;
+            seen.set(g, prev ? Uint8Array.from(prev, (x, k) => Math.max(x, w[k])) : w);
+          }
+          return metric(tot);
+        };
+        const own = ownOf(d0);
+        const mine = own.map(o => {
+          const n0 = o.n!, ms = zonedToUtc(d0.date, o.min!, tz), rated = nodes[n0].w > 0;
+          return { date: p.date, trip_date: p.tripDate, stop_id: o.s.id, name: o.s.name, booked: !!o.s.time_locked,
+                   start: new Date(ms).toISOString(), rated, ...((rated && chance(p, n0, slotOf(ms))) || {}) };
+        });
+        const mm = scoreRoute(own.map(o => ({ n: o.n!, ms: zonedToUtc(d0.date, o.min!, tz) })));
+        const bm = draft ? scoreRoute(s.route.map(v => ({ n: v.n, ms: p.dayStart + v.start * 60000 }))) : { mean: s.mean, cvar: s.cvar };
+        const placeW = new Map<number, number>();
+        for (const n0 of [...s.route.map(v => v.n), ...own.map(o => o.n!)]) {
+          if (nodes[n0].w > 0) placeW.set(nodes[n0].group, Math.max(placeW.get(nodes[n0].group) ?? 0, nodes[n0].w));
+        }
+        let ceiling = 0;
+        for (const [g, w] of placeW) ceiling += w * gainB(g, 250, undefined) / 250;
         const { data: sr, error: e1 } = await db.from('solver_runs').insert({
           trip_id: tripId, plan_date: d0.date, params: { planner: 'T', replay_run: runId, night: n, step, tz },
-          stats: { kind: 'day', planner: 'T', variant: 'T', step, ...extra,
+          stats: { kind: 'day', planner: 'T', variant: 'T', step, ceiling: r3(ceiling), ...extra,
                    days: [{ date: d0.date, trip_date: d0.tripDate, light_only: draft,
                             start_hotel: stopById.get(d0.startId ?? '')?.name ?? null, end_hotel: stopById.get(d0.endId ?? '')?.name ?? null }] },
         }).select('id').single();
         if (e1) throw e1;
-        const { error: e2 } = await db.from('solver_plans').insert({
-          run_id: sr.id, rank: 1, objective: r3(s.j), mean: r3(s.mean), cvar11: r3(s.cvar), drive_minutes: Math.round(s.drive),
+        const { error: e2 } = await db.from('solver_plans').insert([{
+          run_id: sr.id, rank: 0, objective: r3(mm.j), mean: r3(mm.mean), cvar11: r3(mm.cvar),
+          drive_minutes: d0.own.reduce((t: number, x: any) => t + (x.drive_override_minutes ?? 0), 0),
+          visits: mine, note: 'T: your day',
+        }, {
+          run_id: sr.id, rank: 1, objective: r3(s.j), mean: r3(bm.mean), cvar11: r3(bm.cvar), drive_minutes: Math.round(s.drive),
           visits, note: step === 'night' ? 'T: evening plan' : step === 'week' ? 'T: week draft' : 'T: morning re-plan',
-        });
+        }]);
         if (e2) throw e2;
       };
       const coverPlan = async () => {
@@ -1351,7 +1393,7 @@ Deno.serve(async (req) => {
           polStats = { night: r.gain, ...(r.capped ? { night_capped: true } : {}) }; p0 = r.p; st = r.st;
         }
         // Live: the morning step comes hours later, so the night plan is always saved here.
-        if (split && stage !== 'night' && st && ((live && !draft) || !goOn())) { await publish('night', visitsOf(p0, st), st); return await save('night'); }
+        if (split && stage !== 'night' && st && ((live && !draft) || !goOn())) { if (!draft) await publish('night', p0, st); return await save('night'); }
         if ((kind === 'mr1' || kind === 'mrmc') && st && !draft) {
           // Morning-of replan (Phil, 27 Oct 2026): the night's plan (v3, or the one
           // Monte Carlo chose) stands up to 30 min before sunrise; then the planner
@@ -1393,7 +1435,7 @@ Deno.serve(async (req) => {
         }
         if (st) for (const v of st.route) seenIds.add(nodes[v.n].id);
         nextSets = { seen: [...seenIds] };
-        if (st) await publish(draft ? 'week' : 'morning', visitsOf(p0, st), st, mrStats ? { mr: mrStats } : {});
+        if (st) await publish(draft ? 'week' : 'morning', p0, st, mrStats ? { mr: mrStats } : {});
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members: fcB[0]?.members ?? 51, required: req.length, wanted: want.length, kept: list.length, open: open.length,
