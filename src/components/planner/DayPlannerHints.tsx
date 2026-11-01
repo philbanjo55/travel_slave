@@ -2,7 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { colors, spacing, radius, typography } from '../../theme';
-import { GridCell, Plan, PlanRun, PlanVisit, TripSetting, fetchDayRuns, fetchPlans, fetchSubjectGrid, fetchTripSettings, hhmm, latestByDay, LIGHT_WORDS } from '../../services/planner';
+import { format, isToday } from 'date-fns';
+import {
+  DayChange, GridCell, Plan, PlanRun, PlanVisit, TripSetting, fetchDayRuns, fetchPlans, fetchSubjectGrid, fetchTripSettings, hhmm,
+  latestByDay, LIGHT_WORDS, changesLine, mineReason, pctOf, planCeiling,
+} from '../../services/planner';
+import { ScoreBar } from './ScoreBar';
 
 // TEST app only: the planner's read of the trip day shown on the trip page.
 export type DayPlanner = {
@@ -16,7 +21,7 @@ export type DayPlanner = {
 
 // The subject grid takes ~2 s; keep one per trip for 10 minutes.
 const gridCache = new Map<string, { at: number; cells: Promise<GridCell[]> }>();
-function tripGrid(tripId: string) {
+export function tripGrid(tripId: string) {
   const hit = gridCache.get(tripId);
   if (hit && Date.now() - hit.at < 10 * 60_000) return hit.cells;
   const cells = fetchSubjectGrid(tripId).catch(() => [] as GridCell[]);
@@ -36,6 +41,24 @@ function tripTiers(tripId: string) {
 }
 const tierListeners = new Set<() => void>();
 export function forgetTiers() { tierCache.clear(); tierListeners.forEach(f => f()); }
+
+// A stop's tier on a trip (for the % scale's fallback ceiling); refreshed after a settings save.
+export function useTierOf(tripId: string | null | undefined): (stopId: string) => string | null {
+  const [m, setM] = useState<Map<string, string>>(new Map());
+  const [saves, setSaves] = useState(0);
+  useEffect(() => {
+    const f = () => setSaves(n => n + 1);
+    tierListeners.add(f);
+    return () => { tierListeners.delete(f); };
+  }, []);
+  useEffect(() => {
+    if (!tripId) return;
+    let alive = true;
+    tripTiers(tripId).then(rows => { if (alive) setM(new Map(rows.filter(r => r.tier).map(r => [r.stop_id, r.tier as string]))); });
+    return () => { alive = false; };
+  }, [tripId, saves]);
+  return (id: string) => m.get(id) ?? null;
+}
 
 function tierState(rows: TripSetting[], run: PlanRun | null) {
   const tiers = new Map(rows.filter(t => t.tier).map(t => [t.stop_id, t.tier as string]));
@@ -61,7 +84,9 @@ export function useDayPlanner(tripId: string | null, date: string | null | undef
         const run = m.forecast ?? m.light ?? null;
         const plans = run ? await fetchPlans(run.id) : [];
         const mine = plans.find(p => p.rank === 0), best = plans.find(p => p.rank === 1);
-        const byStop = new Map((mine?.visits ?? []).filter(v => v.rated).map(v => [v.stop_id, v]));
+        // Each stop's chance at its own time ("your day", rank 0); T runs from before v51 have
+        // only the best plan, so its visits stand in until the next plan.
+        const byStop = new Map((mine ? mine.visits.filter(v => v.rated) : (best?.visits ?? []).filter(v => v.p_good != null)).map(v => [v.stop_id, v]));
         const betterDay = new Map<string, { date: string; dayNumber: number; p_good: number }>();
         const cells = await tripGrid(tripId);
         const dayNo = new Map(days.filter((d: any) => d.date).map((d: any) => [d.date, d.day_number]));
@@ -89,24 +114,75 @@ export function useDayPlanner(tripId: string | null, date: string | null | undef
   return state;
 }
 
-// "PLANNER · Your day 15 · best plan 22. Add Múlafossur at 20:15 (96%)."
-export function DayPlannerBanner({ tripId, date, planner }: { tripId: string; date: string; planner: DayPlanner | null }) {
+// Redesign A1 (Phil, 1 Nov 2026): the day's score card on the trip page, read-only (accept
+// all): your day as planned vs T's best, both as % of a perfect day, and what T would change.
+// Tapping the header opens the Planner's Plans tab; tapping the changes line shows them on
+// the timeline (ghost mode).
+export type DayScore = { mine: number | null; best: number | null; reason: string | null; changes: DayChange[] };
+export function dayScore(planner: DayPlanner | null, date: string, dayStops: any[], changes: DayChange[]): DayScore | null {
+  if (!planner?.run || !planner.best) return null;
+  const tierOf = (id: string) => planner.tiers.get(id) ?? null;
+  const c = planCeiling(planner.run, [planner.mine, planner.best], tierOf);
+  const tz: string | undefined = planner.run.params?.tz;
+  const reason = mineReason(planner.mine, date, dayStops, tierOf, tz);
+  return { mine: reason ? null : pctOf(planner.mine?.mean, c), best: pctOf(planner.best.mean, c), reason, changes };
+}
+
+export function DayScoreCard({ tripId, date, planner, score, onShowChanges }: {
+  tripId: string; date: string; planner: DayPlanner | null; score: DayScore | null; onShowChanges: () => void;
+}) {
   const navigation = useNavigation<any>();
   const open = () => navigation.navigate('Planner', { tripId, tab: 'plans', date });
-  const tz: string | undefined = planner?.run?.params?.tz;
-  let line = 'Not planned yet. Tap to plan this day.';
-  if (planner?.run && planner.best) {
-    const mineIds = new Set((planner.mine?.visits ?? []).map(v => v.stop_id));
-    const add = planner.best.visits.filter(v => !mineIds.has(v.stop_id) && (v.p_good ?? 0) >= 0.5)
-      .sort((a, b) => (b.p_good ?? 0) - (a.p_good ?? 0))[0];
-    line = `Your day ${Math.round(planner.mine?.objective ?? 0)} · best plan ${Math.round(planner.best.objective)}.`
-      + (add ? ` Add ${add.name} at ${hhmm(add.peak_at ?? add.start, tz)} (${Math.round((add.p_good ?? 0) * 100)}%).` : '');
-  } else if (planner?.run) line = 'Planned. Tap to see it.';
-  return (
-    <TouchableOpacity style={styles.banner} onPress={open} activeOpacity={0.85} accessibilityLabel={`Planner: ${line}`}>
-      <Text style={styles.label}>PLANNER</Text>
-      <Text style={styles.bannerText} numberOfLines={2}>{line}</Text>
+  if (!planner?.run || !score) {
+    return (
+      <TouchableOpacity style={styles.card} onPress={open} activeOpacity={0.85} accessibilityRole="button">
+        <Text style={styles.label}>T · THIS DAY</Text>
+        <Text style={styles.cardSub}>{planner?.run ? 'Planned. Tap to see it.' : 'Not planned yet. Tap to plan this day.'}</Text>
+      </TouchableOpacity>
+    );
+  }
+  const at = new Date(planner.run.created_at);
+  const planned = `planned ${isToday(at) ? '' : format(at, 'EEE ')}${format(at, 'h:mm a')}`;
+  const real = score.changes.filter(c => c.kind !== 'skipped');
+  const same = real.length === 0;
+  const head = (
+    <TouchableOpacity style={styles.cardHead} onPress={open} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={`T, this day, ${planned}. Open the plan`}>
+      <Text style={styles.label}>T · THIS DAY</Text>
+      <Text style={styles.planned}>{planned} ›</Text>
     </TouchableOpacity>
+  );
+  if (same) {
+    return (
+      <View style={styles.card}>
+        {head}
+        <View style={styles.bigRow}>
+          <Text style={styles.big}>{score.best ?? '—'}{score.best != null ? '%' : ''}</Text>
+          <Text style={styles.bigSub}>{score.best != null ? "of a perfect day · this is T's best plan" : 'nothing rated to score on this day'}</Text>
+        </View>
+        <ScoreBar mine={score.best} best={score.best} />
+        {score.changes.length ? (
+          <Text style={styles.cardSub} numberOfLines={2}>Not in T's plan: {score.changes.map(c => c.name).join(', ')} (stays on your day)</Text>
+        ) : null}
+      </View>
+    );
+  }
+  return (
+    <View style={styles.card}>
+      {head}
+      <View style={styles.bigRow}>
+        {score.mine != null ? (
+          <>
+            <Text style={styles.big}>{score.mine}%</Text>
+            <Text style={styles.bigSub}>of a perfect day as planned</Text>
+          </>
+        ) : <Text style={[styles.bigSub, styles.reason]} numberOfLines={2}>{score.reason}</Text>}
+        {score.best != null ? <Text style={styles.best}>best {score.best}%</Text> : null}
+      </View>
+      <ScoreBar mine={score.mine} best={score.best} />
+      <TouchableOpacity onPress={onShowChanges} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={`${changesLine(score.changes)}. Show them on the timeline`}>
+        <Text style={styles.changes} numberOfLines={2}>{changesLine(score.changes)} <Text style={styles.changesGo}>›</Text></Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -127,7 +203,7 @@ export function stopHint(stopId: string, planner: DayPlanner | null): StopHint |
 }
 
 // The chance as a bar, its number and the hint chip (day timeline, stop screen).
-export function ChanceLine({ hint, label }: { hint: StopHint; label?: boolean }) {
+export function ChanceLine({ hint, label, onChip }: { hint: StopHint; label?: boolean; onChip?: () => void }) {
   const pct = Math.round(hint.p * 100);
   return (
     <View style={styles.chanceRow} accessibilityLabel={`Chance ${pct}%${hint.changed ? ', from before your change' : ''}${hint.light ? `, ${hint.light}` : ''}${hint.chip ? `. ${hint.chip}` : ''}`}>
@@ -136,24 +212,39 @@ export function ChanceLine({ hint, label }: { hint: StopHint; label?: boolean })
       <Text style={styles.pct}>{pct}%</Text>
       {hint.changed ? <Text style={styles.hintText} numberOfLines={1}>you changed it · new chance after the next plan</Text>
         : hint.light ? <Text style={styles.hintText} numberOfLines={1}>{hint.light}</Text> : null}
-      {hint.chip ? <Text style={styles.chip}>{hint.chip}</Text> : null}
+      {hint.chip ? (onChip ? (
+        <TouchableOpacity onPress={onChip} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }} accessibilityRole="button"
+          accessibilityLabel={`${hint.chip}. Part of T's best plan: show the changes`}>
+          <Text style={[styles.chip, styles.chipTap]}>{hint.chip} ›</Text>
+        </TouchableOpacity>
+      ) : <Text style={styles.chip}>{hint.chip}</Text>) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  banner: {
-    marginHorizontal: spacing.xl, marginBottom: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2,
+  card: {
+    marginHorizontal: spacing.xl, marginTop: spacing.sm, marginBottom: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 6,
     borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
   },
+  cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 24 },
+  planned: { fontSize: 11, color: colors.textSecondary },
+  bigRow: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
+  big: { fontFamily: 'Georgia', fontSize: 30, color: colors.textPrimary },
+  bigSub: { flex: 1, fontSize: 12, color: colors.textSecondary },
+  reason: { fontSize: 13, color: colors.textPrimary },
+  best: { fontSize: 13, fontWeight: '700', color: colors.signalOk },
+  cardSub: { fontSize: 12, color: colors.textSecondary },
+  changes: { fontSize: 12, color: colors.textPrimary, lineHeight: 17 },
+  changesGo: { color: colors.signalOk, fontWeight: '700' },
   label: { ...typography.labelMedium, color: colors.textSecondary },
-  bannerText: { fontSize: 13, color: colors.textPrimary },
   chanceRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   bar: { flex: 1, minWidth: 40, height: 4, borderRadius: 2, backgroundColor: colors.border },
   barFill: { height: 4, borderRadius: 2, backgroundColor: '#555555' },
   barGood: { backgroundColor: colors.textSecondary },
   pct: { fontSize: 11, fontWeight: '700', color: colors.textPrimary, minWidth: 30 },
   hintText: { fontSize: 11, color: colors.textSecondary, flexShrink: 1 },
+  chipTap: { backgroundColor: 'rgba(90,170,122,0.12)' },
   chip: {
     fontSize: 10, fontWeight: '700', color: colors.signalOk, borderWidth: 1, borderColor: colors.signalOk,
     borderRadius: radius.full, paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden',

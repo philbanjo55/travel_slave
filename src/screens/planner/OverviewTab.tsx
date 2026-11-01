@@ -6,14 +6,16 @@ import { format, parseISO, differenceInCalendarDays } from 'date-fns';
 import { colors, spacing, radius, typography } from '../../theme';
 import {
   Brief, CameraFrame, ClaudeSpend, PlanRun, TripSetting, fetchBrief, fetchClaudeSpend, fetchDayRuns, fetchScores,
-  fetchTripFrames, fetchTripSettings, latestByDay, planDay, spendLine, usesT, replanT, waitForT,
+  fetchTripFrames, fetchTripSettings, latestByDay, planDay, spendLine, usesT, waitForT,
 } from '../../services/planner';
+import { startReplan } from '../../services/planningStatus';
+import { ScoreBar, ScoreText } from '../../components/planner/ScoreBar';
 import { FrameModal, FrameTile } from '../../components/planner/CameraView';
 import { dayBadge } from '../../components/planner/dayBadge';
 import { markBriefSeen } from '../../services/plannerSeen';
 import { cachedTrip, storeFrames } from '../../services/cameraCache';
 
-type DayRow = { id: string; date: string; day_number: number; run?: PlanRun; best?: number; mine?: number; top?: string[] };
+type DayRow = { id: string; date: string; day_number: number; run?: PlanRun; best?: number | null; mine?: number | null; hasMine?: boolean; top?: string[] };
 
 export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
   tripId: string; days: any[]; goPlans: (date: string) => void; goTab: (t: 'setup' | 'subjects') => void;
@@ -47,10 +49,11 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
         const m = runs.get(d.date) ?? {};
         return { id: d.id, date: d.date, day_number: d.day_number, run: m.forecast ?? m.light };
       });
-      const scores = await fetchScores(base.filter(r => r.run).map(r => r.run!.id));
-      setRows(base.map(r => ({ ...r, ...(r.run ? scores.get(r.run.id) : {}) })));
       const st = await fetchTripSettings(tripId);
       setSettings(st);
+      const tierMap = new Map(st.map(x => [x.stop_id, x.tier]));
+      const scores = await fetchScores(base.filter(r => r.run).map(r => r.run!), id => tierMap.get(id));
+      setRows(base.map(r => ({ ...r, ...(r.run ? scores.get(r.run.id) : {}) })));
       const next = base.find(r => differenceInCalendarDays(parseISO(r.date), new Date()) >= 0);
       if (next) {
         const tiers = new Map(st.map(s => [s.stop_id, s.tier]));
@@ -74,7 +77,7 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
     const todo = rows.filter(r => !r.run && differenceInCalendarDays(parseISO(r.date), new Date()) >= 0);
     if (usesTPlanner) {
       setPlanning({ done: 0, total: 1 });
-      try { const since = await replanT(tripId); if (todo.length) await waitForT(tripId, todo[todo.length - 1].date, since); } catch { /* shown on reload */ }
+      try { const since = await startReplan(tripId); if (todo.length) await waitForT(tripId, todo[todo.length - 1].date, since); } catch { /* shown on reload */ }
       setPlanning(null);
       load();
       return;
@@ -115,9 +118,14 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
               {brief.changes.map(c => <Text key={c} style={styles.briefSub}>{c}</Text>)}
               {!brief.changes.length ? <Text style={styles.briefSub}>No big changes since the last plan.</Text> : null}
             </>
-          ) : next.run ? (
-            <Text style={styles.briefLine}>Best plan {fmt(next.best)}{next.mine != null ? ` · your day ${fmt(next.mine)}` : ''}</Text>
-          ) : <Text style={styles.briefSub}>Not planned yet. Tap to plan it.</Text>}
+          ) : next.run ? null : <Text style={styles.briefSub}>Not planned yet. Tap to plan it.</Text>}
+          {next.run ? (
+            <View style={styles.briefScore}>
+              <ScoreText mine={next.mine} best={next.best} style={styles.briefPct} />
+              <Text style={styles.briefSub}>{next.mine != null ? 'your day → T\'s best, of a perfect day' : 'T\'s best, of a perfect day'}</Text>
+              <ScoreBar mine={next.mine} best={next.best} />
+            </View>
+          ) : null}
           <View style={styles.briefFoot}>
             <Text style={[styles.badge, { color: dayBadge(next.date).color }]}>{dayBadge(next.date).text}</Text>
             <Text style={styles.link}>Open the day's plan ›</Text>
@@ -145,7 +153,10 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
             <View style={{ flex: 1 }}>
               {r.run ? (
                 <>
-                  <Text style={styles.dayScore}>Best {fmt(r.best)}{r.mine != null ? ` · yours ${fmt(r.mine)}` : ''}</Text>
+                  <View style={styles.dayScoreRow}>
+                    <ScoreText mine={r.mine} best={r.best} style={styles.dayScore} />
+                    <View style={{ flex: 1 }}><ScoreBar mine={r.mine} best={r.best} height={4} /></View>
+                  </View>
                   {r.top?.length ? <Text style={styles.dayTop} numberOfLines={1}>{r.top.join(' · ')}</Text> : null}
                 </>
               ) : <Text style={styles.dayTop}>Not planned</Text>}
@@ -187,8 +198,6 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
   );
 }
 
-const fmt = (x?: number) => (x == null ? '—' : String(Math.round(x)));
-
 const styles = StyleSheet.create({
   body: { padding: spacing.lg, paddingBottom: spacing.xxxl, gap: spacing.sm },
   error: { color: '#e74c3c', fontSize: 12 },
@@ -215,7 +224,10 @@ const styles = StyleSheet.create({
   },
   dayNum: { ...typography.labelMedium, color: colors.textSecondary },
   dayDate: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
-  dayScore: { fontSize: 13, color: colors.textPrimary },
+  dayScore: { fontSize: 13, color: colors.textPrimary, minWidth: 92 },
+  dayScoreRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  briefScore: { gap: 4, marginTop: 2 },
+  briefPct: { fontFamily: 'Georgia', fontSize: 22, color: colors.textPrimary },
   dayTop: { fontSize: 11, color: colors.textTertiary, marginTop: 2 },
   subjRow: { flexDirection: 'row', gap: spacing.sm },
   subjCard: { flex: 1, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, gap: 4 },

@@ -1,15 +1,19 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO } from 'date-fns';
 import { colors, spacing, radius, typography } from '../../theme';
 import {
   Plan, PlanRun, PlanVisit, applyPreview, fetchDayRuns, fetchMultiRuns, fetchPlans, hhmm, ago, latestByDay,
-  planDay, planDays, planTitle, runTripDates, LIGHT_WORDS, usesT, replanT, latestT, waitForT, fetchTDays,
+  planDay, planDays, planTitle, runTripDates, LIGHT_WORDS, usesT, latestT, waitForT, fetchTDays,
+  planCeiling, planPct, pctText, canApply, applyPlan,
 } from '../../services/planner';
+import { startReplan, ack } from '../../services/planningStatus';
 import { useTripStore } from '../../store/tripStore';
 import { dayBadge } from './dayBadge';
+import { useTierOf, forgetTiers } from './DayPlannerHints';
+import { ScoreBar, ScoreText } from './ScoreBar';
 
 const MODE_TEXT: Record<string, string> = {
   forecast: 'Forecast for this day',
@@ -44,11 +48,12 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
     try {
       let r: PlanRun | null = null;
       if (replan) {
-        const since = await replanT(tripId);
-        setBusy('T is planning the trip again… (about 2–4 minutes; you can leave this screen)');
+        const since = await startReplan(tripId);
+        setBusy('T is planning the trip again (about 2–4 minutes). Progress is in the bar at the top; you can leave this screen.');
         r = await waitForT(tripId, tripDate, since);
         if (!r) throw new Error("T is still planning, or doesn't re-plan this day (today is re-planned each morning). Check back in a few minutes.");
       } else r = await latestT(tripId, tripDate);
+      if (replan) ack(tripId);
       setRun(r); setPlans(r ? await fetchPlans(r.id) : []);
       if (!r) setError("T hasn't planned this day yet. Tap Plan again.");
     } catch (e: any) { setError(String(e?.message ?? e)); }
@@ -102,7 +107,7 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
             {runDay?.start_hotel && runDay?.end_hotel && runDay.start_hotel !== runDay.end_hotel
               ? `\nMove day: ${runDay.start_hotel} → ${runDay.end_hotel}` : ''}
           </Text>
-          <PlanBody run={run} plans={plans} />
+          <PlanBody tripId={tripId} run={run} plans={plans} />
         </>
       )}
     </View>
@@ -123,8 +128,8 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
     setError(null); setBusy('Loading…'); setNote(null);
     try {
       if (replan) {
-        const since = await replanT(tripId);
-        setBusy('T is planning the trip again… (about 2–4 minutes; you can leave this screen)');
+        const since = await startReplan(tripId);
+        setBusy('T is planning the trip again (about 2–4 minutes). Progress is in the bar at the top; you can leave this screen.');
         await waitForT(tripId, tripDates[tripDates.length - 1], since);
       }
       const j = await fetchTDays(tripId, tripDates);
@@ -167,7 +172,7 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>
           {run ? <Text style={styles.hint}>Planned {ago(run.created_at)}{note ? `\n${note}` : ''}</Text> : note ? <Text style={styles.hint}>{note}</Text> : null}
-          <PlanBody run={run} plans={plans} byDay />
+          <PlanBody tripId={tripId} run={run} plans={plans} byDay />
         </>
       )}
     </View>
@@ -175,10 +180,14 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
 }
 
 // Plan chips, summary and visits; "Use this plan…" opens the apply preview.
-export function PlanBody({ run, plans, byDay, initialRank, onRank }: {
-  run: PlanRun | null; plans: Plan[]; byDay?: boolean; initialRank?: number; onRank?: (rank: number) => void;
+export function PlanBody({ tripId, run, plans, byDay, initialRank, onRank }: {
+  tripId: string; run: PlanRun | null; plans: Plan[]; byDay?: boolean; initialRank?: number; onRank?: (rank: number) => void;
 }) {
   const openStop = useOpenStop();
+  const tierOf = useTierOf(tripId);
+  const mine = plans.find(p => p.rank === 0), bestPlan = plans.find(p => p.rank === 1);
+  // One scale everywhere: % of a perfect day (the same ceiling for every plan of the run).
+  const ceiling = planCeiling(run, [mine, bestPlan], tierOf);
   const [sel, setSel] = useState(initialRank ?? 1);
   const [apply, setApply] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
@@ -201,18 +210,26 @@ export function PlanBody({ run, plans, byDay, initialRank, onRank }: {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
         {plans.map(p => (
           <TouchableOpacity key={p.rank} onPress={() => choose(p.rank)} style={[styles.chip, sel === p.rank && styles.chipOn]}>
-            <Text style={[styles.chipText, sel === p.rank && styles.chipTextOn]}>{planTitle(p)}</Text>
+            <Text style={[styles.chipText, sel === p.rank && styles.chipTextOn]}>
+              {planTitle(p)} <Text style={sel === p.rank ? styles.chipPctOn : styles.chipPct}>{pctText(planPct(p, ceiling).pct)}</Text>
+            </Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
       {plan ? (
         <>
           <Text style={styles.summary}>
-            Expected <Text style={styles.bold}>{Math.round(plan.mean)}</Text>
-            {'  ·  '}bad weather <Text style={styles.bold}>{Math.round(plan.cvar11)}</Text>
+            Expected <Text style={styles.bold}>{pctText(planPct(plan, ceiling).pct)}</Text>
+            {'  ·  '}bad weather <Text style={styles.bold}>{pctText(planPct(plan, ceiling).bad)}</Text>
             {plan.drive_minutes != null ? `  ·  ${plan.drive_minutes} min driving` : ''}
             {plan.long_leg_minutes ? ` (${plan.long_leg_minutes} min over an hour)` : ''}
           </Text>
+          {mine && bestPlan && plan.rank !== 0 ? (
+            <View style={{ gap: 4 }}>
+              <ScoreBar mine={planPct(mine, ceiling).pct} best={planPct(plan, ceiling).pct} />
+              <Text style={styles.hint}>Your day {pctText(planPct(mine, ceiling).pct)} → {planTitle(plan).toLowerCase()} {pctText(planPct(plan, ceiling).pct)}, of a perfect day</Text>
+            </View>
+          ) : null}
           {plan.visits.map((v, i) => {
             const d = v.trip_date ?? v.date;
             const head = byDay && d !== lastDay ? (lastDay = d) : null;
@@ -232,12 +249,40 @@ export function PlanBody({ run, plans, byDay, initialRank, onRank }: {
           <Text style={styles.hint}>Chance = share of the 51 weather versions (or light scenarios) where the shot comes out good.</Text>
         </>
       ) : <Text style={styles.hint}>No plan.</Text>}
-      <ApplySheet apply={apply} onClose={() => setApply(null)} />
+      <ApplySheet apply={apply} onClose={() => setApply(null)} tripId={tripId} run={run} plan={plan} mine={mine} ceiling={ceiling} />
     </View>
   );
 }
 
-export function ApplySheet({ apply, onClose }: { apply: any | null; onClose: () => void }) {
+// What applying a plan would change, its score against your day, and (test trips) Accept all.
+export function ApplySheet({ apply, onClose, tripId, run, plan, mine, ceiling, onAccepted }: {
+  apply: any | null; onClose: () => void; tripId?: string; run?: PlanRun | null; plan?: Plan; mine?: Plan; ceiling?: number;
+  onAccepted?: (result: any) => void;
+}) {
+  const { currentTripData, loadTrip } = useTripStore();
+  const [busy, setBusy] = useState(false);
+  const c = ceiling ?? 0;
+  const mineP = mine ? planPct(mine, c) : null, planP = plan ? planPct(plan, c) : null;
+  const pOf = (p: Plan | undefined, name: string) => p?.visits.find(v => v.name === name)?.p_good;
+  const wasLabel = (date: string, name: string) => {
+    const d = currentTripData?.days.find((x: any) => x.date === date);
+    return (d?.stops ?? []).find((x: any) => x.name === name)?.time_label ?? null;
+  };
+  const writable = !!tripId && canApply(tripId) && !!run && !!plan && plan.rank !== 0;
+  const accept = async () => {
+    if (!run || !plan || !tripId) return;
+    setBusy(true);
+    try {
+      const j = await applyPlan(run.id, plan.rank);
+      if (j.preview_only) throw new Error('This trip is preview only.');
+      await loadTrip(tripId);
+      forgetTiers();
+      onClose();
+      onAccepted?.(j.result);
+      Alert.alert('Plan accepted', acceptedText(j.result));
+    } catch (e: any) { Alert.alert('Not applied', String(e?.message ?? e)); }
+    setBusy(false);
+  };
   return (
     <Modal visible={!!apply} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.sheetBg}>
@@ -248,30 +293,79 @@ export function ApplySheet({ apply, onClose }: { apply: any | null; onClose: () 
               <Ionicons name="close" size={22} color={colors.textPrimary} />
             </TouchableOpacity>
           </View>
+          {plan && planP ? (
+            <View style={{ gap: 4 }}>
+              <ScoreText mine={mineP?.pct} best={planP.pct} style={styles.sheetPct} />
+              <Text style={styles.hint}>
+                {mineP ? `Your day ${pctText(mineP.pct)} → ${planTitle(plan)} ${pctText(planP.pct)}` : `${planTitle(plan)} ${pctText(planP.pct)}`}
+                {`  ·  bad weather ${mineP ? `${pctText(mineP.bad)} → ` : ''}${pctText(planP.bad)}`}
+              </Text>
+              <ScoreBar mine={mineP?.pct} best={planP.pct} />
+            </View>
+          ) : null}
           <Text style={styles.hint}>
-            Preview only in the TEST app: nothing is moved on your real trip until the solver is signed off.
+            {writable ? 'Accepting applies all of it: the changes depend on each other.'
+              : 'Preview only on real trips: nothing is moved until the solver is signed off.'}
             {apply?.stops_changed != null ? ` ${apply.stops_changed} stops would change.` : ''}
           </Text>
-          <ScrollView style={{ maxHeight: 460 }}>
+          <ScrollView style={{ maxHeight: 420 }}>
             {(apply?.days ?? []).map((d: any) => (
               <View key={d.date} style={{ marginTop: spacing.md }}>
                 <Text style={styles.label}>DAY {d.day_number} · {format(parseISO(d.date), 'EEE d MMM')}</Text>
-                {d.stops.map((s: any) => (
-                  <View key={`${d.date}-${s.position}`} style={styles.applyRow}>
-                    <Text style={styles.applyTime}>{s.time_label ?? ''}</Text>
-                    <Text style={[styles.applyName, s.planned && styles.bold]} numberOfLines={1}>{s.name}</Text>
-                    <Text style={styles.applyTag}>
-                      {s.moved_from ? `from ${format(parseISO(s.moved_from), 'd MMM')}` : s.retimed ? 'new time' : ''}
-                    </Text>
-                  </View>
-                ))}
+                {d.stops.map((s: any) => {
+                  const was = s.retimed && !s.moved_from ? wasLabel(d.date, s.name) : null;
+                  const a = pOf(mine, s.name), b = pOf(plan, s.name);
+                  return (
+                    <View key={`${d.date}-${s.position}`} style={styles.applyRow}>
+                      <Text style={[styles.applyTime, (s.retimed || s.moved_from) && styles.applyTimeNew]}>{s.time_label ?? ''}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.applyName, s.planned && styles.bold]} numberOfLines={1}>{s.name}</Text>
+                        {was || (a != null && b != null && Math.round(a * 100) !== Math.round(b * 100)) ? (
+                          <Text style={styles.applySub}>
+                            {was ? `was ${was}` : ''}{was && a != null && b != null ? ' · ' : ''}
+                            {a != null && b != null ? `${Math.round(a * 100)}% → ${Math.round(b * 100)}%` : ''}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <Text style={styles.applyTag}>
+                        {s.moved_from ? `from ${format(parseISO(s.moved_from), 'd MMM')}` : s.kind === 'new' ? 'added' : s.retimed ? 'new time' : ''}
+                      </Text>
+                    </View>
+                  );
+                })}
               </View>
             ))}
+            {apply?.set_aside?.length ? (
+              <Text style={[styles.hint, { marginTop: spacing.md }]}>
+                Set aside (another visit of the same place): {apply.set_aside.map((x: any) => x.name).join(', ')}
+              </Text>
+            ) : null}
+            {apply?.clashes?.length ? (
+              <Text style={[styles.hint, { marginTop: spacing.sm, color: colors.signalWarning }]}>
+                Tight: {apply.clashes.map((x: any) => `${x.name} runs ${x.late_min} min into ${x.next_name}`).join('; ')}
+              </Text>
+            ) : null}
           </ScrollView>
+          {writable ? (
+            <TouchableOpacity style={styles.applyBtn} onPress={accept} disabled={busy} accessibilityRole="button">
+              {busy ? <ActivityIndicator color={colors.textInverse} />
+                : <Text style={styles.applyText}>Accept all{mineP && planP ? ` · ${pctText(mineP.pct)} → ${pctText(planP.pct)}` : ''}</Text>}
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
     </Modal>
   );
+}
+
+// "Day 2 updated · 4 stops moved" from solver_apply_plan's result.
+export function acceptedText(r: any): string {
+  const days = (r?.days ?? []).map((d: any) => `Day ${d.day_number}`).join(', ');
+  const n = r?.stops_changed ?? 0;
+  const aside = (r?.set_aside ?? []).map((x: any) => x.name);
+  return `${days || 'Trip'} updated · ${n} stop${n === 1 ? '' : 's'} changed`
+    + (aside.length ? `\nSet aside: ${aside.join(', ')}` : '')
+    + (r?.clashes?.length ? `\nCheck: ${r.clashes.length} tight connection${r.clashes.length === 1 ? '' : 's'}` : '');
 }
 
 export function VisitRow({ v, tz, mine, onPress, index }: { v: PlanVisit; tz?: string; mine: boolean; onPress: () => void; index?: number }) {
@@ -330,6 +424,11 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: colors.accent, borderColor: colors.accent },
   chipText: { fontSize: 13, color: colors.textPrimary },
   chipTextOn: { color: colors.textInverse, fontWeight: '700' },
+  chipPct: { color: colors.signalOk, fontWeight: '700' },
+  chipPctOn: { color: colors.textInverse, fontWeight: '800' },
+  sheetPct: { fontFamily: 'Georgia', fontSize: 26, color: colors.textPrimary },
+  applySub: { fontSize: 11, color: colors.textTertiary },
+  applyTimeNew: { color: colors.signalOk, fontWeight: '700' },
   summary: { fontSize: 13, color: colors.textSecondary, marginBottom: spacing.xs },
   bold: { fontWeight: '700', color: colors.textPrimary },
   visit: {

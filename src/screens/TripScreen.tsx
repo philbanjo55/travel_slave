@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   FlatList, ActivityIndicator, Alert,
@@ -17,10 +17,15 @@ import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
 import { IS_TEST_APP } from '../utils/variant';
-import { fetchClaudeSpend, spendLine, fetchDayRuns } from '../services/planner';
-import { DayPlannerBanner, useDayPlanner } from '../components/planner/DayPlannerHints';
+import {
+  fetchClaudeSpend, spendLine, fetchDayRuns, dayChanges, applyPreview, applyPlan, canApply, changesLine,
+  labelMinutes, DayChange,
+} from '../services/planner';
+import { DayScoreCard, dayScore, useDayPlanner } from '../components/planner/DayPlannerHints';
 import { briefSeenAt } from '../services/plannerSeen';
-import { TimelineRow } from '../components/planner/DayTimeline';
+import { GhostTag, TimelineRow } from '../components/planner/DayTimeline';
+import PlanningStrip from '../components/planner/PlanningStrip';
+import { acceptedText } from '../components/planner/PlanView';
 
 export default function TripScreen() {
   const navigation = useNavigation<any>();
@@ -46,6 +51,62 @@ export default function TripScreen() {
   }, [tripId]));
 
   useEffect(() => { loadTrip(tripId); }, [tripId]);
+
+  // TEST app (redesign A1 + C2/C4): what T's best plan changes on the shown day, against the
+  // day as it stands, and ghost mode (the day in the best plan's order, accept all or not now).
+  const shownDay = currentTripData?.days?.[activeDay];
+  const shownStops: any[] = shownDay?.stops ?? [];
+  const planTz: string | undefined = planner?.run?.params?.tz ?? currentTripData?.trip?.timezone ?? undefined;
+  const changes = useMemo<DayChange[]>(() => (IS_TEST_APP && planner?.best
+    ? dayChanges(shownStops, currentTripData?.days ?? [], planner.mine, planner.best, planTz, id => planner.tiers.get(id) ?? null) : []),
+    [planner, shownStops, currentTripData, planTz]);
+  const score = IS_TEST_APP && shownDay?.date ? dayScore(planner, shownDay.date, shownStops, changes) : null;
+  const realChanges = changes.filter(c => c.kind !== 'skipped');
+  const [ghost, setGhost] = useState(false);
+  const [pop, setPop] = useState<string | null>(null);
+  const [ghostPreview, setGhostPreview] = useState<any | null>(null);
+  const [accepting, setAccepting] = useState(false);
+  useEffect(() => { setGhost(false); setPop(null); }, [activeDay, planner?.run?.id]);
+  // What applying also does (set aside, tight connections), shown before Accept.
+  useEffect(() => {
+    if (!ghost || !planner?.run) { setGhostPreview(null); return; }
+    let alive = true;
+    applyPreview(planner.run.id, 1).then(j => { if (alive) setGhostPreview(j.result); }).catch(() => {});
+    return () => { alive = false; };
+  }, [ghost, planner?.run?.id]);
+  const ghostRows = useMemo(() => {
+    if (!ghost || !planner?.best) return null;
+    const byId = new Map(changes.map(c => [c.stop_id, c]));
+    const rows: { item: any; tag: GhostTag; k: number }[] = [];
+    let last = -1;
+    shownStops.forEach((s: any, i: number) => {
+      const c = byId.get(s.id);
+      const item = c?.kind === 'moved' ? { ...s, time_label: c.now } : s;
+      const m = labelMinutes(item.time_label);
+      const k = i === 0 && m == null ? -1 : i === shownStops.length - 1 && m == null ? 1e5 : m ?? last;
+      if (m != null) last = m;
+      rows.push({ item, tag: { kind: c ? c.kind : 'same', change: c }, k });
+    });
+    for (const c of changes.filter(x => x.kind === 'added')) {
+      const src = (currentTripData?.days ?? []).flatMap((d: any) => d.stops ?? []).find((x: any) => x.id === c.stop_id);
+      const v = planner.best.visits.find(x => x.stop_id === c.stop_id);
+      rows.push({ item: { ...(src ?? { id: c.stop_id, name: c.name, shot_type: 'landscape' }), id: c.stop_id, time_label: c.now }, tag: { kind: 'added', change: c },
+                  k: labelMinutes(c.now) ?? (v ? 0 : 1e4) });
+    }
+    return rows.sort((a, b) => a.k - b.k);
+  }, [ghost, changes, shownStops, planner, currentTripData]);
+  const acceptAll = useCallback(async () => {
+    if (!planner?.run) return;
+    setAccepting(true);
+    try {
+      const j = await applyPlan(planner.run.id, 1);
+      if (j.preview_only) throw new Error('This trip is preview only.');
+      await loadTrip(tripId);
+      setGhost(false);
+      Alert.alert('Plan accepted', acceptedText(j.result));
+    } catch (e: any) { Alert.alert('Not applied', String(e?.message ?? e)); }
+    setAccepting(false);
+  }, [planner?.run?.id, tripId]);
 
   const goToDay = useCallback((index: number) => {
     setActiveDay(index);
@@ -268,6 +329,8 @@ export default function TripScreen() {
         )}
       </View>
 
+      {IS_TEST_APP ? <PlanningStrip tripId={tripId} onView={() => navigation.navigate('Planner', { tripId, tab: 'plans', date: day?.date })} /> : null}
+
       <View style={styles.tabBarWrapper}>
         <ScrollView
           ref={tabScrollRef}
@@ -331,16 +394,41 @@ export default function TripScreen() {
       {/* TEST (mockup E5): the timeline shows each drive, so no totals row. */}
       {IS_TEST_APP ? null : <DaySummary stops={stops} />}
 
-      {IS_TEST_APP && day?.date ? <DayPlannerBanner tripId={tripId} date={day.date} planner={planner} /> : null}
+      {IS_TEST_APP && day?.date ? (
+        <DayScoreCard tripId={tripId} date={day.date} planner={planner} score={score}
+          onShowChanges={() => { setPop(null); setGhost(true); }} />
+      ) : null}
 
       <FlatList
-        data={stops}
+        data={ghostRows ? ghostRows.map(r => r.item) : stops}
         keyExtractor={(item: any) => item.id}
-        contentContainerStyle={styles.stopList}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.stopList, ghostRows ? { paddingBottom: 160 } : null]}
         renderItem={({ item, index }: { item: any; index: number }) => IS_TEST_APP ? (
-          <TimelineRow item={item} index={index} isLast={index === stops.length - 1} weather={dayWeather[item.id]}
-            planner={planner} onPress={() => navigation.navigate('StopDetail', { stopId: item.id, dayId: day.id })} />
+          <TimelineRow item={item} index={index} isLast={index === (ghostRows ?? stops).length - 1} weather={dayWeather[item.id]}
+            planner={planner} ghost={ghostRows ? ghostRows[index]?.tag : null}
+            change={changes.find(c => c.stop_id === item.id && c.kind !== 'added') ?? null}
+            onChip={() => setPop(p => (p === item.id ? null : item.id))}
+            popover={!ghostRows && pop === item.id && score ? (
+              <View style={styles.popover}>
+                <Text style={styles.popText}>
+                  Part of T's best plan: {realChanges.length} change{realChanges.length === 1 ? '' : 's'}
+                  {score.mine != null && score.best != null ? `, ${score.mine}% → ${score.best}%` : score.best != null ? `, best ${score.best}%` : ''}.
+                </Text>
+                <View style={styles.popBtns}>
+                  <TouchableOpacity style={styles.popGo} onPress={() => { setPop(null); setGhost(true); }} accessibilityRole="button">
+                    <Text style={styles.popGoText}>Show in timeline</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.popNo} onPress={() => setPop(null)} accessibilityRole="button">
+                    <Text style={styles.popNoText}>Not now</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
+            onPress={() => {
+              const d = ghostRows ? (currentTripData?.days ?? []).find((x: any) => (x.stops ?? []).some((s: any) => s.id === item.id)) : day;
+              if (d) navigation.navigate('StopDetail', { stopId: item.id, dayId: d.id });
+            }} />
         ) : (
           <View>
             {index > 0 && (
@@ -437,6 +525,48 @@ export default function TripScreen() {
           </View>
         )}
       />
+
+      {IS_TEST_APP && ghostRows ? (
+        <View style={styles.ghostBar}>
+          {ghostPreview ? (() => {
+            // Accepting this day also takes stops from the days T moved them off (they lose them).
+            const here = (ghostPreview.days ?? []).find((d: any) => d.date === day?.date);
+            const from = [...new Set<string>((here?.stops ?? []).map((x: any) => x.moved_from).filter(Boolean))]
+              .map(dt => (currentTripData?.days ?? []).find((d: any) => d.date === dt)?.day_number).filter(Boolean);
+            return (
+              <Text style={styles.ghostNote} numberOfLines={2}>
+                {ghostPreview.stops_changed ?? 0} stops change in all{from.length ? ` · takes stops from Day ${from.join(', ')}` : ''}
+              </Text>
+            );
+          })() : <ActivityIndicator size="small" color={colors.textTertiary} />}
+          {ghostPreview?.set_aside?.length ? (
+            <Text style={styles.ghostNote} numberOfLines={2}>Also sets aside: {ghostPreview.set_aside.map((x: any) => x.name).join(', ')}</Text>
+          ) : null}
+          {ghostPreview?.clashes?.length ? (
+            <Text style={styles.ghostNote} numberOfLines={2}>Tight: {ghostPreview.clashes.map((x: any) => `${x.name} into ${x.next_name} (${x.late_min} min)`).join('; ')}</Text>
+          ) : null}
+          <View style={styles.ghostBtns}>
+            {canApply(tripId) ? (
+              <TouchableOpacity style={styles.ghostAccept} onPress={acceptAll} disabled={accepting || !realChanges.length} accessibilityRole="button">
+                {accepting ? <ActivityIndicator color={colors.textInverse} /> : (
+                  <Text style={styles.ghostAcceptText} numberOfLines={1}>
+                    Accept all {realChanges.length} change{realChanges.length === 1 ? '' : 's'}
+                    {score?.mine != null && score.best != null ? ` · ${score.mine}% → ${score.best}%` : score?.best != null ? ` · best ${score.best}%` : ''}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <View style={[styles.ghostAccept, styles.ghostPreviewOnly]}>
+                <Text style={styles.ghostPreviewText}>Preview only on real trips</Text>
+              </View>
+            )}
+            <TouchableOpacity style={styles.ghostNo} onPress={() => setGhost(false)} accessibilityRole="button">
+              <Text style={styles.ghostNoText}>Not now</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.ghostNote} numberOfLines={2}>{changesLine(changes)}</Text>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -511,4 +641,26 @@ const styles = StyleSheet.create({
   plannerDot: { position: 'absolute', top: 2, right: 2, width: 9, height: 9, borderRadius: 5, backgroundColor: colors.signalOk, borderWidth: 1, borderColor: colors.background },
   wxProgress: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   stopRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  popover: {
+    marginTop: 6, padding: spacing.sm, gap: spacing.sm, borderRadius: radius.md, backgroundColor: '#161616',
+    borderWidth: 1, borderColor: colors.signalOk,
+  },
+  popText: { fontSize: 12, color: colors.textPrimary, lineHeight: 17 },
+  popBtns: { flexDirection: 'row', gap: spacing.sm },
+  popGo: { flex: 1, minHeight: 36, borderRadius: radius.sm, backgroundColor: colors.signalOk, alignItems: 'center', justifyContent: 'center' },
+  popGoText: { fontSize: 13, fontWeight: '700', color: colors.background },
+  popNo: { minHeight: 36, paddingHorizontal: spacing.md, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  popNoText: { fontSize: 13, color: colors.textSecondary },
+  ghostBar: {
+    position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xl, gap: 6,
+    backgroundColor: '#0d0d0d', borderTopWidth: 1, borderTopColor: colors.signalOk,
+  },
+  ghostBtns: { flexDirection: 'row', gap: spacing.sm },
+  ghostAccept: { flex: 1, minHeight: 48, borderRadius: radius.sm, backgroundColor: colors.signalOk, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm },
+  ghostAcceptText: { fontSize: 14, fontWeight: '800', color: colors.background },
+  ghostPreviewOnly: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.border },
+  ghostPreviewText: { fontSize: 13, color: colors.textSecondary },
+  ghostNo: { minHeight: 48, paddingHorizontal: spacing.lg, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  ghostNoText: { fontSize: 14, color: colors.textPrimary },
+  ghostNote: { fontSize: 11, color: colors.textSecondary },
 });

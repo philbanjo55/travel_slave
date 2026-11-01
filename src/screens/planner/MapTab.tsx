@@ -94,7 +94,7 @@ export default function MapTab({ tripId, days, date, setDate, goPlans }: {
           <TouchableOpacity style={styles.planBtn} onPress={() => cur && goPlans(cur)}>
             <Text style={styles.planText}>Not planned yet · plan this day</Text>
           </TouchableOpacity>
-        ) : <PlanBody run={run} plans={plans} initialRank={1} onRank={setRank} />}
+        ) : <PlanBody tripId={tripId} run={run} plans={plans} initialRank={1} onRank={setRank} />}
       </ScrollView>
     </View>
   );

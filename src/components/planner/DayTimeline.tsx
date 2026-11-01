@@ -5,15 +5,23 @@ import { colors, spacing, radius } from '../../theme';
 import { WeatherRow, conditionIcon, conditionsText, readScore, kmhToMph, visibilityText, cToF } from '../../services/weather';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../../utils/helpers';
 import { ChanceLine, DayPlanner, stopHint } from './DayPlannerHints';
+import { DayChange } from '../../services/planner';
+
+// Ghost mode (redesign C4): the day in T's best plan's order and times. moved / added stops
+// get a dashed green card and the new time; skipped ones stay, dimmed (applying keeps them).
+export type GhostTag = { kind: 'same' | 'moved' | 'added' | 'skipped'; change?: DayChange };
 
 // TEST app only: one stop on the day timeline (mockup E5). Times sit in the
 // left column, each stop is a dot on the line with the drive between stops on
 // the line itself; shoot stops are cards with their weather at their time and
 // the planner's chance, logistics stops stay one thin row.
-export function TimelineRow({ item, index, isLast, weather, planner, onPress }: {
+export function TimelineRow({ item, index, isLast, weather, planner, onPress, ghost, change, onChip, popover }: {
   item: any; index: number; isLast: boolean; weather?: WeatherRow; planner: DayPlanner | null; onPress: () => void;
+  ghost?: GhostTag | null; change?: DayChange | null; onChip?: () => void; popover?: React.ReactNode;
 }) {
   const shoot = !!item.shot_type && item.shot_type !== 'logistics';
+  const g = ghost?.kind;
+  const fresh = g === 'moved' || g === 'added';
   const drive = index > 0 ? item.drive_override_minutes : null;
   return (
     <View>
@@ -29,10 +37,10 @@ export function TimelineRow({ item, index, isLast, weather, planner, onPress }: 
           ) : null}
         </View>
       ) : null}
-      <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.75}
-        accessibilityRole="button" accessibilityLabel={`${item.time_label ?? ''} ${item.name}`}>
+      <TouchableOpacity style={[styles.row, g === 'skipped' && styles.dim]} onPress={onPress} activeOpacity={0.75}
+        accessibilityRole="button" accessibilityLabel={`${item.time_label ?? ''} ${item.name}${fresh ? ', new in T\'s plan' : g === 'skipped' ? ', not in T\'s plan' : ''}`}>
         <View style={[styles.gutter, styles.gutterTime]}>
-          <Text style={[styles.time, shoot && styles.timeShoot]}>{item.time_label || ''}</Text>
+          <Text style={[styles.time, shoot && styles.timeShoot, fresh && styles.timeNew]}>{item.time_label || ''}</Text>
           {item.duration_minutes && item.time_label ? (
             <Text style={styles.endTime}>{addMinutesToTimeLabel(item.time_label, item.duration_minutes)}</Text>
           ) : null}
@@ -43,22 +51,40 @@ export function TimelineRow({ item, index, isLast, weather, planner, onPress }: 
           <View style={[styles.lineFill, isLast && styles.lineHidden]} />
         </View>
         <View style={styles.body}>
-          {shoot ? <ShootCard item={item} weather={weather} planner={planner} /> : (
-            <View style={styles.logRow}>
+          {shoot ? <ShootCard item={item} weather={weather} planner={planner} ghost={ghost} change={change} onChip={onChip} /> : (
+            <View style={[styles.logRow, fresh && styles.ghostLog]}>
               <Text style={styles.logEmoji}>{item.emoji || '📍'}</Text>
               <Text style={styles.logName} numberOfLines={1}>{item.name}</Text>
               {item.duration_minutes ? <Text style={styles.logDur}>{minutesToHoursMin(item.duration_minutes)}</Text> : null}
             </View>
           )}
+          {popover}
         </View>
       </TouchableOpacity>
     </View>
   );
 }
 
-function ShootCard({ item, weather: w, planner }: { item: any; weather?: WeatherRow; planner: DayPlanner | null }) {
+// What T's plan does to this stop, in a few words, for the ghost card.
+function ghostLine(ghost: GhostTag): string | null {
+  const c = ghost.change;
+  const pct = (x?: number | null) => (x == null ? null : `${Math.round(x * 100)}%`);
+  if (ghost.kind === 'moved') return [c?.was ? `was ${c.was}` : null, pct(c?.wasP) && pct(c?.p_good) ? `${pct(c?.wasP)} → ${pct(c?.p_good)}` : pct(c?.p_good)].filter(Boolean).join(' · ');
+  if (ghost.kind === 'added') return [c?.fromDay ? `from Day ${c.fromDay}` : 'added by T', pct(c?.p_good)].filter(Boolean).join(' · ');
+  if (ghost.kind === 'skipped') return "not in T's plan · stays on your day";
+  return null;
+}
+
+function ShootCard({ item, weather: w, planner, ghost, change, onChip }: {
+  item: any; weather?: WeatherRow; planner: DayPlanner | null; ghost?: GhostTag | null; change?: DayChange | null; onChip?: () => void;
+}) {
   const tier = planner?.tiers.get(item.id) ?? null;
-  const hint = stopHint(item.id, planner);
+  const base = stopHint(item.id, planner);
+  // C2: a stop T's best plan changes gets a chip even without a better-time hint; tapping opens the popover.
+  const chip = base?.chip ?? (change?.kind === 'moved' ? `T: ${change.now}` : change?.kind === 'skipped' ? 'T skips this' : null);
+  const hint = base ? { ...base, chip: ghost ? null : chip } : null;
+  const g = ghost?.kind;
+  const line = ghost ? ghostLine(ghost) : null;
   const sc = w && w.temperature_c != null ? readScore(item.shot_type, w) : null;
   const wind = w?.wind_speed_kmh != null ? Math.round(kmhToMph(w.wind_speed_kmh)) : null;
   const gust = w?.wind_gusts_kmh != null ? Math.round(kmhToMph(w.wind_gusts_kmh)) : null;
@@ -69,7 +95,7 @@ function ShootCard({ item, weather: w, planner }: { item: any; weather?: Weather
   ].filter(Boolean).join(' · ') : null;
   const contested = w?.display?.agreement?.level === 'CONTESTED';
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, (g === 'moved' || g === 'added') && styles.cardGhost]}>
       <View style={styles.cardHead}>
         <Text style={styles.cardEmoji}>{item.emoji || '📷'}</Text>
         <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
@@ -93,7 +119,13 @@ function ShootCard({ item, weather: w, planner }: { item: any; weather?: Weather
           ) : null}
         </View>
       ) : null}
-      {hint ? <ChanceLine hint={hint} /> : null}
+      {line ? <Text style={[styles.ghostText, g === 'skipped' && styles.ghostSkip]}>{line}</Text> : null}
+      {hint ? <ChanceLine hint={hint} onChip={!ghost && chip && change && change.kind !== 'added' ? onChip : undefined} /> : null}
+      {!hint && !ghost && chip && change ? (
+        <TouchableOpacity onPress={onChip} style={styles.loneChip} accessibilityRole="button" accessibilityLabel={`${chip}. Part of T's best plan`}>
+          <Text style={styles.loneChipText}>{chip}</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -106,6 +138,14 @@ const styles = StyleSheet.create({
   gutterTime: { paddingTop: 11 },
   time: { fontSize: 11, color: colors.textTertiary },
   timeShoot: { color: colors.textPrimary, fontWeight: '600' },
+  timeNew: { color: colors.signalOk, fontWeight: '700' },
+  dim: { opacity: 0.4 },
+  cardGhost: { borderStyle: 'dashed', borderWidth: 1, borderColor: colors.signalOk },
+  ghostLog: { borderStyle: 'dashed', borderWidth: 1, borderColor: colors.signalOk, borderRadius: radius.sm, paddingHorizontal: 6 },
+  ghostText: { fontSize: 11, color: colors.signalOk, fontWeight: '600' },
+  ghostSkip: { color: colors.textSecondary, fontWeight: '400' },
+  loneChip: { alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.signalOk, borderRadius: radius.full, paddingHorizontal: 8, paddingVertical: 2 },
+  loneChipText: { fontSize: 10, fontWeight: '700', color: colors.signalOk },
   endTime: { fontSize: 10, color: colors.textTertiary, marginTop: 1 },
   lineCol: { width: 20, alignItems: 'center', alignSelf: 'stretch' },
   lineTop: { width: StyleSheet.hairlineWidth * 2, height: 12, backgroundColor: colors.border },

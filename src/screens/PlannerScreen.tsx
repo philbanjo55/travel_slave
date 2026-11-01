@@ -12,6 +12,8 @@ import SubjectsTab from './planner/SubjectsTab';
 import MapTab from './planner/MapTab';
 import SetupTab from './planner/SetupTab';
 import NightlyToggle from '../components/planner/NightlyToggle';
+import PlanningStrip from '../components/planner/PlanningStrip';
+import { ack, usePlanningStatus } from '../services/planningStatus';
 
 export { dayBadge } from '../components/planner/dayBadge';
 
@@ -44,6 +46,9 @@ export default function PlannerScreen() {
   useEffect(() => { if (params.tab) setTab(params.tab); if (params.date) setDate(params.date); }, [params.tab, params.date]);
 
   const goPlans = (d: string) => { setDate(d); setTab('plans'); };
+  // B1: opening Plans counts as seeing "New plans ready".
+  const planning = usePlanningStatus(tripId);
+  useEffect(() => { if (tab === 'plans' && planning.kind === 'ready') ack(tripId, planning.status.made); }, [tab, planning.kind]);
   const tz: string | undefined = currentTripData?.trip?.timezone ?? undefined;
 
   return (
@@ -57,6 +62,8 @@ export default function PlannerScreen() {
           <Text style={styles.subtitle}>{currentTripData?.trip?.title ?? ''} · TEST</Text>
         </View>
       </View>
+
+      <PlanningStrip tripId={tripId} onView={() => setTab('plans')} />
 
       <View style={{ flex: 1 }}>
         {tab === 'overview' ? <OverviewTab tripId={tripId} days={days} goPlans={goPlans} goTab={setTab}

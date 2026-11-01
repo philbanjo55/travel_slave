@@ -33,11 +33,21 @@ import postgres from 'npm:postgres@3.4.4';
 //                ~6-10 s) when a rating, light, fog or shot changed since the
 //                last build, so "Plan again" uses Phil's latest changes
 //   apply_preview {run_id, rank}  what applying a plan would change
-//   apply        {run_id, rank}  test-bed trip only until Phil signs off the
-//                solver; the real trip gets the preview
+//   apply        {run_id, rank}  the test trips only (test bed, Faroes Live, Teton Live;
+//                Phil, 1 Nov 2026: "accept all" in the TEST app) until Phil signs off
+//                the solver; real trips get the preview
+//   planning_status {trip_id}  T's newest week draft for the trip (replay_runs, no anon
+//                read): {id, status, night, nights, trip_dates, made, updated_at}
+//   stop_curve   {stop_id, trip_date}  the stop's chance per 15-min slot that trip day
+//                (solver_stop_curve: newest raw score build, else light only)
 // Plans and settings are read straight from the tables (read-only policies).
 
-const TEST_BED = '7e57bed0-0000-4000-8000-000000000001';
+// Trips "Accept all" may write to: the test bed, Faroes Live and Teton Live.
+const TEST_TRIPS = new Set([
+  '7e57bed0-0000-4000-8000-000000000001',
+  '7e57bed0-0000-4000-8000-000000000002',
+  '7e57bed0-0000-4000-8000-000000000003',
+]);
 const TIERS = ['GOD', 'S', 'A', 'B', 'C', 'D', 'F'];
 const LIGHTS = ['front', 'side', 'back', 'soft'];
 const SETTING_COLS = 'stop_id, tier, light_wanted, fog_wanted, star_vantage_id, shot_status, source';
@@ -254,10 +264,28 @@ Deno.serve(async (req) => {
         if (!body.run_id || body.rank == null) return json({ error: 'run_id and rank required' }, 400);
         const { data: run } = await db.from('solver_runs').select('trip_id').eq('id', body.run_id).maybeSingle();
         if (!run) return json({ error: 'run not found' }, 404);
-        const write = body.action === 'apply' && run.trip_id === TEST_BED;
+        const write = body.action === 'apply' && TEST_TRIPS.has(run.trip_id);
         const { data, error } = await db.rpc('solver_apply_plan', { p_run_id: body.run_id, p_rank: body.rank, p_apply: write });
         if (error) return json({ ok: false, error: error.message });
         return json({ ok: true, preview_only: !write, result: data });
+      }
+
+      case 'planning_status': {
+        if (!body.trip_id) return json({ error: 'trip_id required' }, 400);
+        const { data: r, error } = await db.from('replay_runs')
+          .select('id, status, night, nights, trip_dates, config, updated_at')
+          .eq('trip_id', body.trip_id).eq('config->>name', 'draft_T')
+          .order('id', { ascending: false }).limit(1).maybeSingle();
+        if (error) throw error;
+        return json({ ok: true, status: r ? { id: r.id, status: r.status, night: r.night, nights: r.nights, trip_dates: r.trip_dates,
+                                               made: r.config?.made ?? null, updated_at: r.updated_at } : null });
+      }
+
+      case 'stop_curve': {
+        if (!body.stop_id || !body.trip_date) return json({ error: 'stop_id and trip_date required' }, 400);
+        const { data, error } = await db.rpc('solver_stop_curve', { p_stop: body.stop_id, p_date: body.trip_date });
+        if (error) throw error;
+        return json({ ok: true, slots: data ?? [] });
       }
 
       default:

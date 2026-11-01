@@ -96,9 +96,13 @@ export async function fetchTDays(tripId: string, tripDates: string[]): Promise<{
   const best = plans.map(ps => ps.find(p => p.rank === 1)).filter((p): p is Plan => !!p);
   if (!best.length) return { run: null, plans: [], missing };
   const sum = (k: 'objective' | 'mean' | 'cvar11' | 'drive_minutes') => best.reduce((t, p) => t + (p[k] ?? 0), 0);
+  // The days' ceilings add up like their scores (each day's own, when every day has one).
+  const ceilings = runs.filter((r): r is PlanRun => !!r).map(r => Number(r.stats?.ceiling));
+  const ceiling = ceilings.length && ceilings.every(c => c > 0) ? ceilings.reduce((t, c) => t + c, 0) : null;
+  const first = runs.find(r => !!r) ?? null;
   const joined: Plan = { rank: 1, objective: sum('objective'), mean: sum('mean'), cvar11: sum('cvar11'), drive_minutes: sum('drive_minutes'),
                          long_leg_minutes: null, note: 'T: days together', visits: best.flatMap(p => p.visits) };
-  return { run: runs.find(r => !!r) ?? null, plans: [joined], missing };
+  return { run: first ? { ...first, stats: { ...first.stats, ceiling } } : null, plans: [joined], missing };
 }
 
 // Single-day runs for a trip, newest first (no plan bodies: they're large).
@@ -133,21 +137,23 @@ export async function fetchPlans(runId: string): Promise<Plan[]> {
   return (data ?? []) as Plan[];
 }
 
-// Best plan and "my day" scores for many runs at once (day list).
-export async function fetchScores(runIds: string[]): Promise<Map<string, { best?: number; mine?: number; top?: string[] }>> {
-  const out = new Map<string, { best?: number; mine?: number; top?: string[] }>();
-  if (!runIds.length) return out;
+// Best plan and "your day" for many runs at once (day list), as % of a perfect day.
+export type DayScore = { best?: number | null; mine?: number | null; hasMine: boolean; top?: string[] };
+export async function fetchScores(runs: PlanRun[], tierOf: (stopId: string) => string | null | undefined): Promise<Map<string, DayScore>> {
+  const out = new Map<string, DayScore>();
+  if (!runs.length) return out;
   const { data, error } = await supabase.from('solver_plans')
-    .select('run_id, rank, objective, visits').in('run_id', runIds).in('rank', [0, 1]);
+    .select('run_id, rank, mean, cvar11, objective, visits').in('run_id', runs.map(r => r.id)).in('rank', [0, 1]);
   if (error) throw error;
-  for (const p of data ?? []) {
-    const e = out.get(p.run_id) ?? {};
-    if (p.rank === 0) e.mine = p.objective;
-    if (p.rank === 1) {
-      e.best = p.objective;
-      e.top = (p.visits as PlanVisit[]).filter(v => (v.p_good ?? 0) >= 0.5).map(v => v.name).slice(0, 3);
-    }
-    out.set(p.run_id, e);
+  for (const r of runs) {
+    const ps = (data ?? []).filter((p: any) => p.run_id === r.id) as (Plan & { run_id: string })[];
+    const mine = ps.find(p => p.rank === 0), best = ps.find(p => p.rank === 1);
+    const c = planCeiling(r, [mine, best], tierOf);
+    out.set(r.id, {
+      // Your day worth nothing (times passed, no light) shows T's best alone, not "0% →".
+      mine: mine && mine.mean > 0 ? pctOf(mine.mean, c) : null, best: best ? pctOf(best.mean, c) : null, hasMine: !!mine,
+      top: best?.visits.filter(v => (v.p_good ?? 0) >= 0.5).map(v => v.name).slice(0, 3),
+    });
   }
   return out;
 }
@@ -189,7 +195,7 @@ export async function confirmAllSettings(tripId: string): Promise<number> {
 }
 
 export const planTitle = (p: Plan) =>
-  p.note?.startsWith('T: ') ? (p.note.includes('morning') ? 'Morning re-plan' : p.note.includes('draft') ? 'Week draft'
+  p.note?.startsWith('T: ') ? (p.note.includes('your day') ? 'Your day' : p.note.includes('morning') ? 'Morning re-plan' : p.note.includes('draft') ? 'Week draft'
     : p.note.includes('together') ? 'T plan' : 'Evening plan')
   : p.rank === 0 ? 'My day' : p.note?.startsWith('safest') ? 'Safest' : p.rank === 1 ? 'Best' : `Alt ${p.rank}`;
 
@@ -327,3 +333,144 @@ export async function fetchBrief(tripId: string, tripDate: string, tierOf: (stop
   }
   return { tripDate, runAt: now.created_at, headline, leave, changes: changes.slice(0, 4) };
 }
+
+// ---- One score scale (Phil, 1 Nov 2026: redesign) -------------------------------------
+// Every plan score in the app is "% of a perfect day": the plan's expected value (mean) or
+// its bad-weather value (cvar11) over the most the day could add. T (solver-replay v51+)
+// stores that ceiling on the run (stats.ceiling: every rated place in either plan seen
+// perfectly, over what is already shot); older runs fall back to the tier weights of the
+// distinct rated stops in "your day" and the best plan. Weights as in solver-plan /
+// solver-replay TIER_W.
+export const TIER_W: Record<string, number> = { GOD: 10, S: 5, A: 2, B: 1, C: 1, D: 0.5, F: 0 };
+
+export function planCeiling(run: PlanRun | null, plans: (Plan | undefined)[], tierOf: (stopId: string) => string | null | undefined): number {
+  const c = Number(run?.stats?.ceiling);
+  if (Number.isFinite(c) && c > 0) return c;
+  const ids = new Set<string>();
+  for (const p of plans) for (const v of p?.visits ?? []) ids.add(v.stop_id);
+  let t = 0;
+  for (const id of ids) t += TIER_W[tierOf(id) ?? ''] ?? 0;
+  return t;
+}
+
+// 0-100, or null when the day has nothing rated (ceiling 0).
+export function pctOf(x: number | null | undefined, ceiling: number): number | null {
+  if (x == null || !(ceiling > 0)) return null;
+  const p = Math.max(0, Math.min(100, Math.round((100 * x) / ceiling)));
+  return p === 0 && x > 0 ? 1 : p; // something, however little, never reads as a bare 0
+}
+export const pctText = (p: number | null) => (p == null ? '—' : `${p}%`);
+
+export type PlanPct = { pct: number | null; bad: number | null };
+export const planPct = (p: Plan | undefined, ceiling: number): PlanPct =>
+  ({ pct: pctOf(p?.mean, ceiling), bad: pctOf(p?.cvar11, ceiling) });
+
+// "8:05 AM" <-> minutes after midnight; an ISO time as minutes in the trip's timezone.
+export function labelMinutes(label: string | null | undefined): number | null {
+  const m = (label ?? '').replace(/^~\s*/, '').match(/^(\d+):(\d+)\s*(AM|PM)$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10) % 12;
+  if (m[3].toUpperCase() === 'PM') h += 12;
+  return h * 60 + parseInt(m[2], 10);
+}
+export function minutesLabel(min: number): string {
+  const h = Math.floor(min / 60) % 24, m = min % 60;
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+export function tzMinutes(iso: string | null | undefined, tz?: string): number | null {
+  if (!iso) return null;
+  const [h, m] = hhmm(iso, tz).split(':').map(Number);
+  return Number.isFinite(h) && Number.isFinite(m) ? (h % 24) * 60 + m : null;
+}
+
+// What T's best plan changes on one trip day, against the day as it stands now (so the
+// list empties once the plan is accepted). moved: a stop of this day at a new time (>= 10
+// min); added: a stop brought in from another day (or a new visit of a place); skipped: a
+// rated stop of the day the plan leaves out (applying keeps it on the day).
+export type DayChange = {
+  kind: 'moved' | 'added' | 'skipped'; stop_id: string; name: string;
+  was: string | null; now: string | null; fromDay?: number | null; p_good?: number | null; wasP?: number | null;
+};
+export function dayChanges(dayStops: any[], allDays: any[], mine: Plan | undefined, best: Plan | undefined, tz: string | undefined,
+                           tierOf: (stopId: string) => string | null | undefined): DayChange[] {
+  if (!best) return [];
+  const out: DayChange[] = [];
+  const onDay = new Map(dayStops.map((s: any) => [s.id, s]));
+  const inBest = new Set(best.visits.map(v => v.stop_id));
+  const mineP = new Map((mine?.visits ?? []).map(v => [v.stop_id, v.p_good ?? null]));
+  for (const v of best.visits) {
+    if (v.booked) continue;
+    const now = tzMinutes(v.start, tz);
+    const s = onDay.get(v.stop_id);
+    if (s) {
+      const was = labelMinutes(s.time_label);
+      if (now != null && (was == null || Math.abs(was - now) >= 10)) {
+        out.push({ kind: 'moved', stop_id: v.stop_id, name: v.name, was: s.time_label ?? null, now: now != null ? minutesLabel(now) : null,
+                   p_good: v.p_good ?? null, wasP: mineP.get(v.stop_id) ?? null });
+      }
+    } else {
+      const from = allDays.find((d: any) => (d.stops ?? []).some((x: any) => x.id === v.stop_id));
+      out.push({ kind: 'added', stop_id: v.stop_id, name: v.name, was: null, now: now != null ? minutesLabel(now) : null,
+                 fromDay: from?.day_number ?? null, p_good: v.p_good ?? null });
+    }
+  }
+  for (const s of dayStops) {
+    if (inBest.has(s.id) || s.time_locked) continue;
+    if (!(TIER_W[tierOf(s.id) ?? ''] > 0)) continue;
+    out.push({ kind: 'skipped', stop_id: s.id, name: s.name, was: s.time_label ?? null, now: null, wasP: mineP.get(s.id) ?? null });
+  }
+  return out;
+}
+const firstWord = (n: string) => n.split(/\s+[—–-]\s+|\s+\+\s+/)[0];
+// "3 changes: Shane Cabins to 10:15, stay at Snake River till 9:45, Emily's Pond in"
+export function changesLine(ch: DayChange[]): string {
+  const real = ch.filter(c => c.kind !== 'skipped');
+  const bits = real.map(c => c.kind === 'added'
+    ? `add ${firstWord(c.name)}${c.now ? ` at ${c.now.replace(' ', ' ')}` : ''}${c.fromDay ? ` (from Day ${c.fromDay})` : ''}`
+    : `${firstWord(c.name)} to ${c.now?.replace(' ', ' ') ?? '?'}`);
+  const skipped = ch.filter(c => c.kind === 'skipped').map(c => firstWord(c.name));
+  const head = `${real.length} change${real.length === 1 ? '' : 's'}`;
+  return `${head}: ${bits.join(', ')}${skipped.length ? `; skips ${skipped.join(', ')}` : ''}`;
+}
+
+// Why "your day" has no score, in words (never a bare 0).
+export function mineReason(mine: Plan | undefined, tripDate: string, dayStops: any[], tierOf: (id: string) => string | null | undefined, tz?: string): string | null {
+  const rated = dayStops.filter((s: any) => TIER_W[tierOf(s.id) ?? ''] > 0);
+  if (!rated.length) return 'No rated stops on this day.';
+  if (!mine) return "T scores your own day from its next plan.";
+  if ((mine.mean ?? 0) > 0) return null;
+  let todayStr = '';
+  try { todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()); } catch { todayStr = new Date().toISOString().slice(0, 10); }
+  if (todayStr === tripDate) {
+    const nowMin = tzMinutes(new Date().toISOString(), tz) ?? 0;
+    const left = rated.filter((s: any) => (labelMinutes(s.time_label) ?? 0) + (s.duration_minutes ?? 0) > nowMin);
+    if (!left.length) return 'No rated stops left today.';
+    return "Today's schedule has slipped: your stops' times have passed. T's plan re-times them.";
+  }
+  return 'Your stops at their times get no good light in any weather version.';
+}
+
+// T's planning in the background (B1): its newest week draft for the trip.
+export type PlanningStatus = { id: number; status: string; night: number; nights: number; trip_dates: string[]; made: string | null; updated_at: string | null };
+export async function fetchPlanningStatus(tripId: string): Promise<PlanningStatus | null> {
+  const j = await solverAction<{ status: PlanningStatus | null }>({ action: 'planning_status', trip_id: tripId });
+  return j.status;
+}
+
+// One stop's chance per 15-min slot on a trip day (stop page "Today" chart).
+export type CurveSlot = { slot_at: string; mean: number; p_good: number; source: 'forecast' | 'light' };
+export async function fetchStopCurve(stopId: string, tripDate: string): Promise<CurveSlot[]> {
+  const j = await solverAction<{ slots: CurveSlot[] }>({ action: 'stop_curve', stop_id: stopId, trip_date: tripDate });
+  return (j.slots ?? []).map(s => ({ ...s, mean: Number(s.mean), p_good: Number(s.p_good) }));
+}
+
+// "Accept all" writes on the test trips only (test bed, Faroes Live, Teton Live); real trips
+// get the preview until Phil signs the solver off (solver-actions TEST_TRIPS).
+export const TEST_TRIPS = new Set([
+  '7e57bed0-0000-4000-8000-000000000001',
+  '7e57bed0-0000-4000-8000-000000000002',
+  '7e57bed0-0000-4000-8000-000000000003',
+]);
+export const canApply = (tripId: string) => TEST_TRIPS.has(tripId);
+export const applyPlan = (runId: string, rank: number) =>
+  solverAction<{ preview_only: boolean; result: any }>({ action: 'apply', run_id: runId, rank });

@@ -249,7 +249,11 @@ export default function StopDetailScreen() {
         )}
 
         {/* Planner chance + settings (TEST app only until the solver is signed off) */}
-        {IS_TEST_APP && <StopPlannerSection stopId={stop.id} planner={planner} />}
+        {IS_TEST_APP && (
+          <StopPlannerSection stopId={stop.id} planner={planner} tripId={currentTripData?.trip?.id ?? null} tripDate={day?.date ?? null}
+            days={currentTripData?.days ?? []} timeLabel={stop.time_label ?? null} duration={stop.duration_minutes ?? null}
+            tz={currentTripData?.trip?.timezone ?? undefined} />
+        )}
 
         {/* Weather — pinned near the top of the location. TEST: folded under the
             camera picture, which already shows the headline numbers. */}
