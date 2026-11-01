@@ -1,6 +1,7 @@
 // Solver data for the TEST app's Planner. Plans and stop settings are read
 // straight from Supabase (read-only policies); everything that writes or
 // needs a signed webcam URL goes through the solver-actions edge function.
+import { AppState } from 'react-native';
 import { supabase } from './supabase';
 
 const ACTIONS_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/solver-actions';
@@ -76,13 +77,21 @@ export async function latestT(tripId: string, tripDate: string): Promise<PlanRun
   return m.forecast ?? m.light ?? null;
 }
 
-// Waits for a T plan of the day made after `since` (every 6 s, up to 6 min).
-export async function waitForT(tripId: string, tripDate: string, since: string): Promise<PlanRun | null> {
+// Waits for a T plan of the day made after `since` (up to 6 min). While T works it only asks
+// the tiny planning status (every 6 s), and reads the plans once T is done; no network while
+// the app is in the background, and it stops as soon as `alive()` says the screen is gone
+// (Phil, 1 Nov 2026: nothing downloading in the background).
+export async function waitForT(tripId: string, tripDate: string, since: string, alive: () => boolean = () => true): Promise<PlanRun | null> {
   const t0 = Date.now(), after = new Date(since).getTime();
+  const find = async () => (await fetchDayRuns(tripId)).find(x => runTripDate(x) === tripDate && new Date(x.created_at).getTime() >= after) ?? null;
   while (Date.now() - t0 < 6 * 60000) {
-    const r = (await fetchDayRuns(tripId)).find(x => runTripDate(x) === tripDate && new Date(x.created_at).getTime() >= after);
-    if (r) return r;
     await new Promise(res => setTimeout(res, 6000));
+    if (!alive()) return null;
+    if (AppState.currentState !== 'active') continue;
+    const st = await fetchPlanningStatus(tripId).catch(() => null);
+    if (st && (st.status === 'queued' || st.status === 'running')) continue;
+    const r = await find().catch(() => null);
+    if (r || (st && st.status === 'done')) return r;
   }
   return null;
 }

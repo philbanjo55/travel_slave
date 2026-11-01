@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -41,6 +41,8 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
   const [busy, setBusy] = useState<string | null>('Loading…');
   const [error, setError] = useState<string | null>(null);
   const [t, setT] = useState<boolean | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
 
   // Trips T plans: its newest plan for the day; Plan again rebuilds T's week draft.
   const loadT = useCallback(async (replan = false) => {
@@ -50,7 +52,8 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
       if (replan) {
         const since = await startReplan(tripId);
         setBusy('T is planning the trip again (about 2–4 minutes). Progress is in the bar at the top; you can leave this screen.');
-        r = await waitForT(tripId, tripDate, since);
+        r = await waitForT(tripId, tripDate, since, () => mounted.current);
+        if (!mounted.current) return;
         if (!r) throw new Error("T is still planning, or doesn't re-plan this day (today is re-planned each morning). Check back in a few minutes.");
       } else r = await latestT(tripId, tripDate);
       if (replan) ack(tripId);
@@ -123,6 +126,8 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
   const key = tripDates.join(',');
   const [t, setT] = useState<boolean | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
 
   const loadT = useCallback(async (replan = false) => {
     setError(null); setBusy('Loading…'); setNote(null);
@@ -130,7 +135,8 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
       if (replan) {
         const since = await startReplan(tripId);
         setBusy('T is planning the trip again (about 2–4 minutes). Progress is in the bar at the top; you can leave this screen.');
-        await waitForT(tripId, tripDates[tripDates.length - 1], since);
+        await waitForT(tripId, tripDates[tripDates.length - 1], since, () => mounted.current);
+        if (!mounted.current) return;
       }
       const j = await fetchTDays(tripId, tripDates);
       setRun(j.run); setPlans(j.plans);

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -69,6 +69,8 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const [usesTPlanner, setUsesT] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
   useEffect(() => { usesT(tripId).then(setUsesT).catch(() => {}); }, [tripId]);
 
   // Plans every trip day that has none yet (light only before the forecast). Trips T plans:
@@ -77,7 +79,8 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
     const todo = rows.filter(r => !r.run && differenceInCalendarDays(parseISO(r.date), new Date()) >= 0);
     if (usesTPlanner) {
       setPlanning({ done: 0, total: 1 });
-      try { const since = await startReplan(tripId); if (todo.length) await waitForT(tripId, todo[todo.length - 1].date, since); } catch { /* shown on reload */ }
+      try { const since = await startReplan(tripId); if (todo.length) await waitForT(tripId, todo[todo.length - 1].date, since, () => mounted.current); } catch { /* shown on reload */ }
+      if (!mounted.current) return;
       setPlanning(null);
       load();
       return;
