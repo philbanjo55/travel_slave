@@ -422,6 +422,10 @@ Deno.serve(async (req) => {
       if (b > 0) groupBase.set(find(i), Math.max(groupBase.get(find(i)) ?? 0, b));
     });
     const tickBase = new Map(groupBase);
+    // A ticked place is done through every entry of it (v54: a nailed entry leaves the plannable
+    // stops, so "every place once" saw the place's other entries as never visited and forced one
+    // back in on the last day).
+    const tickedGroups = new Set<number>(rated.map((r, i) => (tickedIds.has(r.stop_id) ? find(i) : -1)).filter(g => g >= 0));
 
     // Accommodation -> a stop named after it (else the nearest stop).
     const accStop = (acc: any): string | undefined => {
@@ -1021,7 +1025,7 @@ Deno.serve(async (req) => {
         // Places done: the app's plans go by Phil's ticks (got / nailed) for the days already
         // done, plus a draft's own earlier draft days; the bench by what its plans visited.
         const seenIds = new Set<string>([...(ticks && !draft ? [] : ((ks.sets as any)?.seen ?? [])), ...(ticks ? tickedIds : [])]);
-        const done = (x: number) => seenIds.has(nodes[x].id);
+        const done = (x: number) => seenIds.has(nodes[x].id) || (ticks && tickedGroups.has(nodes[x].group));
         // A place: a keep-together group (all of it), else a subject (any of its stops).
         const unitKey = (x: number) => nodes[x].together ? 't:' + nodes[x].together : 'g:' + nodes[x].group;
         const unitsAll = new Map<string, number[]>();
