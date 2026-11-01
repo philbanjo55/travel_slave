@@ -5,7 +5,7 @@ import { colors, spacing, radius, typography } from '../../theme';
 import { format, isToday } from 'date-fns';
 import {
   DayChange, GridCell, Plan, PlanRun, PlanVisit, TripSetting, fetchDayRuns, fetchPlans, fetchSubjectGrid, fetchTripSettings, hhmm,
-  latestByDay, LIGHT_WORDS, changesLine, mineReason, pctOf, planCeiling,
+  latestByDay, LIGHT_WORDS, changesLine, mineReason, pctOf, planCeiling, clock12,
 } from '../../services/planner';
 import { ScoreBar } from './ScoreBar';
 
@@ -197,7 +197,7 @@ export function stopHint(stopId: string, planner: DayPlanner | null): StopHint |
   if (planner?.changed.has(stopId)) return { p: v.p_good, light, chip: null, changed: true };
   const better = planner?.betterDay.get(stopId);
   const tryAt = v.best && v.best.p_good > v.p_good + 0.1 ? v.best : null;
-  const chip = tryAt ? `Try ${hhmm(tryAt.start, tz)} · ${Math.round(tryAt.p_good * 100)}%`
+  const chip = tryAt ? `Try ${clock12(tryAt.start, tz)} · ${Math.round(tryAt.p_good * 100)}%`
     : better ? `Better Day ${better.dayNumber} · ${Math.round(better.p_good * 100)}%` : null;
   return { p: v.p_good, light, chip };
 }

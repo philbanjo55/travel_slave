@@ -4,7 +4,8 @@ import { useNavigation } from '@react-navigation/native';
 import { format, parseISO } from 'date-fns';
 import { colors, spacing, radius, typography } from '../../theme';
 import {
-  CurveSlot, GridCell, StopSettings, fetchStopCurve, fetchStopSettings, hhmm, labelMinutes, minutesLabel, tzMinutes,
+  CurveSlot, GridCell, StopSettings, ago, clock12, fetchStopCurve, fetchStopSettings, labelMinutes, minutesLabel, tzMinutes,
+  LIGHT_WORDS,
 } from '../../services/planner';
 import { startReplan } from '../../services/planningStatus';
 import SettingsEditor, { settingsSummary } from './SettingsEditor';
@@ -26,6 +27,15 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
   const [cells, setCells] = useState<GridCell[] | null>(null);
   const [saved, setSaved] = useState(false);
   const [replanning, setReplanning] = useState(false);
+  const [curve, setCurve] = useState<{ slots: CurveSlot[]; builtAt: string | null } | null>(null);
+  const [curveError, setCurveError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!tripDate) return;
+    let alive = true;
+    setCurve(null); setCurveError(null);
+    fetchStopCurve(stopId, tripDate).then(c => { if (alive) setCurve(c); }).catch(e => { if (alive) setCurveError(String(e?.message ?? e)); });
+    return () => { alive = false; };
+  }, [stopId, tripDate]);
 
   useEffect(() => { fetchStopSettings(stopId).then(r => setSetting(r.setting)).catch(() => {}); }, [stopId]);
   useEffect(() => {
@@ -37,17 +47,40 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
 
   const tz: string | undefined = planner?.run?.params?.tz ?? tripTz;
   const hint = stopHint(stopId, planner);
-  const v = planner?.byStop.get(stopId);
-  const pct = hint ? Math.round(hint.p * 100) : null;
   const tier = setting?.tier ?? planner?.tiers.get(stopId) ?? null;
   const dayNo = useMemo(() => new Map(days.filter((d: any) => d.date).map((d: any) => [d.date, d.day_number as number])), [days]);
+
+  // The header answers three things (Phil, 1 Nov 2026: "what is this card telling me"):
+  // the chance at YOUR time, the best time today, and where T's plan puts the stop.
+  // Your time: T's score of your day when it has one, else the chart over your planned window.
+  const mineV = planner?.mine?.visits.find(v => v.stop_id === stopId && v.rated && v.p_good != null);
+  const bestV = planner?.best?.visits.find(v => v.stop_id === stopId);
+  const slots = curve?.slots ?? [];
+  const startMin = labelMinutes(timeLabel);
+  const endMin = startMin != null ? startMin + Math.max(duration ?? 15, 15) : null;
+  const win = slots.filter(x => { const m = tzMinutes(x.slot_at, tz); return m != null && startMin != null && m >= startMin - 7 && m < endMin!; });
+  const yourP = mineV?.p_good ?? (win.length ? Math.max(...win.map(x => x.p_good)) : null);
+  const pct = yourP != null ? Math.round(yourP * 100) : null;
+  const light = mineV?.light ? LIGHT_WORDS[mineV.light] ?? mineV.light : null;
+  const bestSlot = slots.length ? slots.reduce((b, x) => (x.p_good > b.p_good ? x : b), slots[0]) : null;
+  const bestToday = bestSlot && bestSlot.p_good >= (yourP ?? 0) + 0.05 ? `Best today: ${clock12(bestSlot.slot_at, tz)} (${Math.round(bestSlot.p_good * 100)}%)` : null;
+  const bestMin = bestV ? tzMinutes(bestV.start, tz) : null;
+  const tPlan = !planner?.best ? null
+    : !bestV ? "Not in T's plan for this day"
+    : startMin != null && bestMin != null && Math.abs(bestMin - startMin) >= 10 ? `T's plan: ${clock12(bestV.start, tz)}${bestV.p_good != null ? ` (${Math.round(bestV.p_good * 100)}%)` : ''}`
+    : "T's plan keeps your time";
 
   // "Day 3 almost as good (74%)": the next-best trip day, else the planner's better-day hint.
   const other = (cells ?? []).filter(c => c.trip_date !== tripDate && dayNo.has(c.trip_date)).sort((a, b) => b.p_good - a.p_good)[0];
   const better = planner?.betterDay.get(stopId);
   const second = better ? `Day ${better.dayNumber} looks better (${Math.round(better.p_good * 100)}%)`
-    : other && hint && other.p_good >= 0.3 ? `Day ${dayNo.get(other.trip_date)} ${other.p_good >= hint.p ? 'as good' : 'almost as good'} (${Math.round(other.p_good * 100)}%)`
-    : other && !hint && other.p_good >= 0.3 ? `Best day: Day ${dayNo.get(other.trip_date)} (${Math.round(other.p_good * 100)}%)` : null;
+    : other && pct != null && other.p_good >= 0.3 ? `Day ${dayNo.get(other.trip_date)} ${other.p_good * 100 >= pct ? 'as good' : 'almost as good'} (${Math.round(other.p_good * 100)}%)`
+    : other && pct == null && other.p_good >= 0.3 ? `Best day: Day ${dayNo.get(other.trip_date)} (${Math.round(other.p_good * 100)}%)` : null;
+  // When each part was last updated.
+  const updated = [
+    planner?.run ? `T planned ${ago(planner.run.created_at)}` : null,
+    slots[0]?.source === 'forecast' && curve?.builtAt ? `forecast ${ago(curve.builtAt)}` : slots[0]?.source === 'light' ? 'chart: light only' : null,
+  ].filter(Boolean).join(' · ');
 
   const replan = async () => {
     if (!tripId) return;
@@ -59,18 +92,21 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
   return (
     <View style={styles.card}>
       <View style={styles.head}>
-        <View style={{ flex: 1, gap: 2 }}>
+        <View style={{ flex: 1, gap: 3 }}>
           <Text style={styles.label}>T · THIS STOP</Text>
+          {hint?.changed ? <Text style={styles.bigSub}>You changed it: new chances after the next plan.</Text> : null}
           {pct != null ? (
             <View style={styles.bigRow}>
               <Text style={[styles.big, pct >= 40 && styles.good]}>{pct}%</Text>
               <Text style={styles.bigSub} numberOfLines={2}>
-                {hint?.changed ? 'you changed it · new chance after the next plan'
-                  : `chance${hint?.light ? ` · ${hint.light}` : ''}${v ? ` at ${hhmm(v.peak_at ?? v.start, tz)}` : ''}`}
+                chance of a good shot at your time{timeLabel ? `, ${timeLabel}` : ''}{light ? ` · ${light}` : ''}
               </Text>
             </View>
-          ) : <Text style={styles.bigSub}>{tier ? 'Not in this day\'s plan yet.' : 'Not rated: the planner skips it.'}</Text>}
+          ) : <Text style={styles.bigSub}>{tier ? 'No chance worked out for your time yet.' : 'Not rated: the planner skips it.'}</Text>}
+          {bestToday ? <Text style={styles.second}>{bestToday}</Text> : null}
+          {tPlan ? <Text style={styles.second}>{tPlan}</Text> : null}
           {second ? <Text style={styles.second}>{second}</Text> : null}
+          {updated ? <Text style={styles.updated}>{updated}</Text> : null}
         </View>
         {tier ? <Text style={styles.tierPill}>{tier}</Text> : null}
       </View>
@@ -85,7 +121,7 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
       </View>
 
       {tab === 'today' ? (
-        tripDate ? <TodayChart stopId={stopId} tripDate={tripDate} tz={tz} timeLabel={timeLabel} duration={duration} />
+        tripDate ? <TodayChart slots={curve?.slots ?? null} error={curveError} tz={tz} timeLabel={timeLabel} duration={duration} />
           : <Text style={styles.hint}>This stop isn't on a dated day.</Text>
       ) : tab === 'trip' ? (
         <View style={{ gap: 2 }}>
@@ -105,7 +141,7 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
                     {p != null ? <View style={[styles.tripFill, { width: `${Math.max(p, 2)}%`, backgroundColor: barColor(c!.p_good) }]} /> : null}
                   </View>
                   <Text style={[styles.tripPct, here && styles.bold]}>{p != null ? `${p}%` : '—'}</Text>
-                  <Text style={styles.tripAt}>{c ? `${hhmm(c.best_at, tz)}${c.source === 'light' ? ' · light' : ''}` : ''}</Text>
+                  <Text style={styles.tripAt}>{c ? `${clock12(c.best_at, tz)}${c.source === 'light' ? ' · light' : ''}` : ''}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -130,18 +166,9 @@ const barColor = (p: number) => (p >= 0.6 ? colors.signalOk : p >= 0.3 ? '#8a8a8
 
 // The stop's chance per 15-min slot on its day (ECMWF ensemble, else light only), the planned
 // window (its time and length) boxed, the best slot named.
-function TodayChart({ stopId, tripDate, tz, timeLabel, duration }: {
-  stopId: string; tripDate: string; tz?: string; timeLabel: string | null; duration: number | null;
+function TodayChart({ slots, error, tz, timeLabel, duration }: {
+  slots: CurveSlot[] | null; error: string | null; tz?: string; timeLabel: string | null; duration: number | null;
 }) {
-  const [slots, setSlots] = useState<CurveSlot[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    setSlots(null); setError(null);
-    fetchStopCurve(stopId, tripDate).then(s => { if (alive) setSlots(s); }).catch(e => { if (alive) setError(String(e?.message ?? e)); });
-    return () => { alive = false; };
-  }, [stopId, tripDate]);
-
   if (error) return <Text style={styles.hint}>{/network|fetch/i.test(error) ? 'No connection.' : error}</Text>;
   if (!slots) return <ActivityIndicator color={colors.textTertiary} style={{ marginVertical: spacing.md }} />;
   if (!slots.length) return <Text style={styles.hint}>No chances for this day yet (the stop needs a rating and a starred shot).</Text>;
@@ -191,6 +218,7 @@ const styles = StyleSheet.create({
   good: { color: colors.signalOk },
   bigSub: { flex: 1, fontSize: 13, color: colors.textSecondary },
   second: { fontSize: 12, color: colors.textSecondary },
+  updated: { fontSize: 10, color: colors.textTertiary, marginTop: 2 },
   tierPill: { fontSize: 12, fontWeight: '800', color: colors.textInverse, backgroundColor: colors.accent, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, overflow: 'hidden' },
   seg: { flexDirection: 'row', backgroundColor: colors.background, borderRadius: radius.sm, padding: 3 },
   segBtn: { flex: 1, minHeight: 34, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm - 2 },

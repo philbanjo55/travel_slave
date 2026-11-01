@@ -49,6 +49,7 @@ export default function StopCameraHero({ cams, weather, timeLabel, onClosed }: {
   ].filter(Boolean).join(' · ') : null;
   return (
     <View style={styles.wrap}>
+      <View style={styles.pic}>
       <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={styles.box}
         onMomentumScrollEnd={e => setPage(Math.round(e.nativeEvent.contentOffset.x / W))}>
         {cams.map(c => (
@@ -64,16 +65,20 @@ export default function StopCameraHero({ cams, weather, timeLabel, onClosed }: {
           </TouchableOpacity>
         ))}
       </ScrollView>
-      {w ? (
-        <View style={styles.overlay} pointerEvents="none">
-          <Text style={styles.forecastLabel}>FORECAST{timeLabel ? ` AT ${timeLabel.toUpperCase()}` : ''}</Text>
-          <Text style={styles.temp}>{tempText(w.temperature_c)}</Text>
-          {line ? <Text style={styles.line} numberOfLines={2}>{line}</Text> : null}
-        </View>
-      ) : null}
       {cams.length > 1 ? (
         <View style={styles.dots} pointerEvents="none">
           {cams.map((c, i) => <View key={c.camera.code} style={[styles.dot, i === page && styles.dotOn]} />)}
+        </View>
+      ) : null}
+      </View>
+      {/* The forecast sits under the picture (Phil, 1 Nov 2026: over it, its dark band hid the view). */}
+      {w ? (
+        <View style={styles.forecast}>
+          <Text style={styles.temp}>{tempText(w.temperature_c)}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.forecastLabel}>FORECAST{timeLabel ? ` AT ${timeLabel.toUpperCase()}` : ''}</Text>
+            {line ? <Text style={styles.line} numberOfLines={2}>{line}</Text> : null}
+          </View>
         </View>
       ) : null}
       <FrameModal item={open} onClose={() => { setOpen(null); onClosed(); }} />
@@ -92,13 +97,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4, overflow: 'hidden',
   },
   chipTime: { flexShrink: 0, marginLeft: 'auto' },
-  overlay: {
-    position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12,
-    backgroundColor: 'rgba(0,0,0,0.55)', gap: 2,
+  pic: { width: W, height: H },
+  forecast: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: 12, paddingVertical: 8,
+    backgroundColor: colors.surface,
   },
-  forecastLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.2, color: '#dddddd' },
-  temp: { fontFamily: 'Georgia', fontSize: 30, color: '#ffffff', lineHeight: 34 },
-  line: { fontSize: 12, color: '#eeeeee', marginRight: 40 },
+  forecastLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.2, color: colors.textSecondary },
+  temp: { fontFamily: 'Georgia', fontSize: 26, color: colors.textPrimary, lineHeight: 30 },
+  line: { fontSize: 12, color: colors.textPrimary },
   dots: { position: 'absolute', right: 12, bottom: 14, flexDirection: 'row', gap: 4 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)' },
   dotOn: { width: 16, backgroundColor: '#ffffff' },

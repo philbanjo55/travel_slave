@@ -377,6 +377,11 @@ export function minutesLabel(min: number): string {
   const h = Math.floor(min / 60) % 24, m = min % 60;
   return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
 }
+// "5:15 PM" in the trip's timezone, the way the app writes stop times.
+export function clock12(iso: string | null | undefined, tz?: string): string {
+  const m = tzMinutes(iso, tz);
+  return m == null ? '—' : minutesLabel(m);
+}
 export function tzMinutes(iso: string | null | undefined, tz?: string): number | null {
   if (!iso) return null;
   const [h, m] = hhmm(iso, tz).split(':').map(Number);
@@ -459,9 +464,9 @@ export async function fetchPlanningStatus(tripId: string): Promise<PlanningStatu
 
 // One stop's chance per 15-min slot on a trip day (stop page "Today" chart).
 export type CurveSlot = { slot_at: string; mean: number; p_good: number; source: 'forecast' | 'light' };
-export async function fetchStopCurve(stopId: string, tripDate: string): Promise<CurveSlot[]> {
-  const j = await solverAction<{ slots: CurveSlot[] }>({ action: 'stop_curve', stop_id: stopId, trip_date: tripDate });
-  return (j.slots ?? []).map(s => ({ ...s, mean: Number(s.mean), p_good: Number(s.p_good) }));
+export async function fetchStopCurve(stopId: string, tripDate: string): Promise<{ slots: CurveSlot[]; builtAt: string | null }> {
+  const j = await solverAction<{ slots: CurveSlot[]; built_at?: string | null }>({ action: 'stop_curve', stop_id: stopId, trip_date: tripDate });
+  return { slots: (j.slots ?? []).map(s => ({ ...s, mean: Number(s.mean), p_good: Number(s.p_good) })), builtAt: j.built_at ?? null };
 }
 
 // "Accept all" writes on the test trips only (test bed, Faroes Live, Teton Live); real trips
