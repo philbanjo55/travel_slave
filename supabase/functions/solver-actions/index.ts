@@ -39,7 +39,8 @@ import postgres from 'npm:postgres@3.4.4';
 //   planning_status {trip_id}  T's newest week draft for the trip (replay_runs, no anon
 //                read): {id, status, night, nights, trip_dates, made, updated_at}
 //   stop_curve   {stop_id, trip_date}  the stop's chance per 15-min slot that trip day
-//                (solver_stop_curve: newest raw score build, else light only)
+//                (solver_stop_curve: newest raw score build, else light only) and
+//                built_at, when that build was made
 // Plans and settings are read straight from the tables (read-only policies).
 
 // Trips "Accept all" may write to: the test bed, Faroes Live and Teton Live.
@@ -285,7 +286,11 @@ Deno.serve(async (req) => {
         if (!body.stop_id || !body.trip_date) return json({ error: 'stop_id and trip_date required' }, 400);
         const { data, error } = await db.rpc('solver_stop_curve', { p_stop: body.stop_id, p_date: body.trip_date });
         if (error) throw error;
-        return json({ ok: true, slots: data ?? [] });
+        // When the forecast behind it was built (the app's "updated" line).
+        const { data: st } = await db.from('stops').select('trip_id').eq('id', body.stop_id).maybeSingle();
+        const { data: b } = st ? await db.from('solver_score_builds').select('built_at').eq('trip_id', st.trip_id).eq('variant', 'raw')
+          .order('built_at', { ascending: false }).limit(1).maybeSingle() : { data: null };
+        return json({ ok: true, slots: data ?? [], built_at: b?.built_at ?? null });
       }
 
       default:
