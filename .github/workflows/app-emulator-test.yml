@@ -57,7 +57,8 @@ jobs:
           NODE_ENV: production
         run: |
           cd android
-          echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" >> gradle.properties
+          printf "\norg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\n" >> gradle.properties
+          tail -4 gradle.properties
           ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon --stacktrace
           mkdir -p ../apk && cp app/build/outputs/apk/release/*.apk ../apk/app.apk
           ls -la ../apk
