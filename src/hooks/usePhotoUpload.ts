@@ -89,7 +89,7 @@ export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
       refreshCurrentTrip().catch(() => {});
       return photo;
     } catch (err: any) {
-      setError(err.message || 'Upload failed');
+      setError(`Upload failed: ${err.message || 'unknown error'}`);
       return null;
     } finally {
       setUploading(false);
@@ -123,7 +123,7 @@ export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
       }
       await refreshCurrentTrip();
     } catch (err: any) {
-      setError(err.message || 'Upload failed');
+      setError(`Upload failed: ${err.message || 'unknown error'}`);
     } finally {
       setUploading(false);
       setUploadProgress('');
@@ -143,31 +143,38 @@ export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
       await uploadSinglePhoto(result.assets[0].uri, photoType);
       await refreshCurrentTrip();
     } catch (err: any) {
-      setError(err.message || 'Upload failed');
+      setError(`Upload failed: ${err.message || 'unknown error'}`);
     } finally {
       setUploading(false);
     }
   };
 
   const deletePhoto = async (photoId: string) => {
+    setError(null);
     try {
-      const { data: photo } = await supabase
+      const { data: photo, error: readErr } = await supabase
         .from('stop_photos')
         .select('storage_url')
         .eq('id', photoId)
         .single();
+      if (readErr) throw readErr;
+
+      // The row goes first: if that fails nothing has changed. Removing the
+      // file afterwards can only leave an unused file behind, never a photo
+      // on the list whose image is gone.
+      const { error: delErr } = await supabase.from('stop_photos').delete().eq('id', photoId);
+      if (delErr) throw delErr;
 
       if (photo?.storage_url) {
         const storagePath = photo.storage_url.split(`/public/${STORAGE_BUCKET}/`)[1];
         if (storagePath) {
-          await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]);
+          const { error: fileErr } = await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]);
+          if (fileErr) console.warn('Photo file left in storage:', storagePath, fileErr.message);
         }
       }
-
-      await supabase.from('stop_photos').delete().eq('id', photoId);
       await refreshCurrentTrip();
     } catch (err: any) {
-      setError(err.message);
+      setError(`Delete failed: ${err?.message || 'check your connection'}`);
     }
   };
 
@@ -185,7 +192,7 @@ export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
       refreshCurrentTrip().catch(() => {});
       return true;
     } catch (err: any) {
-      setError(err.message || 'Could not reorder photos');
+      setError(`Could not reorder photos${err.message ? `: ${err.message}` : ''}`);
       return false;
     }
   };

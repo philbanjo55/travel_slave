@@ -101,6 +101,18 @@ export async function getCachedFilmStocks(): Promise<FilmStock[]> {
   }
 }
 
+// Keep the cached list in step with a change made on the detail screen, so
+// reopening an exposure (or the list while offline) shows what was saved.
+export async function patchCachedExposure(id: string, patch: Partial<Exposure> | null): Promise<void> {
+  try {
+    const cached = await getCachedExposures();
+    const next = patch === null
+      ? cached.filter(e => e.id !== id)
+      : cached.map(e => (e.id === id ? { ...e, ...patch } : e));
+    await cacheExposures(next);
+  } catch { /* cache only; the server has the truth */ }
+}
+
 // Load with offline fallback: try network, fall back to cache.
 export async function loadExposures(): Promise<{ exposures: Exposure[]; offline: boolean }> {
   try {

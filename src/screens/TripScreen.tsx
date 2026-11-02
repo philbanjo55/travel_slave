@@ -137,7 +137,17 @@ export default function TripScreen() {
         },
       };
     });
-    supabase.from('days').update({ checked: newChecked, review: newReview }).eq('id', dayId).then();
+    // Saved after the screen changes; if the save fails, put the old status back.
+    const { error } = await supabase.from('days').update({ checked: newChecked, review: newReview }).eq('id', dayId);
+    if (error) {
+      useTripStore.setState((state) => state.currentTripData ? {
+        currentTripData: {
+          ...state.currentTripData,
+          days: state.currentTripData.days.map((d: any) => (d.id === dayId ? { ...d, checked, review } : d)),
+        },
+      } : state);
+      Alert.alert('Not saved', "Couldn't change the day's status. Check your connection and try again.");
+    }
   }, []);
 
   const recalcDriveTimes = useCallback(async () => {

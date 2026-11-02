@@ -9,11 +9,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 import { parseExposureText, importExposures, ParsedExposure } from '../services/exposureImport';
 
-// expo-document-picker is added at the next native build; until then the
-// .sdocx path is disabled and the paste path is the live importer.
-let DocumentPicker: any = null;
-try { DocumentPicker = require('expo-document-picker'); } catch {}
-
 export default function ExposureImportScreen() {
   const navigation = useNavigation<any>();
   const [text, setText] = useState('');
@@ -44,14 +39,6 @@ export default function ExposureImportScreen() {
     }
   };
 
-  const pickSdocx = async () => {
-    if (!DocumentPicker) {
-      Alert.alert('Not available yet', 'The .sdocx file import needs the next app build. For now, use Paste Text below.');
-      return;
-    }
-    // Wired for when expo-document-picker + jszip parsing ship in a native build.
-    Alert.alert('Coming in next build', 'File import is wired but requires the next APK build to activate.');
-  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -63,16 +50,8 @@ export default function ExposureImportScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 60 }}>
-        {/* sdocx file path (gated) */}
-        <TouchableOpacity style={styles.fileBtn} onPress={pickSdocx}>
-          <Ionicons name="document-attach-outline" size={20} color={colors.textSecondary} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.fileBtnTitle}>Pick Samsung note (.sdocx)</Text>
-            <Text style={styles.fileBtnSub}>Batch import with photos · needs next app build</Text>
-          </View>
-        </TouchableOpacity>
-
-        <Text style={styles.or}>— or —</Text>
+        {/* The .sdocx file import isn't built yet, so only the paste importer
+            is shown. */}
 
         {/* paste text path (live) */}
         <Text style={styles.label}>PASTE SHARED TEXT</Text>

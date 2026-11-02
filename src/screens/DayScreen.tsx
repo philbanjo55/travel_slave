@@ -9,6 +9,7 @@ import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
 import DaySummary from '../components/DaySummary';
+import MissingScreen from '../components/MissingScreen';
 import DayWeatherSummary from '../components/DayWeatherSummary';
 import { WeatherRow, conditionIcon, readScore, cToF } from '../services/weather';
 import { colors, typography, spacing, radius } from '../theme';
@@ -38,7 +39,7 @@ export default function DayScreen() {
   );
 
   const day = currentTripData?.days[dayIndex];
-  if (!day) return null;
+  if (!day) return <MissingScreen loading={!currentTripData} what="day" />;
 
   const stops = day.stops || [];
   const stopsWithLocation = stops.filter((s: any) => s.lat && s.lng);

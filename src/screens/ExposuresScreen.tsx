@@ -4,7 +4,7 @@ import {
   Image, ActivityIndicator, FlatList, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 import { format, parseISO } from 'date-fns';
@@ -43,7 +43,9 @@ export default function ExposuresScreen() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Reload whenever the list comes back into view, so a delete or an import
+  // made on another screen shows up straight away.
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -164,7 +166,7 @@ export default function ExposuresScreen() {
         <View style={styles.loading}>
           <Ionicons name="film-outline" size={40} color={colors.textTertiary} />
           <Text style={styles.emptyText}>No exposures yet</Text>
-          <Text style={styles.emptySub}>Tap + to import a Samsung note or text</Text>
+          <Text style={styles.emptySub}>Tap + to paste exposures shared from Light Meter</Text>
         </View>
       ) : (
         <FlatList

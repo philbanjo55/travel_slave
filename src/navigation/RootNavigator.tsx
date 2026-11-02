@@ -15,7 +15,6 @@ import ExposureDetailScreen from '../screens/ExposureDetailScreen';
 import ExposureImportScreen from '../screens/ExposureImportScreen';
 import DayCompareScreen from '../screens/DayCompareScreen';
 import PlannerScreen from '../screens/PlannerScreen';
-import PlanScreen from '../screens/PlanScreen';
 import TrainingScreen from '../screens/TrainingScreen';
 import { colors } from '../theme';
 
@@ -29,9 +28,9 @@ export type RootStackParamList = {
   Exposures: undefined;
   ExposureDetail: { id: string };
   ExposureImport: undefined;
+  DayCompare: { dayTitle: string; dayNumber: number; stops: any[]; weather: Record<string, any> };
   // Solver Planner, TEST app only (see utils/variant).
   Planner: { tripId: string; tab?: 'overview' | 'plans' | 'subjects' | 'map' | 'setup'; date?: string };
-  Plan: { tripId: string; tripDate: string; dayNumber?: number };
   // Live training trips (trips.training_of), TEST app only.
   Training: undefined;
 };
@@ -104,7 +103,6 @@ export default function RootNavigator() {
         <Stack.Screen name="DayCompare" component={DayCompareScreen} />
         {/* No swipe-back: it grabbed sideways swipes on the camera strip and moved the whole screen. */}
         <Stack.Screen name="Planner" component={PlannerScreen} options={{ gestureEnabled: false }} />
-        <Stack.Screen name="Plan" component={PlanScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Training" component={TrainingScreen} />
       </Stack.Navigator>
     </NavigationContainer>
