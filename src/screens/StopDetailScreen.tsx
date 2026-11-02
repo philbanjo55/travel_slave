@@ -11,6 +11,7 @@ import { getPhotoUri } from '../services/photoCache';
 import { usePhotoUpload } from '../hooks/usePhotoUpload';
 import { useTripStore } from '../store/tripStore';
 import StopWeatherCard from '../components/StopWeatherCard';
+import MissingScreen from '../components/MissingScreen';
 import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
 import SunPlannerSection from '../components/sun/SunPlannerSection';
 import StopLocationEditor from '../components/StopLocationEditor';
@@ -112,7 +113,7 @@ export default function StopDetailScreen() {
   const groupStops = photoGroupStops(currentTripData, stop);
   const { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error } = usePhotoUpload(stop?.id ?? '', groupStops.map((s: any) => s.id));
 
-  if (!stop) return null;
+  if (!stop) return <MissingScreen loading={!currentTripData} what="stop" />;
 
   const allPhotos = photoGroupPhotos(groupStops);
   const byPosition = (a: any, b: any) => (a.position ?? 1e9) - (b.position ?? 1e9);
@@ -245,7 +246,7 @@ export default function StopDetailScreen() {
           </View>
         </View>
         {error && (
-          <Text style={[styles.uploadError, { marginBottom: spacing.md }]}>Upload failed: {error}</Text>
+          <Text style={[styles.uploadError, { marginBottom: spacing.md }]}>{error}</Text>
         )}
 
         {/* Planner chance + settings (TEST app only until the solver is signed off) */}

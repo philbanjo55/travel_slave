@@ -10,7 +10,7 @@ import { colors, typography, spacing, radius } from '../theme';
 import { format, parseISO } from 'date-fns';
 import {
   Exposure, FilmStock, loadFilmStocks, updateExposure, deleteExposure,
-  getCachedExposures, addFilmStock,
+  getCachedExposures, addFilmStock, patchCachedExposure,
 } from '../services/exposures';
 
 function fmtShutter(e: Exposure): string {
@@ -45,11 +45,16 @@ export default function ExposureDetailScreen() {
     if (!exposure) return;
     setFilmModal(false);
     const stock = stocks.find(s => s.name === name);
-    setExposure({ ...exposure, film_stock: name, film_stock_id: stock?.id ?? null });
+    const patch = { film_stock: name, film_stock_id: stock?.id ?? null };
+    const before = exposure;
+    setExposure({ ...exposure, ...patch });
     try {
-      await updateExposure(exposure.id, { film_stock: name, film_stock_id: stock?.id ?? null });
+      await updateExposure(exposure.id, patch);
+      await patchCachedExposure(exposure.id, patch);
     } catch {
-      Alert.alert('Offline', 'Change saved locally; will sync when online.');
+      // Nothing is queued for later, so put the old film back and say so.
+      setExposure(before);
+      Alert.alert('Not saved', "Couldn't change the film. Check your connection and try again.");
     }
   };
 
@@ -74,6 +79,7 @@ export default function ExposureDetailScreen() {
         onPress: async () => {
           try {
             await deleteExposure(id);
+            await patchCachedExposure(id, null);
             navigation.goBack();
           } catch {
             Alert.alert('Error', 'Could not delete (are you online?).');

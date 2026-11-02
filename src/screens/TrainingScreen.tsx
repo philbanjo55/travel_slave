@@ -36,7 +36,8 @@ export default function TrainingScreen() {
         text: item.archived ? 'Unarchive' : 'Archive',
         onPress: async () => {
           try {
-            await supabase.from('trips').update({ archived: !item.archived }).eq('id', item.id);
+            const { error } = await supabase.from('trips').update({ archived: !item.archived }).eq('id', item.id);
+            if (error) throw error;
             await loadTrips();
           } catch {
             Alert.alert('Error', 'Could not update trip.');

@@ -21,6 +21,7 @@ export default function TripsScreen() {
   const [migrating, setMigrating] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     try {
@@ -31,7 +32,8 @@ export default function TripsScreen() {
     } catch {}
   }, []);
 
-  useEffect(() => { loadTrips(); }, []);
+  const reload = () => { setLoading(true); loadTrips().finally(() => setLoading(false)); };
+  useEffect(() => { reload(); }, []);
 
   // Training trips (live-weather copies, trips.training_of) stay off the
   // list; the TEST app shows them on their own screen.
@@ -43,7 +45,8 @@ export default function TripsScreen() {
 
   const archiveTrip = async (item: any, archive: boolean) => {
     try {
-      await supabase.from('trips').update({ archived: archive }).eq('id', item.id);
+      const { error } = await supabase.from('trips').update({ archived: archive }).eq('id', item.id);
+      if (error) throw error;
       await loadTrips();
     } catch (e) {
       Alert.alert('Error', 'Could not update trip.');
@@ -144,9 +147,27 @@ export default function TripsScreen() {
         <Text style={styles.lastUpdate}>SYNCED {lastUpdate}</Text>
       )}
 
-      {activeTrips.length === 0 && !showArchived ? (
+      {activeTrips.length === 0 && !showArchived && loading ? (
         <View style={styles.loading}>
           <ActivityIndicator color={colors.accent} />
+        </View>
+      ) : activeTrips.length === 0 && !showArchived && trainingTrips.length === 0 ? (
+        // Nothing active: say why and keep a way to the archived trips, instead
+        // of spinning for ever.
+        <View style={styles.loading}>
+          <Text style={styles.emptyText}>
+            {mainTrips.length === 0 && isOffline
+              ? "Couldn't load your trips. Check your connection."
+              : mainTrips.length === 0 ? 'No trips yet.' : 'No active trips.'}
+          </Text>
+          <TouchableOpacity style={styles.emptyBtn} onPress={reload}>
+            <Text style={styles.archivedBtnText}>Try again</Text>
+          </TouchableOpacity>
+          {archivedTrips.length > 0 && (
+            <TouchableOpacity style={styles.emptyBtn} onPress={() => setShowArchived(true)}>
+              <Text style={styles.archivedBtnText}>{`Show Archived (${archivedTrips.length})`}</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ) : (
         <FlatList
@@ -228,6 +249,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xl,
     justifyContent: 'center',
   },
+  emptyText: { ...typography.labelLarge, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: spacing.xl },
+  emptyBtn: { marginTop: spacing.lg, paddingVertical: spacing.sm, paddingHorizontal: spacing.lg },
   archivedBtnText: { ...typography.labelMedium, color: colors.textTertiary },
   trainingNote: { ...typography.labelMedium, color: colors.textSecondary, marginTop: 2 },
   trainingRow: {
