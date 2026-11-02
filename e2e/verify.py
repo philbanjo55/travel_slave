@@ -27,6 +27,16 @@ def check(name, ok, detail=''):
 
 def show(label, s):
     ts = [t for t in s.all_texts if t.strip()]
+    if not ts:  # the app isn't on screen: say what is, and why it might not be
+        other = [(n.get('package'), (n.get('text') or n.get('content-desc') or '').strip()) for n in (s.root.iter('node') if s.root is not None else [])]
+        print(f'DIAG [{label}] focus={C.focus_pkg()} pid={C.adb("shell", "pidof", PKG).strip()} on_screen=' +
+              ' ¦ '.join(f'{p}:{t[:40]}' for p, t in other if t)[:600], flush=True)
+        crash = C.adb('logcat', '-d', '-b', 'crash', timeout=60).strip().splitlines()
+        for line in crash[-25:]:
+            print('DIAG crash ' + line[:220], flush=True)
+        js = [l for l in C.adb('logcat', '-d', timeout=60).splitlines() if 'ReactNativeJS' in l or 'AndroidRuntime' in l or 'philmframe' in l]
+        for line in js[-25:]:
+            print('DIAG log ' + line[:220], flush=True)
     print(f'TEXT [{label}] ' + ' ¦ '.join(t.replace("\n", " ")[:80] for t in ts[:70]), flush=True)
     C.screenshot('verify-' + label)
 
