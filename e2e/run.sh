@@ -11,7 +11,7 @@ LOGCAT=$!
 python3 e2e/verify.py || echo "verify exited with $?"
 adb shell svc wifi enable || true
 adb shell svc data enable || true
-python3 e2e/crawl.py || echo "crawler exited with $?"
+CRAWL_MINUTES=5 python3 e2e/crawl.py || echo "crawler exited with $?"
 kill $LOGCAT 2>/dev/null || true
 grep -h "E2E_" out/logcat.txt > out/blocked-writes.txt || true
 grep -h "ReactNativeJS" out/logcat.txt > out/js-console.txt || true

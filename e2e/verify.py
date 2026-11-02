@@ -49,13 +49,13 @@ def has(s, *needles):
 def tap_text(s, needle, exact=False):
     for c in s.clickables:
         lab = c['label']
-        if (lab == needle) if exact else (needle.lower() in lab.lower()):
+        if (lab.lower() == needle.lower() or lab.lower().strip(', ') == needle.lower()) if exact else (needle.lower() in lab.lower()):
             C.tap(c['xy'])
             return True
     # fall back to any node with that text (the clickable parent may be unlabelled)
     for n in s.root.iter('node') if s.root is not None else []:
         t = (n.get('text') or n.get('content-desc') or '').strip()
-        if t and ((t == needle) if exact else (needle.lower() in t.lower())):
+        if t and ((t.lower() == needle.lower()) if exact else (needle.lower() in t.lower())):
             x1, y1, x2, y2 = C.bounds(n)
             C.tap(((x1 + x2) // 2, (y1 + y2) // 2))
             return True
@@ -99,7 +99,8 @@ def back(n=1):
 
 def header_icons(s):
     """Unlabelled header buttons at the top right of the trip list, left to right."""
-    return sorted([c for c in s.clickables if c['xy'][1] < 400 and c['label'].startswith('<unlabelled')],
+    return sorted([c for c in s.clickables if c['xy'][1] < 400 and not re.search(r'[A-Za-z0-9]', c['label'].replace('unlabelled', ''))
+                   or (c['xy'][1] < 400 and c['label'].startswith('<unlabelled'))],
                   key=lambda c: c['xy'][0])
 
 
@@ -224,33 +225,32 @@ def fix_archive_and_day_status():
         check('day-status-not-saved', False, 'could not open Offline Test'); return
     t = C.capture(5); show('offline-test-trip', t)
     n0 = blocked_count()
-    if long_press_text(t, 'Day 1'):
+    if long_press_text(t, 'DAY 0') or long_press_text(t, 'DAY 1'):
         e = C.capture(4); show('after-day-longpress', e)
         check('day-status-not-saved', has(e, 'Not saved') and blocked_count() > n0)
         dialog_ok()
     else:
-        check('day-status-not-saved', False, 'no Day 1 tab')
+        check('day-status-not-saved', False, 'no day tab')
+
+
+def open_teton():
+    s = home()
+    if not tap_text(s, 'Grand Teton Winter 2026'):
+        return None
+    return C.capture(6)
 
 
 def walk_teton():
-    """Read-only look at the real upcoming trip: trip, a stop, day map, compare, planner tabs."""
-    s = home()
-    if not tap_text(s, 'Grand Teton Winter 2026'):
+    """Read-only look at the real upcoming trip: trip, day map, compare, planner tabs, a stop."""
+    t = open_teton()
+    if t is None:
         check('teton-open', False); return
-    t = C.capture(6); show('teton-trip-day1', t)
-    for i in range(3):
+    show('teton-trip-day1', t)
+    for i in range(4):
         C.swipe_up(); show(f'teton-trip-day1-scroll{i+1}', C.capture(1.5))
-    for i in range(3):
+    for i in range(4):
         C.adb('shell', 'input', 'swipe', '540', '700', '540', '1700', '400'); time.sleep(0.6)
-    if find_scroll('Snake River Overlook', 4):
-        st = C.capture(5); show('stop-snake-river', st)
-        check('stop-page-opens', C.app_alive() and not has(st, "isn't in the trip"))
-        for i in range(6):
-            C.swipe_up(); show(f'stop-snake-river-scroll{i+1}', C.capture(1.5))
-        back()
-    else:
-        check('stop-page-opens', False, 'stop row not found')
-    s = C.capture(2)
+    s = C.capture(1)
     if tap_text(s, 'MAP', exact=True):
         dy = C.capture(5); show('teton-day1-map', dy)
         check('day-screen-opens', has(dy, 'DAY 1'))
@@ -259,14 +259,12 @@ def walk_teton():
             check('day-compare-opens', C.app_alive() and has(cp, 'DAY ROLLUP'))
             for i in range(3):
                 C.swipe_up(); show(f'compare-scroll{i+1}', C.capture(1.5))
-            back()
         else:
             check('day-compare-opens', False, 'no COMPARE')
-        back()
     else:
         check('day-screen-opens', False, 'no MAP button')
-    s = C.capture(2)
-    if tap_text(s, 'Open the Planner'):
+    t = open_teton()
+    if t is not None and tap_text(t, 'Open the Planner'):
         p = C.capture(8); show('planner-overview', p)
         for i in range(2):
             C.swipe_up(); show(f'planner-overview-scroll{i+1}', C.capture(1.5))
@@ -276,11 +274,19 @@ def walk_teton():
                 q = C.capture(5); show(f'planner-{tab}', q)
                 C.swipe_up(); show(f'planner-{tab}-scroll', C.capture(1.5))
         check('planner-tabs', C.app_alive())
-        back()
-    # day 3 (Jenny Lake ski day)
-    s = C.capture(2)
-    if tap_text(s, 'Day 3', exact=True):
-        show('teton-trip-day3', C.capture(4))
+    t = open_teton()
+    if t is not None and tap_text(t, 'DAY 3', exact=True):
+        d3 = C.capture(4); show('teton-trip-day3', d3)
+        for i in range(2):
+            C.swipe_up(); show(f'teton-trip-day3-scroll{i+1}', C.capture(1.5))
+    t = open_teton()
+    if t is not None and find_scroll('Snake River Overlook', 4):
+        st = C.capture(6); show('stop-snake-river', st)
+        check('stop-page-opens', C.app_alive() and C.focus_pkg() == PKG and not has(st, "isn't in the trip"))
+        back(); bk = C.capture(3); show('after-stop-back', bk)
+        check('stop-page-back', has(bk, 'Grand Teton Winter 2026'), 'hardware back from the stop page')
+    else:
+        check('stop-page-opens', False, 'stop row not found')
 
 
 def calculators():
@@ -301,7 +307,7 @@ def calculators():
 
 
 def main():
-    steps = [fix1_offline_trips, fix_import_and_exposures, fix_archive_and_day_status, walk_teton, calculators]
+    steps = [fix1_offline_trips, fix_import_and_exposures, fix_archive_and_day_status, calculators, walk_teton]
     for st in steps:
         try:
             st()
