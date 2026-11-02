@@ -87,7 +87,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           OUT: out
-          CRAWL_MINUTES: '110'
+          CRAWL_MINUTES: '35'
         with:
           api-level: 34
           target: google_apis

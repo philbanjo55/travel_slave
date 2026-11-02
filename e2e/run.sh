@@ -8,6 +8,9 @@ adb emu geo fix -77.1067 38.8816 || true
 adb logcat -c || true
 adb logcat -v time > out/logcat.txt 2>&1 &
 LOGCAT=$!
+python3 e2e/verify.py || echo "verify exited with $?"
+adb shell svc wifi enable || true
+adb shell svc data enable || true
 python3 e2e/crawl.py || echo "crawler exited with $?"
 kill $LOGCAT 2>/dev/null || true
 grep -h "E2E_" out/logcat.txt > out/blocked-writes.txt || true
