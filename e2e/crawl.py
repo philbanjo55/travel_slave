@@ -137,13 +137,44 @@ def save_xml(name, root):
 
 def capture(settle=2.0):
     time.sleep(settle)
-    return State(dump())
+    root = dump()
+    if root is not None and any("isn't responding" in (n.get('text') or '') for n in root.iter('node')):
+        dismiss_system_dialogs()
+        root = dump()
+    return State(root)
+
+
+def dismiss_system_dialogs():
+    """Close an emulator 'X isn't responding' box (the launcher often hangs on CI)."""
+    for _ in range(3):
+        root = dump()
+        if root is None:
+            return
+        hit = None
+        for n in root.iter('node'):
+            t = (n.get('text') or '').strip()
+            if n.get('package') == 'android' and t in ('Close app', 'Wait', 'OK', 'Close'):
+                hit = n
+                if t == 'Close app':
+                    break
+        if hit is None:
+            return
+        x1, y1, x2, y2 = bounds(hit)
+        log('  dismissed system dialog:', hit.get('text'))
+        tap(((x1 + x2) // 2, (y1 + y2) // 2))
+        time.sleep(2)
 
 
 def launch():
+    dismiss_system_dialogs()
     adb('shell', 'am', 'force-stop', PKG)
-    adb('shell', 'monkey', '-p', PKG, '-c', 'android.intent.category.LAUNCHER', '1')
+    adb('shell', 'am', 'start', '-W', '-n', f'{PKG}/.MainActivity')
     time.sleep(12)
+    dismiss_system_dialogs()
+    if focus_pkg() != PKG:
+        adb('shell', 'monkey', '-p', PKG, '-c', 'android.intent.category.LAUNCHER', '1')
+        time.sleep(8)
+        dismiss_system_dialogs()
     return capture(2)
 
 
