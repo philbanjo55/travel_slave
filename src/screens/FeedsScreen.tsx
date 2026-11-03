@@ -124,17 +124,19 @@ function CameraCard({ c, tz, paused, view }: { c: FeedCamera; tz: string | null;
   const noClock = live && !live.failed && pictureAt == null;
   const stuck = oldMin != null ? oldMin > FROZEN_MIN : noClock && c.status === 'frozen';
 
-  const st = !live ? { text: paused ? 'Paused' : 'Loading', color: colors.textSecondary }
+  const st = paused ? { text: 'Paused', color: colors.textSecondary }
+    : !live ? { text: 'Loading', color: colors.textSecondary }
     : live.failed ? { text: 'Not answering', color: STATUS.offline.color }
     : stuck ? STATUS.frozen
     : c.status === 'night' ? STATUS.night
     : STATUS.live;
-  const fresh = !live
+  const freshNow = !live
     ? (paused ? (archive ? `Paused · showing the ${archive} archive picture` : 'Paused')
        : archive ? `Loading the live picture · showing the ${archive} archive picture` : 'Loading the live picture…')
     : live.failed ? (archive ? `Camera not answering · showing the ${archive} archive picture` : 'Camera not answering')
     : pictureAt ? `Picture taken ${pictureAt} · ${oldText(oldMin ?? 0)}`
     : `This camera shows no clock · reloaded ${clock(live.at.toISOString(), ctz, true)}`;
+  const fresh = paused && live ? `Paused · ${freshNow}` : freshNow;
   const peaks = c.frame?.hills_visible != null
     ? `Peaks ${c.frame.hills_visible ? 'clear' : 'hidden'} in the ${archive} archive picture${c.frame.cloud_on_hills && c.frame.cloud_on_hills !== 'none' ? ` (cloud ${c.frame.cloud_on_hills})` : ''}`
     : null;
