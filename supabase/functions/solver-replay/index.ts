@@ -2,6 +2,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v59 (3 Nov 2026): run config week_exact = Z, the rest of the week solved exactly per weather version
+// in the Monte Carlo (in place of the quick stand-in), from the stand-in's answer, never worse.
 // v58 (3 Nov 2026): run config brute = B1 brute-force day (every free place, every start slot, all weather
 // versions; exact for the day score), in place of polish on the night plan and morning re-plan.
 // v57 (3 Nov 2026): run config dawn_before_min = free stops start no earlier than civil dawn less
@@ -1446,8 +1448,80 @@ Deno.serve(async (req) => {
           });
           const cap = days.map((_, h) => freeNodes.map(x => (h === 0 ? 0 : winOn(h, [x]))));
           const onceUnits = [...unitsAll.values()].filter(u => u.some(x => nodes[x].once) && !covered(u));
+          // Z, week brute force (run config week_exact, v59, Phil 3 Nov 2026: "start building the
+          // week brute force"): in each weather version the rest of the week is solved exactly
+          // instead of by the quick stand-in below. Same model as the stand-in: every open place
+          // on any later day or on none (keep-together places as one, on one day), each day's
+          // size cap[h] (80% of daylight less 45 min, the gear window kept, 30 min a stop for
+          // getting there), a subject counted once at its best over the week, every ski outing
+          // never done costing MISS_PENALTY x its weight. Depth first from the stand-in's answer
+          // (so never worse), cut by a bound: value so far, plus the best each undecided place
+          // could add, filling the minutes left fractionally by value per minute, less the misses
+          // already certain. week_cap (default 200k) stops a search; it then keeps the best found.
+          const WEEK_CAP = Number(cfg.week_cap ?? 200_000), PEN = Number(cfg.miss_penalty ?? MISS_PENALTY);
+          const capMax = cap.map(row => Math.max(0, ...row));
+          const laterExact = (vb: Map<number, Uint8Array>[], k: number, bestG0: Map<number, number>, did0: Set<number>, greedyLater: number) => {
+            const Hn = days.length;
+            const elig = freeNodes.map((x, j) => ({ x, j })).filter(o => !skip.has(o.x) && !(nodes[o.x].once && did0.has(o.x)));
+            const byKey = new Map<string, { x: number; j: number }[]>();
+            for (const o of elig) { const key = nodes[o.x].together ? 't:' + nodes[o.x].together : 'n:' + o.x; byKey.set(key, [...(byKey.get(key) ?? []), o]); }
+            const gainOn = (ms: { x: number }[], h: number) => ms.reduce((t, o) => t + nodes[o.x].w * Math.max(0, vb[h].get(o.x)![k] - (bestG0.get(nodes[o.x].group) ?? 0)) / 250, 0);
+            const items = [...byKey.values()].map(ms => {
+              const dur = ms.reduce((t, o) => t + nodes[o.x].dur + 30, 0);
+              const ds: { h: number; c: number; g: number }[] = [];
+              for (let h = 1; h < Hn; h++) { const c = Math.min(...ms.map(o => cap[h][o.j])); if (c > 0 && c >= dur) ds.push({ h, c, g: gainOn(ms, h) }); }
+              ds.sort((a, b) => b.g - a.g);
+              return { ms, dur, ds, ub: ds.length ? ds[0].g : 0, once: ms.some(o => nodes[o.x].once) };
+            }).filter(it => it.ds.length && (it.ub > 0 || it.once));
+            items.sort((a, b) => (Number(b.once) - Number(a.once)) || (b.ub / b.dur - a.ub / a.dur));
+            const itemOf = new Map<number, number>();
+            items.forEach((it, i) => it.ms.forEach(o => itemOf.set(o.x, i)));
+            const suf = items.map((_, i) => items.map((it, q) => ({ it, q })).slice(i).sort((a, b) => b.it.ub / b.it.dur - a.it.ub / a.it.dur).map(o => o.q));
+            const chosen = new Int8Array(items.length).fill(-1);
+            const used = new Array(Hn).fill(0), lim = new Array(Hn).fill(Infinity);
+            const bestG = new Map(bestG0);
+            const unitW = onceUnits.map(u => u.reduce((t, x) => t + nodes[x].w, 0));
+            const doneAt = (x: number, upto: number) => did0.has(x) || (itemOf.has(x) && itemOf.get(x)! < upto && chosen[itemOf.get(x)!] >= 0);
+            // Misses already certain once items before i are decided (a place not offered counts as decided).
+            const missed = (i: number, final: boolean) => {
+              let p = 0;
+              onceUnits.forEach((u, ui) => {
+                if (u.some(x => !doneAt(x, items.length) && (final || !itemOf.has(x) || (itemOf.get(x)! < i && chosen[itemOf.get(x)!] < 0)))) p += PEN * unitW[ui];
+              });
+              return p;
+            };
+            let best = greedyLater, tried = 0, stopped = false;
+            const dfs = (i: number, cur: number) => {
+              if (stopped) return;
+              if (++tried > WEEK_CAP) { stopped = true; return; }
+              if (i === items.length) { const v = cur - missed(i, true); if (v > best + 1e-9) best = v; return; }
+              let room = 0;
+              for (let h = 1; h < Hn; h++) room += Math.max(0, Math.min(capMax[h], lim[h]) - used[h]);
+              let b = 0;
+              for (const q of suf[i]) { const it = items[q]; if (it.dur <= room) { b += it.ub; room -= it.dur; } else { b += it.ub * room / it.dur; break; } }
+              if (cur + b - missed(i, false) <= best + 1e-9) return;
+              const it = items[i];
+              for (const d of it.ds) {
+                if (used[d.h] + it.dur > Math.min(lim[d.h], d.c)) continue;
+                let g = 0; const undo: [number, number | undefined][] = [];
+                for (const o of it.ms) {
+                  const gr = nodes[o.x].group, vv = vb[d.h].get(o.x)![k], pb = bestG.get(gr) ?? 0;
+                  if (vv > pb) { g += nodes[o.x].w * (vv - pb) / 250; undo.push([gr, bestG.get(gr)]); bestG.set(gr, vv); }
+                }
+                const ol = lim[d.h]; used[d.h] += it.dur; lim[d.h] = Math.min(ol, d.c); chosen[i] = d.h;
+                dfs(i + 1, cur + g);
+                used[d.h] -= it.dur; lim[d.h] = ol; chosen[i] = -1;
+                for (let q = undo.length - 1; q >= 0; q--) { const [gr, pv] = undo[q]; if (pv === undefined) bestG.delete(gr); else bestG.set(gr, pv); }
+                if (stopped) return;
+              }
+              dfs(i + 1, cur);
+            };
+            dfs(0, 0);
+            return { later: best, gain: best - greedyLater, tried, capped: stopped };
+          };
           const scoreCand = (c: { p: DayPlan; st: State }, vb: Map<number, Uint8Array>[]) => {
             const tot = new Float32Array(S);
+            const we = cfg.week_exact ? { better: 0, gain: 0, tried: 0, capped: 0 } : null;
             for (let k = 0; k < S; k++) {
               const bestG = new Map<number, number>(groupBase);
               const did = new Set<number>(freeNodes.filter(x => done(x)));
@@ -1458,6 +1532,7 @@ Deno.serve(async (req) => {
                 const g = nodes[x].group, prev = bestG.get(g) ?? 0;
                 v += nodes[x].w * Math.max(0, val0 - prev) / 250; bestG.set(g, Math.max(prev, val0)); did.add(x);
               }
+              const v0 = v, bestG0 = we ? new Map(bestG) : bestG, did0 = we ? new Set(did) : did;
               for (let h = 1; h < days.length; h++) {
                 const opts = freeNodes.map((x, j) => ({ x, j })).filter(o => !skip.has(o.x) && !(nodes[o.x].once && did.has(o.x)) && cap[h][o.j] > 0)
                   .map(o => { const g = nodes[o.x].group, gain = nodes[o.x].w * Math.max(0, vb[h].get(o.x)![k] - (bestG.get(g) ?? 0)) / 250; return { ...o, gain, r: gain / (nodes[o.x].dur + 30) }; })
@@ -1470,9 +1545,15 @@ Deno.serve(async (req) => {
                 }
               }
               for (const u of onceUnits) if (!u.every(x => did.has(x))) v -= Number(cfg.miss_penalty ?? MISS_PENALTY) * u.reduce((t, x) => t + nodes[x].w, 0);
+              if (we) {
+                const r = laterExact(vb, k, bestG0, did0, v - v0);
+                v = v0 + r.later;
+                we.tried += r.tried; if (r.capped) we.capped++; if (r.gain > 1e-9) { we.better++; we.gain += r.gain; }
+              }
               tot[k] = v;
             }
-            return metric(tot);
+            const m = metric(tot);
+            return we ? { ...m, we: { better: we.better, gain: r3(we.gain / S), tried: we.tried, capped: we.capped } } : m;
           };
           // Every ski outing must still fit after tomorrow: a candidate that leaves
           // more outings than the days after it can hold is out (Phil: every place
@@ -1515,7 +1596,7 @@ Deno.serve(async (req) => {
             const pool = ok.length ? ok : cands.slice(0, 1);
             const scored = pool.map(c => ({ c, m: scoreCand(c, vb) }));
             const pick = scored.reduce((a, b) => (b.m.j > a.m.j ? b : a));
-            mcStats = { dropped: cands.length - pool.length, cands: scored.map(x => ({ tag: x.c.tag, j: r3(x.m.j), mean: r3(x.m.mean), stops: x.c.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name) })),
+            mcStats = { dropped: cands.length - pool.length, cands: scored.map(x => ({ tag: x.c.tag, j: r3(x.m.j), mean: r3(x.m.mean), stops: x.c.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name), ...((x.m as any).we ? { we: (x.m as any).we } : {}) })),
                         chose: pick.c.tag, ms: Math.round(performance.now() - tMc) };
             p0 = pick.c.p; st = pick.c.st; list = pick.c.list;
           } else {
@@ -1542,7 +1623,7 @@ Deno.serve(async (req) => {
             };
             const scoreLite = (c: any, vb: Map<number, Uint8Array>[]) => {
               const l = lite(c), m = scoreCand(l, vb);
-              c.fits = fitsLater(l.st); c.m = { j: m.j, mean: m.mean };
+              c.fits = fitsLater(l.st); c.m = { j: m.j, mean: m.mean }; if ((m as any).we) c.we = (m as any).we;
               c.stops = l.st.route.filter(v => nodes[v.n].w > 0).map(v => nodes[v.n].name);
             };
             let cs: any[], todo: any[];
@@ -1586,7 +1667,7 @@ Deno.serve(async (req) => {
             const ok = cs.filter(c => c.fits);
             const pool = ok.length ? ok : cs.slice(0, 1);
             const pick = pool.reduce((a, b) => (b.m.j > a.m.j ? b : a));
-            mcStats = { dropped: cs.length - pool.length, cands: pool.map(c => ({ tag: c.tag, j: r3(c.m.j), mean: r3(c.m.mean), stops: c.stops })),
+            mcStats = { dropped: cs.length - pool.length, cands: pool.map(c => ({ tag: c.tag, j: r3(c.m.j), mean: r3(c.m.mean), stops: c.stops, ...(c.we ? { we: c.we } : {}) })),
                         chose: pick.tag, ms: (pend?.ms ?? 0) + Math.round(performance.now() - tMc) };
             const vis = (pick.visits as any[]).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
             list = (pick.units as string[][]).map(u => u.map(id => pos.get(id)!));
