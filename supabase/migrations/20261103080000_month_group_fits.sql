@@ -108,3 +108,11 @@ begin
   d := replace(d, o, '         where trip_id = v.trip_id and season = v_season and mg = v_mmg group by model, m8) a group by model) f;');
   execute d;
 end $$;
+
+-- Follow-up (same day): the winter bench data starts on 30 Nov (forecasts fetched for the 1 Dec
+-- start weeks), so 30 Nov counts as winter: the group-0 fits are then byte-identical to before
+-- (checked by md5 after a refit). Autumn = 1 Sep - 29 Nov.
+create or replace function public.replay_month_group(p_day date)
+returns smallint language sql immutable as $$
+  select (case when extract(month from p_day) in (9, 10) or (extract(month from p_day) = 11 and extract(day from p_day) < 30) then 1 else 0 end)::smallint
+$$;
