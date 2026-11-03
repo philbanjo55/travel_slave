@@ -306,8 +306,111 @@ def calculators():
     back()
 
 
+
+def texts_all(scrolls=5, up_first=0):
+    """Every text on a screen, scrolling down; returns (set of texts, last state)."""
+    for _ in range(up_first):
+        C.adb('shell', 'input', 'swipe', '540', '700', '540', '1700', '300'); time.sleep(0.5)
+    seen = []
+    s = C.capture(1.5)
+    for i in range(scrolls + 1):
+        seen += s.all_texts
+        if i < scrolls:
+            C.swipe_up(); s = C.capture(1.2)
+    return seen, s
+
+
+def field_reciprocity_and_timer():
+    s = home(); icons = header_icons(s)
+    if len(icons) < 3:
+        check('recip-filters', False, 'no header icons'); return
+    C.tap(icons[-3]['xy']); r = C.capture(3)
+    tap_text(r, 'Pan F+ 50'); r = C.capture(1.5)
+    if not r.inputs:
+        check('recip-filters', False, 'no input'); return
+    C.tap(r.inputs[0]['xy']); C.adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END')
+    for _ in range(8):
+        C.adb('shell', 'input', 'keyevent', 'KEYCODE_DEL')
+    C.adb('shell', 'input', 'text', '0.25'); C.adb('shell', 'input', 'keyevent', 'KEYCODE_BACK'); time.sleep(1)
+    if not find_scroll('Red 29', 8):
+        check('recip-filters', False, 'no Red 29 chip'); return
+    s = C.capture(1); tap_text(s, 'ND64'); s = C.capture(1.5)
+    show('recip-filter-box', s)
+    box = '\n'.join(s.all_texts)
+    seen, _ = texts_all(0, up_first=12)
+    show('recip-result-with-filters', C.capture(0.5))
+    ok_box = '18m' in box and 'with filters' in box
+    ok_res = any(t.startswith('18m') for t in seen) and any('Includes filters +10 stops' in t for t in seen)
+    check('recip-filters', ok_box and ok_res, f'box={ok_box} result={ok_res} (1/4 s + Red 29 + ND64 on Pan F+ should be ~18m)')
+    # reading taken through the filters -> no filter stops added
+    if find_scroll('My reading was taken through', 8):
+        seen, _ = texts_all(0, up_first=12)
+        show('recip-through-filters', C.capture(0.5))
+        check('recip-through-filters', any('Filters already in the reading' in t for t in seen) and not any(t.startswith('18m') for t in seen))
+        find_scroll('My reading was taken through', 8)  # untick
+        texts_all(0, up_first=12)
+    else:
+        check('recip-through-filters', False, 'no checkbox')
+    # timer: 18 min exposure
+    s = C.capture(1)
+    if not find_scroll('Start Timer', 3):
+        check('timer-keeps-screen-on', False, 'no Start Timer'); return
+    time.sleep(5)
+    t = C.capture(0.5); show('timer-running', t)
+    win = C.adb('shell', 'dumpsys', 'window', 'windows', timeout=60)
+    check('timer-keeps-screen-on', 'KEEP_SCREEN_ON' in win)
+    alarms = C.adb('shell', 'dumpsys', 'alarm', timeout=60)
+    n_al = alarms.count(PKG)
+    check('timer-end-notification', n_al > 0, f'{n_al} alarms for the app')
+    C.adb('shell', 'input', 'keyevent', 'KEYCODE_BACK'); d = C.capture(1.5); show('timer-after-back', d)
+    asked = has(d, 'Stop the timer?')
+    tap_text(d, 'Keep timing'); k = C.capture(1.5); show('timer-kept', k)
+    check('timer-back-asks', asked and has(k, 'EXPOSING'))
+    tap_text(k, 'Cancel', exact=True); d = C.capture(1.5)
+    tap_text(d, 'Stop', exact=True); e = C.capture(2); show('timer-stopped', e)
+    alarms2 = C.adb('shell', 'dumpsys', 'alarm', timeout=60).count(PKG)
+    check('timer-stop', not has(e, 'EXPOSING') and alarms2 < n_al, f'alarms {n_al} -> {alarms2}')
+    back()
+
+
+def field_trips_and_forecasts():
+    s = home()
+    seen, _ = texts_all(2)
+    low = [t.lower() for t in seen]
+    check('trip-day-count', '7 days' in low and '16 days' in low, ' / '.join(t for t in seen if t.lower().endswith('days')))
+    t = open_teton()
+    if t is None:
+        check('timeline-preview-tag', False, 'no Teton trip'); return
+    seen, _ = texts_all(5)
+    tags = sorted(set(x for x in seen if x.lower().startswith('preview · ')))
+    check('timeline-preview-tag', bool(tags), ', '.join(tags))
+    check('t-card-online', any('planned' in x for x in seen))
+    # planner overview: Latest brief + the alert switch in trip time
+    t = open_teton()
+    if t is not None and tap_text(t, 'Open the Planner'):
+        seen, _ = texts_all(6)
+        show('planner-overview-end', C.capture(0.5))
+        check('planner-latest-brief', any('LATEST BRIEF' in x for x in seen) and not any("TONIGHT'S BRIEF" in x for x in seen))
+        alert = [x for x in seen if 'trip time' in x or 'Daily plan alert' in x]
+        check('planner-alert-trip-time', any('trip time' in x for x in alert), ' | '.join(alert)[:200])
+
+
+def field_offline_plan():
+    t = open_teton()  # online: the day plan is read and saved on the phone
+    time.sleep(6)
+    net(False)
+    t = open_teton()
+    if t is None:
+        check('t-card-offline', False, 'trip did not open offline'); net(True); return
+    time.sleep(8)
+    seen, _ = texts_all(3)
+    show('teton-offline', C.capture(0.5))
+    check('t-card-offline', any('offline · planned' in x for x in seen))
+    net(True)
+
+
 def main():
-    steps = [fix1_offline_trips, fix_import_and_exposures, fix_archive_and_day_status, calculators, walk_teton]
+    steps = [fix1_offline_trips, fix_archive_and_day_status, field_reciprocity_and_timer, field_trips_and_forecasts, field_offline_plan]
     for st in steps:
         try:
             st()
