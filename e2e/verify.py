@@ -320,6 +320,13 @@ def texts_all(scrolls=5, up_first=0):
     return seen, s
 
 
+def hide_kb():
+    """Close the soft keyboard only if it is up (Back with no keyboard would leave the screen)."""
+    for _ in range(2):
+        if 'mInputShown=true' in C.adb('shell', 'dumpsys', 'input_method', timeout=30):
+            C.adb('shell', 'input', 'keyevent', 'KEYCODE_BACK'); time.sleep(0.8)
+
+
 def field_reciprocity_and_timer():
     s = home(); icons = header_icons(s)
     if len(icons) < 3:
@@ -331,7 +338,7 @@ def field_reciprocity_and_timer():
     C.tap(r.inputs[0]['xy']); C.adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END')
     for _ in range(8):
         C.adb('shell', 'input', 'keyevent', 'KEYCODE_DEL')
-    C.adb('shell', 'input', 'text', '0.25'); C.adb('shell', 'input', 'keyevent', 'KEYCODE_BACK'); time.sleep(1)
+    C.adb('shell', 'input', 'text', '0.25'); time.sleep(0.5); hide_kb(); time.sleep(1)
     if not find_scroll('Red 29', 8):
         check('recip-filters', False, 'no Red 29 chip'); return
     s = C.capture(1); tap_text(s, 'ND64'); s = C.capture(1.5)
@@ -352,7 +359,7 @@ def field_reciprocity_and_timer():
     else:
         check('recip-through-filters', False, 'no checkbox')
     # timer: 18 min exposure
-    s = C.capture(1)
+    hide_kb(); s = C.capture(1)
     if not find_scroll('Start Timer', 3):
         check('timer-keeps-screen-on', False, 'no Start Timer'); return
     time.sleep(5)
