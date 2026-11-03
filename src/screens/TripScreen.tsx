@@ -21,7 +21,8 @@ import {
   fetchClaudeSpend, spendLine, fetchDayRuns, dayChanges, applyWeek, isPastDay, canApply, changesLine,
   labelMinutes, DayChange,
 } from '../services/planner';
-import { DayScoreCard, dayScore, useDayPlanner } from '../components/planner/DayPlannerHints';
+import { DayScoreCard, dayScore, moveReasons, useDayPlanner } from '../components/planner/DayPlannerHints';
+import { shotsText } from '../services/plannerWords';
 import { briefSeenAt } from '../services/plannerSeen';
 import { GhostTag, TimelineRow } from '../components/planner/DayTimeline';
 import PlanningStrip from '../components/planner/PlanningStrip';
@@ -432,8 +433,9 @@ export default function TripScreen() {
             popover={!ghostRows && pop === item.id && score ? (
               <View style={styles.popover}>
                 <Text style={styles.popText}>
-                  Part of T's best plan: {realChanges.length} change{realChanges.length === 1 ? '' : 's'}
-                  {score.mine != null && score.best != null ? `, ${score.mine}% → ${score.best}%` : score.best != null ? `, best ${score.best}%` : ''}.
+                  {(() => { const c = changes.find(x => x.stop_id === item.id); return c && planner && day?.date ? `${moveReasons([c], planner, day.date)[0]}. ` : ''; })()}
+                  Part of T's plan: {realChanges.length} change{realChanges.length === 1 ? '' : 's'} on this day
+                  {score.mine != null && score.bigOnDay ? ` (big-subject good shots ${shotsText(score.mine)} → ${shotsText(score.best)})` : ''}.
                 </Text>
                 <View style={styles.popBtns}>
                   <TouchableOpacity style={styles.popGo} onPress={() => { setPop(null); setGhost(true); }} accessibilityRole="button">
@@ -562,7 +564,7 @@ export default function TripScreen() {
           </TouchableOpacity>
           {ghostDetails ? (
             <View style={{ gap: 4 }}>
-              <Text style={styles.ghostNote}>{changesLine(changes)}</Text>
+              {(score?.reasons.length ? score.reasons : [changesLine(changes)]).map(r => <Text key={r} style={styles.ghostNote}>· {r}</Text>)}
               {ghostPreview ? (() => {
                 // Accepting this day also takes stops from the days T moved them off (they lose them).
                 const here = (ghostPreview.days ?? []).find((d: any) => d.date === day?.date);

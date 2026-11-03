@@ -7,6 +7,7 @@ import { dayBadge } from '../../components/planner/dayBadge';
 import { useTierOf } from '../../components/planner/DayPlannerHints';
 import { fetchDayRuns, fetchScores, latestByDay, PlanRun } from '../../services/planner';
 import { usePlanningStatus } from '../../services/planningStatus';
+import { shotsText } from '../../services/plannerWords';
 
 // Any trip day, or three days together. The chosen day is shared with Map.
 export default function PlansTab({ tripId, days, date, setDate, goMap }: {
@@ -18,7 +19,7 @@ export default function PlansTab({ tripId, days, date, setDate, goMap }: {
   const i = dated.findIndex((d: any) => d.date === cur);
   const three = i >= 0 ? dated.slice(i, i + 3).map((d: any) => d.date) : [];
 
-  // Each day's best plan as % of a perfect day, under its date (redesign §6); reloaded when T finishes.
+  // Each day's good shots of big subjects on T's plan, under its date; reloaded when T finishes.
   const tierOf = useTierOf(tripId);
   const planning = usePlanningStatus(tripId);
   const [best, setBest] = useState<Map<string, number | null>>(new Map());
@@ -61,7 +62,7 @@ export default function PlansTab({ tripId, days, date, setDate, goMap }: {
             <TouchableOpacity key={d.id} onPress={() => setDate(d.date)} style={[styles.day, on && styles.dayOn]}>
               <Text style={[styles.dayNum, on && styles.dayTextOn]}>D{d.day_number}</Text>
               <Text style={[styles.dayDate, on && styles.dayTextOn]}>{format(parseISO(d.date), 'd MMM')}</Text>
-              {best.get(d.date) != null ? <Text style={[styles.dayPct, on && styles.dayTextOn]}>{best.get(d.date)}%</Text> : null}
+              {best.get(d.date) != null ? <Text style={[styles.dayPct, on && styles.dayTextOn]}>{shotsText(best.get(d.date)!)}</Text> : null}
               <Text style={[styles.dayBadge, { color: on ? colors.textInverse : b.color }]}>{b.text === 'LIGHT ONLY' ? 'LIGHT' : b.text.slice(0, 5)}</Text>
             </TouchableOpacity>
           );

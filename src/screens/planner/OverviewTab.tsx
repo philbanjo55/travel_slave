@@ -9,13 +9,13 @@ import {
   fetchTripFrames, fetchTripSettings, latestByDay, planDay, spendLine, usesT, waitForT,
 } from '../../services/planner';
 import { startReplan } from '../../services/planningStatus';
-import { ScoreBar, ScoreText } from '../../components/planner/ScoreBar';
+import { ScoreBar, ShotsText } from '../../components/planner/ScoreBar';
 import { FrameModal, FrameTile } from '../../components/planner/CameraView';
 import { dayBadge } from '../../components/planner/dayBadge';
 import { markBriefSeen } from '../../services/plannerSeen';
 import { cachedTrip, storeFrames } from '../../services/cameraCache';
 
-type DayRow = { id: string; date: string; day_number: number; run?: PlanRun; best?: number | null; mine?: number | null; hasMine?: boolean; top?: string[] };
+type DayRow = { id: string; date: string; day_number: number; run?: PlanRun; best?: number | null; mine?: number | null; hasMine?: boolean; top?: string[]; goods?: number };
 
 export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
   tripId: string; days: any[]; goPlans: (date: string) => void; goTab: (t: 'setup' | 'subjects') => void;
@@ -103,6 +103,11 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
     return { n: s.length, nailed: s.filter(x => x.shot_status === 'nailed').length, got: s.filter(x => x.shot_status === 'got').length };
   };
   const god = big('GOD'), sTier = big('S');
+  // Day rows' bars share one scale: the best day's good shots.
+  const maxShots = Math.max(1, ...rows.map(r => Math.max(r.best ?? 0, r.mine ?? 0)));
+  const ahead = rows.filter(r => r.run && differenceInCalendarDays(parseISO(r.date), today) >= 0);
+  const weekT = ahead.reduce((t, r) => t + (r.best ?? 0), 0);
+  const weekMine = ahead.every(r => r.mine != null) ? ahead.reduce((t, r) => t + (r.mine ?? 0), 0) : null;
 
   return (
     <ScrollView contentContainerStyle={styles.body}
@@ -124,9 +129,8 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
           ) : next.run ? null : <Text style={styles.briefSub}>Not planned yet. Tap to plan it.</Text>}
           {next.run ? (
             <View style={styles.briefScore}>
-              <ScoreText mine={next.mine} best={next.best} style={styles.briefPct} />
-              <Text style={styles.briefSub}>{next.mine != null ? 'your day → T\'s best, of a perfect day' : 'T\'s best, of a perfect day'}</Text>
-              <ScoreBar mine={next.mine} best={next.best} />
+              <ShotsText mine={next.mine} best={next.best} style={styles.briefPct} />
+              <Text style={styles.briefSub}>{next.mine != null && next.mine !== next.best ? "good shots of big subjects expected: your day → T's plan" : 'good shots of big subjects expected'}</Text>
             </View>
           ) : null}
           <View style={styles.briefFoot}>
@@ -137,7 +141,7 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
       ) : null}
 
       <View style={styles.sectionHead}>
-        <Text style={styles.label}>ALL DAYS</Text>
+        <Text style={styles.label}>ALL DAYS · GOOD SHOTS OF BIG SUBJECTS</Text>
         {missing > 0 && !planning ? (
           <TouchableOpacity onPress={planMissing} style={styles.smallBtn}>
             <Text style={styles.smallBtnText}>Plan {missing} days</Text>
@@ -145,6 +149,11 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
         ) : null}
         {planning ? <Text style={styles.progress}>Planning {planning.done}/{planning.total}…</Text> : null}
       </View>
+      {ahead.length > 1 ? (
+        <Text style={styles.hint}>
+          From today: T {weekT.toFixed(1)}{weekMine != null ? ` · your days ${weekMine.toFixed(1)}` : ''}. Each big subject adds its chance (a 2-in-3 Good bet adds 0.7). T may lower one day to win the week.
+        </Text>
+      ) : null}
       {rows.map(r => {
         const b = dayBadge(r.date);
         return (
@@ -157,10 +166,12 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
               {r.run ? (
                 <>
                   <View style={styles.dayScoreRow}>
-                    <ScoreText mine={r.mine} best={r.best} style={styles.dayScore} />
-                    <View style={{ flex: 1 }}><ScoreBar mine={r.mine} best={r.best} height={4} /></View>
+                    <ShotsText mine={r.mine} best={r.best} style={styles.dayScore} />
+                    <View style={{ flex: 1 }}><ScoreBar mine={r.mine != null ? (100 * r.mine) / maxShots : null} best={r.best != null ? (100 * r.best) / maxShots : null} height={4} /></View>
                   </View>
-                  {r.top?.length ? <Text style={styles.dayTop} numberOfLines={1}>{r.top.join(' · ')}</Text> : null}
+                  <Text style={styles.dayTop} numberOfLines={1}>
+                    {r.top?.length ? `Good bet${r.top.length === 1 ? '' : 's'}: ${r.top.join(' · ')}` : (r.best ?? 0) < 0.1 ? 'No good bet among the big subjects' : 'Long shots only'}
+                  </Text>
                 </>
               ) : <Text style={styles.dayTop}>Not planned</Text>}
             </View>
@@ -227,7 +238,7 @@ const styles = StyleSheet.create({
   },
   dayNum: { ...typography.labelMedium, color: colors.textSecondary },
   dayDate: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
-  dayScore: { fontSize: 13, color: colors.textPrimary, minWidth: 92 },
+  dayScore: { fontSize: 15, color: colors.textPrimary, minWidth: 80 },
   dayScoreRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   briefScore: { gap: 4, marginTop: 2 },
   briefPct: { fontFamily: 'Georgia', fontSize: 22, color: colors.textPrimary },

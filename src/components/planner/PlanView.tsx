@@ -7,18 +7,20 @@ import { colors, spacing, radius, typography } from '../../theme';
 import {
   Plan, PlanRun, PlanVisit, applyPreview, fetchDayRuns, fetchMultiRuns, fetchPlans, hhmm, ago, latestByDay,
   planDay, planDays, planTitle, runTripDates, LIGHT_WORDS, usesT, latestT, waitForT, fetchTDays,
-  planCeiling, planPct, pctText, canApply, applyPlan,
+  canApply, applyPlan, clock12,
 } from '../../services/planner';
+import { VERDICT_COLOR, VERDICT_TEXT, countText, expShots, forecastCount, isLightOnly, lateReplan, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
+import { forgetWeek } from '../../services/plannerWeek';
 import { startReplan, ack } from '../../services/planningStatus';
 import { useTripStore } from '../../store/tripStore';
 import { dayBadge } from './dayBadge';
 import { useTierOf, forgetTiers } from './DayPlannerHints';
-import { ScoreBar, ScoreText } from './ScoreBar';
+import { ShotsText } from './ScoreBar';
 
 const MODE_TEXT: Record<string, string> = {
   forecast: 'Forecast for this day',
   tforecast: "T's plan from the forecast for this day",
-  tlight: "T's week draft: real sun for this date, no forecast reaches it yet",
+  tlight: "T's week draft: real sun for this date and typical weather (no forecast reaches it yet)",
   light: 'Light only: real sun for this date, typical (mostly cloudy) weather',
   preview: "Preview: this week's forecast played as this day (today's sun, not the trip's)",
 };
@@ -105,8 +107,11 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
       </View>
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>
+          {(() => { const l = lateReplan(run, plans); return l && run ? (
+            <Text style={styles.warn}>This morning's re-plan came at {clock12(run.created_at, run.params?.tz)}, after the first stop ({clock12(l, run.params?.tz)}).</Text>
+          ) : null; })()}
           <Text style={styles.hint}>
-            {MODE_TEXT[kind]}{run ? ` · planned ${ago(run.created_at)}` : ''}
+            {t && run ? `${planKindText(run)}, made ${clock12(run.created_at, run.params?.tz)} (${ago(run.created_at)})` : `${MODE_TEXT[kind]}${run ? ` · planned ${ago(run.created_at)}` : ''}`}
             {runDay?.start_hotel && runDay?.end_hotel && runDay.start_hotel !== runDay.end_hotel
               ? `\nMove day: ${runDay.start_hotel} → ${runDay.end_hotel}` : ''}
           </Text>
@@ -192,8 +197,8 @@ export function PlanBody({ tripId, run, plans, byDay, initialRank, onRank }: {
   const openStop = useOpenStop();
   const tierOf = useTierOf(tripId);
   const mine = plans.find(p => p.rank === 0), bestPlan = plans.find(p => p.rank === 1);
-  // One scale everywhere: % of a perfect day (the same ceiling for every plan of the run).
-  const ceiling = planCeiling(run, [mine, bestPlan], tierOf);
+  // One scale everywhere: the good shots of the big subjects (GOD + S) each plan expects.
+  const big = (p: Plan | undefined) => expShots(p, tierOf), rest = (p: Plan | undefined) => expShots(p, tierOf, false);
   const [sel, setSel] = useState(initialRank ?? 1);
   const [apply, setApply] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
@@ -217,7 +222,7 @@ export function PlanBody({ tripId, run, plans, byDay, initialRank, onRank }: {
         {plans.map(p => (
           <TouchableOpacity key={p.rank} onPress={() => choose(p.rank)} style={[styles.chip, sel === p.rank && styles.chipOn]}>
             <Text style={[styles.chipText, sel === p.rank && styles.chipTextOn]}>
-              {planTitle(p)} <Text style={sel === p.rank ? styles.chipPctOn : styles.chipPct}>{pctText(planPct(p, ceiling).pct)}</Text>
+              {planTitle(p)} <Text style={sel === p.rank ? styles.chipPctOn : styles.chipPct}>{shotsText(big(p))}</Text>
             </Text>
           </TouchableOpacity>
         ))}
@@ -225,16 +230,16 @@ export function PlanBody({ tripId, run, plans, byDay, initialRank, onRank }: {
       {plan ? (
         <>
           <Text style={styles.summary}>
-            Expected <Text style={styles.bold}>{pctText(planPct(plan, ceiling).pct)}</Text>
-            {'  ·  '}bad weather <Text style={styles.bold}>{pctText(planPct(plan, ceiling).bad)}</Text>
+            Good shots expected: <Text style={styles.bold}>{shotsText(big(plan))}</Text> of big subjects
+            {rest(plan) >= 0.05 ? <>{', '}<Text style={styles.bold}>{shotsText(rest(plan))}</Text> of the others</> : null}
             {plan.drive_minutes != null ? `  ·  ${plan.drive_minutes} min driving` : ''}
             {plan.long_leg_minutes ? ` (${plan.long_leg_minutes} min over an hour)` : ''}
           </Text>
-          {mine && bestPlan && plan.rank !== 0 ? (
-            <View style={{ gap: 4 }}>
-              <ScoreBar mine={planPct(mine, ceiling).pct} best={planPct(plan, ceiling).pct} />
-              <Text style={styles.hint}>Your day {pctText(planPct(mine, ceiling).pct)} → {planTitle(plan).toLowerCase()} {pctText(planPct(plan, ceiling).pct)}, of a perfect day</Text>
-            </View>
+          {mine && bestPlan && plan.rank !== 0 && shotsText(big(mine)) !== shotsText(big(plan)) ? (
+            <Text style={styles.hint}>
+              Your day {shotsText(big(mine))} → {planTitle(plan).toLowerCase()} {shotsText(big(plan))}
+              {big(plan) < big(mine) ? ". T's day is lower here because it saves a big subject for a better day of the week." : ''}
+            </Text>
           ) : null}
           {plan.visits.map((v, i) => {
             const d = v.trip_date ?? v.date;
@@ -242,7 +247,7 @@ export function PlanBody({ tripId, run, plans, byDay, initialRank, onRank }: {
             return (
               <View key={`${v.stop_id}-${i}`}>
                 {head ? <Text style={[styles.label, { marginTop: spacing.md }]}>{format(parseISO(head), 'EEE d MMM').toUpperCase()}</Text> : null}
-                <VisitRow v={v} tz={tz} mine={plan.rank === 0} onPress={() => openStop(v.stop_id)} />
+                <VisitRow v={v} tz={tz} mine={plan.rank === 0} run={run} onPress={() => openStop(v.stop_id)} />
               </View>
             );
           })}
@@ -252,23 +257,26 @@ export function PlanBody({ tripId, run, plans, byDay, initialRank, onRank }: {
             </TouchableOpacity>
           ) : null}
           {error ? <Text style={styles.error}>{error}</Text> : null}
-          <Text style={styles.hint}>Chance = share of the 51 weather versions (or light scenarios) where the shot comes out good.</Text>
+          <Text style={styles.hint}>
+            {isLightOnly(run) ? 'No forecast reaches this day yet: chances are for typical weather on this date, with its real sun.'
+              : `Good bet = a good shot in at least half of T's ${forecastCount(run) ?? 6} forecasts; Long shot = in some; Skip = in none.`}
+          </Text>
         </>
       ) : <Text style={styles.hint}>No plan.</Text>}
-      <ApplySheet apply={apply} onClose={() => setApply(null)} tripId={tripId} run={run} plan={plan} mine={mine} ceiling={ceiling} />
+      <ApplySheet apply={apply} onClose={() => setApply(null)} tripId={tripId} run={run} plan={plan} mine={mine} />
     </View>
   );
 }
 
 // What applying a plan would change, its score against your day, and (test trips) Accept all.
-export function ApplySheet({ apply, onClose, tripId, run, plan, mine, ceiling, onAccepted }: {
-  apply: any | null; onClose: () => void; tripId?: string; run?: PlanRun | null; plan?: Plan; mine?: Plan; ceiling?: number;
+export function ApplySheet({ apply, onClose, tripId, run, plan, mine, onAccepted }: {
+  apply: any | null; onClose: () => void; tripId?: string; run?: PlanRun | null; plan?: Plan; mine?: Plan;
   onAccepted?: (result: any) => void;
 }) {
   const { currentTripData, loadTrip } = useTripStore();
   const [busy, setBusy] = useState(false);
-  const c = ceiling ?? 0;
-  const mineP = mine ? planPct(mine, c) : null, planP = plan ? planPct(plan, c) : null;
+  const tierOf = useTierOf(tripId);
+  const mineS = mine ? expShots(mine, tierOf) : null, planS = plan ? expShots(plan, tierOf) : null;
   const pOf = (p: Plan | undefined, name: string) => p?.visits.find(v => v.name === name)?.p_good;
   const wasLabel = (date: string, name: string) => {
     const d = currentTripData?.days.find((x: any) => x.date === date);
@@ -286,6 +294,7 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, ceiling, o
       if (j.preview_only) throw new Error('This trip is preview only.');
       await loadTrip(tripId);
       forgetTiers();
+      forgetWeek(tripId);
       onClose();
       onAccepted?.(j.result);
       Alert.alert('Plan accepted', acceptedText(j.result));
@@ -302,14 +311,12 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, ceiling, o
               <Ionicons name="close" size={22} color={colors.textPrimary} />
             </TouchableOpacity>
           </View>
-          {plan && planP ? (
+          {plan && planS != null ? (
             <View style={{ gap: 4 }}>
-              <ScoreText mine={mineP?.pct} best={planP.pct} style={styles.sheetPct} />
+              <ShotsText mine={mineS} best={planS} style={styles.sheetPct} />
               <Text style={styles.hint}>
-                {mineP ? `Your day ${pctText(mineP.pct)} → ${planTitle(plan)} ${pctText(planP.pct)}` : `${planTitle(plan)} ${pctText(planP.pct)}`}
-                {`  ·  bad weather ${mineP ? `${pctText(mineP.bad)} → ` : ''}${pctText(planP.bad)}`}
+                Good shots of big subjects expected{mineS != null ? `: your day ${shotsText(mineS)} → ${planTitle(plan)} ${shotsText(planS)}` : `: ${shotsText(planS)}`}
               </Text>
-              <ScoreBar mine={mineP?.pct} best={planP.pct} />
             </View>
           ) : null}
           <Text style={styles.hint}>
@@ -329,10 +336,11 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, ceiling, o
                       <Text style={[styles.applyTime, (s.retimed || s.moved_from) && styles.applyTimeNew]}>{s.time_label ?? ''}</Text>
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.applyName, s.planned && styles.bold]} numberOfLines={1}>{s.name}</Text>
-                        {was || (a != null && b != null && Math.round(a * 100) !== Math.round(b * 100)) ? (
+                        {was || (a != null && b != null && verdictOf(a) !== verdictOf(b)) || (a == null && b != null) ? (
                           <Text style={styles.applySub}>
-                            {was ? `was ${was}` : ''}{was && a != null && b != null ? ' · ' : ''}
-                            {a != null && b != null ? `${Math.round(a * 100)}% → ${Math.round(b * 100)}%` : ''}
+                            {was ? `was ${was}` : ''}{was && b != null ? ' · ' : ''}
+                            {a != null && b != null && verdictOf(a) !== verdictOf(b) ? `${VERDICT_TEXT[verdictOf(a)]} → ${VERDICT_TEXT[verdictOf(b)]}`
+                              : b != null ? `${VERDICT_TEXT[verdictOf(b)]} (${countText({ p_good: b }, run).replace(/ forecasts$/, '')})` : ''}
                           </Text>
                         ) : null}
                       </View>
@@ -358,7 +366,7 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, ceiling, o
           {writable ? (
             <TouchableOpacity style={styles.applyBtn} onPress={accept} disabled={busy} accessibilityRole="button">
               {busy ? <ActivityIndicator color={colors.textInverse} />
-                : <Text style={styles.applyText}>Accept all{mineP && planP ? ` · ${pctText(mineP.pct)} → ${pctText(planP.pct)}` : ''}</Text>}
+                : <Text style={styles.applyText}>Accept all{mineS != null && planS != null ? ` · ${shotsText(mineS)} → ${shotsText(planS)} good shots` : ''}</Text>}
             </TouchableOpacity>
           ) : null}
         </View>
@@ -377,34 +385,34 @@ export function acceptedText(r: any): string {
     + (r?.clashes?.length ? `\nCheck: ${r.clashes.length} tight connection${r.clashes.length === 1 ? '' : 's'}` : '');
 }
 
-export function VisitRow({ v, tz, mine, onPress, index }: { v: PlanVisit; tz?: string; mine: boolean; onPress: () => void; index?: number }) {
-  const pct = v.p_good != null ? Math.round(v.p_good * 100) : null;
-  const barColor = pct == null ? colors.border : pct >= 60 ? colors.signalOk : pct >= 30 ? '#aaaaaa' : '#555555';
+export function VisitRow({ v, tz, mine, onPress, index, run }: { v: PlanVisit; tz?: string; mine: boolean; onPress: () => void; index?: number; run?: PlanRun | null }) {
+  const vd = v.p_good != null ? verdictOf(v.p_good) : null;
   const light = v.light ? LIGHT_WORDS[v.light] ?? v.light : null;
   const muted = mine && !v.rated;
   return (
     <TouchableOpacity style={styles.visit} onPress={onPress} activeOpacity={0.8}>
-      <Text style={[styles.visitTime, muted && styles.muted]}>{index != null ? `${index} · ` : ''}{hhmm(v.start, tz)}</Text>
+      <Text style={[styles.visitTime, muted && styles.muted]}>{index != null ? `${index} · ` : ''}{clock12(v.start, tz).replace(' AM', 'a').replace(' PM', 'p')}</Text>
       <View style={{ flex: 1, gap: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text style={[styles.visitName, muted && styles.muted]} numberOfLines={2}>{v.name}</Text>
           {v.booked ? <Text style={styles.booked}>BOOKED</Text> : null}
         </View>
-        {pct != null ? (
+        {vd ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={styles.barBg}><View style={[styles.bar, { width: `${Math.max(pct, 3)}%`, backgroundColor: barColor }]} /></View>
-            <Text style={styles.visitMeta}>
-              {pct}%{light ? ` · ${light}` : ''}{v.peak_at && v.peak_at !== v.start ? ` at ${hhmm(v.peak_at, tz)}` : ''}
+            <Text style={[styles.verdict, { color: VERDICT_COLOR[vd], borderColor: VERDICT_COLOR[vd] }]}>{VERDICT_TEXT[vd]}</Text>
+            <Text style={styles.visitMeta} numberOfLines={1}>
+              {countText(v, run)}{light ? ` · ${light}` : ''}{v.peak_at && v.peak_at !== v.start ? ` · best at ${clock12(v.peak_at, tz)}` : ''}
             </Text>
           </View>
         ) : null}
+        {(v as any).move_why ? <Text style={styles.visitSub}>{(v as any).move_why}</Text> : null}
         {!mine && (v.wait_min || v.drive_min) ? (
           <Text style={styles.visitSub}>
             {v.drive_min ? `${v.drive_min} min drive` : ''}{v.drive_min && v.wait_min ? ' · ' : ''}{v.wait_min ? `${v.wait_min} min wait` : ''}
           </Text>
         ) : null}
-        {mine && v.best && v.best.p_good > (v.p_good ?? 0) + 0.1 ? (
-          <Text style={styles.hintChip}>Better at {hhmm(v.best.start, tz)}: {Math.round(v.best.p_good * 100)}%</Text>
+        {mine && v.best && verdictOf(v.best.p_good) !== vd && v.best.p_good > (v.p_good ?? 0) ? (
+          <Text style={styles.hintChip}>Better at {clock12(v.best.start, tz)}: {VERDICT_TEXT[verdictOf(v.best.p_good)]}</Text>
         ) : null}
       </View>
     </TouchableOpacity>
@@ -428,6 +436,7 @@ const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingVertical: spacing.xxl },
   hint: { fontSize: 12, color: colors.textTertiary, lineHeight: 17 },
   error: { fontSize: 13, color: '#e74c3c' },
+  warn: { fontSize: 12, color: colors.textPrimary, borderLeftWidth: 2, borderLeftColor: colors.textPrimary, paddingLeft: 8 },
   chips: { gap: 6, paddingVertical: spacing.xs },
   chip: { minHeight: 34, paddingHorizontal: 14, justifyContent: 'center', borderRadius: radius.full, borderWidth: 1, borderColor: colors.border },
   chipOn: { backgroundColor: colors.accent, borderColor: colors.accent },
@@ -444,12 +453,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row', gap: spacing.md, paddingVertical: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderSubtle,
   },
-  visitTime: { width: 46, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
+  visitTime: { width: 52, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   visitName: { fontSize: 15, fontWeight: '600', color: colors.textPrimary, flexShrink: 1 },
   muted: { color: colors.textTertiary, fontWeight: '400' },
   booked: { fontSize: 9, fontWeight: '800', color: colors.textInverse, backgroundColor: colors.accent, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 3 },
-  barBg: { width: 70, height: 4, borderRadius: 2, backgroundColor: colors.border },
-  bar: { height: 4, borderRadius: 2 },
+  verdict: { fontSize: 11, fontWeight: '800', borderWidth: 1, borderRadius: radius.full, paddingHorizontal: 7, paddingVertical: 1, overflow: 'hidden' },
   visitMeta: { fontSize: 12, color: colors.textSecondary, flexShrink: 1 },
   visitSub: { fontSize: 11, color: colors.textTertiary },
   hintChip: {
