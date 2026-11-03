@@ -1,0 +1,106 @@
+name: App emulator test (read-only tap-through)
+
+# Builds the TEST variant of the app (Philm+Frame TEST, com.philmframe.app.test)
+# with every Supabase write blocked (e2e/fetchGuard.ts), installs it on an
+# Android emulator and taps through every screen (e2e/crawl.py).
+# Runs only on this branch. Starts no EAS build and publishes no update:
+# expo-updates is switched off in this throwaway build.
+
+on:
+  push:
+    branches: [claude/planner-clarity-test]
+  workflow_dispatch:
+
+concurrency:
+  group: planner-clarity-test
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache APK for unchanged app code
+        id: apkcache
+        uses: actions/cache@v4
+        with:
+          path: apk
+          key: apk-${{ hashFiles('src/**', 'App.tsx', 'app.json', 'app.config.js', 'package-lock.json', 'e2e/fetchGuard.ts', '.github/workflows/app-emulator-test.yml') }}
+      - uses: actions/setup-node@v4
+        if: steps.apkcache.outputs.cache-hit != 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        if: steps.apkcache.outputs.cache-hit != 'true'
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Read-only test build (guard first, updates off)
+        if: steps.apkcache.outputs.cache-hit != 'true'
+        run: |
+          sed -i "1i import './e2e/fetchGuard';" App.tsx
+          head -3 App.tsx
+          jq '.expo.updates.enabled = false' app.json > app.tmp && mv app.tmp app.json
+          npm ci --no-audit --no-fund
+      - name: Prebuild Android (TEST variant)
+        if: steps.apkcache.outputs.cache-hit != 'true'
+        env:
+          APP_VARIANT: test
+          CI: 1
+        run: npx expo prebuild --platform android --no-install
+      - name: Gradle release APK (x86_64 only)
+        if: steps.apkcache.outputs.cache-hit != 'true'
+        env:
+          APP_VARIANT: test
+          NODE_ENV: production
+        run: |
+          cd android
+          printf "\norg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\n" >> gradle.properties
+          tail -4 gradle.properties
+          ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon --stacktrace
+          mkdir -p ../apk && cp app/build/outputs/apk/release/*.apk ../apk/app.apk
+          ls -la ../apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-apk
+          path: apk/app.apk
+          retention-days: 7
+
+  emulator:
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-apk
+          path: apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run tap-through on a Pixel emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          OUT: out
+          CRAWL_MINUTES: '20'
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 4096M
+          disk-size: 6000M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: bash e2e/run.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tap-through-results
+          path: out
+          retention-days: 14
