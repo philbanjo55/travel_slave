@@ -22,7 +22,7 @@ export type PlanRun = { id: string; created_at: string; plan_date: string; param
 export type RunMode = 'forecast' | 'light' | 'preview';
 
 export type CameraFrame = {
-  camera: { code: string; name: string; island: string; lat: number; lng: number; image_url: string; live_url?: string; live_time?: string | null; distance_km: number | null };
+  camera: { code: string; name: string; island: string; lat: number; lng: number; image_url: string; live_url?: string; live_time?: string | null; distance_km: number | null; tz?: string | null };
   frame: null | {
     // taken_at: the camera's own time when known, else when it was fetched
     // (captured_at is only the hourly slot).
@@ -295,7 +295,9 @@ export function hhmm(iso: string | null | undefined, tz?: string): string {
 }
 
 export function ago(iso: string): string {
-  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  // A camera clock a minute ahead of the phone must not read "-1 min ago".
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (!Number.isFinite(min)) return '';
   if (min < 60) return `${min} min ago`;
   if (min < 48 * 60) return `${Math.round(min / 60)} h ago`;
   return `${Math.round(min / 1440)} days ago`;
