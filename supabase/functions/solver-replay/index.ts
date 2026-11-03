@@ -2,6 +2,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v57 (3 Nov 2026): run config dawn_before_min = free stops start no earlier than civil dawn less
+// that many minutes (Phil: 25), replacing the 05:00 day start and the 03:45 sunrise exception.
 // v56 (3 Nov 2026, T2, on top of v55 learn): run config wx = rain, gusts and the waterfall rained-yesterday bonus in
 // the builds (lead + 20); every visit carries chance (calibrated odds of a good shot, from
 // solver_t_calib), n_fc / n_good (forecasts good of all), why (one plain line), and on published
@@ -555,8 +557,13 @@ Deno.serve(async (req) => {
       const slotMs = scores.map(r => r.ms);
       // From 90 min before the first light (else the window opens), to an
       // hour after the last (else it closes); bookings always fit.
-      const winStart = zonedToUtc(day.date, day.earliestMin ?? hhmm(EARLIEST), tz!), winEnd = zonedToUtc(day.date, day.latestMin ?? hhmm(LATEST), tz!);
-      const earlyStart = day.light || day.earliestMin != null ? winStart : zonedToUtc(day.date, hhmm(SUNRISE_EARLIEST), tz!);
+      // Run config dawn_before_min (v57, Phil 3 Nov 2026: "no stop before 25 minutes to first light"): free
+      // stops start no earlier than civil dawn less that many minutes, in place of the 05:00 window and the
+      // 03:45 sunrise exception; a booked arrival later than that still opens the day.
+      const dawnLo = cfg.dawn_before_min != null ? civilDawn(day.date, mid.lat, mid.lng, tz!) - Number(cfg.dawn_before_min) * 60000 : null;
+      const winStart0 = zonedToUtc(day.date, day.earliestMin ?? hhmm(EARLIEST), tz!), winEnd = zonedToUtc(day.date, day.latestMin ?? hhmm(LATEST), tz!);
+      const winStart = dawnLo == null ? winStart0 : day.earliestMin != null ? Math.max(winStart0, dawnLo) : dawnLo;
+      const earlyStart = dawnLo != null || day.light || day.earliestMin != null ? winStart : zonedToUtc(day.date, hhmm(SUNRISE_EARLIEST), tz!);
       const first = Math.min(Math.max(Math.min(...slotMs) - 90 * 60000, earlyStart), ...anchors.map(a => a.startMs - 90 * 60000));
       const last = Math.max(Math.min(Math.max(...slotMs) + 60 * 60000, winEnd), ...anchors.map(a => a.startMs + (a.dur + 60) * 60000));
       const dayStart = Math.floor(first / (SLOT * 60000)) * SLOT * 60000;
