@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { colors, spacing, radius, typography } from '../../theme';
 import { format, isToday } from 'date-fns';
@@ -17,7 +18,31 @@ export type DayPlanner = {
   tiers: Map<string, string>;
   // Stops Phil changed after this plan was made: its chance is from before.
   changed: Set<string>;
+  // Shown from the copy saved on the phone because T couldn't be reached (no signal).
+  offline?: boolean;
 };
+
+// The last read of each trip day's plan, saved on the phone so the trip page still shows T's
+// plan with no signal (Nov 2 field review: offline the T card and chips just disappeared).
+const DP_KEY = (tripId: string, date: string) => `dayplanner:${tripId}:${date}`;
+function saveDayPlanner(tripId: string, date: string, d: DayPlanner) {
+  const plain = {
+    run: d.run, mine: d.mine, best: d.best, byStop: [...d.byStop], betterDay: [...d.betterDay],
+    tiers: [...d.tiers], changed: [...d.changed],
+  };
+  AsyncStorage.setItem(DP_KEY(tripId, date), JSON.stringify(plain)).catch(() => {});
+}
+async function loadDayPlanner(tripId: string, date: string): Promise<DayPlanner | null> {
+  try {
+    const v = await AsyncStorage.getItem(DP_KEY(tripId, date));
+    if (!v) return null;
+    const j = JSON.parse(v);
+    return { run: j.run, mine: j.mine, best: j.best, byStop: new Map(j.byStop), betterDay: new Map(j.betterDay),
+      tiers: new Map(j.tiers), changed: new Set(j.changed), offline: true };
+  } catch { return null; }
+}
+const withTimeout = <T,>(p: Promise<T>, ms = 15000) =>
+  Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 
 // The subject grid takes ~2 s; keep one per trip for 10 minutes.
 const gridCache = new Map<string, { at: number; cells: Promise<GridCell[]> }>();
@@ -75,14 +100,25 @@ export function useDayPlanner(tripId: string | null, date: string | null | undef
     tierListeners.add(f);
     return () => { tierListeners.delete(f); };
   }, []);
+  // Read the plan again when the trip page comes back into view or the app comes back to the
+  // front (at most once a minute), so the morning re-plan shows without leaving the trip.
+  const [reads, setReads] = useState(0);
+  const lastRead = useRef(0);
+  const again = () => { if (Date.now() - lastRead.current > 60_000) setReads(n => n + 1); };
+  useEffect(() => { if (focused) again(); }, [focused]);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', st => { if (st === 'active') again(); });
+    return () => sub.remove();
+  }, []);
   useEffect(() => {
     if (!tripId || !date) { setState(null); return; }
     let alive = true;
+    lastRead.current = Date.now();
     (async () => {
       try {
-        const m = latestByDay(await fetchDayRuns(tripId)).get(date) ?? {};
+        const m = latestByDay(await withTimeout(fetchDayRuns(tripId))).get(date) ?? {};
         const run = m.forecast ?? m.light ?? null;
-        const plans = run ? await fetchPlans(run.id) : [];
+        const plans = run ? await withTimeout(fetchPlans(run.id)) : [];
         const mine = plans.find(p => p.rank === 0), best = plans.find(p => p.rank === 1);
         // Each stop's chance at its own time ("your day", rank 0); T runs from before v51 have
         // only the best plan, so its visits stand in until the next plan.
@@ -99,11 +135,18 @@ export function useDayPlanner(tripId: string | null, date: string | null | undef
           }
         }
         const ts = tierState(await tripTiers(tripId), run);
-        if (alive) setState({ run, mine, best, byStop, betterDay, ...ts });
-      } catch { if (alive) setState(null); }
+        const next: DayPlanner = { run, mine, best, byStop, betterDay, ...ts };
+        saveDayPlanner(tripId, date, next);
+        if (alive) setState(next);
+      } catch {
+        // No signal (or T timed out): the last plan saved on the phone, marked offline; else
+        // keep what is on screen.
+        const saved = await loadDayPlanner(tripId, date);
+        if (alive) setState(s => (s && s.run && (!saved?.run || s.run.created_at >= saved.run.created_at) ? { ...s, offline: true } : saved));
+      }
     })();
     return () => { alive = false; };
-  }, [tripId, date]);
+  }, [tripId, date, reads]);
   // After a save, and back on the screen: read tiers again.
   useEffect(() => {
     if (!tripId || !focused) return;
@@ -142,7 +185,7 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges }: {
     );
   }
   const at = new Date(planner.run.created_at);
-  const planned = `planned ${isToday(at) ? '' : format(at, 'EEE ')}${format(at, 'h:mm a')}`;
+  const planned = `${planner.offline ? 'offline · ' : ''}planned ${isToday(at) ? '' : format(at, 'EEE ')}${format(at, 'h:mm a')}`;
   const real = score.changes.filter(c => c.kind !== 'skipped');
   const same = real.length === 0;
   const head = (

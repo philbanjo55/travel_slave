@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
-import { parseExposureText, importExposures, ParsedExposure } from '../services/exposureImport';
+import { parseExposureText, importExposures, applyShotTimeZones, ParsedExposure } from '../services/exposureImport';
 
 export default function ExposureImportScreen() {
   const navigation = useNavigation<any>();
@@ -15,13 +15,16 @@ export default function ExposureImportScreen() {
   const [preview, setPreview] = useState<ParsedExposure[] | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const doPreview = () => {
+  const doPreview = async () => {
     const parsed = parseExposureText(text);
     if (parsed.length === 0) {
       Alert.alert('Nothing found', 'No exposure blocks detected. Paste the full shared text (it should start with "Meter:").');
       return;
     }
-    setPreview(parsed);
+    setBusy(true);
+    // Each frame's time in the zone where it was shot (from the nearest trip stop); offline,
+    // frames keep the phone's zone and the preview says so.
+    try { setPreview(await applyShotTimeZones(parsed)); } catch { setPreview(parsed); } finally { setBusy(false); }
   };
 
   const doImport = async () => {
@@ -32,8 +35,9 @@ export default function ExposureImportScreen() {
       Alert.alert('Imported', `${inserted} new, ${updated} updated.`, [
         { text: 'OK', onPress: () => navigation.popTo('Exposures') },
       ]);
-    } catch (e) {
-      Alert.alert('Error', 'Import failed — are you online?');
+    } catch (e: any) {
+      // Nothing is lost: the preview and the pasted text stay here to try again.
+      Alert.alert('Not imported', `Nothing was saved. ${e?.message ? `(${e.message}) ` : ''}Check your connection and tap Import again; your pasted text is kept.`);
     } finally {
       setBusy(false);
     }
@@ -71,7 +75,7 @@ export default function ExposureImportScreen() {
         />
 
         {!preview ? (
-          <TouchableOpacity style={[styles.actionBtn, !text && styles.actionBtnDisabled]} onPress={doPreview} disabled={!text}>
+          <TouchableOpacity style={[styles.actionBtn, !text && styles.actionBtnDisabled]} onPress={doPreview} disabled={!text || busy}>
             <Text style={styles.actionBtnText}>Preview</Text>
           </TouchableOpacity>
         ) : (
@@ -79,7 +83,8 @@ export default function ExposureImportScreen() {
             <Text style={styles.label}>PREVIEW — {preview.length} EXPOSURE{preview.length > 1 ? 'S' : ''}</Text>
             {preview.map((p, i) => (
               <View key={i} style={styles.previewCard}>
-                <Text style={styles.previewWhen}>{p.captured_at || 'no time?'}</Text>
+                <Text style={styles.previewWhen}>{p.local_time ? p.local_time.replace('T', ' ') : p.captured_at || 'no time?'}</Text>
+                <Text style={styles.previewMeta}>{p.captured_at ? (p.tz ? `${p.tz} time (shot near a trip stop)` : "Phone's time zone (no trip stop nearby)") : ''}</Text>
                 <Text style={styles.previewSettings}>
                   f/{p.aperture ?? '—'} · {p.shutter_display ?? '—'} · ISO {p.iso ?? '—'} · EV {p.ev ?? '—'}
                 </Text>

@@ -85,7 +85,7 @@ export default function TripsScreen() {
     const start = item.start_date ? format(parseISO(item.start_date), 'MMM d') : '';
     const end = item.end_date ? format(parseISO(item.end_date), 'MMM d, yyyy') : '';
     const days = item.start_date && item.end_date
-      ? differenceInDays(parseISO(item.end_date), parseISO(item.start_date))
+      ? differenceInDays(parseISO(item.end_date), parseISO(item.start_date)) + 1 // both ends count: Dec 29 to Jan 4 is 7 days
       : null;
 
     return (

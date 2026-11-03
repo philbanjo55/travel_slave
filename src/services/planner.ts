@@ -32,9 +32,17 @@ export type CameraFrame = {
 };
 
 export async function solverAction<T = any>(body: Record<string, any>): Promise<T> {
-  const r = await fetch(ACTIONS_URL, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
+  // A weak signal must not hang the planner screens for ever: give up after 20 s.
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 20_000);
+  let r: Response;
+  try {
+    r = await fetch(ACTIONS_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctl.signal,
+    });
+  } catch (e: any) {
+    throw new Error(ctl.signal.aborted ? 'No answer from T (weak signal?)' : String(e?.message ?? e));
+  } finally { clearTimeout(timer); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok || j.ok === false) throw new Error(j.error ?? `HTTP ${r.status}`);
   return j as T;

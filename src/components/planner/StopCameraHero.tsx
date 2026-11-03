@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, ActivityIn
 import { colors, spacing, radius } from '../../theme';
 import { CameraFrame, ago, fetchFrames } from '../../services/planner';
 import { cachedNear, storeFrames } from '../../services/cameraCache';
-import { WeatherRow, conditionsText, tempText, windText, visibilityText, kmhToMph } from '../../services/weather';
+import { WeatherRow, conditionsText, tempText, windText, visibilityText, kmhToMph, forecastTag } from '../../services/weather';
 import { format } from 'date-fns';
 import { FrameModal, useLive } from './CameraView';
 
@@ -32,8 +32,8 @@ const H = Math.round(W * 0.66);
 // TEST app only (mockup S3e): the nearest camera's picture, swipe for the
 // next two, with the forecast for the stop's time written over it. Tap opens
 // the full frame with Live and the label buttons.
-export default function StopCameraHero({ cams, weather, timeLabel, onClosed }: {
-  cams: CameraFrame[] | null; weather: WeatherRow | null; timeLabel?: string | null; onClosed: () => void;
+export default function StopCameraHero({ cams, weather, timeLabel, onClosed, dayDate }: {
+  cams: CameraFrame[] | null; weather: WeatherRow | null; timeLabel?: string | null; onClosed: () => void; dayDate?: string | null;
 }) {
   const [page, setPage] = useState(0);
   const [open, setOpen] = useState<CameraFrame | null>(null);
@@ -86,6 +86,7 @@ export default function StopCameraHero({ cams, weather, timeLabel, onClosed }: {
           <Text style={styles.temp}>{tempText(w.temperature_c)}</Text>
           <View style={{ flex: 1 }}>
             <Text style={styles.forecastLabel}>FORECAST{timeLabel ? ` AT ${timeLabel.toUpperCase()}` : ''}</Text>
+            {forecastTag(w, dayDate) ? <Text style={styles.forecastTag}>{forecastTag(w, dayDate)!.toUpperCase()}</Text> : null}
             {line ? <Text style={styles.line} numberOfLines={2}>{line}</Text> : null}
           </View>
         </View>
@@ -113,6 +114,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   forecastLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.2, color: colors.textSecondary },
+  forecastTag: { fontSize: 10, fontWeight: '700', letterSpacing: 1, color: colors.signalWarning, marginTop: 1 },
   temp: { fontFamily: 'Georgia', fontSize: 26, color: colors.textPrimary, lineHeight: 30 },
   line: { fontSize: 12, color: colors.textPrimary },
   dots: { position: 'absolute', right: 12, bottom: 14, flexDirection: 'row', gap: 4 },

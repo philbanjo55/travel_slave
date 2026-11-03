@@ -3,7 +3,9 @@ import { supabase } from './supabase';
 const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
 
 export type ParsedExposure = {
-  captured_at: string;       // ISO with -04:00 assumed local (see note)
+  captured_at: string;       // ISO with the UTC offset of where it was shot (see applyShotTimeZones)
+  local_time: string;        // the meter's wall-clock time, no zone: "2026-12-30T07:12:00"
+  tz: string | null;         // time zone used for captured_at (null = the phone's own)
   lat: number | null;
   lng: number | null;
   ev: number | null;
@@ -100,6 +102,7 @@ export function parseExposureText(text: string): ParsedExposure[] {
     // time: DD/MM/YYYY HH:MM:SS AM/PM  (app exports day/month/year)
     const traw = grab('Time', block) || '';
     let captured = '';
+    let local = '';
     const tm = traw.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)/);
     if (tm) {
       let [, d, mo, y, h, mi, sec, ap] = tm;
@@ -109,10 +112,11 @@ export function parseExposureText(text: string): ParsedExposure[] {
       // The meter app writes the phone's local time, so use the phone's UTC
       // offset at that moment (was a fixed -04:00, US Eastern summer, which
       // put every frame shot elsewhere at the wrong time).
-      const off = -new Date(+y, +mo - 1, +d, hh, +mi, +sec).getTimezoneOffset();
-      const sign = off < 0 ? '-' : '+', a = Math.abs(off);
-      const zone = `${sign}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
-      captured = `${y}-${mo}-${d}T${String(hh).padStart(2, '0')}:${mi}:${sec}${zone}`;
+      // applyShotTimeZones() then swaps in the zone of where the frame was shot, when the
+      // frame has a location near a trip stop (importing Teton frames at home in Eastern time
+      // would otherwise move them 2 hours).
+      local = `${y}-${mo}-${d}T${String(hh).padStart(2, '0')}:${mi}:${sec}`;
+      captured = local + offsetText(-new Date(+y, +mo - 1, +d, hh, +mi, +sec).getTimezoneOffset());
     }
 
     const loc = grab('Location', block) || '';
@@ -146,6 +150,8 @@ export function parseExposureText(text: string): ParsedExposure[] {
 
     out.push({
       captured_at: captured,
+      local_time: local,
+      tz: null,
       lat, lng,
       ev: evRaw ? parseFloat(evRaw) : null,
       iso: isoRaw ? parseInt(isoRaw, 10) : null,
@@ -165,10 +171,63 @@ export function parseExposureText(text: string): ParsedExposure[] {
   return out;
 }
 
-// md5 is not built into RN; dedupe_key uses the captured_at string directly.
-// (Stable + unique per frame to the second, which is what we need.)
-function dedupeKey(capturedAt: string): string {
-  return capturedAt;
+function offsetText(minutes: number): string {
+  const sign = minutes < 0 ? '-' : '+', a = Math.abs(minutes);
+  return `${sign}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
+}
+
+// UTC offset (minutes) of an IANA zone at a wall-clock time there.
+export function zoneOffsetAt(tz: string, local: string): number | null {
+  const m = local.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const wall = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  const offsetOf = (utc: number) => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(new Date(utc));
+    const g = (t: string) => Number(parts.find(p => p.type === t)?.value);
+    return (Date.UTC(g('year'), g('month') - 1, g('day'), g('hour') % 24, g('minute'), g('second')) - utc) / 60000;
+  };
+  try {
+    const first = offsetOf(wall);
+    return offsetOf(wall - first * 60000);
+  } catch { return null; }
+}
+
+// The time zone of the trip with a stop within ~50 km of a frame, or null.
+async function zoneNear(lat: number, lng: number): Promise<{ tz: string; trip: string } | null> {
+  const { data, error } = await supabase.from('stops')
+    .select('lat, lng, days!inner(trips!inner(title, timezone))')
+    .gte('lat', lat - 0.5).lte('lat', lat + 0.5).gte('lng', lng - 0.7).lte('lng', lng + 0.7)
+    .limit(20);
+  if (error || !data?.length) return null;
+  for (const r of data as any[]) {
+    const t = r.days?.trips;
+    if (t?.timezone) return { tz: t.timezone, trip: t.title };
+  }
+  return null;
+}
+
+// Re-time each frame in the zone where it was shot (from a trip stop near its location);
+// frames with no location, or far from every trip, keep the phone's zone.
+export async function applyShotTimeZones(parsed: ParsedExposure[]): Promise<ParsedExposure[]> {
+  const seen = new Map<string, { tz: string; trip: string } | null>();
+  const out: ParsedExposure[] = [];
+  for (const p of parsed) {
+    if (!p.local_time || p.lat == null || p.lng == null) { out.push(p); continue; }
+    const k = `${p.lat.toFixed(1)},${p.lng.toFixed(1)}`;
+    if (!seen.has(k)) seen.set(k, await zoneNear(p.lat, p.lng).catch(() => null));
+    const z = seen.get(k);
+    const off = z ? zoneOffsetAt(z.tz, p.local_time) : null;
+    out.push(z && off != null ? { ...p, tz: z.tz, captured_at: p.local_time + offsetText(off) } : p);
+  }
+  return out;
+}
+
+// One frame = one meter reading to the second. The key is the meter's wall-clock time (no
+// zone), so re-importing a frame with a corrected zone updates it instead of adding a copy.
+function dedupeKey(p: ParsedExposure): string {
+  return p.local_time || p.captured_at;
 }
 
 // Upload a photo (base64) to Storage via the edge function; returns public URL.
@@ -196,15 +255,17 @@ export async function importExposures(
   for (let i = 0; i < parsed.length; i++) {
     const p = parsed[i];
     if (!p.captured_at) continue;
-    const key = dedupeKey(p.captured_at);
+    const key = dedupeKey(p);
     const photo_url = opts.photoUrls?.[i] ?? null;
 
-    // does it exist?
-    const { data: existing } = await supabase
+    // does it exist? (older imports keyed on the full time with its zone, so match the prefix)
+    const { data: found, error: findErr } = await supabase
       .from('exposures')
       .select('id')
-      .eq('dedupe_key', key)
-      .maybeSingle();
+      .like('dedupe_key', `${key}%`)
+      .limit(1);
+    if (findErr) throw findErr;
+    const existing = found?.[0] ?? null;
 
     const row: any = {
       captured_at: p.captured_at,
@@ -217,11 +278,15 @@ export async function importExposures(
     };
     if (photo_url) row.photo_url = photo_url;
 
+    // Every write is checked: supabase returns an error instead of throwing, and an import
+    // that says "Imported" when nothing was saved loses the pasted text (Nov 2 test).
     if (existing) {
-      await supabase.from('exposures').update({ ...row, updated_at: new Date().toISOString() }).eq('id', existing.id);
+      const { error } = await supabase.from('exposures').update({ ...row, updated_at: new Date().toISOString() }).eq('id', existing.id);
+      if (error) throw error;
       updated++;
     } else {
-      await supabase.from('exposures').insert(row);
+      const { error } = await supabase.from('exposures').insert(row);
+      if (error) throw error;
       inserted++;
     }
   }

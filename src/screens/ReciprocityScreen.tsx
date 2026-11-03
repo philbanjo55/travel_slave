@@ -1,14 +1,45 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Dimensions, Vibration, Modal,
+  TextInput, Dimensions, Vibration, Modal, Alert, BackHandler, Platform,
 } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, typography, spacing, radius } from '../theme';
 
 const { width } = Dimensions.get('window');
+
+// Keep the screen on while an exposure runs (expo-keep-awake's native module ships with expo;
+// optional so an old build without it just skips this).
+const KeepAwake: { activate(tag: string): Promise<void>; deactivate(tag: string): Promise<void> } | null =
+  requireOptionalNativeModule('ExpoKeepAwake');
+const AWAKE_TAG = 'exposure-timer';
+const keepAwake = (on: boolean) => {
+  try { (on ? KeepAwake?.activate(AWAKE_TAG) : KeepAwake?.deactivate(AWAKE_TAG))?.catch(() => {}); } catch { /* not in this build */ }
+};
+
+// The end of an exposure as a local notification, so it still buzzes if the phone sleeps
+// or the app is in the background.
+const TIMER_CHANNEL = 'exposure-timer';
+async function scheduleExposureEnd(seconds: number, stockName: string): Promise<string | null> {
+  try {
+    let perm = await Notifications.getPermissionsAsync();
+    if (!perm.granted) perm = await Notifications.requestPermissionsAsync();
+    if (!perm.granted) return null;
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync(TIMER_CHANNEL, {
+        name: 'Exposure timer', importance: Notifications.AndroidImportance.MAX, vibrationPattern: [0, 500, 200, 500, 200, 500],
+      });
+    }
+    return await Notifications.scheduleNotificationAsync({
+      content: { title: 'Exposure complete', body: `Close the shutter (${stockName}).` },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: Math.max(1, Math.round(seconds)), channelId: TIMER_CHANNEL },
+    });
+  } catch { return null; }
+}
 
 // ─────────────────────────────────────────────────────
 // CALCULATION ENGINE (verified against manufacturer data)
@@ -137,6 +168,9 @@ export default function ReciprocityScreen() {
   const [deltaP, setDeltaP] = useState<1.26 | 1.20>(1.26);
   const [customP, setCustomP] = useState(1.26);
   const [stopAdjust, setStopAdjust] = useState(0); // dial: +/- stops applied to metered base
+  // Off (default): the reading was taken without the filters, so the stack is added before
+  // reciprocity. On: the meter already read through them (or its ND EV field had them).
+  const [filtersInReading, setFiltersInReading] = useState(false);
 
   type FilterDef = { name: string; stops: number; note?: string };
   const FILTERS: FilterDef[] = [
@@ -177,6 +211,13 @@ export default function ReciprocityScreen() {
   // computed on the shifted value. Adjusting the *input* (not the corrected time)
   // is the physically correct order — the result below is always valid.
   const metered = meteredBase > 0 ? meteredBase * Math.pow(2, stopAdjust) : 0;
+  // The time the film actually needs light for before reciprocity: the reading plus the
+  // filter stack (filters lengthen the metered time; reciprocity then acts on the longer
+  // time, so the order matters: 1/4 s + 10 stops = 256 s, then Pan F+ makes it ~18 min).
+  const filterAdd = activeFilters.size > 0 && !filtersInReading ? totalFilterFactor : 1;
+  const exposed = metered * filterAdd;
+  const stockNameRef = useRef(stock.name);
+  stockNameRef.current = stock.name;
 
   // Timer state
   const [timerActive, setTimerActive] = useState(false);
@@ -185,6 +226,9 @@ export default function ReciprocityScreen() {
   const [remainingMs, setRemainingMs] = useState(0);
   const [totalMs, setTotalMs] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const endNoteRef = useRef<string | null>(null);
+  const phaseRef = useRef<'countdown' | 'running' | 'done'>('countdown');
+  useEffect(() => { phaseRef.current = timerPhase; }, [timerPhase]);
   const startTimeRef = useRef(0);
   const exposureMsRef = useRef(0);
 
@@ -195,13 +239,37 @@ export default function ReciprocityScreen() {
     }
   }, []);
 
+  const cancelEndNote = useCallback(() => {
+    const id = endNoteRef.current;
+    endNoteRef.current = null;
+    if (id) Notifications.cancelScheduledNotificationAsync(id).catch(() => {});
+  }, []);
+
   const stopTimer = useCallback(() => {
     clearTimer();
+    cancelEndNote();
+    keepAwake(false);
     setTimerActive(false);
-  }, [clearTimer]);
+  }, [clearTimer, cancelEndNote]);
+
+  // Back (or the Cancel button) mid-exposure asks first, so a stray press can't lose the count.
+  const askStop = useCallback(() => {
+    if (phaseRef.current === 'done') { stopTimer(); return; }
+    Alert.alert('Stop the timer?', 'The exposure count will be lost.', [
+      { text: 'Keep timing', style: 'cancel' },
+      { text: 'Stop', style: 'destructive', onPress: stopTimer },
+    ]);
+  }, [stopTimer]);
+  useEffect(() => {
+    if (!timerActive) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { askStop(); return true; });
+    return () => sub.remove();
+  }, [timerActive, askStop]);
 
   const startTimer = useCallback((adjustedSeconds: number) => {
     clearTimer();
+    cancelEndNote();
+    keepAwake(true);
     const expMs = Math.round(adjustedSeconds * 1000);
     exposureMsRef.current = expMs;
     setTotalMs(expMs);
@@ -225,6 +293,11 @@ export default function ReciprocityScreen() {
         setTimerPhase('running');
         setRemainingMs(exposureMsRef.current);
         startTimeRef.current = Date.now();
+        // Long exposures: a notification at the end too (the screen stays on, but the app
+        // may be sent to the background).
+        if (exposureMsRef.current >= 10_000) {
+          scheduleExposureEnd(exposureMsRef.current / 1000, stockNameRef.current).then(id => { endNoteRef.current = id; });
+        }
 
         timerRef.current = setInterval(() => {
           const elapsed = Date.now() - startTimeRef.current;
@@ -233,6 +306,7 @@ export default function ReciprocityScreen() {
             clearTimer();
             setRemainingMs(0);
             setTimerPhase('done');
+            keepAwake(false);
             Vibration.vibrate([0, 500, 200, 500, 200, 500]); // triple buzz = DONE
           } else {
             setRemainingMs(remaining);
@@ -240,11 +314,11 @@ export default function ReciprocityScreen() {
         }, 100);
       }
     }, 1000);
-  }, [clearTimer]);
+  }, [clearTimer, cancelEndNote]);
 
   useEffect(() => {
-    return () => clearTimer(); // cleanup on unmount
-  }, [clearTimer]);
+    return () => { clearTimer(); cancelEndNote(); keepAwake(false); }; // cleanup on unmount
+  }, [clearTimer, cancelEndNote]);
 
   function formatTimerDisplay(ms: number): string {
     const totalSec = Math.ceil(ms / 1000);
@@ -262,14 +336,15 @@ export default function ReciprocityScreen() {
 
   const result = useMemo(() => {
     if (metered <= 0) return null;
-    const adjusted = calculate(stock, metered);
+    const adjusted = calculate(stock, exposed);
     return {
       adjusted,
       formatted: formatTime(adjusted),
-      stops: stopsCorrection(metered, adjusted),
+      stops: stopsCorrection(exposed, adjusted),
       meteredFormatted: formatTime(metered),
+      exposedFormatted: formatTime(exposed),
     };
-  }, [stock, metered]);
+  }, [stock, metered, exposed]);
 
 
   // Aperture solver — keep the metered SCENE fixed (metered at f/22) and find the
@@ -281,7 +356,7 @@ export default function ReciprocityScreen() {
   // actual exposure for that rounded stop (forward reciprocity) — never the wish.
   const apertureAdj = useMemo(() => {
     const target = parseFloat(targetTime);
-    if (!result || !target || target <= 0 || metered <= 0) return null;
+    if (!result || !target || target <= 0 || exposed <= 0) return null;
     if (Math.abs(result.adjusted - target) < 0.5) return null; // already on target
 
     const baseF = 22;
@@ -289,7 +364,7 @@ export default function ReciprocityScreen() {
     const neededMetered = invertReciprocity(stock, target);
     // Stops of aperture change: metered base -> neededMetered.
     // Longer metered = close down (larger f); shorter = open up (smaller f).
-    const stopsDiff = Math.log2(neededMetered / metered);
+    const stopsDiff = Math.log2(neededMetered / exposed);
     // f-number scales as sqrt(2) per stop.
     const newF = baseF * Math.pow(2, stopsDiff / 2);
 
@@ -305,7 +380,7 @@ export default function ReciprocityScreen() {
     // TRUE actual exposure at the ROUNDED f-stop: rounding moves the metered time,
     // which gets its own reciprocity correction. Report this, not the target.
     const roundedStops = 2 * Math.log2(nearestF / baseF);
-    const actualMetered = metered * Math.pow(2, roundedStops);
+    const actualMetered = exposed * Math.pow(2, roundedStops);
     const actualExposure = calculate(stock, actualMetered);
     const offsetSeconds = actualExposure - target;
     const onTarget = Math.abs(offsetSeconds) < Math.max(1, target * 0.05);
@@ -321,7 +396,7 @@ export default function ReciprocityScreen() {
       offsetSeconds,
       onTarget,
     };
-  }, [result, targetTime, stock, metered]);
+  }, [result, targetTime, stock, exposed]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -509,6 +584,13 @@ export default function ReciprocityScreen() {
               <Text style={styles.resultStops}>{result.stops} stops correction</Text>
               <Text style={styles.resultOriginal}>from {result.meteredFormatted} metered{stopAdjust !== 0 ? ` (${stopAdjust > 0 ? '+' : '−'}${Math.abs(stopAdjust).toString().replace('0.5','½').replace('1.5','1½').replace('2.5','2½')} stop)` : ''}</Text>
             </View>
+            {activeFilters.size > 0 ? (
+              <Text style={styles.resultFilters}>
+                {filtersInReading
+                  ? `Filters already in the reading (+${totalFilterStops} stops not added)`
+                  : `Includes filters +${totalFilterStops} stops: ${result.meteredFormatted} → ${result.exposedFormatted} before reciprocity`}
+              </Text>
+            ) : null}
             <TouchableOpacity
               style={styles.timerBtn}
               onPress={() => startTimer(apertureAdj ? apertureAdj.targetSeconds : result.adjusted)}
@@ -557,7 +639,7 @@ export default function ReciprocityScreen() {
           visible={timerActive}
           animationType="fade"
           statusBarTranslucent
-          onRequestClose={stopTimer}
+          onRequestClose={askStop}
         >
           <View style={styles.timerOverlay}>
             {timerPhase === 'countdown' && (
@@ -596,7 +678,7 @@ export default function ReciprocityScreen() {
               </View>
             )}
 
-            <TouchableOpacity style={styles.timerStopBtn} onPress={stopTimer}>
+            <TouchableOpacity style={styles.timerStopBtn} onPress={askStop}>
               <Text style={styles.timerStopText}>
                 {timerPhase === 'done' ? 'Done' : 'Cancel'}
               </Text>
@@ -659,11 +741,18 @@ export default function ReciprocityScreen() {
               <Text style={styles.filterResultLabel}>COMBINED</Text>
               <Text style={styles.filterResultValue}>+{totalFilterStops} stops</Text>
               <Text style={styles.filterResultFactor}>{totalFilterFactor.toFixed(0)}× factor</Text>
-              {metered > 0 && (
+              {metered > 0 && result && (
                 <Text style={styles.filterResultExample}>
-                  {formatTime(metered)} metered → {formatTime(metered * totalFilterFactor)} with filters
+                  {filtersInReading
+                    ? `${formatTime(metered)} metered through the filters → ${result.formatted} with reciprocity`
+                    : `${formatTime(metered)} metered → ${formatTime(exposed)} with filters → ${result.formatted} with reciprocity`}
                 </Text>
               )}
+              <TouchableOpacity style={styles.inReadingRow} onPress={() => setFiltersInReading(v => !v)} accessibilityRole="checkbox"
+                accessibilityState={{ checked: filtersInReading }}>
+                <Ionicons name={filtersInReading ? 'checkbox' : 'square-outline'} size={20} color={filtersInReading ? colors.accent : colors.textTertiary} />
+                <Text style={styles.inReadingText}>My reading was taken through these filters (don't add them)</Text>
+              </TouchableOpacity>
             </View>
           )}
           {FILTERS.filter(f => f.note && activeFilters.has(f.name)).map(f => (
@@ -882,6 +971,9 @@ const styles = StyleSheet.create({
   filterResultValue: { fontSize: 28, fontWeight: '700', color: colors.textPrimary, marginVertical: spacing.xs },
   filterResultFactor: { fontSize: 13, color: colors.accent, fontWeight: '500' },
   filterResultExample: { fontSize: 11, color: colors.textTertiary, marginTop: spacing.sm },
+  resultFilters: { fontSize: 12, color: colors.accent, marginTop: spacing.sm, textAlign: 'center' },
+  inReadingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md, paddingVertical: spacing.sm },
+  inReadingText: { flex: 1, fontSize: 13, color: colors.textSecondary },
   filterNote: { fontSize: 10, color: '#d4a017', marginTop: spacing.xs, paddingHorizontal: spacing.xs },
 
   // Timer overlay

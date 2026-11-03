@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Switch } from 'react-native';
 import { colors, spacing, radius } from '../../theme';
-import { Nightly, disableNightly, enableNightly, nightlyState, readyTimeLocal, refreshNightly } from '../../services/plannerNotify';
+import { Nightly, disableNightly, enableNightly, nightlyState, readyTimeIn, readyTimeLocal, refreshNightly } from '../../services/plannerNotify';
 
 const two = (n: number) => String(n).padStart(2, '0');
 
-// "Tell me when tonight's plans are in" for this trip (one trip at a time).
-export default function NightlyToggle({ tripId, tripTitle }: { tripId: string; tripTitle: string }) {
+// "Tell me when T's new plans are in" for this trip (one trip at a time).
+export default function NightlyToggle({ tripId, tripTitle, tripTz }: { tripId: string; tripTitle: string; tripTz?: string | null }) {
   const [state, setState] = useState<Nightly | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -14,6 +14,8 @@ export default function NightlyToggle({ tripId, tripTitle }: { tripId: string; t
 
   const on = state?.tripId === tripId;
   const t = readyTimeLocal();
+  const there = readyTimeIn(tripTz);
+  const mine = `${two(t.hour)}:${two(t.minute)}`;
   const toggle = async (v: boolean) => {
     setBusy(true); setError(null);
     try { setError(v ? await enableNightly(tripId, tripTitle) : (await disableNightly(), null)); }
@@ -25,9 +27,10 @@ export default function NightlyToggle({ tripId, tripTitle }: { tripId: string; t
     <View style={styles.card}>
       <View style={styles.row}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Nightly brief</Text>
+          <Text style={styles.title}>Daily plan alert</Text>
           <Text style={styles.hint}>
-            A notification at {two(t.hour)}:{two(t.minute)} your time, when the night's plans are in.
+            A notification once a day when T's new plans are in: {mine} your time{there && there !== mine ? ` (${there} trip time)` : ''}.
+            T plans again early each morning; open the trip to see that one.
             {state && !on ? ' (Now set for another trip; turning it on moves it here.)' : ''}
           </Text>
         </View>
