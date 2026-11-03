@@ -807,6 +807,18 @@ export function forecastMode(
   return { preview, forecastDate };
 }
 
+// A short honesty tag for a forecast shown in a small space (timeline rows, the stop camera
+// card): "Preview · Nov 2" when the row is not for the trip date (it's a stand-in from today's
+// forecast), else its age once it is more than 6 hours old (cached, or no signal), else null.
+export function forecastTag(row: WeatherRow | null | undefined, dayDate?: string | null): string | null {
+  if (!row) return null;
+  const { preview, forecastDate } = forecastMode(row, dayDate);
+  if (preview && dayDate) return `Preview · ${forecastDate ? shortDate(forecastDate) : 'not this date'}`;
+  const t = row.fetched_at ? new Date(row.fetched_at).getTime() : NaN;
+  if (!isNaN(t) && Date.now() - t > 6 * 3600_000) return updatedAgoText(row.fetched_at);
+  return null;
+}
+
 // "2026-05-24" → "May 24"
 export function shortDate(d: string | null): string {
   if (!d) return '';

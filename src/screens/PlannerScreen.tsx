@@ -67,7 +67,7 @@ export default function PlannerScreen() {
 
       <View style={{ flex: 1 }}>
         {tab === 'overview' ? <OverviewTab tripId={tripId} days={days} goPlans={goPlans} goTab={setTab}
-            extra={<NightlyToggle tripId={tripId} tripTitle={currentTripData?.trip?.title ?? 'Trip'} />} />
+            extra={<NightlyToggle tripId={tripId} tripTitle={currentTripData?.trip?.title ?? 'Trip'} tripTz={currentTripData?.trip?.timezone} />} />
           : tab === 'plans' ? <PlansTab tripId={tripId} days={days} date={date} setDate={setDate} goMap={() => setTab('map')} />
           : tab === 'subjects' ? <SubjectsTab tripId={tripId} days={days} tz={tz} goPlans={goPlans} />
           : tab === 'map' ? <MapTab tripId={tripId} days={days} date={date} setDate={setDate} goPlans={goPlans} />

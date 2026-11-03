@@ -113,7 +113,7 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
       {next ? (
         <TouchableOpacity style={styles.brief} activeOpacity={0.85} onPress={() => goPlans(next.date)}>
           <Text style={styles.label}>
-            {brief ? 'TONIGHT\'S BRIEF · ' : 'NEXT TRIP DAY · '}DAY {next.day_number} · {format(parseISO(next.date), 'EEE d MMM').toUpperCase()}
+            {brief ? 'LATEST BRIEF · ' : 'NEXT TRIP DAY · '}DAY {next.day_number} · {format(parseISO(next.date), 'EEE d MMM').toUpperCase()}
           </Text>
           {brief ? (
             <>

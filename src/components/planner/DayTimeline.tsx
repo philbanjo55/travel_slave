@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../../theme';
-import { WeatherRow, conditionIcon, conditionsText, readScore, kmhToMph, visibilityText, cToF } from '../../services/weather';
+import { WeatherRow, conditionIcon, conditionsText, readScore, kmhToMph, visibilityText, cToF, forecastTag } from '../../services/weather';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../../utils/helpers';
 import { ChanceLine, DayPlanner, stopHint } from './DayPlannerHints';
 import { DayChange } from '../../services/planner';
@@ -15,8 +15,8 @@ export type GhostTag = { kind: 'same' | 'moved' | 'added' | 'skipped'; change?: 
 // left column, each stop is a dot on the line with the drive between stops on
 // the line itself; shoot stops are cards with their weather at their time and
 // the planner's chance, logistics stops stay one thin row.
-export function TimelineRow({ item, index, isLast, weather, planner, onPress, ghost, change, onChip, popover }: {
-  item: any; index: number; isLast: boolean; weather?: WeatherRow; planner: DayPlanner | null; onPress: () => void;
+export function TimelineRow({ item, index, isLast, weather, planner, onPress, ghost, change, onChip, popover, dayDate }: {
+  item: any; index: number; isLast: boolean; weather?: WeatherRow; planner: DayPlanner | null; onPress: () => void; dayDate?: string | null;
   ghost?: GhostTag | null; change?: DayChange | null; onChip?: () => void; popover?: React.ReactNode;
 }) {
   const shoot = !!item.shot_type && item.shot_type !== 'logistics';
@@ -51,7 +51,7 @@ export function TimelineRow({ item, index, isLast, weather, planner, onPress, gh
           <View style={[styles.lineFill, isLast && styles.lineHidden]} />
         </View>
         <View style={styles.body}>
-          {shoot ? <ShootCard item={item} weather={weather} planner={planner} ghost={ghost} change={change} onChip={onChip} /> : (
+          {shoot ? <ShootCard item={item} weather={weather} planner={planner} ghost={ghost} change={change} onChip={onChip} dayDate={dayDate} /> : (
             <View style={[styles.logRow, fresh && styles.ghostLog]}>
               <Text style={styles.logEmoji}>{item.emoji || '📍'}</Text>
               <Text style={styles.logName} numberOfLines={1}>{item.name}</Text>
@@ -75,9 +75,11 @@ function ghostLine(ghost: GhostTag): string | null {
   return null;
 }
 
-function ShootCard({ item, weather: w, planner, ghost, change, onChip }: {
+function ShootCard({ item, weather: w, planner, ghost, change, onChip, dayDate }: {
   item: any; weather?: WeatherRow; planner: DayPlanner | null; ghost?: GhostTag | null; change?: DayChange | null; onChip?: () => void;
+  dayDate?: string | null;
 }) {
+  const wxTag = w && w.temperature_c != null ? forecastTag(w, dayDate) : null;
   const tier = planner?.tiers.get(item.id) ?? null;
   const base = stopHint(item.id, planner);
   // C2: a stop T's best plan changes gets a chip even without a better-time hint; tapping opens the popover.
@@ -107,6 +109,7 @@ function ShootCard({ item, weather: w, planner, ghost, change, onChip }: {
       {wxLine ? (
         <View style={styles.wxRow}>
           <Ionicons name={conditionIcon(w!.weather_code) as any} size={13} color={colors.textSecondary} />
+          {wxTag ? <Text style={styles.wxTag} numberOfLines={1}>{wxTag.toUpperCase()}</Text> : null}
           <Text style={styles.wxText} numberOfLines={1}>{wxLine}</Text>
           {contested ? <Ionicons name="warning" size={11} color={colors.signalWarning} /> : null}
           {sc ? (
@@ -175,5 +178,7 @@ const styles = StyleSheet.create({
   cardDur: { marginLeft: 'auto', fontSize: 10, color: colors.textTertiary },
   wxRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   wxText: { flexShrink: 1, fontSize: 11, color: colors.textSecondary },
+  wxTag: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5, color: colors.signalWarning, borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.signalWarning, borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1 },
   stars: { flexDirection: 'row', gap: 1, marginLeft: 'auto' },
 });

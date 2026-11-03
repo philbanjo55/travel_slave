@@ -422,7 +422,7 @@ export default function TripScreen() {
         ) : undefined}
         contentContainerStyle={[styles.stopList, ghostRows ? { paddingBottom: ghostDetails ? 260 : 130 } : null]}
         renderItem={({ item, index }: { item: any; index: number }) => IS_TEST_APP ? (
-          <TimelineRow item={item} index={index} isLast={index === (ghostRows ?? stops).length - 1} weather={dayWeather[item.id]}
+          <TimelineRow item={item} index={index} isLast={index === (ghostRows ?? stops).length - 1} weather={dayWeather[item.id]} dayDate={day?.date}
             planner={planner} ghost={ghostRows ? ghostRows[index]?.tag : null}
             change={changes.find(c => c.stop_id === item.id && c.kind !== 'added') ?? null}
             onChip={() => setPop(p => (p === item.id ? null : item.id))}
