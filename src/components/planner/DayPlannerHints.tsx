@@ -243,7 +243,7 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
       {score.week && score.week.days > 1 ? (
         <Text style={styles.week}>
           Week from today: T {shotsText(score.week.t)}{score.week.mine != null ? ` · yours ${shotsText(score.week.mine)}` : ''} good shots of big subjects
-          {score.week.bigLeft ? `, a good shot at about ${Math.round(score.week.covered)} of ${score.week.bigLeft}` : ''}
+          {score.week.bigLeft ? `. T gets at least one good shot of about ${Math.round(score.week.covered)} of the ${score.week.bigLeft} big subjects left` : ''}
         </Text>
       ) : null}
     </View>

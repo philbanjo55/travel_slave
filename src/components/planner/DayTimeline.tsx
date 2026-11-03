@@ -6,6 +6,7 @@ import { WeatherRow, conditionIcon, conditionsText, readScore, kmhToMph, visibil
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../../utils/helpers';
 import { ChanceLine, DayPlanner, stopHint } from './DayPlannerHints';
 import { DayChange } from '../../services/planner';
+import { VERDICT_TEXT, verdictOf } from '../../services/plannerWords';
 
 // Ghost mode (redesign C4): the day in T's best plan's order and times. moved / added stops
 // get a dashed green card and the new time; skipped ones stay, dimmed (applying keeps them).
@@ -68,9 +69,10 @@ export function TimelineRow({ item, index, isLast, weather, planner, onPress, gh
 // What T's plan does to this stop, in a few words, for the ghost card.
 function ghostLine(ghost: GhostTag): string | null {
   const c = ghost.change;
-  const pct = (x?: number | null) => (x == null ? null : `${Math.round(x * 100)}%`);
-  if (ghost.kind === 'moved') return [c?.was ? `was ${c.was}` : null, pct(c?.wasP) && pct(c?.p_good) ? `${pct(c?.wasP)} → ${pct(c?.p_good)}` : pct(c?.p_good)].filter(Boolean).join(' · ');
-  if (ghost.kind === 'added') return [c?.fromDay ? `from Day ${c.fromDay}` : 'added by T', pct(c?.p_good)].filter(Boolean).join(' · ');
+  // T's verdict, never a bare % (one chance per stop, the same words everywhere).
+  const vd = (x?: number | null) => (x == null ? null : VERDICT_TEXT[verdictOf(x)]);
+  if (ghost.kind === 'moved') return [c?.was ? `was ${c.was}` : null, vd(c?.wasP) && vd(c?.p_good) && vd(c?.wasP) !== vd(c?.p_good) ? `${vd(c?.wasP)} → ${vd(c?.p_good)}` : vd(c?.p_good)].filter(Boolean).join(' · ');
+  if (ghost.kind === 'added') return [c?.fromDay ? `from Day ${c.fromDay}` : 'added by T', vd(c?.p_good)].filter(Boolean).join(' · ');
   if (ghost.kind === 'skipped') return "not in T's plan · stays on your day";
   return null;
 }
