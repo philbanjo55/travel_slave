@@ -2,6 +2,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v61 (3 Nov 2026): bench tests miss_seed (one S/GOD visit a week missed: not shot, not seen, so it must be
+// fitted in again) and slow_drive (stats.slow: the route replayed with every drive x that factor, scored).
 // v60 (3 Nov 2026): run config shrink / clim_hidden / shrink_morning = careful score: forecast values
 // blended toward light x the usual clear-peaks share (see the block after the score loads).
 // v59 (3 Nov 2026): run config week_exact = Z, the rest of the week solved exactly per weather version
@@ -1047,7 +1049,34 @@ Deno.serve(async (req) => {
       };
       await mark('truth');
       let row: any;
-      const record = (visits: { n: number; startMs: number }[], extra: any) => {
+      // Missed-stop test (run config miss_seed, v61, Phil 3 Nov 2026): on one night per week
+      // (picked from the week's start date and the seed) the first planned S or GOD visit is
+      // missed: it earns nothing and is not counted as shot or seen, so the planner has to fit
+      // it in again later in the week. Bench only (needs the truth; never on published runs).
+      let missNight = -1, missedNode: number | null = null;
+      if (cfg.miss_seed != null && trSc[0].length && !cfg.publish) {
+        let h = 0; for (const ch of `${run.start_date}|${cfg.miss_seed}`) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+        missNight = h % Math.max(1, run.nights);
+      }
+      const pickMissed = (route: { n: number }[]) => (missNight === n ? (route.find(v => nodes[v.n].w >= 5)?.n ?? null) : null);
+      // Slow-drive test (run config slow_drive, v61): the day's route replayed with every drive
+      // that much longer (1.25 = winter roads); each visit starts when it really could (never
+      // before its plan) and is scored against the truth then. Stats only: the plan is unchanged.
+      const slowOf = (vs: { n: number; startMs: number }[]) => {
+        const mult = Number(cfg.slow_drive), H0 = pos.get(days[0].startId!);
+        let prevEnd: number | null = null, prevN: number | null = H0 ?? null, late = 0, delay = 0;
+        const out = [...vs].sort((a, b) => a.startMs - b.startMs).map(v => {
+          const leg = prevN != null ? D[prevN][v.n] : 0, ok = Number.isFinite(leg);
+          const earliest = prevEnd == null ? v.startMs + (ok ? leg * (mult - 1) * 60000 : 0) : prevEnd + (ok ? leg * mult * 60000 : 0);
+          const s = Math.max(v.startMs, earliest);
+          if (s > v.startMs + 60000) { late++; delay += (s - v.startMs) / 60000; }
+          prevEnd = s + nodes[v.n].dur * 60000; prevN = v.n;
+          return { n: v.n, startMs: s };
+        });
+        return { out, late, delay: Math.round(delay) };
+      };
+      const record = (visits0: { n: number; startMs: number }[], extra: any) => {
+        const visits = missedNode == null ? visits0 : visits0.filter(v => v.n !== missedNode);
         const realized = truthN ? evalVisits(truthN, visits) : null;
         const shot = { ...shotBefore };
         for (const v of visits) {
@@ -1057,6 +1086,11 @@ Deno.serve(async (req) => {
         }
         row = { run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: realized == null ? null : r3(realized), ...extra };
         if (Array.isArray(row.visits) && row.stats) row.stats = { ...row.stats, ...goodShots(row.visits) };
+        if (row.stats && missedNode != null) row.stats = { ...row.stats, missed: nodes[missedNode].name };
+        if (row.stats && cfg.slow_drive && truthN && visits.length) {
+          const sl = slowOf(visits);
+          row.stats = { ...row.stats, slow: { realized: r3(evalVisits(truthN, sl.out)), late: sl.late, delay_min: sl.delay } };
+        }
         // What each visit got against what happened.
         if (truthN && row.visits?.length === visits.length) row.visits = row.visits.map((v: any, i: number) => ({ ...v, truth: r2(truthAt(truthN, visits[i]) / 250) }));
         return shot;
@@ -1763,7 +1797,7 @@ Deno.serve(async (req) => {
             p0 = pm; st = sm;
           } else mrStats.error = 'no morning route: the night plan stands';
         }
-        if (st) for (const v of st.route) seenIds.add(nodes[v.n].id);
+        if (st) { missedNode = pickMissed(st.route); for (const v of st.route) if (v.n !== missedNode) seenIds.add(nodes[v.n].id); }
         nextSets = { seen: [...seenIds] };
         if (st) await publish(draft ? 'week' : 'morning', p0, st, mrStats ? { mr: mrStats } : {});
         return record(st ? routeOf(p0, st) : [], {
