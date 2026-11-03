@@ -2,6 +2,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v60 (3 Nov 2026): run config shrink / clim_hidden / shrink_morning = careful score: forecast values
+// blended toward light x the usual clear-peaks share (see the block after the score loads).
 // v59 (3 Nov 2026): run config week_exact = Z, the rest of the week solved exactly per weather version
 // in the Monte Carlo (in place of the quick stand-in), from the stand-in's answer, never worse.
 // v58 (3 Nov 2026): run config brute = B1 brute-force day (every free place, every start slot, all weather
@@ -365,7 +367,7 @@ Deno.serve(async (req) => {
       db.from('days').select('id, date').eq('trip_id', tripId).then(r => r.data ?? []),
     ]);
     if (fcSc.some(x => !x.length) || trSc.some((x, i) => !x.length && !(live && !trB[i]))) return json({ ok: false, error: 'empty replay builds' }, 404);
-    const mSc = mB ? await scoresOf(mB.id) : [];
+    let mSc = mB ? await scoresOf(mB.id) : [];
     if (mB && !mSc.length) return json({ ok: false, error: 'empty morning build' }, 404);
     if (week && ltSc.some((x, i) => needLt(i) && !x.length)) return json({ ok: false, error: 'no light geometry for a later day' }, 404);
     // A draft plans tomorrow on light only too.
@@ -375,6 +377,30 @@ Deno.serve(async (req) => {
     if (week) for (const day of fcSc) for (const r of day) {
       const m = r.v.length; if (m === 51) continue;
       const src = r.v; r.v = Uint8Array.from({ length: 51 }, (_, k) => src[Math.floor(k * m / 51)]);
+    }
+    // Careful score (run config shrink, v60, Phil 3 Nov 2026: "test the more careful score idea";
+    // Y showed that searching harder on the forecast lost points): each forecast value is blended
+    // toward a climate value that knows the light but not the weather: shrink x forecast +
+    // (1 - shrink) x (the light-only value at that slot, averaged over its sun scenarios) x
+    // (1 - 0.9 x clim_hidden, the usual share of daylight with the peaks hidden). The light
+    // stays exact; how much a forecast's weather can move a plan shrinks. Night forecasts only;
+    // shrink_morning also blends the morning build (made after a look at the peaks). New rows,
+    // the cached ones are never changed.
+    if (cfg.shrink != null) {
+      const a = Math.max(0, Math.min(1, Number(cfg.shrink))), ch = Number(cfg.clim_hidden ?? 0.6);
+      const blend = async (rows: any[], date: string) => {
+        const lt = await lightOf(date);
+        const clim = new Map<string, number>();
+        for (const r of lt) { let s = 0; for (const x of r.v) s += x; clim.set(r.stop_id + '|' + r.ms, (s / r.v.length) * (1 - 0.9 * ch)); }
+        return rows.map(r => {
+          const c = clim.get(r.stop_id + '|' + r.ms); if (c == null) return r;
+          const src = r.v as Uint8Array, v = new Uint8Array(src.length);
+          for (let k = 0; k < src.length; k++) v[k] = Math.round(a * src[k] + (1 - a) * c);
+          return { ...r, v };
+        });
+      };
+      for (let i = 0; i < fcSc.length; i++) if (!(draft && i === 0)) fcSc[i] = await blend(fcSc[i], horizon[i].date);
+      if (cfg.shrink_morning && mSc.length) mSc = await blend(mSc, horizon[0].date);
     }
     // Shot status is about the real trip; a replay starts from nothing shot. v53 (Phil, 1 Nov
     // 2026): the plans the app shows (publish) go by Phil's ticks instead: nailed = done for the
