@@ -2,7 +2,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
-// v55 (3 Nov 2026, T2): run config wx = rain, gusts and the waterfall rained-yesterday bonus in
+// v56 (3 Nov 2026, T2, on top of v55 learn): run config wx = rain, gusts and the waterfall rained-yesterday bonus in
 // the builds (lead + 20); every visit carries chance (calibrated odds of a good shot, from
 // solver_t_calib), n_fc / n_good (forecasts good of all), why (one plain line), and on published
 // plans light (front/side/back/soft/no sun) and move_why (T's plan, when it moved a stop off Phil's
@@ -269,7 +269,8 @@ Deno.serve(async (req) => {
     // bonus (replay_build lead + 20, on top of learn's + 40; the truth with ERA5 rain and gusts as
     // lead 20, the morning build as lead 21). Truth and morning builds are matched by lead, so a
     // wx build never stands in for a plain one.
-    const WX = cfg.wx ? 20 : 0;
+    // Drafts plan from light only (no forecast to carry rain or wind): no wx builds for them.
+    const WX = cfg.wx && !cfg.draft ? 20 : 0;
     const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX;
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
