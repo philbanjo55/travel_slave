@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
 // v55 (3 Nov 2026, T2): run config wx = rain, gusts and the waterfall rained-yesterday bonus in
@@ -430,8 +431,8 @@ Deno.serve(async (req) => {
     const placed = stopsAll.filter(s => s.lat != null && rated.some(r => r.stop_id === s.id));
     const mid = { lat: placed.reduce((t, s) => t + s.lat, 0) / (placed.length || 1), lng: placed.reduce((t, s) => t + s.lng, 0) / (placed.length || 1) };
     // Calibration for chance (solver_t_calib, refit by solver_t_fit_calib from bench + Phil's grades).
-    const region = mid.lat > 55 ? 'faroes' : 'teton';
-    const CAL = region === 'faroes' ? { a: -3.65, b: 7.831 } : { a: -4.53, b: 8.157 };
+    const region = regionOf(mid.lat);
+    const CAL = { ...CAL_FALLBACK[region] };
     { const { data: cr } = await db.from('solver_t_calib').select('a, b').eq('region', region).maybeSingle();
       if (cr && Number.isFinite(cr.a) && Number.isFinite(cr.b)) { CAL.a = cr.a; CAL.b = cr.b; } }
     // What a subject already has (x250): nailed = everything, got = shot_value.
@@ -734,7 +735,7 @@ Deno.serve(async (req) => {
     // good 7-23% of the time. chance = the calibrated odds of a good shot (truth V >= 0.6) from
     // the visit's mean value: logistic fit on T's bench visits (solver_t_calib, refit by
     // solver_t_fit_calib(); held-out Brier Teton 0.094 vs 0.128 for p_good, Faroes 0.158 vs 0.218).
-    const calOf = (v: number) => 1 / (1 + Math.exp(-(CAL.a + CAL.b * v)));
+    const calOf = (v: number) => calChance(CAL, v);
     const chance = (p: DayPlan, n: number, slot: number) => {
       if (nodes[n].w <= 0) return null;
       const w = p.W(n, slot); if (!w) return null;
@@ -745,25 +746,12 @@ Deno.serve(async (req) => {
                n_fc: p.light ? null : w.length, n_good: p.light ? null : g, peak_at: iso(p, p.peak(n, slot) * SLOT) };
     };
     // reason (T2): one short line per visit for the app, in plain words, from what the plan used.
-    const localHm = (ms: number, date: string) => {
-      const m = Math.round((ms - zonedToUtc(date, 0, tz)) / 60000), h = Math.floor(m / 60) % 24, mm = ((m % 60) + 60) % 60;
-      return `${h % 12 || 12}:${String(mm).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
-    };
-    const lightWord = (ms: number) => {
-      const a = sunAlt(mid.lat, mid.lng, ms);
-      return a < -0.8 ? 'blue hour' : a < 6 ? 'golden hour' : a < 15 ? 'low sun' : 'daylight';
-    };
+    const localMin = (ms: number, date: string) => (ms - zonedToUtc(date, 0, tz)) / 60000;
     const reasonOf = (p: DayPlan, v: Visit, c: ReturnType<typeof chance>) => {
-      const nd = nodes[v.n];
-      if (v.anchor) return 'Booked: kept at its time';
-      if (!c) return 'On the way';
-      const peakMs = Date.parse(c.peak_at);
-      const parts = [p.light ? 'typical weather only (no forecast yet)' : `good in ${c.n_good} of ${c.n_fc} forecasts`,
-                     `best light ${localHm(peakMs, p.date)} (${lightWord(peakMs)})`];
-      const wait = Math.round(v.start - v.arrive);
-      if (wait >= 20) parts.push(`wait ${wait} min for it`);
-      if (nd.once) parts.push('once this trip');
-      return parts.join(', ');
+      const peakMs = c ? Date.parse(c.peak_at) : 0;
+      return reasonText({ anchor: v.anchor, rated: !!c, lightOnly: p.light, nGood: c?.n_good ?? null, nFc: c?.n_fc ?? null,
+        peakMinutes: c ? localMin(peakMs, p.date) : 0, peakAlt: c ? sunAlt(mid.lat, mid.lng, peakMs) : 0,
+        waitMin: v.start - v.arrive, once: nodes[v.n].once });
     };
     const visitsOf = (p: DayPlan, st: State) => st.route.map(v => {
       const c = chance(p, v.n, Math.round(v.start / SLOT));
@@ -776,18 +764,10 @@ Deno.serve(async (req) => {
     });
     // Expected good shots (T2): the sum of the calibrated chances, a subject counted once (its best
     // visit), for every rated place and for the top tiers (S and GOD) alone.
-    const goodShots = (vs: any[]) => {
-      const best = new Map<string, { c: number; top: boolean }>();
-      for (const x of vs) {
-        if (x.chance == null) continue;
-        const n0 = pos.get(x.stop_id); if (n0 == null) continue;
-        const k = String(nodes[n0].group), t = tierOf.get(x.stop_id);
-        if ((best.get(k)?.c ?? -1) < x.chance) best.set(k, { c: x.chance, top: t === 'S' || t === 'GOD' });
-      }
-      let all = 0, top = 0;
-      for (const b of best.values()) { all += b.c; if (b.top) top += b.c; }
-      return { exp_all: r2(all), exp_big: r2(top) };
-    };
+    const goodShots = (vs: any[]) => goodShotsOf(vs.map(x => {
+      const n0 = pos.get(x.stop_id), t = tierOf.get(x.stop_id);
+      return { chance: x.chance, key: n0 == null ? null : String(nodes[n0].group), top: t === 'S' || t === 'GOD' };
+    }));
 
     // Value of a route against the truth (plan `tp`, one member): tier x truth
     // V at the visit, a subject counted once (only its improvement over what
@@ -1064,7 +1044,6 @@ Deno.serve(async (req) => {
         });
         // For the app (T2, the planner-screens thread): the light at each planned time, and for T's
         // plan why a stop moved off Phil's own time or day.
-        const LIGHT_WORD: Record<string, string> = { front: 'front', side: 'side', backlit: 'back', 'in shadow': 'soft', 'no sun': 'no sun' };
         const vOf = new Map(rated.map(r => [r.stop_id, r.star_vantage_id as string]));
         const want = [...new Set([...visits, ...mine].map(x => vOf.get(x.stop_id)).filter(Boolean))] as string[];
         const lc = want.length ? await all<any>((a, b) => db.from('solver_light_cache').select('vantage_id, slot_at, light')
@@ -1082,15 +1061,13 @@ Deno.serve(async (req) => {
           if (x.why && x.light && x.light !== 'no sun' && !x.booked) x.why += `, ${x.light} light`;
           const st0 = stopById.get(x.stop_id), ownDay = st0 ? tripDays.find(d => d.id === st0.day_id)?.date : undefined;
           const o = own.find(m => m.s.id === x.stop_id);
-          if (x.booked || x.n_good == null) continue;
-          if (o) {
-            const ms = zonedToUtc(d0.date, o.min!, tz), c0 = chance(p, o.n!, slotOf(ms));
-            if (Math.abs(ms - Date.parse(x.start)) >= 30 * 60000 && c0 && c0.n_good != null)
-              x.move_why = `moved from your ${localHm(ms, p.date)} to ${localHm(Date.parse(x.start), p.date)}: good in ${x.n_good} of ${x.n_fc} forecasts then vs ${c0.n_good} of ${c0.n_fc} at yours`;
-          } else if (ownDay && ownDay !== d0.tripDate) {
-            const wd = new Date(ownDay + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
-            x.move_why = `moved here from your ${wd}: good in ${x.n_good} of ${x.n_fc} forecasts today`;
-          } else if (!ownDay) x.move_why = `added: good in ${x.n_good} of ${x.n_fc} forecasts today`;
+          const oms = o ? zonedToUtc(d0.date, o.min!, tz) : 0, c0 = o ? chance(p, o.n!, slotOf(oms)) : null;
+          const mw = moveWhyText({ booked: !!x.booked, nGood: x.n_good ?? null, nFc: x.n_fc ?? null,
+            own: o ? { minutes: o.min!, nGood: c0?.n_good ?? null, nFc: c0?.n_fc ?? null } : null,
+            startMinutes: localMin(Date.parse(x.start), p.date),
+            ownDayLabel: ownDay ? new Date(ownDay + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) : null,
+            sameDay: ownDay === d0.tripDate });
+          if (mw) x.move_why = mw;
         }
         for (const x of mine as any[]) x.light = x.rated ? lightAt(x.stop_id, x.start) : null;
         const mm = scoreRoute(own.map(o => ({ n: o.n!, ms: zonedToUtc(d0.date, o.min!, tz) })));
