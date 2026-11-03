@@ -3,6 +3,7 @@
 // needs a signed webcam URL goes through the solver-actions edge function.
 import { AppState } from 'react-native';
 import { supabase } from './supabase';
+import { VERDICT_TEXT, countText, expShots, verdictOf } from './plannerWords';
 
 const ACTIONS_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/solver-actions';
 
@@ -154,8 +155,10 @@ export async function fetchPlans(runId: string): Promise<Plan[]> {
   return (data ?? []) as Plan[];
 }
 
-// Best plan and "your day" for many runs at once (day list), as % of a perfect day.
-export type DayScore = { best?: number | null; mine?: number | null; hasMine: boolean; top?: string[] };
+// Best plan and "your day" for many runs at once (day list), as the good shots of the big
+// subjects (GOD + S) each expects (Phil, 3 Nov 2026: replaced "% of a perfect day", which could
+// never reach 100 and read as 0% on every grey day).
+export type DayScore = { best?: number | null; mine?: number | null; hasMine: boolean; top?: string[]; goods?: number };
 export async function fetchScores(runs: PlanRun[], tierOf: (stopId: string) => string | null | undefined): Promise<Map<string, DayScore>> {
   const out = new Map<string, DayScore>();
   if (!runs.length) return out;
@@ -165,11 +168,12 @@ export async function fetchScores(runs: PlanRun[], tierOf: (stopId: string) => s
   for (const r of runs) {
     const ps = (data ?? []).filter((p: any) => p.run_id === r.id) as (Plan & { run_id: string })[];
     const mine = ps.find(p => p.rank === 0), best = ps.find(p => p.rank === 1);
-    const c = planCeiling(r, [mine, best], tierOf);
+    const big = (id: string) => ['GOD', 'S'].includes(tierOf(id) ?? '');
+    const goods = (best?.visits ?? []).filter(v => big(v.stop_id) && verdictOf(v.p_good) === 'good');
     out.set(r.id, {
-      // Your day worth nothing (times passed, no light) shows T's best alone, not "0% →".
-      mine: mine && mine.mean > 0 ? pctOf(mine.mean, c) : null, best: best ? pctOf(best.mean, c) : null, hasMine: !!mine,
-      top: best?.visits.filter(v => (v.p_good ?? 0) >= 0.5).map(v => v.name).slice(0, 3),
+      // Your day worth nothing (times passed, no light) shows T's plan alone.
+      mine: mine && mine.mean > 0 ? expShots(mine, tierOf) : null, best: best ? expShots(best, tierOf) : null, hasMine: !!mine,
+      top: goods.map(v => v.name).slice(0, 3), goods: goods.length,
     });
   }
   return out;
@@ -329,12 +333,12 @@ export async function fetchBrief(tripId: string, tripDate: string, tierOf: (stop
   const scored = pNow.visits.filter(v => v.p_good != null);
   const big = scored.filter(v => ['GOD', 'S'].includes(tierOf(v.stop_id) ?? ''));
   const top = [...(big.length ? big : scored)].sort((a, b) => (b.p_good ?? 0) - (a.p_good ?? 0))[0];
-  const headline = top
-    ? `Go for ${top.name} at ${hhmm(top.peak_at ?? top.start, tz)} (${Math.round((top.p_good ?? 0) * 100)}%).`
-    : 'Nothing rated looks good this day.';
+  const headline = top && (top.p_good ?? 0) >= 0.1
+    ? `${VERDICT_TEXT[verdictOf(top.p_good)]}: ${top.name} at ${clock12(top.start, tz)} (${countText(top, now)}).`
+    : 'Grey day: nothing rated looks good.';
   const first = pNow.visits.find(v => v.start);
   const leave = first?.start
-    ? `Leave ${hhmm(new Date(new Date(first.start).getTime() - (first.drive_min ?? 0) * 60000).toISOString(), tz)} for ${first.name}.`
+    ? `Leave ${clock12(new Date(new Date(first.start).getTime() - (first.drive_min ?? 0) * 60000).toISOString(), tz)} for ${first.name}.`
     : null;
   const changes: string[] = [];
   if (pBefore) {
@@ -342,8 +346,8 @@ export async function fetchBrief(tripId: string, tripDate: string, tierOf: (stop
     for (const v of scored) {
       const a = was.get(v.stop_id);
       if (a == null) continue;
-      const d = (v.p_good ?? 0) - a;
-      if (Math.abs(d) >= 0.15) changes.push(`${d > 0 ? '↑' : '↓'} ${v.name} ${Math.round(a * 100)}% → ${Math.round((v.p_good ?? 0) * 100)}%`);
+      const vWas = verdictOf(a), vNow = verdictOf(v.p_good);
+      if (vWas !== vNow) changes.push(`${(v.p_good ?? 0) > a ? '↑' : '↓'} ${v.name}: ${VERDICT_TEXT[vWas]} → ${VERDICT_TEXT[vNow]} (${countText(v, now)})`);
     }
     const newIn = pNow.visits.filter(v => v.p_good != null && !was.has(v.stop_id)).map(v => v.name);
     if (newIn.length) changes.push(`New in the plan: ${newIn.slice(0, 3).join(', ')}`);
