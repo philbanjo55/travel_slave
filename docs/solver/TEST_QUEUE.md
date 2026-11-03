@@ -7,6 +7,8 @@ it runs; compare paired per week with `replay_paired(a, b, kind, block_days)` (p
 `jsonb_array_elements` join); check 'no route' nights before reading a result; keep the bench
 under 6 runs at a time and never start many heavy (Faroes, polish) runs at once; watch DB size.
 
+Phil, 3 Nov 2026: focus on the solver; app feedback later; roadside repeats are fine.
+
 | # | Test | What it answers | Status |
 |---|------|-----------------|--------|
 | 1 | Y = T + polish 10 (`pk10_56`, 56 winters) | Does a deeper exhaustive day search earn real points, or only plan score? | done 3 Nov: retired. -1.15 +/- 0.42 per week vs T (14 better / 40 worse, both winters down): more search on the forecast's score overfits forecast noise |

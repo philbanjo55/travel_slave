@@ -34,5 +34,5 @@ the KJAC ceiling and TetonCam.
 ## What to check
 
 - Every ski outing fits both weeks (Teton Pines, Taggart + Bradley, Jenny Lake, Swan Lake, Emily's Pond), inside the gear window; arrival and flight days hold.
-- T fills spare time with the roadside views again (2024-25: Snake River Overlook 4 times, Shane Cabins 4, Menor's Ferry 3, Glacier View 3). A repeat only counts when it could beat the earlier shot. Is that what Phil wants, or fewer repeats?
+- T fills spare time with the roadside views again (2024-25: Snake River Overlook 4 times, Shane Cabins 4, Menor's Ferry 3, Glacier View 3). A repeat only counts when it could beat the earlier shot. Phil, 3 Nov 2026: repeats are fine, keep them.
 - A day the forecast calls hidden all day gets no plan (4 Jan 2026). The app then shows Phil's own day.
