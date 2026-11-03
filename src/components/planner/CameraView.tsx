@@ -43,6 +43,26 @@ export function LabelButtons({ frameId, value, onChange }: {
 
 const LIVE_REFRESH_MS = 30_000;
 
+// Templated archives (TetonCam: .../{YYYY}/{MM}/{DD}/{HHmm}.jpg every 15 min, camera-local):
+// the newest two file names by the clock, newest first. The server's address waits 10 min for
+// an upload, so Live showed a picture up to 25 min old while a newer one was there (3 Nov 2026:
+// Live 13:15 at 13:37 while the archive had 13:30); the phone tries the newer names first.
+export function templateSlots(template: string, tz: string | null | undefined, now = new Date()): { url: string; time: string }[] {
+  const step = 15 * 60_000;
+  const out: { url: string; time: string }[] = [];
+  for (let k = 0; k < 2; k++) {
+    const t = new Date(Math.floor(now.getTime() / step) * step - k * step);
+    const p: Record<string, string> = {};
+    try {
+      for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: tz ?? 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(t)) p[x.type] = x.value;
+    } catch { return []; }
+    out.push({ url: template.replace('{YYYY}', p.year).replace('{MM}', p.month).replace('{DD}', p.day).replace('{HHmm}', p.hour + p.minute),
+               time: `${p.hour}:${p.minute}` });
+  }
+  return out;
+}
+
 // Live view: the camera's picture now, reloaded every 30 s while open. The new
 // picture is downloaded first and swapped in, so it doesn't blink. Templated
 // archives (TetonCam) ask the server for their newest file each time.
@@ -73,9 +93,19 @@ export function useLive(camera: CameraFrame['camera'] | undefined, on: boolean, 
           if (c?.live_url) { url = c.live_url; picture = c.live_time ?? null; }
         } catch { /* keep the last address */ }
       }
-      const uri = `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
-      let ok = true;
-      try { ok = await Image.prefetch(uri); } catch { ok = false; }
+      // A newer file than the server's, when there is one (templated archives only).
+      const tries: { url: string; time: string | null }[] = [];
+      if (camera.image_url.includes('{') && camera.tz) {
+        for (const c of templateSlots(camera.image_url, camera.tz)) if (c.url !== url) tries.push(c);
+      }
+      tries.push({ url, time: picture });
+      let uri = '';
+      let ok = false;
+      for (const t of tries) {
+        uri = `${t.url}${t.url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+        try { ok = await Image.prefetch(uri); } catch { ok = false; }
+        if (ok) { picture = t.time; break; }
+      }
       if (!alive) return;
       setState(prev => ok || !prev ? { uri, at: new Date(), picture, failed: !ok } : { ...prev, failed: true });
     };
