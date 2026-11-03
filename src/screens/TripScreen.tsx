@@ -18,7 +18,7 @@ import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
 import { IS_TEST_APP } from '../utils/variant';
 import {
-  fetchClaudeSpend, spendLine, fetchDayRuns, dayChanges, applyPreview, applyPlan, canApply, changesLine,
+  fetchClaudeSpend, spendLine, fetchDayRuns, dayChanges, applyWeek, isPastDay, canApply, changesLine,
   labelMinutes, DayChange,
 } from '../services/planner';
 import { DayScoreCard, dayScore, useDayPlanner } from '../components/planner/DayPlannerHints';
@@ -68,13 +68,16 @@ export default function TripScreen() {
   const [accepting, setAccepting] = useState(false);
   const [ghostDetails, setGhostDetails] = useState(false);
   useEffect(() => { setGhost(false); setPop(null); }, [activeDay, planner?.run?.id]);
-  // What applying also does (set aside, tight connections), shown before Accept.
+  // A day that is over: no changes to show or accept (past days never change).
+  const pastDay = !!shownDay?.date && isPastDay(shownDay.date, planTz);
+  // What accepting T's plan for the rest of the trip does (every day it changes, set aside,
+  // tight connections), shown before Accept.
   useEffect(() => {
-    if (!ghost || !planner?.run) { setGhostPreview(null); return; }
+    if (!ghost) { setGhostPreview(null); return; }
     let alive = true;
-    applyPreview(planner.run.id, 1).then(j => { if (alive) setGhostPreview(j.result); }).catch(() => {});
+    applyWeek(tripId, false).then(j => { if (alive) setGhostPreview(j.result); }).catch(() => {});
     return () => { alive = false; };
-  }, [ghost, planner?.run?.id]);
+  }, [ghost, tripId]);
   const ghostRows = useMemo(() => {
     if (!ghost || !planner?.best) return null;
     const byId = new Map(changes.map(c => [c.stop_id, c]));
@@ -97,17 +100,17 @@ export default function TripScreen() {
     return rows.sort((a, b) => a.k - b.k);
   }, [ghost, changes, shownStops, planner, currentTripData]);
   const acceptAll = useCallback(async () => {
-    if (!planner?.run) return;
     setAccepting(true);
     try {
-      const j = await applyPlan(planner.run.id, 1);
+      const j = await applyWeek(tripId, true);
       if (j.preview_only) throw new Error('This trip is preview only.');
+      if (j.result?.nothing) throw new Error("T has no plan left to accept for this trip.");
       await loadTrip(tripId);
       setGhost(false);
       Alert.alert('Plan accepted', acceptedText(j.result));
     } catch (e: any) { Alert.alert('Not applied', String(e?.message ?? e)); }
     setAccepting(false);
-  }, [planner?.run?.id, tripId]);
+  }, [tripId]);
 
   const goToDay = useCallback((index: number) => {
     setActiveDay(index);
@@ -416,7 +419,7 @@ export default function TripScreen() {
             <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />
             {day?.date ? (
               <DayScoreCard tripId={tripId} date={day.date} planner={planner} score={score}
-                onShowChanges={() => { setPop(null); setGhost(true); }} />
+                past={pastDay} onShowChanges={() => { setPop(null); setGhost(true); }} />
             ) : null}
           </View>
         ) : undefined}
@@ -425,7 +428,7 @@ export default function TripScreen() {
           <TimelineRow item={item} index={index} isLast={index === (ghostRows ?? stops).length - 1} weather={dayWeather[item.id]} dayDate={day?.date}
             planner={planner} ghost={ghostRows ? ghostRows[index]?.tag : null}
             change={changes.find(c => c.stop_id === item.id && c.kind !== 'added') ?? null}
-            onChip={() => setPop(p => (p === item.id ? null : item.id))}
+            onChip={pastDay ? undefined : () => setPop(p => (p === item.id ? null : item.id))}
             popover={!ghostRows && pop === item.id && score ? (
               <View style={styles.popover}>
                 <Text style={styles.popText}>
@@ -550,7 +553,7 @@ export default function TripScreen() {
             accessibilityState={{ expanded: ghostDetails }}>
             {ghostPreview ? (
               <Text style={styles.ghostNote} numberOfLines={1}>
-                {ghostPreview.stops_changed ?? 0} stops change
+                {ghostPreview.stops_changed ?? 0} stops change{ghostPreview.week_days?.length ? ` over ${ghostPreview.week_days.length} days` : ''}
                 {ghostPreview.set_aside?.length ? ` · ${ghostPreview.set_aside.length} set aside` : ''}
                 {ghostPreview.clashes?.length ? ` · ${ghostPreview.clashes.length} tight` : ''}
               </Text>
@@ -577,12 +580,10 @@ export default function TripScreen() {
           ) : null}
           <View style={styles.ghostBtns}>
             {canApply(tripId) ? (
-              <TouchableOpacity style={styles.ghostAccept} onPress={acceptAll} disabled={accepting || !realChanges.length} accessibilityRole="button">
+              <TouchableOpacity style={styles.ghostAccept} onPress={acceptAll} disabled={accepting || !ghostPreview || ghostPreview.nothing} accessibilityRole="button"
+                accessibilityLabel="Accept T's plan for the rest of the trip: the rest of today and every later day. Past days don't change.">
                 {accepting ? <ActivityIndicator color={colors.textInverse} /> : (
-                  <Text style={styles.ghostAcceptText} numberOfLines={1}>
-                    Accept all {realChanges.length} change{realChanges.length === 1 ? '' : 's'}
-                    {score?.mine != null && score.best != null ? ` · ${score.mine}% → ${score.best}%` : score?.best != null ? ` · best ${score.best}%` : ''}
-                  </Text>
+                  <Text style={styles.ghostAcceptText} numberOfLines={1}>Accept T's plan from now on</Text>
                 )}
               </TouchableOpacity>
             ) : (

@@ -494,5 +494,19 @@ export const TEST_TRIPS = new Set([
   '7e57bed0-0000-4000-8000-000000000003',
 ]);
 export const canApply = (tripId: string) => TEST_TRIPS.has(tripId);
+// Whole-week Accept (Phil, 3 Nov 2026): T's plan for the rest of the trip at once: today's
+// visits still ahead and every later day; past days and passed stops never change; the rated
+// stops T's week leaves out are set aside (tier kept). apply false = preview. Writes on the
+// test trips only.
+export const applyWeek = (tripId: string, apply: boolean) =>
+  solverAction<{ preview_only: boolean; result: any }>({ action: 'apply_week', trip_id: tripId, apply });
+
+// Is this trip day already over (before today in the trip's timezone)?
+export function isPastDay(date: string, tz?: string): boolean {
+  let today = new Date().toISOString().slice(0, 10);
+  try { today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()); } catch { /* phone's date */ }
+  return date < today;
+}
+
 export const applyPlan = (runId: string, rank: number) =>
   solverAction<{ preview_only: boolean; result: any }>({ action: 'apply', run_id: runId, rank });

@@ -36,6 +36,10 @@ import postgres from 'npm:postgres@3.4.4';
 //   apply        {run_id, rank}  the test trips only (test bed, Faroes Live, Teton Live;
 //                Phil, 1 Nov 2026: "accept all" in the TEST app) until Phil signs off
 //                the solver; real trips get the preview
+//   apply_week   {trip_id, apply?}  T's plan for the rest of the trip at once (today's
+//                visits still ahead + every later day; past days and passed stops frozen;
+//                solver_apply_week). apply: true writes on the test trips only; otherwise
+//                (and on real trips) the preview
 //   planning_status {trip_id}  T's newest week draft for the trip (replay_runs, no anon
 //                read): {id, status, night, nights, trip_dates, made, updated_at}
 //   stop_curve   {stop_id, trip_date}  the stop's chance per 15-min slot that trip day
@@ -267,6 +271,14 @@ Deno.serve(async (req) => {
         if (!run) return json({ error: 'run not found' }, 404);
         const write = body.action === 'apply' && TEST_TRIPS.has(run.trip_id);
         const { data, error } = await db.rpc('solver_apply_plan', { p_run_id: body.run_id, p_rank: body.rank, p_apply: write });
+        if (error) return json({ ok: false, error: error.message });
+        return json({ ok: true, preview_only: !write, result: data });
+      }
+
+      case 'apply_week': {
+        if (!body.trip_id) return json({ error: 'trip_id required' }, 400);
+        const write = !!body.apply && TEST_TRIPS.has(body.trip_id);
+        const { data, error } = await db.rpc('solver_apply_week', { p_trip: body.trip_id, p_apply: write });
         if (error) return json({ ok: false, error: error.message });
         return json({ ok: true, preview_only: !write, result: data });
       }

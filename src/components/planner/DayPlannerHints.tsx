@@ -171,8 +171,8 @@ export function dayScore(planner: DayPlanner | null, date: string, dayStops: any
   return { mine: reason ? null : pctOf(planner.mine?.mean, c), best: pctOf(planner.best.mean, c), reason, changes };
 }
 
-export function DayScoreCard({ tripId, date, planner, score, onShowChanges }: {
-  tripId: string; date: string; planner: DayPlanner | null; score: DayScore | null; onShowChanges: () => void;
+export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past }: {
+  tripId: string; date: string; planner: DayPlanner | null; score: DayScore | null; onShowChanges: () => void; past?: boolean;
 }) {
   const navigation = useNavigation<any>();
   const open = () => navigation.navigate('Planner', { tripId, tab: 'plans', date });
@@ -222,9 +222,11 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges }: {
         {score.best != null ? <Text style={styles.best}>best {score.best}%</Text> : null}
       </View>
       <ScoreBar mine={score.mine} best={score.best} />
-      <TouchableOpacity onPress={onShowChanges} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={`${changesLine(score.changes)}. Show them on the timeline`}>
-        <Text style={styles.changes} numberOfLines={2}>{changesLine(score.changes)} <Text style={styles.changesGo}>›</Text></Text>
-      </TouchableOpacity>
+      {past ? <Text style={styles.cardSub}>This day is over: nothing to change.</Text> : (
+        <TouchableOpacity onPress={onShowChanges} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={`${changesLine(score.changes)}. Show them on the timeline`}>
+          <Text style={styles.changes} numberOfLines={2}>{changesLine(score.changes)} <Text style={styles.changesGo}>›</Text></Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }

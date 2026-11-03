@@ -274,7 +274,10 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, ceiling, o
     const d = currentTripData?.days.find((x: any) => x.date === date);
     return (d?.stops ?? []).find((x: any) => x.name === name)?.time_label ?? null;
   };
-  const writable = !!tripId && canApply(tripId) && !!run && !!plan && plan.rank !== 0;
+  // Accepting a single day pulls stops off other days (Phil, 3 Nov 2026): accept happens for the
+  // rest of the trip at once, from the day card on the trip page. This sheet only previews.
+  const writable = false;
+  const testTrip = !!tripId && canApply(tripId);
   const accept = async () => {
     if (!run || !plan || !tripId) return;
     setBusy(true);
@@ -310,7 +313,7 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, ceiling, o
             </View>
           ) : null}
           <Text style={styles.hint}>
-            {writable ? 'Accepting applies all of it: the changes depend on each other.'
+            {testTrip ? "Preview of this day only. To accept, tap the T card's changes line on the trip page: it applies T's plan for the rest of the trip at once (past days don't change)."
               : 'Preview only on real trips: nothing is moved until the solver is signed off.'}
             {apply?.stops_changed != null ? ` ${apply.stops_changed} stops would change.` : ''}
           </Text>
