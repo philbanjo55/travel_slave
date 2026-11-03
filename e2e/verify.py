@@ -341,10 +341,12 @@ def field_reciprocity_and_timer():
     C.adb('shell', 'input', 'text', '0.25'); time.sleep(0.5); hide_kb(); time.sleep(1)
     if not find_scroll('Red 29', 8):
         check('recip-filters', False, 'no Red 29 chip'); return
-    s = C.capture(1); tap_text(s, 'ND64'); s = C.capture(1.5)
+    hide_kb(); s = C.capture(1); tap_text(s, 'ND64'); hide_kb()
+    box_seen, s = texts_all(3)
     show('recip-filter-box', s)
-    box = '\n'.join(s.all_texts)
+    box = '\n'.join(box_seen)
     seen, _ = texts_all(0, up_first=12)
+    seen = box_seen + seen
     show('recip-result-with-filters', C.capture(0.5))
     ok_box = '18m' in box and 'with filters' in box
     ok_res = any(t.startswith('18m') for t in seen) and any('Includes filters +10 stops' in t for t in seen)
