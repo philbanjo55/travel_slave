@@ -6,6 +6,7 @@ import { colors, spacing, radius } from '../../theme';
 import { Plan, PlanRun, TripSetting, fetchDayRuns, fetchPlans, fetchTripSettings, latestByDay } from '../../services/planner';
 import { PlanBody } from '../../components/planner/PlanView';
 import { darkMapStyle } from '../DayScreen';
+import { VERDICT_TEXT, verdictOf } from '../../services/plannerWords';
 
 // The chosen day's plan as a route: numbered stops in order, rated stops the
 // plan leaves out in grey. Same day as the Plans tab.
@@ -78,7 +79,7 @@ export default function MapTab({ tripId, days, date, setDate, goPlans }: {
           ))}
           {route.map((x, i) => (
             <Marker key={`r-${x.v.stop_id}-${i}`} coordinate={{ latitude: x.s.lat, longitude: x.s.lng }} title={`${i + 1} · ${x.v.name}`}
-              description={x.v.p_good != null ? `${Math.round(x.v.p_good * 100)}% chance` : undefined} anchor={{ x: 0.5, y: 0.5 }}>
+              description={x.v.p_good != null ? VERDICT_TEXT[verdictOf(x.v.p_good)] : undefined} anchor={{ x: 0.5, y: 0.5 }}>
               <View style={[styles.pin, x.v.booked && styles.pinBooked]}><Text style={styles.pinText}>{i + 1}</Text></View>
             </Marker>
           ))}
