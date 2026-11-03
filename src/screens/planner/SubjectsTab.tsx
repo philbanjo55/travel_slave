@@ -36,7 +36,19 @@ export default function SubjectsTab({ tripId, days, tz, goPlans }: {
   const dated = days.filter((d: any) => d.date);
   const stops = new Map<string, any>();
   for (const d of days) for (const s of d.stops ?? []) stops.set(s.id, { ...s, day: d });
-  const rows = [...stops.keys()].map(id => ({ id, s: stops.get(id), st: settings.get(id) }))
+  // Phil keeps one stop row per day for the same place: one row per place here, outlined on
+  // every day it sits on his plan.
+  const own = new Map<string, Set<string>>();
+  const firstOf = new Map<string, string>();
+  for (const [id, s] of stops) {
+    const k = (s.name ?? id).toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!own.has(k)) own.set(k, new Set());
+    if (s.day?.id) own.get(k)!.add(s.day.id);
+    const cur = firstOf.get(k);
+    if (!cur || (settings.get(id)?.tier && !settings.get(cur)?.tier)) firstOf.set(k, id);
+  }
+  const ownDays = (s: any) => own.get((s.name ?? '').toLowerCase().replace(/\s+/g, ' ').trim()) ?? new Set<string>();
+  const rows = [...firstOf.values()].map(id => ({ id, s: stops.get(id), st: settings.get(id) }))
     .filter(r => r.s && r.st?.tier && r.st.tier !== 'F')
     .filter(r => filter === 'rated' || (filter === 'big' ? ['GOD', 'S'].includes(r.st!.tier!) : r.st!.shot_status !== 'nailed'))
     .sort((a, b) => TIER_ORDER.indexOf(a.st!.tier!) - TIER_ORDER.indexOf(b.st!.tier!) || a.s.name.localeCompare(b.s.name));
@@ -91,7 +103,7 @@ export default function SubjectsTab({ tripId, days, tz, goPlans }: {
               <View style={styles.cells}>
                 {dated.map((d: any) => {
                   const t = where.find(w => w.date === d.date);
-                  const own = s.day?.id === d.id;
+                  const own = ownDays(s).has(d.id);
                   const v = t?.visit.p_good ?? null;
                   const k = v != null ? verdictOf(v) : null;
                   return <View key={d.id} style={[styles.cell, k === 'good' ? styles.great : k === 'long' ? styles.soso : k === 'skip' ? styles.poor : styles.empty, own && styles.own]} />;
@@ -103,7 +115,7 @@ export default function SubjectsTab({ tripId, days, tz, goPlans }: {
                 <Text style={styles.hint}>
                   {top ? `T's best: Day ${top.dayNumber} at ${clock12(top.visit.start, top.run.params?.tz ?? tz)}, ${VERDICT_TEXT[verdictOf(top.visit.p_good)]} (${countText(top.visit, top.run)}).`
                     : "T doesn't plan it on any day yet."}
-                  {s.day ? ` Your plan: Day ${s.day.day_number}${ownMine ? `, ${VERDICT_TEXT[verdictOf(ownMine.p_good)]} (${countText(ownMine, week?.byDate.get(s.day.date)?.run)})` : ''}.` : ''}
+                  {s.day ? ` Your plan: Day ${dated.filter((d: any) => ownDays(s).has(d.id)).map((d: any) => d.day_number).join(', ') || s.day.day_number}${ownMine ? `, ${VERDICT_TEXT[verdictOf(ownMine.p_good)]} (${countText(ownMine, week?.byDate.get(s.day.date)?.run)})` : ''}.` : ''}
                 </Text>
                 {where.sort((a, b) => a.date.localeCompare(b.date)).map(w => (
                   <View key={w.date} style={styles.detailRow}>
