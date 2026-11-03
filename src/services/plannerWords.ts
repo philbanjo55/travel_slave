@@ -39,6 +39,16 @@ export const isLightOnly = (run: PlanRun | null | undefined) => !!run?.stats?.da
 
 type V = { p_good?: number | null; n_fc?: number | null; n_good?: number | null; why?: string | null };
 
+// T's newer plans carry `chance` (calibrated odds of a good shot) beside the raw p_good. The app
+// shows one chance per stop, so when a visit has `chance` it becomes the visit's p_good everywhere.
+export function withChance<P extends { visits?: any[] }>(plans: P[]): P[] {
+  for (const p of plans) for (const v of p.visits ?? []) {
+    if (typeof v.chance === 'number' && Number.isFinite(v.chance)) { v.p_raw = v.p_good; v.p_good = v.chance; }
+  }
+  return plans;
+}
+const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+
 // "4 of 6 forecasts", "about 4 in 10 forecasts", "4 in 10 typical days".
 export function countText(v: V, run: PlanRun | null | undefined): string {
   const p = v.p_good ?? 0;
@@ -63,7 +73,7 @@ export function chanceText(v: V, run: PlanRun | null | undefined): string {
 
 // The reason in words: T's own when it gives one, else from the count.
 export function reasonText(v: V, run: PlanRun | null | undefined): string {
-  if (v.why) return v.why;
+  if (v.why) return cap(v.why);
   const p = v.p_good ?? 0;
   const c = countText(v, run);
   if (isLightOnly(run)) return p > 0 ? `No forecast yet: good light ${c}` : 'No forecast yet: the light is rarely right here then';

@@ -32,6 +32,9 @@ export function moveReasons(changes: DayChange[], planner: DayCore, date: string
   // A stop T brings in from another day isn't also "left out" here (Phil had it twice).
   const added = changes.filter(c => c.kind === 'added').map(c => c.stop_id);
   return changes.filter(c => !(c.kind === 'skipped' && added.some(a => samePlace(week, a, c.stop_id)))).map(c => {
+    // T's own reason when it gives one (move_why on its plan, newer solver).
+    const tv: any = c.kind !== 'skipped' ? planner.best?.visits.find(v => v.stop_id === c.stop_id) : null;
+    if (tv?.move_why) return `${c.name}: ${tv.move_why}`;
     if (c.kind === 'moved') {
       const now = c.p_good != null ? countText({ p_good: c.p_good }, run) : 'unscored';
       return `${c.name} ${c.was ?? ''} → ${c.now ?? '?'}: ${now}${c.wasP != null ? `, vs ${short({ p_good: c.wasP }, run)} at your time` : ''}`.replace('  ', ' ');

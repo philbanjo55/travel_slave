@@ -3,7 +3,7 @@
 // needs a signed webcam URL goes through the solver-actions edge function.
 import { AppState } from 'react-native';
 import { supabase } from './supabase';
-import { VERDICT_TEXT, countText, expShots, verdictOf } from './plannerWords';
+import { VERDICT_TEXT, countText, expShots, verdictOf, withChance } from './plannerWords';
 
 const ACTIONS_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/solver-actions';
 
@@ -152,7 +152,7 @@ export async function fetchPlans(runId: string): Promise<Plan[]> {
     .select('rank, objective, mean, cvar11, drive_minutes, long_leg_minutes, note, visits')
     .eq('run_id', runId).order('rank');
   if (error) throw error;
-  return (data ?? []) as Plan[];
+  return withChance((data ?? []) as Plan[]);
 }
 
 // Best plan and "your day" for many runs at once (day list), as the good shots of the big
@@ -166,7 +166,7 @@ export async function fetchScores(runs: PlanRun[], tierOf: (stopId: string) => s
     .select('run_id, rank, mean, cvar11, objective, visits').in('run_id', runs.map(r => r.id)).in('rank', [0, 1]);
   if (error) throw error;
   for (const r of runs) {
-    const ps = (data ?? []).filter((p: any) => p.run_id === r.id) as (Plan & { run_id: string })[];
+    const ps = withChance((data ?? []).filter((p: any) => p.run_id === r.id) as (Plan & { run_id: string })[]);
     const mine = ps.find(p => p.rank === 0), best = ps.find(p => p.rank === 1);
     const big = (id: string) => ['GOD', 'S'].includes(tierOf(id) ?? '');
     const goods = (best?.visits ?? []).filter(v => big(v.stop_id) && verdictOf(v.p_good) === 'good');
