@@ -7,6 +7,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { supabase } from './supabase';
 import { Plan, PlanRun, fetchDayRuns, latestByDay } from './planner';
 import { TDay, TWeek } from './plannerWeekPure';
+import { withChance } from './plannerWords';
 export * from './plannerWeekPure';
 
 export async function fetchTWeek(tripId: string, days: any[]): Promise<TWeek> {
@@ -23,7 +24,7 @@ export async function fetchTWeek(tripId: string, days: any[]): Promise<TWeek> {
       .select('run_id, rank, objective, mean, cvar11, drive_minutes, long_leg_minutes, note, visits')
       .in('run_id', runs.map(r => r.id)).in('rank', [0, 1]);
     if (error) throw error;
-    plans.push(...((data ?? []) as any));
+    plans.push(...withChance((data ?? []) as any[]));
   }
   const out: TDay[] = runs.map(run => {
     const date = run.stats?.days?.[0]?.trip_date ?? run.plan_date;
