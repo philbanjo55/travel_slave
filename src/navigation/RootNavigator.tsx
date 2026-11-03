@@ -16,6 +16,7 @@ import ExposureImportScreen from '../screens/ExposureImportScreen';
 import DayCompareScreen from '../screens/DayCompareScreen';
 import PlannerScreen from '../screens/PlannerScreen';
 import TrainingScreen from '../screens/TrainingScreen';
+import FeedsScreen from '../screens/FeedsScreen';
 import { colors } from '../theme';
 
 export type RootStackParamList = {
@@ -33,6 +34,8 @@ export type RootStackParamList = {
   Planner: { tripId: string; tab?: 'overview' | 'plans' | 'subjects' | 'map' | 'setup'; date?: string };
   // Live training trips (trips.training_of), TEST app only.
   Training: undefined;
+  // Every live feed for a trip (cameras, airport, last updated), TEST app only.
+  Feeds: { tripId: string };
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -104,6 +107,7 @@ export default function RootNavigator() {
         {/* No swipe-back: it grabbed sideways swipes on the camera strip and moved the whole screen. */}
         <Stack.Screen name="Planner" component={PlannerScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Training" component={TrainingScreen} />
+        <Stack.Screen name="Feeds" component={FeedsScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

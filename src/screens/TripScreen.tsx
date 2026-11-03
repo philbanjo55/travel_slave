@@ -336,6 +336,12 @@ export default function TripScreen() {
           <Ionicons name="time-outline" size={20} color={recalculating ? colors.textTertiary : colors.textSecondary} />
         </TouchableOpacity>
         {IS_TEST_APP && (
+          <TouchableOpacity onPress={() => navigation.navigate('Feeds', { tripId })} style={styles.plannerBtn}
+            accessibilityLabel="Open the live feeds">
+            <Ionicons name="videocam-outline" size={18} color={colors.textPrimary} />
+          </TouchableOpacity>
+        )}
+        {IS_TEST_APP && (
           <TouchableOpacity onPress={() => navigation.navigate('Planner', { tripId })} style={styles.plannerBtn}
             accessibilityLabel="Open the Planner">
             <Ionicons name="sparkles-outline" size={18} color={colors.textPrimary} />

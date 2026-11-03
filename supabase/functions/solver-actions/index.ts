@@ -108,11 +108,27 @@ async function resolveRoundshot(l: { url: string; time: string | null }) {
   try {
     const r = await fetch(l.url, { signal: AbortSignal.timeout(5000) });
     await r.body?.cancel();
+    // 200 + Location (some clients) or a real redirect that fetch followed (v17: before, the
+    // followed case kept the bare address and no time).
     const loc = r.headers.get('location');
-    if (!loc) return l;
-    const m = loc.match(/\d{4}-\d{2}-\d{2}-(\d{2})-(\d{2})-\d{2}_[a-z]+\.jpg/);
-    return { url: new URL(loc, l.url).toString(), time: m ? `${m[1]}:${m[2]}` : null };
+    const target = loc ? new URL(loc, l.url).toString() : r.redirected ? r.url : null;
+    if (!target) return l;
+    const m = target.match(/\d{4}-\d{2}-\d{2}-(\d{2})-(\d{2})-\d{2}_[a-z]+\.jpg/);
+    return { url: target, time: m ? `${m[1]}:${m[2]}` : null };
   } catch { return l; }
+}
+
+// Sun height in degrees (NOAA low precision, as webcam-archive).
+function sunAlt(lat: number, lng: number, d: Date) {
+  const rad = Math.PI / 180;
+  const n = d.getTime() / 86400000 - 10957.5;
+  const L = (280.46 + 0.9856474 * n) % 360, g = ((357.528 + 0.9856003 * n) % 360) * rad;
+  const lam = (L + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * rad;
+  const eps = (23.439 - 0.0000004 * n) * rad;
+  const dec = Math.asin(Math.sin(eps) * Math.sin(lam));
+  const ra = Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam));
+  const ha = ((280.46061837 + 360.98564736629 * n + lng) % 360) * rad - ra;
+  return Math.asin(Math.sin(lat * rad) * Math.sin(dec) + Math.cos(lat * rad) * Math.cos(dec) * Math.cos(ha)) / rad;
 }
 
 function km(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
@@ -292,6 +308,84 @@ Deno.serve(async (req) => {
         if (error) throw error;
         return json({ ok: true, status: r ? { id: r.id, status: r.status, night: r.night, nights: r.nights, trip_dates: r.trip_dates,
                                                made: r.config?.made ?? null, updated_at: r.updated_at } : null });
+      }
+
+      case 'feeds': {
+        // Feeds page (v17, Phil 3 Nov 2026: "make sure when something is live it's actually live";
+        // a trip-level page next to the Planner). Every camera within MAX_CAMERA_KM of the trip's
+        // stops with a status from what the archive saw, the live picture's own time when its
+        // source tells it (Roundshot: the time in its address; others: Last-Modified, read now),
+        // the METAR stations within 30 km with their newest report, and when the forecasts and
+        // T's plans last updated.
+        if (!body.trip_id) return json({ error: 'trip_id required' }, 400);
+        const now = new Date();
+        const { data: st, error: sErr } = await db.from('stops').select('lat, lng').eq('trip_id', body.trip_id).not('lat', 'is', null);
+        if (sErr) throw sErr;
+        const pts = st ?? [];
+        const near = (c: { lat: number; lng: number }, maxKm: number) => {
+          const d = pts.length ? Math.min(...pts.map(s => km(s, c))) : Infinity;
+          return d <= maxKm ? Math.round(d * 10) / 10 : null;
+        };
+        const { data: cams, error } = await db.from('webcam_cameras')
+          .select('code, name, island, lat, lng, image_url, source, tz').eq('active', true);
+        if (error) throw error;
+        const listed = (cams ?? []).filter(c => c.lat != null).map(c => ({ c, d: near(c, MAX_CAMERA_KM) }))
+          .filter(x => x.d != null).sort((a, b) => a.d! - b.d!).slice(0, 12);
+        const cameras = await Promise.all(listed.map(async ({ c, d }) => {
+          const sun = sunAlt(c.lat, c.lng, now);
+          const l0 = liveUrl(c, now);
+          const l = await resolveRoundshot({ url: l0.url, time: l0.time });
+          // The live picture's own time: Roundshot / templated cameras carry it; else ask the server.
+          let liveSource: string | null = null;
+          if (!l.time && !c.image_url.includes('{')) {
+            try {
+              const h = await fetch(l.url, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
+              const lm = h.headers.get('last-modified'); const t = lm ? Date.parse(lm) : NaN;
+              if (Number.isFinite(t)) liveSource = new Date(t).toISOString();
+            } catch { /* no answer: unknown */ }
+          }
+          const { data: last } = await db.from('webcam_frames')
+            .select('captured_at, fetched_at, camera_time, source_time, stale, stale_reason, storage_path, label, hills_visible, cloud_on_hills, label_note')
+            .eq('camera_code', c.code).order('captured_at', { ascending: false }).limit(1).maybeSingle();
+          const { data: good } = await db.from('webcam_frames')
+            .select('captured_at, fetched_at, camera_time, source_time, storage_path, label, hills_visible, cloud_on_hills, label_note')
+            .eq('camera_code', c.code).eq('stale', false).not('storage_path', 'is', null)
+            .order('captured_at', { ascending: false }).limit(1).maybeSingle();
+          const ageMin = (t?: string | null) => (t ? Math.round((now.getTime() - Date.parse(t)) / 60000) : null);
+          const lastAt = last ? (last.fetched_at ?? last.captured_at) : null;
+          // live: archived in the last 90 min and not frozen; frozen: the newest frame is stale;
+          // night: sun below -6 deg (no captures); offline: daylight but nothing for over 90 min.
+          const status = sun < -6 ? 'night' : last?.stale ? 'frozen' : (ageMin(lastAt) ?? 1e9) <= 90 ? 'live' : 'offline';
+          let url: string | null = null;
+          if (good?.storage_path) {
+            const { data: s } = await db.storage.from('webcams').createSignedUrl(good.storage_path, SIGNED_URL_S);
+            url = s?.signedUrl ?? null;
+          }
+          return {
+            code: c.code, name: c.name, source: c.source, distance_km: d, tz: c.tz, status, image_url: c.image_url,
+            stale_reason: last?.stale ? last.stale_reason : null,
+            live_url: l.url, live_time: l.time, live_source_time: liveSource,
+            last_checked: lastAt,
+            frame: good ? { url, taken_at: good.camera_time ?? good.source_time ?? good.fetched_at ?? good.captured_at,
+                            label: good.label, hills_visible: good.hills_visible, cloud_on_hills: good.cloud_on_hills, note: good.label_note } : null,
+          };
+        }));
+        const { data: sts } = await db.from('metar_stations').select('icao, name, lat, lng, hidden_ceiling_ft');
+        const stations = await Promise.all((sts ?? []).filter(s => s.lat != null && near(s, 30) != null).map(async s => {
+          const { data: o } = await db.from('station_obs_hourly')
+            .select('hr, fetched_at, ceiling_ft, lowest_cloud_ft, cloud_pct, visibility_m, temperature_c, wx_string, fog')
+            .eq('station', s.icao).order('hr', { ascending: false }).limit(1).maybeSingle();
+          return { icao: s.icao, name: s.name, distance_km: near(s, 30), hidden_ceiling_ft: s.hidden_ceiling_ft,
+                   peaks_hidden: o && s.hidden_ceiling_ft && o.ceiling_ft != null ? o.ceiling_ft < s.hidden_ceiling_ft : null, obs: o ?? null };
+        }));
+        const one = async (q: any) => { const { data } = await q.limit(1).maybeSingle(); return data; };
+        const fc = await one(db.from('weather_forecasts').select('fetched_at').eq('trip_id', body.trip_id).order('fetched_at', { ascending: false }));
+        const ens = await one(db.from('weather_ensemble_pulls').select('pulled_at, run_at').order('pulled_at', { ascending: false }));
+        const build = await one(db.from('solver_score_builds').select('built_at').eq('trip_id', body.trip_id).eq('variant', 'raw').order('built_at', { ascending: false }));
+        const plan = await one(db.from('solver_runs').select('created_at').eq('trip_id', body.trip_id).eq('stats->>planner', 'T').order('created_at', { ascending: false }));
+        return json({ ok: true, now: now.toISOString(), cameras, stations,
+                      updated: { forecast: fc?.fetched_at ?? null, ensemble: ens?.pulled_at ?? null, ensemble_run: ens?.run_at ?? null,
+                                 planner_scores: build?.built_at ?? null, plan: plan?.created_at ?? null } });
       }
 
       case 'stop_curve': {

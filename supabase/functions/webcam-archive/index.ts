@@ -36,6 +36,9 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 // dead camera can't stall the run. A plain image_url that answers with an
 // empty body and a Location header (Roundshot panoramas) is followed, and a
 // time in that file name becomes camera_time_text too.
+// v16 (3 Nov 2026): source_time (Last-Modified, or the time in the image address after fetch's own
+// redirects, which Roundshot uses) and source_etag kept per frame; the stale trigger also flags a
+// source time over 45 min old (cameras that print no clock).
 
 const BUCKET = 'webcams';
 const KEEP_DAYS = 7;
@@ -172,14 +175,29 @@ function templateCandidates(url: string, tz: string, now: Date): { url: string; 
   return out;
 }
 
-async function fetchImage(cam: any, now: Date): Promise<{ buf: Uint8Array; time: string | null }> {
+// The camera's own time from the source (v16, Phil 3 Nov 2026: "make sure live is actually live"):
+// the server's Last-Modified, and the version tag (ETag), kept with each frame.
+type Src = { sourceTime: string | null; etag: string | null };
+const srcOf = (r: Response): Src => {
+  const lm = r.headers.get('last-modified'), t = lm ? Date.parse(lm) : NaN;
+  return { sourceTime: Number.isFinite(t) ? new Date(t).toISOString() : null, etag: r.headers.get('etag') };
+};
+// A capture time in an image address (Roundshot: .../2026-10-23-11-50-00_quarter.jpg, camera-local).
+const timeInUrl = (u: string | null) => {
+  const m = u?.match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-\d{2}_[a-z]+\.jpg/);
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : null;
+};
+
+async function fetchImage(cam: any, now: Date): Promise<{ buf: Uint8Array; time: string | null } & Src> {
   const headers = { 'User-Agent': 'travel_slave webcam archive (permission: see webcam_cameras.permission_note)' };
   if (!cam.image_url.includes('{')) {
     const sep = cam.image_url.includes('?') ? '&' : '?';
     const r = await fetch(`${cam.image_url}${sep}t=${Date.now()}`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!r.ok) throw new Error(`image ${r.status}`);
     let buf = new Uint8Array(await r.arrayBuffer());
-    let time: string | null = null;
+    let src = srcOf(r);
+    // fetch follows a real redirect itself: its target's name carries the time (Roundshot).
+    let time: string | null = timeInUrl(r.url);
     // Roundshot's .../cams/<id>/<size> answers 200 with an empty body and the
     // newest picture in Location (no redirect status), so follow it by hand.
     // Its file name carries the camera-local time (..._2026-10-23-11-50-00_quarter.jpg).
@@ -188,16 +206,16 @@ async function fetchImage(cam: any, now: Date): Promise<{ buf: Uint8Array; time:
       const r2 = await fetch(new URL(loc, cam.image_url).toString(), { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       if (!r2.ok) throw new Error(`image ${r2.status} (location)`);
       buf = new Uint8Array(await r2.arrayBuffer());
-      const m = loc.match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-\d{2}_[a-z]+\.jpg/);
-      if (m) time = `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+      src = srcOf(r2);
+      time = timeInUrl(loc) ?? timeInUrl(r2.url) ?? time;
     }
     if (buf.length === 0) throw new Error('empty image');
-    return { buf, time };
+    return { buf, time, ...src };
   }
   let last = 'no candidate';
   for (const c of templateCandidates(cam.image_url, cam.tz ?? 'UTC', now)) {
     const r = await fetch(c.url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    if (r.ok) return { buf: new Uint8Array(await r.arrayBuffer()), time: c.time };
+    if (r.ok) return { buf: new Uint8Array(await r.arrayBuffer()), time: c.time, ...srcOf(r) };
     await r.body?.cancel();
     last = `image ${r.status}`;
   }
@@ -270,7 +288,7 @@ Deno.serve(async (req) => {
           .eq('camera_code', cam.code).eq('captured_at', slot.toISOString()).maybeSingle();
         if (existing && body.force !== true) { res.skipped = 'already captured this hour'; results.push(res); continue; }
 
-        const { buf, time: fileTime } = await fetchImage(cam, now);
+        const { buf, time: fileTime, sourceTime, etag } = await fetchImage(cam, now);
         const fetchedAt = new Date().toISOString();
         const sha = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)))
           .map(b => b.toString(16).padStart(2, '0')).join('');
@@ -292,7 +310,7 @@ Deno.serve(async (req) => {
         const row = {
           camera_code: cam.code, captured_at: slot.toISOString(), storage_path: path, bytes: buf.length,
           keep: slot.getUTCHours() === keepHourUtc(cam.lng), sun_altitude: alt, ...metrics,
-          image_sha256: sha, fetched_at: fetchedAt,
+          image_sha256: sha, fetched_at: fetchedAt, source_time: sourceTime, source_etag: etag ? etag.slice(0, 200) : null,
           ...labelColumns(l.lab, l.model, l.err),
           // A file named by its time is a better clock than reading the image.
           ...(fileTime ? { camera_time_text: fileTime } : {}),
@@ -301,7 +319,7 @@ Deno.serve(async (req) => {
           .upsert(row, { onConflict: 'camera_code,captured_at' });
         if (insErr) throw insErr;
         Object.assign(res, { bytes: buf.length, label: row.label, cloud_on_hills: row.cloud_on_hills,
-                             sun_on_land: row.sun_on_land, camera_time: row.camera_time_text, repeat, label_error: l.err });
+                             sun_on_land: row.sun_on_land, camera_time: row.camera_time_text, source_time: sourceTime, repeat, label_error: l.err });
       } catch (e: any) { res.error = String(e?.message ?? e).slice(0, 300); }
       results.push(res);
     }

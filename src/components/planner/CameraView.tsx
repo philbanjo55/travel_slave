@@ -63,7 +63,10 @@ export function useLive(camera: CameraFrame['camera'] | undefined, on: boolean, 
     const load = async () => {
       let url = camera.live_url ?? camera.image_url;
       let picture = camera.live_time ?? null;
-      if (camera.image_url.includes('{')) {
+      // Templated archives and Roundshot panoramas: the address of the newest picture changes,
+      // so ask for it each time (3 Nov 2026: a resolved Roundshot address is one fixed picture,
+      // and reloading it kept showing that picture as "live").
+      if (camera.image_url.includes('{') || /roundshot\.com\/cams\//.test(camera.image_url)) {
         try {
           const r = await solverAction<{ cameras: CameraFrame[] }>({ action: 'frames', camera: camera.code });
           const c = r.cameras[0]?.camera;
