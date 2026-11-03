@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 import crawl as C
 import verify as V
 
-H24 = re.compile(r'(?<![\d:])(?:[01]\d|2[0-3]):[0-5]\d(?!:| ?[AP]M)')
-LOADED = re.compile(r'loaded (\d{1,2}:\d{2}:\d{2} [AP]M)')
+H24 = re.compile(r'(?<![\d:])(?:[01]\d|2[0-3]):[0-5]\d(?!:|[\s\u202f\u00a0]?[AP]M)')
+LOADED = re.compile(r'loaded (\d{1,2}:\d{2}:\d{2}[\s\u202f\u00a0][AP]M)')
 
 
 def blob(seen):
@@ -57,9 +57,14 @@ def page(trip, key):
     turned = 0
     for _ in range(10):
         st = C.capture(1.2)
-        btns = [c for c in st.clickables if c['label'].strip().lower() in ('show live', 'live')]
-        for c in btns:
-            C.tap(c['xy']); turned += 1; time.sleep(0.6)
+        pts = []
+        for n in st.root.iter('node') if st.root is not None else []:
+            if (n.get('content-desc') or '').strip().lower() == 'show live':
+                x1, y1, x2, y2 = C.bounds(n); pts.append(((x1 + x2) // 2, (y1 + y2) // 2))
+        if not pts:
+            print('DIAG live clickables: ' + ' | '.join(c['label'][:30] for c in st.clickables)[:500], flush=True)
+        for xy in pts:
+            C.tap(xy); turned += 1; time.sleep(0.6)
         C.swipe_up()
     print(f'INFO {key} live buttons turned on: {turned}', flush=True)
     time.sleep(12)
