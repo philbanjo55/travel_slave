@@ -22,7 +22,8 @@ export function tripToday(run: PlanRun | null | undefined, fallback: string): st
 }
 // Another day T plans a stop on that hasn't passed yet, best first.
 const elsewhere = (week: TWeek | null, stopId: string, date: string, today: string) =>
-  placements(week, stopId).filter(p => p.date !== date && p.date >= today);
+  placements(week, stopId).filter(p => p.date !== date && p.date >= today
+    && !(p.date === today && p.visit.start && Date.parse(p.visit.start) < Date.now()));
 
 // One line per change: where the stop goes and why, in T's own chances.
 export function moveReasons(changes: DayChange[], planner: DayCore, date: string): string[] {
