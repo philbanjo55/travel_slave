@@ -3,8 +3,10 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
 // v55 (3 Nov 2026, T2): run config wx = rain, gusts and the waterfall rained-yesterday bonus in
 // the builds (lead + 20); every visit carries chance (calibrated odds of a good shot, from
-// solver_t_calib) and reason (one plain line); plans and bench nights carry expected_good
-// (sum of chances, a place counted once) and expected_good_top (S and GOD only).
+// solver_t_calib), n_fc / n_good (forecasts good of all), why (one plain line), and on published
+// plans light (front/side/back/soft/no sun) and move_why (T's plan, when it moved a stop off Phil's
+// time or day); stats exp_big / exp_big_mine (expected good shots, S and GOD, T vs Phil's day, a
+// place counted once) and exp_all / exp_all_mine, n_fc; bench nights carry exp_all / exp_big.
 // POST {day_id, config?: {name?, tier_w?, lambda?, drive_penalty?, long_leg_min?, long_leg_penalty?, beam?}}
 //   or {run_id, kind}: one plan's next night of a whole-trip run (replay_runs), see below.
 // Replays one past day (replay_days): plans the trip day `trip_date` on the
@@ -739,8 +741,8 @@ Deno.serve(async (req) => {
       let s = 0, g = 0;
       for (const x of w) { s += x; if (x >= GOOD) g++; }
       const value = s / w.length / 250;
-      return { value: r2(value), p_good: r2(g / w.length), chance: r2(calOf(value)), good_of: [g, w.length],
-               peak_at: iso(p, p.peak(n, slot) * SLOT) };
+      return { value: r2(value), p_good: r2(g / w.length), chance: r2(calOf(value)),
+               n_fc: p.light ? null : w.length, n_good: p.light ? null : g, peak_at: iso(p, p.peak(n, slot) * SLOT) };
     };
     // reason (T2): one short line per visit for the app, in plain words, from what the plan used.
     const localHm = (ms: number, date: string) => {
@@ -755,13 +757,12 @@ Deno.serve(async (req) => {
       const nd = nodes[v.n];
       if (v.anchor) return 'Booked: kept at its time';
       if (!c) return 'On the way';
-      const tier = tierOf.get(nd.id), peakMs = Date.parse(c.peak_at);
-      const parts = [`${tier === 'GOD' ? 'Top pick' : tier ? `Tier ${tier}` : 'Rated'}: best light ${localHm(peakMs, p.date)} (${lightWord(peakMs)})`];
-      if (p.light) parts.push('sun angle only, no forecast yet');
-      else parts.push(`${c.good_of[0]} of ${c.good_of[1]} forecasts good`);
+      const peakMs = Date.parse(c.peak_at);
+      const parts = [p.light ? 'typical weather only (no forecast yet)' : `good in ${c.n_good} of ${c.n_fc} forecasts`,
+                     `best light ${localHm(peakMs, p.date)} (${lightWord(peakMs)})`];
       const wait = Math.round(v.start - v.arrive);
-      if (wait >= 20) parts.push(`wait ${wait} min for the light`);
-      if (nd.once) parts.push('ski or hike outing, once this trip');
+      if (wait >= 20) parts.push(`wait ${wait} min for it`);
+      if (nd.once) parts.push('once this trip');
       return parts.join(', ');
     };
     const visitsOf = (p: DayPlan, st: State) => st.route.map(v => {
@@ -770,7 +771,7 @@ Deno.serve(async (req) => {
         date: p.date, trip_date: p.tripDate, stop_id: nodes[v.n].id, name: nodes[v.n].name, booked: v.anchor,
         arrive: iso(p, v.arrive), start: iso(p, v.start), end: iso(p, v.end),
         wait_min: Math.round(v.start - v.arrive), drive_min: Math.round(v.drive),
-        ...c, reason: reasonOf(p, v, c),
+        ...c, why: reasonOf(p, v, c),
       };
     });
     // Expected good shots (T2): the sum of the calibrated chances, a subject counted once (its best
@@ -785,7 +786,7 @@ Deno.serve(async (req) => {
       }
       let all = 0, top = 0;
       for (const b of best.values()) { all += b.c; if (b.top) top += b.c; }
-      return { expected_good: r2(all), expected_good_top: r2(top) };
+      return { exp_all: r2(all), exp_big: r2(top) };
     };
 
     // Value of a route against the truth (plan `tp`, one member): tier x truth
@@ -1061,6 +1062,37 @@ Deno.serve(async (req) => {
           return { date: p.date, trip_date: p.tripDate, stop_id: o.s.id, name: o.s.name, booked: !!o.s.time_locked,
                    start: new Date(ms).toISOString(), rated, ...((rated && chance(p, n0, slotOf(ms))) || {}) };
         });
+        // For the app (T2, the planner-screens thread): the light at each planned time, and for T's
+        // plan why a stop moved off Phil's own time or day.
+        const LIGHT_WORD: Record<string, string> = { front: 'front', side: 'side', backlit: 'back', 'in shadow': 'soft', 'no sun': 'no sun' };
+        const vOf = new Map(rated.map(r => [r.stop_id, r.star_vantage_id as string]));
+        const want = [...new Set([...visits, ...mine].map(x => vOf.get(x.stop_id)).filter(Boolean))] as string[];
+        const lc = want.length ? await all<any>((a, b) => db.from('solver_light_cache').select('vantage_id, slot_at, light')
+          .eq('local_date', p.date).in('vantage_id', want).order('slot_at').range(a, b)) : [];
+        const lightBy = new Map<string, { ms: number; l: string }[]>();
+        for (const r of lc) { const k = r.vantage_id; if (!lightBy.has(k)) lightBy.set(k, []); lightBy.get(k)!.push({ ms: Date.parse(r.slot_at), l: r.light }); }
+        const lightAt = (stopId: string, at: string | undefined) => {
+          const rows = lightBy.get(vOf.get(stopId) ?? ''); if (!rows || !at) return null;
+          const ms = Date.parse(at); let best = rows[0];
+          for (const r of rows) if (Math.abs(r.ms - ms) < Math.abs(best.ms - ms)) best = r;
+          return Math.abs(best.ms - ms) <= 20 * 60000 ? (LIGHT_WORD[best.l] ?? best.l) : null;
+        };
+        for (const x of visits as any[]) {
+          x.light = lightAt(x.stop_id, x.start);
+          if (x.why && x.light && x.light !== 'no sun' && !x.booked) x.why += `, ${x.light} light`;
+          const st0 = stopById.get(x.stop_id), ownDay = st0 ? tripDays.find(d => d.id === st0.day_id)?.date : undefined;
+          const o = own.find(m => m.s.id === x.stop_id);
+          if (x.booked || x.n_good == null) continue;
+          if (o) {
+            const ms = zonedToUtc(d0.date, o.min!, tz), c0 = chance(p, o.n!, slotOf(ms));
+            if (Math.abs(ms - Date.parse(x.start)) >= 30 * 60000 && c0 && c0.n_good != null)
+              x.move_why = `moved from your ${localHm(ms, p.date)} to ${localHm(Date.parse(x.start), p.date)}: good in ${x.n_good} of ${x.n_fc} forecasts then vs ${c0.n_good} of ${c0.n_fc} at yours`;
+          } else if (ownDay && ownDay !== d0.tripDate) {
+            const wd = new Date(ownDay + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+            x.move_why = `moved here from your ${wd}: good in ${x.n_good} of ${x.n_fc} forecasts today`;
+          } else if (!ownDay) x.move_why = `added: good in ${x.n_good} of ${x.n_fc} forecasts today`;
+        }
+        for (const x of mine as any[]) x.light = x.rated ? lightAt(x.stop_id, x.start) : null;
         const mm = scoreRoute(own.map(o => ({ n: o.n!, ms: zonedToUtc(d0.date, o.min!, tz) })));
         const bm = draft ? scoreRoute(s.route.map(v => ({ n: v.n, ms: p.dayStart + v.start * 60000 }))) : { mean: s.mean, cvar: s.cvar };
         const placeW = new Map<number, number>();
@@ -1072,7 +1104,8 @@ Deno.serve(async (req) => {
         const { data: sr, error: e1 } = await db.from('solver_runs').insert({
           trip_id: tripId, plan_date: d0.date, params: { planner: 'T', replay_run: runId, night: n, step, tz },
           stats: { kind: 'day', planner: 'T', variant: 'T', step, ceiling: r3(ceiling), ...extra,
-                   expected: { yours: goodShots(mine), t: goodShots(visits) },
+                   n_fc: draft ? null : M, exp_big: goodShots(visits).exp_big, exp_big_mine: goodShots(mine).exp_big,
+                   exp_all: goodShots(visits).exp_all, exp_all_mine: goodShots(mine).exp_all,
                    days: [{ date: d0.date, trip_date: d0.tripDate, light_only: draft,
                             start_hotel: stopById.get(d0.startId ?? '')?.name ?? null, end_hotel: stopById.get(d0.endId ?? '')?.name ?? null }] },
         }).select('id').single();
