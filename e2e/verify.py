@@ -361,7 +361,7 @@ def field_reciprocity_and_timer():
     else:
         check('recip-through-filters', False, 'no checkbox')
     # timer: 18 min exposure
-    hide_kb(); s = C.capture(1)
+    hide_kb(); C.dismiss_system_dialogs(); s = C.capture(1)
     if not find_scroll('Start Timer', 3):
         check('timer-keeps-screen-on', False, 'no Start Timer'); return
     time.sleep(5)
@@ -373,12 +373,19 @@ def field_reciprocity_and_timer():
     check('timer-end-notification', n_al > 0, f'{n_al} alarms for the app')
     C.adb('shell', 'input', 'keyevent', 'KEYCODE_BACK'); d = C.capture(1.5); show('timer-after-back', d)
     asked = has(d, 'Stop the timer?')
-    tap_text(d, 'Keep timing'); k = C.capture(1.5); show('timer-kept', k)
-    check('timer-back-asks', asked and has(k, 'EXPOSING'))
-    tap_text(k, 'Cancel', exact=True); d = C.capture(1.5)
-    tap_text(d, 'Stop', exact=True); e = C.capture(2); show('timer-stopped', e)
+    tap_text(d, 'Keep timing'); time.sleep(3)
+    # the running timer is an animated modal uiautomator can't read, so check what it holds instead
+    win = C.adb('shell', 'dumpsys', 'window', 'windows', timeout=60)
+    n_keep = C.adb('shell', 'dumpsys', 'alarm', timeout=60).count(PKG)
+    check('timer-back-asks', asked and 'KEEP_SCREEN_ON' in win and n_keep >= n_al and C.app_alive(),
+          f'asked={asked} still awake={"KEEP_SCREEN_ON" in win} alarms {n_al}->{n_keep}')
+    C.adb('shell', 'input', 'keyevent', 'KEYCODE_BACK'); d = C.capture(1.5); show('timer-stop-ask', d)
+    tap_text(d, 'Stop', exact=True); time.sleep(3)
+    win2 = C.adb('shell', 'dumpsys', 'window', 'windows', timeout=60)
     alarms2 = C.adb('shell', 'dumpsys', 'alarm', timeout=60).count(PKG)
-    check('timer-stop', not has(e, 'EXPOSING') and alarms2 < n_al, f'alarms {n_al} -> {alarms2}')
+    e = C.capture(1.5); show('timer-stopped', e)
+    check('timer-stop', alarms2 < n_keep and 'KEEP_SCREEN_ON' not in win2 and C.app_alive(),
+          f'alarms {n_keep} -> {alarms2}, screen-on flag cleared={"KEEP_SCREEN_ON" not in win2}')
     back()
 
 
