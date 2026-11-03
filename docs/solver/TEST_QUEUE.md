@@ -3,7 +3,7 @@
 A scheduled check-in in the planning session works this list: read finished runs, record results
 (planner_versions + the board), launch the next item when bench slots free up, and tell Phil only
 when a result lands. Rules: every new planner version gets its letter in `planner_versions` before
-it runs; compare paired per week with error bars; sum `realized` per run day (never over a
+it runs; compare paired per week with `replay_paired(a, b, kind, block_days)` (plain and calendar-block error bars; 3 Nov 2026: the overlapping weeks start 2 days apart, but block SEs came out within ~10% of the plain ones, e.g. T vs L +1.28, SE 0.48 plain / 0.54 by week blocks / 0.47 by 2-week blocks, so past conclusions stand; ~30 versions tried on the same weeks, so a new winner must also hold on fresh data: October, Faroes, live days); sum `realized` per run day (never over a
 `jsonb_array_elements` join); check 'no route' nights before reading a result; keep the bench
 under 6 runs at a time and never start many heavy (Faroes, polish) runs at once; watch DB size.
 
