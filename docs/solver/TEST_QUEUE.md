@@ -15,7 +15,7 @@ under 6 runs at a time and never start many heavy (Faroes, polish) runs at once;
 | 4 | Missed stop recovery | Each bench week, one planned S/GOD visit "missed" (seeded): does T get it back later, and what does a miss cost? (solver-replay switch) | todo |
 | 5 | Slow drives | Realized timing with drives x1.25 (winter roads): how often does a plan arrive after its light? | todo |
 | 6 | Brute force, one day (B1 = planner Z1, run config `brute`, solver-replay v58) | Every candidate place, every start slot, all weather versions, for tomorrow: how far is T's day from the true best of its own score, and does the gap show up in realized points? | smoke `bf_smoke` (2 weeks, runs 4162-4163) queued 3 Nov; read stats.polish.brute_* (gain, tried, capped), then full 56 weeks as `bf56` |
-| 7 | Brute force, week (B2 = planner Z) | Outings to days exhaustively + B1 per day per weather version, cached | after B1 |
+| 7 | Brute force, week (planner Z, run config `week_exact`, solver-replay v59) | The rest of the week solved exactly in each weather version inside T's Monte Carlo (every open place on any later day or none, keep-together as one, same day sizes / gear window / miss penalty as the stand-in), from the stand-in's answer | smoke `wk_smoke` (2 weeks) queued 3 Nov; read stats.mc.cands[].we (versions better, mean gain, nodes, capped), then `wk56`; then Z1 + Z together |
 | 8 | Real trip dry run | T on exactly 29 Dec - 4 Jan in both past winters, plans in plain words for Phil to sanity-check | todo |
 | 9 | Live scoreboard | T vs L vs old on the practice trips, nightly | ongoing |
 
