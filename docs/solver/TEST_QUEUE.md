@@ -9,6 +9,8 @@ under 6 runs at a time and never start many heavy (Faroes, polish) runs at once;
 
 Phil, 3 Nov 2026: focus on the solver; app feedback later; roadside repeats are fine.
 
+Held runs (3 Nov 21:55 UTC): 20 `wk56` released, 30 more `wk56` still `held`; then `bf56` (50 held; 3 of its first 6 weeks died at night 0 on CPU even after a retry: hold to 2 at a time, or drop it as a measuring stick), then `slow56` / `miss56` (56 each), `foR_T` (Faroes, heavy) last. Release a few at a time (status held -> queued).
+
 | # | Test | What it answers | Status |
 |---|------|-----------------|--------|
 | 1 | Y = T + polish 10 (`pk10_56`, 56 winters) | Does a deeper exhaustive day search earn real points, or only plan score? | done 3 Nov: retired. -1.15 +/- 0.42 per week vs T (14 better / 40 worse, both winters down): more search on the forecast's score overfits forecast noise |
