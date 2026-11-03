@@ -138,7 +138,7 @@ function invertReciprocity(stock: FilmStock, targetCorrected: number): number {
 }
 
 function formatTime(seconds: number): string {
-  if (seconds < 1) return `${seconds.toFixed(1)}s`;
+  if (seconds < 1) return `${Number(seconds.toFixed(2))}s`; // 1/4 s reads "0.25s", not "0.3s"
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
