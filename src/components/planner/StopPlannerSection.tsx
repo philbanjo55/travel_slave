@@ -8,7 +8,7 @@ import {
   LIGHT_WORDS,
 } from '../../services/planner';
 import { VERDICT_COLOR, VERDICT_TEXT, countText, planKindText, reasonText, verdictOf } from '../../services/plannerWords';
-import { mineVisit, placements } from '../../services/plannerWeek';
+import { mineVisit, placements, samePlace } from '../../services/plannerWeek';
 import { startReplan } from '../../services/planningStatus';
 import SettingsEditor, { settingsSummary } from './SettingsEditor';
 import { DayPlanner } from './DayPlannerHints';
@@ -47,9 +47,9 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
   const run = planner?.run ?? null;
 
   // T's chance at YOUR time (T scores your own day on the same forecasts as its plan).
-  const mineV = planner?.mine?.visits.find(v => v.stop_id === stopId && v.rated !== false && v.p_good != null)
+  const mineV = planner?.mine?.visits.find(v => samePlace(week, v.stop_id, stopId) && v.rated !== false && v.p_good != null)
     ?? (tripDate ? mineVisit(week, stopId, tripDate) : null);
-  const bestV = planner?.best?.visits.find(v => v.stop_id === stopId && v.p_good != null) ?? null;
+  const bestV = planner?.best?.visits.find(v => samePlace(week, v.stop_id, stopId) && v.p_good != null) ?? null;
   const light = mineV?.light ? LIGHT_WORDS[mineV.light] ?? mineV.light : null;
   const startMin = labelMinutes(timeLabel);
   const bestMin = bestV ? tzMinutes(bestV.start, tz) : null;
