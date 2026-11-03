@@ -1,6 +1,10 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v55 (3 Nov 2026, T2): run config wx = rain, gusts and the waterfall rained-yesterday bonus in
+// the builds (lead + 20); every visit carries chance (calibrated odds of a good shot, from
+// solver_t_calib) and reason (one plain line); plans and bench nights carry expected_good
+// (sum of chances, a place counted once) and expected_good_top (S and GOD only).
 // POST {day_id, config?: {name?, tier_w?, lambda?, drive_penalty?, long_leg_min?, long_leg_penalty?, beam?}}
 //   or {run_id, kind}: one plan's next night of a whole-trip run (replay_runs), see below.
 // Replays one past day (replay_days): plans the trip day `trip_date` on the
@@ -258,11 +262,16 @@ Deno.serve(async (req) => {
     // the build with each model's sun calibrated (stored as lead + 10); learn (v55, Phil 3 Nov
     // 2026) the build whose hidden-peaks odds also learn from the season's last 30 days
     // before the day (lead + 40).
-    const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0);
+    // wx (run config, T2, v56, 3 Nov 2026): the builds that also weigh rain, wind and the waterfall
+    // bonus (replay_build lead + 20, on top of learn's + 40; the truth with ERA5 rain and gusts as
+    // lead 20, the morning build as lead 21). Truth and morning builds are matched by lead, so a
+    // wx build never stands in for a plain one.
+    const WX = cfg.wx ? 20 : 0;
+    const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX;
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
     const fcB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'forecast' && b.lead === leadOf(h.lead)));
-    const trB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'truth'));
+    const trB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'truth' && b.lead === WX));
 
     // A run's plan loads only what it plans on (and the truth of the day it does).
     const k0 = runId != null ? kindOf : null;
@@ -282,7 +291,7 @@ Deno.serve(async (req) => {
     // ECMWF's night-before forecast for its overnight (00 UTC) run, ready before the look.
     const morning = (k0 === 'mr1' || k0 === 'mrmc') && !draft;
     const mKind = cfg.morning_fresh ? 'morningf' : 'morning';
-    const mB = morning ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === mKind) : undefined;
+    const mB = morning ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === mKind && b.lead === 1 + WX) : undefined;
     if (morning && !mB && !live) return json({ ok: false, error: 'morning build missing' }, 404);
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
@@ -378,6 +387,7 @@ Deno.serve(async (req) => {
     // Rated stops with a starred shot: the only ones that carry value.
     const rated = inputs.filter(r => (TIER_W[r.tier] ?? 0) > 0 && r.star_vantage_id)
       .sort((a, b) => (a.stop_id < b.stop_id ? -1 : 1));
+    const tierOf = new Map<string, string>(rated.map(r => [r.stop_id, r.tier]));
 
     // Same-subject groups from the starred shots' aim points.
     const vIds = [...new Set(rated.map(c => c.star_vantage_id))];
@@ -417,6 +427,11 @@ Deno.serve(async (req) => {
       ...(cfg.no_once ? [] : (cfg.once_add ?? []) as string[])]);
     const placed = stopsAll.filter(s => s.lat != null && rated.some(r => r.stop_id === s.id));
     const mid = { lat: placed.reduce((t, s) => t + s.lat, 0) / (placed.length || 1), lng: placed.reduce((t, s) => t + s.lng, 0) / (placed.length || 1) };
+    // Calibration for chance (solver_t_calib, refit by solver_t_fit_calib from bench + Phil's grades).
+    const region = mid.lat > 55 ? 'faroes' : 'teton';
+    const CAL = region === 'faroes' ? { a: -3.65, b: 7.831 } : { a: -4.53, b: 8.157 };
+    { const { data: cr } = await db.from('solver_t_calib').select('a, b').eq('region', region).maybeSingle();
+      if (cr && Number.isFinite(cr.a) && Number.isFinite(cr.b)) { CAL.a = cr.a; CAL.b = cr.b; } }
     // What a subject already has (x250): nailed = everything, got = shot_value.
     let groupBase = new Map<number, number>();
     rated.forEach((r, i) => {
@@ -712,19 +727,66 @@ Deno.serve(async (req) => {
     const iso = (p: DayPlan, min: number) => new Date(p.dayStart + min * 60000).toISOString();
     // Chance for a visit starting at a slot: mean V and share of members
     // with a good shot (best moment of the visit), and when that moment is.
+    // chance (T2, 3 Nov 2026, Phil: "make sure 70% means 70%"): p_good is the share of the
+    // 6-8 forecasts with a good shot, so it moves in steps of 17% and said 0% for visits that came
+    // good 7-23% of the time. chance = the calibrated odds of a good shot (truth V >= 0.6) from
+    // the visit's mean value: logistic fit on T's bench visits (solver_t_calib, refit by
+    // solver_t_fit_calib(); held-out Brier Teton 0.094 vs 0.128 for p_good, Faroes 0.158 vs 0.218).
+    const calOf = (v: number) => 1 / (1 + Math.exp(-(CAL.a + CAL.b * v)));
     const chance = (p: DayPlan, n: number, slot: number) => {
       if (nodes[n].w <= 0) return null;
       const w = p.W(n, slot); if (!w) return null;
       let s = 0, g = 0;
       for (const x of w) { s += x; if (x >= GOOD) g++; }
-      return { value: r2(s / w.length / 250), p_good: r2(g / w.length), peak_at: iso(p, p.peak(n, slot) * SLOT) };
+      const value = s / w.length / 250;
+      return { value: r2(value), p_good: r2(g / w.length), chance: r2(calOf(value)), good_of: [g, w.length],
+               peak_at: iso(p, p.peak(n, slot) * SLOT) };
     };
-    const visitsOf = (p: DayPlan, st: State) => st.route.map(v => ({
-      date: p.date, trip_date: p.tripDate, stop_id: nodes[v.n].id, name: nodes[v.n].name, booked: v.anchor,
-      arrive: iso(p, v.arrive), start: iso(p, v.start), end: iso(p, v.end),
-      wait_min: Math.round(v.start - v.arrive), drive_min: Math.round(v.drive),
-      ...chance(p, v.n, Math.round(v.start / SLOT)),
-    }));
+    // reason (T2): one short line per visit for the app, in plain words, from what the plan used.
+    const localHm = (ms: number, date: string) => {
+      const m = Math.round((ms - zonedToUtc(date, 0, tz)) / 60000), h = Math.floor(m / 60) % 24, mm = ((m % 60) + 60) % 60;
+      return `${h % 12 || 12}:${String(mm).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+    };
+    const lightWord = (ms: number) => {
+      const a = sunAlt(mid.lat, mid.lng, ms);
+      return a < -0.8 ? 'blue hour' : a < 6 ? 'golden hour' : a < 15 ? 'low sun' : 'daylight';
+    };
+    const reasonOf = (p: DayPlan, v: Visit, c: ReturnType<typeof chance>) => {
+      const nd = nodes[v.n];
+      if (v.anchor) return 'Booked: kept at its time';
+      if (!c) return 'On the way';
+      const tier = tierOf.get(nd.id), peakMs = Date.parse(c.peak_at);
+      const parts = [`${tier === 'GOD' ? 'Top pick' : tier ? `Tier ${tier}` : 'Rated'}: best light ${localHm(peakMs, p.date)} (${lightWord(peakMs)})`];
+      if (p.light) parts.push('sun angle only, no forecast yet');
+      else parts.push(`${c.good_of[0]} of ${c.good_of[1]} forecasts good`);
+      const wait = Math.round(v.start - v.arrive);
+      if (wait >= 20) parts.push(`wait ${wait} min for the light`);
+      if (nd.once) parts.push('ski or hike outing, once this trip');
+      return parts.join(', ');
+    };
+    const visitsOf = (p: DayPlan, st: State) => st.route.map(v => {
+      const c = chance(p, v.n, Math.round(v.start / SLOT));
+      return {
+        date: p.date, trip_date: p.tripDate, stop_id: nodes[v.n].id, name: nodes[v.n].name, booked: v.anchor,
+        arrive: iso(p, v.arrive), start: iso(p, v.start), end: iso(p, v.end),
+        wait_min: Math.round(v.start - v.arrive), drive_min: Math.round(v.drive),
+        ...c, reason: reasonOf(p, v, c),
+      };
+    });
+    // Expected good shots (T2): the sum of the calibrated chances, a subject counted once (its best
+    // visit), for every rated place and for the top tiers (S and GOD) alone.
+    const goodShots = (vs: any[]) => {
+      const best = new Map<string, { c: number; top: boolean }>();
+      for (const x of vs) {
+        if (x.chance == null) continue;
+        const n0 = pos.get(x.stop_id); if (n0 == null) continue;
+        const k = String(nodes[n0].group), t = tierOf.get(x.stop_id);
+        if ((best.get(k)?.c ?? -1) < x.chance) best.set(k, { c: x.chance, top: t === 'S' || t === 'GOD' });
+      }
+      let all = 0, top = 0;
+      for (const b of best.values()) { all += b.c; if (b.top) top += b.c; }
+      return { expected_good: r2(all), expected_good_top: r2(top) };
+    };
 
     // Value of a route against the truth (plan `tp`, one member): tier x truth
     // V at the visit, a subject counted once (only its improvement over what
@@ -871,6 +933,7 @@ Deno.serve(async (req) => {
           shot[k] = Math.max(shot[k] ?? 0, truthN ? truthAt(truthN, v) : meanAt(fcN!, v));
         }
         row = { run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: realized == null ? null : r3(realized), ...extra };
+        if (Array.isArray(row.visits) && row.stats) row.stats = { ...row.stats, ...goodShots(row.visits) };
         // What each visit got against what happened.
         if (truthN && row.visits?.length === visits.length) row.visits = row.visits.map((v: any, i: number) => ({ ...v, truth: r2(truthAt(truthN, visits[i]) / 250) }));
         return shot;
@@ -1009,6 +1072,7 @@ Deno.serve(async (req) => {
         const { data: sr, error: e1 } = await db.from('solver_runs').insert({
           trip_id: tripId, plan_date: d0.date, params: { planner: 'T', replay_run: runId, night: n, step, tz },
           stats: { kind: 'day', planner: 'T', variant: 'T', step, ceiling: r3(ceiling), ...extra,
+                   expected: { yours: goodShots(mine), t: goodShots(visits) },
                    days: [{ date: d0.date, trip_date: d0.tripDate, light_only: draft,
                             start_hotel: stopById.get(d0.startId ?? '')?.name ?? null, end_hotel: stopById.get(d0.endId ?? '')?.name ?? null }] },
         }).select('id').single();
