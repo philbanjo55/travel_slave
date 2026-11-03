@@ -72,38 +72,79 @@ function newestRun(r: Feeds['updated']['ensemble_run']): string | null {
   const ts = Object.values(r).map(v => Date.parse(v)).filter(Number.isFinite);
   return ts.length ? new Date(Math.max(...ts)).toISOString() : null;
 }
-// An airport report older than this is not "the weather now".
+// An airport report older than this is not "the weather now"; one silent a day is not reporting.
 const STATION_OLD_MIN = 180;
+const STATION_DEAD_MIN = 24 * 60;
 const ageMin = (iso: string) => (Date.now() - Date.parse(iso)) / 60000;
+// A picture older than this while the camera answers: it is stuck on an old picture.
+const FROZEN_MIN = 45;
+// Minutes since a camera-local "13:30" (from a file name or the camera's clock), today in its zone.
+function localAgeMin(hm: string, tz: string | null | undefined): number | null {
+  const m = hm.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  try {
+    const p: Record<string, string> = {};
+    for (const x of new Intl.DateTimeFormat('en-US', { timeZone: tz ?? undefined, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date())) p[x.type] = x.value;
+    let d = Number(p.hour) * 60 + Number(p.minute) - (Number(m[1]) * 60 + Number(m[2]));
+    if (d < -5) d += 1440; // yesterday's picture
+    return Math.max(0, d);
+  } catch { return null; }
+}
+function oldText(min: number): string {
+  if (min < 1) return 'just taken';
+  if (min < 60) return `${Math.round(min)} min old`;
+  const h = Math.floor(min / 60), r = Math.round(min % 60);
+  return `${h} h${r ? ` ${r} min` : ''} old`;
+}
 
-function CameraCard({ c, tz }: { c: FeedCamera; tz: string | null }) {
-  const [live, setLive] = useState(false);
+type View_ = { y: number; h: number };
+
+// Every camera is live from the moment Feeds opens and reloads itself every 30 s (Phil, 3 Nov
+// 2026: "if I'm there I wanna see live at the moment it loads"). The archived picture shows
+// until the live one arrives, and stays if the camera stops answering. Cards far off screen
+// stop downloading and keep their last picture.
+function CameraCard({ c, tz, paused, view }: { c: FeedCamera; tz: string | null; paused: boolean; view: View_ | null }) {
+  const [box, setBox] = useState<{ y: number; h: number } | null>(null);
+  const near = !view || !box || (box.y + box.h > view.y - view.h * 0.5 && box.y < view.y + view.h * 1.5);
   // The archived picture's address is signed again on every refresh, so a new address does not
-  // mean a new picture: keep the old one while the picture is the same (3 Nov 2026: every
-  // camera's picture downloaded again every minute).
+  // mean a new picture: keep the old one while the picture is the same.
   const shown = useRef<{ taken: string | null; url: string | null }>({ taken: null, url: null });
   if (c.frame?.taken_at !== shown.current.taken || !shown.current.url) shown.current = { taken: c.frame?.taken_at ?? null, url: c.frame?.url ?? null };
-  const liveState = useLive(live ? { code: c.code, name: c.name, island: '', lat: 0, lng: 0, image_url: c.image_url, live_url: c.live_url, live_time: c.live_time, distance_km: c.distance_km, tz: c.tz } : undefined, live);
+  const live = useLive({ code: c.code, name: c.name, island: '', lat: 0, lng: 0, image_url: c.image_url, live_url: c.live_url, live_time: c.live_time, distance_km: c.distance_km, tz: c.tz }, true, undefined, paused || !near);
   const ctz = c.tz ?? tz;
-  // With Live on, the pill says what the camera is doing now.
-  const st = live && liveState?.failed ? { text: 'Not answering', color: STATUS.offline.color } : STATUS[c.status];
-  // When the picture on show was taken: the source's own time if known.
-  const pictureLine = live
-    ? (liveState?.failed ? 'Live picture did not load' : liveState
-        ? `Live · ${liveState.picture ? `picture ${hm12(liveState.picture)}` : c.live_source_time ? `picture ${clock(c.live_source_time, ctz)}` : 'camera gives no time'} · loaded ${clock(liveState.at.toISOString(), ctz, true)}`
-        : 'Loading live picture…')
-    : c.frame ? `Archived · picture ${clock(c.frame.taken_at, ctz)} (${ago(c.frame.taken_at)})` : 'No picture yet';
-  const why = c.status === 'frozen' ? `Serving an old picture (${c.stale_reason ?? 'repeat'})`
-    : c.status === 'offline' ? `Nothing new since ${c.last_checked ? ago(c.last_checked) : 'a while'}`
-    : c.status === 'night' ? 'Not checked at night'
-    : c.live_time || c.live_source_time ? `Camera says ${c.live_time ? hm12(c.live_time) : clock(c.live_source_time, ctz)}` : 'Checked hourly; camera gives no time';
-  const uri = live ? liveState?.uri : shown.current.url ?? undefined;
+  const archive = c.frame ? clock(c.frame.taken_at, ctz) : null;
+
+  // How old the picture on show is, from the camera's own time when it gives one.
+  let pictureAt: string | null = null;
+  let oldMin: number | null = null;
+  if (live && !live.failed) {
+    if (live.picture) { pictureAt = hm12(live.picture); oldMin = localAgeMin(live.picture, ctz); }
+    else if (c.live_source_time) { pictureAt = clock(c.live_source_time, ctz); oldMin = Math.max(0, ageMin(c.live_source_time)); }
+  }
+  const noClock = live && !live.failed && pictureAt == null;
+  const stuck = oldMin != null ? oldMin > FROZEN_MIN : noClock && c.status === 'frozen';
+
+  const st = !live ? { text: paused ? 'Paused' : 'Loading', color: colors.textSecondary }
+    : live.failed ? { text: 'Not answering', color: STATUS.offline.color }
+    : stuck ? STATUS.frozen
+    : c.status === 'night' ? STATUS.night
+    : STATUS.live;
+  const fresh = !live
+    ? (paused ? (archive ? `Paused · showing the ${archive} archive picture` : 'Paused')
+       : archive ? `Loading the live picture · showing the ${archive} archive picture` : 'Loading the live picture…')
+    : live.failed ? (archive ? `Camera not answering · showing the ${archive} archive picture` : 'Camera not answering')
+    : pictureAt ? `Picture taken ${pictureAt} · ${oldText(oldMin ?? 0)}`
+    : `This camera shows no clock · reloaded ${clock(live.at.toISOString(), ctz, true)}`;
+  const peaks = c.frame?.hills_visible != null
+    ? `Peaks ${c.frame.hills_visible ? 'clear' : 'hidden'} in the ${archive} archive picture${c.frame.cloud_on_hills && c.frame.cloud_on_hills !== 'none' ? ` (cloud ${c.frame.cloud_on_hills})` : ''}`
+    : null;
+  const uri = live && !live.failed ? live.uri : shown.current.url ?? live?.uri ?? undefined;
   return (
-    <View style={styles.card}>
+    <View style={styles.card} onLayout={e => setBox({ y: e.nativeEvent.layout.y, h: e.nativeEvent.layout.height })}>
       <View style={styles.cardHead}>
         <View style={{ flex: 1 }}>
           <Text style={styles.camName} numberOfLines={1}>{c.name}</Text>
-          <Text style={styles.small}>{c.source ?? ''}{c.distance_km != null ? ` · ${c.distance_km} km` : ''}</Text>
+          <Text style={styles.small} numberOfLines={1}>{c.source ?? ''}{c.distance_km != null ? ` · ${c.distance_km} km from a stop` : ''}</Text>
         </View>
         <View style={[styles.pill, { borderColor: st.color }]}>
           <View style={[styles.dot, { backgroundColor: st.color }]} />
@@ -111,17 +152,8 @@ function CameraCard({ c, tz }: { c: FeedCamera; tz: string | null }) {
         </View>
       </View>
       {uri ? <Image source={{ uri }} style={styles.pic} resizeMode="cover" /> : <View style={[styles.pic, styles.picEmpty]}><Text style={styles.small}>No picture</Text></View>}
-      <View style={styles.cardFoot}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.small}>{pictureLine}</Text>
-          <Text style={styles.small}>{why}</Text>
-          {c.frame?.label && !live ? <Text style={styles.small}>Archive read: {c.frame.hills_visible === false ? 'peaks hidden' : c.frame.hills_visible ? 'peaks clear' : c.frame.label}{c.frame.cloud_on_hills && c.frame.cloud_on_hills !== 'none' ? ` · cloud ${c.frame.cloud_on_hills}` : ''}</Text> : null}
-        </View>
-        <TouchableOpacity onPress={() => setLive(v => !v)} style={[styles.liveBtn, live && styles.liveBtnOn]} accessibilityLabel={live ? 'Stop live' : 'Show live'}>
-          <Ionicons name={live ? 'pause' : 'radio-outline'} size={14} color={live ? colors.textInverse : colors.textPrimary} />
-          <Text style={[styles.liveText, live && { color: colors.textInverse }]}>{live ? 'Live on' : 'Live'}</Text>
-        </TouchableOpacity>
-      </View>
+      <Text style={styles.fresh}>{fresh}</Text>
+      {peaks ? <Text style={styles.small}>{peaks}</Text> : null}
     </View>
   );
 }
@@ -134,6 +166,9 @@ export default function FeedsScreen() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(AppState.currentState === 'active');
+  const [paused, setPaused] = useState(false);
+  const [view, setView] = useState<View_ | null>(null);
+  const listY = useRef(0);
   useEffect(() => { const s = AppState.addEventListener('change', x => setActive(x === 'active')); return () => s.remove(); }, []);
 
   const load = useCallback(async () => {
@@ -157,12 +192,20 @@ export default function FeedsScreen() {
   const tz = data?.cameras.find(c => c.tz)?.tz ?? null;
   const tzLabel = tzName(tz);
   const run = newestRun(u?.ensemble_run ?? null);
-  const row = (label: string, iso: string | null | undefined, extra?: string) => (
+  // Stacked: the name on one line, the time under it, so nothing runs off a phone's edge
+  // (3 Nov 2026: the Ensemble row ran past the right margin).
+  const row = (label: string, iso: string | null | undefined, note?: string | null) => (
     <View style={styles.updRow} key={label}>
       <Text style={styles.updLabel}>{label}</Text>
-      <Text style={styles.updVal}>{iso ? `${clock(iso, tz)} · ${ago(iso)}${extra ?? ''}` : '—'}</Text>
+      <Text style={styles.updVal}>{iso ? `${clock(iso, tz)} · ${ago(iso)}` : 'Not yet'}</Text>
+      {note ? <Text style={styles.small}>{note}</Text> : null}
     </View>
   );
+  // An airport silent for a day is not reporting: one line for it, not a card (Driggs, silent
+  // since 13 Oct 2026, showed a 22-day-old report).
+  const stations = data?.stations ?? [];
+  const silent = stations.filter(s => !s.obs || ageMin(s.obs.hr) > STATION_DEAD_MIN);
+  const reporting = stations.filter(s => !silent.includes(s));
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -172,18 +215,28 @@ export default function FeedsScreen() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Feeds</Text>
         {loading ? <ActivityIndicator size="small" color={colors.textSecondary} /> : null}
+        {data?.cameras.length ? (
+          <TouchableOpacity onPress={() => setPaused(p => !p)} style={styles.pauseBtn} accessibilityLabel={paused ? 'Resume live' : 'Pause live'}>
+            <Ionicons name={paused ? 'play' : 'pause'} size={14} color={colors.textPrimary} />
+            <Text style={styles.pauseText}>{paused ? 'Resume' : 'Pause'}</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
-      <ScrollView contentContainerStyle={styles.list} refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={colors.textSecondary} />}>
+      <ScrollView contentContainerStyle={styles.list}
+        onLayout={e => { const h = e.nativeEvent.layout.height; setView(v => ({ y: v?.y ?? 0, h })); }}
+        onScroll={e => { listY.current = e.nativeEvent.contentOffset.y; setView(v => v ? { ...v, y: listY.current } : v); }}
+        scrollEventThrottle={400}
+        refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={colors.textSecondary} />}>
         {err ? <Text style={styles.err}>{data ? `Could not refresh. Showing what was checked at ${clock(data.now, tz)}.` : err}</Text> : null}
-        {data && tzLabel ? <Text style={[styles.small, { paddingTop: spacing.md }]}>Times are trip time ({tzLabel}).</Text> : null}
+        {data && tzLabel ? <Text style={[styles.small, { paddingTop: spacing.md }]}>Times are trip time ({tzLabel}). Cameras reload every 30 seconds.</Text> : null}
         {!data && !err ? <Text style={styles.small}>Loading…</Text> : null}
 
         {data ? <Text style={styles.section}>CAMERAS</Text> : null}
         {data && !data.cameras.length ? <Text style={styles.small}>No cameras within 50 km of this trip.</Text> : null}
-        {data?.cameras.map(c => <CameraCard key={c.code} c={c} tz={tz} />)}
+        {data?.cameras.map(c => <CameraCard key={c.code} c={c} tz={tz} paused={paused} view={view} />)}
 
-        {data?.stations.length ? <Text style={styles.section}>AIRPORT REPORT</Text> : null}
-        {data?.stations.map(s => {
+        {stations.length ? <Text style={styles.section}>AIRPORT REPORT</Text> : null}
+        {reporting.map(s => {
           // A report hours old is not the weather now (Driggs last reported 13 Oct).
           const old = !s.obs || ageMin(s.obs.hr) > STATION_OLD_MIN;
           // No ceiling in a fresh report means no low cloud deck: the peaks are clear.
@@ -195,7 +248,7 @@ export default function FeedsScreen() {
             <View style={styles.cardHead}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.camName}>{s.name ?? s.icao} ({s.icao})</Text>
-                <Text style={styles.small}>{s.distance_km != null ? `${s.distance_km} km` : ''}{s.obs ? ` · report ${clock(s.obs.hr, tz)} (${ago(s.obs.hr)})` : ' · no report'}</Text>
+                <Text style={styles.small}>{s.obs ? `Report ${clock(s.obs.hr, tz)} · ${ago(s.obs.hr)}` : 'No report'}{s.distance_km != null ? ` · ${s.distance_km} km from a stop` : ''}</Text>
               </View>
               {pill ? (
                 <View style={[styles.pill, { borderColor: pill.color }]}>
@@ -216,12 +269,15 @@ export default function FeedsScreen() {
           </View>
           );
         })}
+        {silent.length ? (
+          <Text style={styles.small}>Not reporting: {silent.map(s => `${s.name ?? s.icao} (${s.icao})${s.obs ? `, silent since ${format(new Date(s.obs.hr), 'MMM d')}` : ''}`).join('; ')}.</Text>
+        ) : null}
 
         {u ? <Text style={styles.section}>LAST UPDATED</Text> : null}
         {u ? (
           <View style={styles.card}>
             {row('Weather forecast', u.forecast)}
-            {row('Ensemble (51 versions)', u.ensemble, run ? ` · newest model run ${clock(run, tz)}` : '')}
+            {row('Ensemble (51 versions)', u.ensemble, run ? `Newest model run ${clock(run, tz)}` : null)}
             {row('Planner scores', u.planner_scores)}
             {row("T's newest plan", u.plan)}
           </View>
@@ -252,11 +308,10 @@ const styles = StyleSheet.create({
   pillText: { fontSize: 12, fontWeight: '600' },
   pic: { width: '100%', aspectRatio: 16 / 9, borderRadius: 6, backgroundColor: colors.surfaceElevated },
   picEmpty: { alignItems: 'center', justifyContent: 'center' },
-  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  liveBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: colors.border, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 },
-  liveBtnOn: { backgroundColor: colors.textPrimary, borderColor: colors.textPrimary },
-  liveText: { fontSize: 12, fontWeight: '600', color: colors.textPrimary },
-  updRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.md },
-  updLabel: { fontSize: 13, color: colors.textPrimary },
+  fresh: { fontSize: 13, color: colors.textPrimary },
+  pauseBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: colors.border, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 },
+  pauseText: { fontSize: 12, fontWeight: '600', color: colors.textPrimary },
+  updRow: { gap: 2, paddingVertical: 2 },
+  updLabel: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
   updVal: { fontSize: 13, color: colors.textSecondary },
 });

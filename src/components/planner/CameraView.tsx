@@ -47,9 +47,9 @@ const LIVE_REFRESH_MS = 30_000;
 // the newest two file names by the clock, newest first. The server's address waits 10 min for
 // an upload, so Live showed a picture up to 25 min old while a newer one was there (3 Nov 2026:
 // Live 13:15 at 13:37 while the archive had 13:30); the phone tries the newer names first.
-export function templateSlots(template: string, tz: string | null | undefined, now = new Date()): { url: string; time: string }[] {
+export function templateSlots(template: string, tz: string | null | undefined, now = new Date()): { url: string; time: string; at: number }[] {
   const step = 15 * 60_000;
-  const out: { url: string; time: string }[] = [];
+  const out: { url: string; time: string; at: number }[] = [];
   for (let k = 0; k < 2; k++) {
     const t = new Date(Math.floor(now.getTime() / step) * step - k * step);
     const p: Record<string, string> = {};
@@ -58,7 +58,7 @@ export function templateSlots(template: string, tz: string | null | undefined, n
         hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(t)) p[x.type] = x.value;
     } catch { return []; }
     out.push({ url: template.replace('{YYYY}', p.year).replace('{MM}', p.month).replace('{DD}', p.day).replace('{HHmm}', p.hour + p.minute),
-               time: `${p.hour}:${p.minute}` });
+               time: `${p.hour}:${p.minute}`, at: t.getTime() });
   }
   return out;
 }
@@ -68,7 +68,8 @@ export function templateSlots(template: string, tz: string | null | undefined, n
 // archives (TetonCam) ask the server for their newest file each time.
 // It only downloads while it can be seen: never with the screen covered by another one, or
 // with the app in the background (Phil, 1 Nov 2026: no downloading in the background).
-export function useLive(camera: CameraFrame['camera'] | undefined, on: boolean, everyMs = LIVE_REFRESH_MS) {
+// paused: stop downloading but keep the last picture (Feeds pauses cameras scrolled off screen).
+export function useLive(camera: CameraFrame['camera'] | undefined, on: boolean, everyMs = LIVE_REFRESH_MS, paused = false) {
   const [state, setState] = useState<{ uri: string; at: Date; picture: string | null; failed: boolean } | null>(null);
   const focused = useIsFocused();
   const [active, setActive] = useState(AppState.currentState === 'active');
@@ -76,7 +77,7 @@ export function useLive(camera: CameraFrame['camera'] | undefined, on: boolean, 
     const sub = AppState.addEventListener('change', s => setActive(s === 'active'));
     return () => sub.remove();
   }, []);
-  const run = on && focused && active;
+  const run = on && focused && active && !paused;
   useEffect(() => {
     if (!run || !camera) { if (!on || !camera) setState(null); return; }
     let alive = true;
@@ -96,7 +97,11 @@ export function useLive(camera: CameraFrame['camera'] | undefined, on: boolean, 
       // A newer file than the server's, when there is one (templated archives only).
       const tries: { url: string; time: string | null }[] = [];
       if (camera.image_url.includes('{') && camera.tz) {
-        for (const c of templateSlots(camera.image_url, camera.tz)) if (c.url !== url) tries.push(c);
+        // Only names newer than the server's (it waits 10 min): at 2:41 the server already gives
+        // 2:30, and trying 2:15 first showed a picture older than the server's (3 Nov 2026).
+        const step = 15 * 60_000;
+        const serverAt = Math.floor((Date.now() - 10 * 60_000) / step) * step;
+        for (const c of templateSlots(camera.image_url, camera.tz)) if (c.at > serverAt && c.url !== url) tries.push(c);
       }
       tries.push({ url, time: picture });
       let uri = '';
