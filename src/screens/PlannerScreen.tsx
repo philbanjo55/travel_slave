@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { differenceInCalendarDays, parseISO } from 'date-fns';
-import { useTripStore } from '../store/tripStore';
+import { useTripStore, useTripData } from '../store/tripStore';
 import { colors, spacing, typography } from '../theme';
 import OverviewTab from './planner/OverviewTab';
 import PlansTab from './planner/PlansTab';
@@ -32,7 +32,11 @@ export default function PlannerScreen() {
   const navigation = useNavigation<any>();
   const params = useRoute<any>().params ?? {};
   const tripId: string = params.tripId;
-  const { currentTripData } = useTripStore();
+  // Only this trip's data; if another trip is in memory (opened from a brief), load this one.
+  const currentTripData = useTripData(tripId);
+  useFocusEffect(useCallback(() => {
+    if (tripId && useTripStore.getState().currentTripId !== tripId) useTripStore.getState().loadTrip(tripId);
+  }, [tripId]));
   const days: any[] = currentTripData?.days ?? [];
   const [tab, setTab] = useState<PlannerTab>(params.tab ?? 'overview');
   const [date, setDate] = useState<string | null>(params.date ?? null);
