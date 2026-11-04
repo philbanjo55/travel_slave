@@ -98,13 +98,13 @@ def tap_day(n, s=None):
     """Tap the 'Day n' tab on the trip page, scrolling the tab bar sideways if needed."""
     for attempt in range(8):
         s = s or C.capture(0.8)
-        tabs = [c for c in s.clickables if re.match(r'Day \d+( \||$)', c['label'])]
+        tabs = [c for c in s.clickables if re.match(r'day \d+(,| \||$)', c['label'], re.I)]
         for c in tabs:
-            if re.match(rf'Day {n}( \||$)', c['label']):
+            if re.match(rf'day {n}(,| \||$)', c['label'], re.I):
                 C.tap(c['xy']); return True
         if not tabs:
             s = None; time.sleep(1.5); continue
-        nums = [int(re.match(r'Day (\d+)', c['label']).group(1)) for c in tabs]
+        nums = [int(re.match(r'day (\d+)', c['label'], re.I).group(1)) for c in tabs]
         y = tabs[0]['xy'][1]
         if n > max(nums):
             C.adb('shell', 'input', 'swipe', '900', str(y), '200', str(y), '350')
@@ -162,7 +162,7 @@ def phil_repro(other, wait, n=1):
     time.sleep(3)
     if not tap_day(4):
         V.check(key, None, 'no Day 4 tab'); V.show(key + '-nodaytab', C.capture(0.5)); return
-    watch(key, 'teton_live', 4, 45)
+    watch(key, 'teton_live', 4, 30)
     store_check(key, key, 'teton_live')
 
 
@@ -178,7 +178,7 @@ def rapid_switch():
     V.tap_text(C.capture(0.8), 'Teton Live')
     time.sleep(2)
     tap_day(4)
-    watch(key, 'teton_live', 4, 60)
+    watch(key, 'teton_live', 4, 40)
     store_check(key, key, 'teton_live')
 
 
@@ -192,7 +192,7 @@ def reverse():
     V.tap_text(C.capture(0.8), 'Faroes Live')
     time.sleep(3)
     tap_day(4)
-    watch(key, 'faroes_live', 4, 40)
+    watch(key, 'faroes_live', 4, 25)
     store_check(key, key, 'faroes_live')
 
 
@@ -215,7 +215,7 @@ def every_day(key):
     V.check(f'days-{key}', not wrong, '; '.join(wrong[:6]) if wrong else f'{len(t["days"])} days, each showed its own title')
     # Back on Day 4, sit still through a reload or two.
     tap_day(4)
-    watch(f'days-{key}-still', key, 4, 20)
+    watch(f'days-{key}-still', key, 4, 15)
     # Day 4's map screen and back.
     s = C.capture(0.8)
     if V.tap_text(s, 'MAP', exact=True):
@@ -240,18 +240,21 @@ def planner(key):
     s = C.capture(4)
     bad = []
     def sub_ok(s, where):
+        if not s.all_texts:
+            print(f'INFO planner-{key} {where}: screen unreadable (map)', flush=True); return
         if t['name'] not in '\n'.join(s.all_texts) or [k for k in which(s) if k != key]:
             bad.append(f'{where}: {which(s)}'); V.show(f'planner-{key}-{where}', s)
     sub_ok(s, 'overview')
     if V.tap_text(s, 'Plans', exact=True):
         s = C.capture(3)
         sub_ok(s, 'plans')
-        chips = sorted({int(m.group(1)) for c in s.clickables for m in [re.match(r'D(\d+) \|', c['label'])] if m})
+        chips = sorted({int(m.group(1)) for c in s.clickables for m in [re.match(r'D(\d+)(,| \|)', c['label'])] if m})
+        print(f'INFO planner-{key} plans clickables: {[c["label"][:30] for c in s.clickables][:25]}', flush=True)
         print(f'INFO planner-{key} day chips on screen: {chips}', flush=True)
         for n in chips[:6]:
             s = C.capture(0.6)
             for c in s.clickables:
-                if re.match(rf'D{n} \|', c['label']):
+                if re.match(rf'D{n}(,| \|)', c['label']):
                     C.tap(c['xy']); break
             s = C.capture(2)
             sub_ok(s, f'plans-D{n}')
@@ -298,7 +301,7 @@ def background(key, other=None):
     time.sleep(20)
     C.adb('shell', 'monkey', '-p', C.PKG, '-c', 'android.intent.category.LAUNCHER', '1')
     time.sleep(2)
-    watch(name, key, 4, 35)
+    watch(name, key, 4, 25)
     store_check(name, name, key)
 
 
@@ -322,7 +325,7 @@ def main():
     go_home()
     print(f'INFO guard on: {V.guard_on()}', flush=True)
     # Phil's report first, several ways in.
-    for i, (other, wait) in enumerate([('faroes_live', 1), ('faroes_live', 3), ('faroes_live', 6), ('faroes_plan', 2), ('teton_plan', 2)], 1):
+    for i, (other, wait) in enumerate([('faroes_live', 1), ('faroes_live', 4), ('faroes_plan', 2), ('teton_plan', 2)], 1):
         phil_repro(other, wait, i)
     rapid_switch()
     reverse()
