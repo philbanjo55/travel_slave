@@ -64,8 +64,8 @@ begin
            coalesce((select i.fog_wanted from solver_stop_inputs i where i.stop_id = (v->>'stop_id')::uuid), false) fog
       from runs r cross join jsonb_array_elements(r.visits) v
      where v ? 'p_good' and (v->>'value') is not null
-       -- only stops T expected in at least civil twilight (a 06:15 November visit is in the dark)
-       and (select sp.altitude from sun_position(coalesce((v->>'peak_at')::timestamptz, (v->>'start')::timestamptz), v_lat, v_lng) sp) > -6
+       -- only stops T expected in daylight (visible = good shot applies there; blue hour depends on light too)
+       and (select sp.altitude from sun_position(coalesce((v->>'peak_at')::timestamptz, (v->>'start')::timestamptz), v_lat, v_lng) sp) > 0
   ), j as (
     -- Judged at the time T expected the stop at its best (peak_at), on the nearest hourly report.
     -- Fog shots (fog_wanted) want the hills in cloud: their "hidden" is a good outcome (4 Nov 2026).
