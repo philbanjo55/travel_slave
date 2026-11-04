@@ -2,6 +2,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v62 (4 Nov 2026): run config midday = a second re-plan at local noon (planner version AF): the report on
+// the peaks in the hour before noon re-conditions the odds from 13:00 (replay_build kind 'midday' /
+// 'middayf'), and the afternoon is re-planned from where the morning plan is. Bench only (not live).
 // v61 (3 Nov 2026): bench tests miss_seed (one S/GOD visit a week missed: not shot, not seen, so it must be
 // fitted in again) and slow_drive (stats.slow: the route replayed with every drive x that factor, scored).
 // v60 (3 Nov 2026): run config shrink / clim_hidden / shrink_morning = careful score: forecast values
@@ -308,6 +311,11 @@ Deno.serve(async (req) => {
     const mKind = cfg.morning_fresh ? 'morningf' : 'morning';
     const mB = morning ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === mKind && b.lead === 1 + WX) : undefined;
     if (morning && !mB && !live) return json({ ok: false, error: 'morning build missing' }, 404);
+    // midday (v62): the noon look's build, same models as the morning one.
+    const middayOn = morning && !!cfg.midday && !live;
+    const dKind = cfg.morning_fresh ? 'middayf' : 'midday';
+    const dB = middayOn ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === dKind && b.lead === 1 + WX) : undefined;
+    if (middayOn && !dB) return json({ ok: false, error: 'midday build missing' }, 404);
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
     const tz: string = trip?.timezone ?? 'UTC';
@@ -371,6 +379,8 @@ Deno.serve(async (req) => {
     if (fcSc.some(x => !x.length) || trSc.some((x, i) => !x.length && !(live && !trB[i]))) return json({ ok: false, error: 'empty replay builds' }, 404);
     let mSc = mB ? await scoresOf(mB.id) : [];
     if (mB && !mSc.length) return json({ ok: false, error: 'empty morning build' }, 404);
+    const dSc = dB ? await scoresOf(dB.id) : [];
+    if (dB && !dSc.length) return json({ ok: false, error: 'empty midday build' }, 404);
     if (week && ltSc.some((x, i) => needLt(i) && !x.length)) return json({ ok: false, error: 'no light geometry for a later day' }, 404);
     // A draft plans tomorrow on light only too.
     if (draft) fcSc[0] = ltSc[0];
@@ -1427,11 +1437,14 @@ Deno.serve(async (req) => {
           // Rebuilt with the same required places, so its score (j) is the original's.
           // skip too (30 Oct 2026): without it a keep-together pair whose once-only half was
           // done earlier failed the all-or-none check and the night came back 'no route'.
-          p0 = planDay({ ...days[0], light: draft }, fcSc[0], false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
+          // stage 'morning' (v62, midday on): the morning re-plan, rebuilt on the morning build.
+          p0 = stage === 'morning'
+            ? planDay({ ...days[0], light: false }, mSc, false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 })
+            : planDay({ ...days[0], light: draft }, fcSc[0], false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
           st = p0.routes[0] ?? null;
         } else ({ p: p0, st, list } = planList([...req, ...want]));
         await mark('plan0');
-        let mcStats: any = phase2 ? pend.mc : null, mrStats: any = null, exStats: any = phase2 ? pend.ex : null, polStats: any = phase2 ? pend.pol : null;
+        let mcStats: any = phase2 ? pend.mc : null, mrStats: any = stage === 'morning' ? pend.mr : null, exStats: any = phase2 ? pend.ex : null, polStats: any = phase2 ? pend.pol : null;
         // The near-exhaustive search (planDay exact) over a plan's own stops, the
         // required ones and the next best places up to k (keep-together partners
         // added whole); more than 9 stops is not tried.
@@ -1738,23 +1751,24 @@ Deno.serve(async (req) => {
         }
         const save = async (stg: string) => {
           const pending = { night: n, stage: stg, visits: st!.route.map(v => ({ id: nodes[v.n].id, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
-                            units: list.map(u => mustOf(u).map(x => nodes[x].id)), mc: mcStats, ex: exStats, pol: polStats };
+                            units: list.map(u => mustOf(u).map(x => nodes[x].id)), mc: mcStats, ex: exStats, pol: polStats, ...(mrStats ? { mr: mrStats } : {}) };
           await db.from('replay_run_state').update({ sets: { ...(ks.sets ?? {}), pending }, status: 'idle', note: null, updated_at: new Date().toISOString() })
             .eq('run_id', runId).eq('kind', kind);
           return null;
         };
         if (split && !phase2 && (cfg.polish_k || cfg.brute) && st && !goOn()) return await save('mc');
-        if (cfg.polish_k && st && stage !== 'night') {
+        const pastNight = stage === 'night' || stage === 'morning';
+        if (cfg.polish_k && st && !pastNight) {
           const r = polish(fcSc[0], p0, st, list.flatMap(mustOf));
           polStats = { night: r.gain, ...(r.capped ? { night_capped: true } : {}) }; p0 = r.p; st = r.st;
         }
-        if (cfg.brute && st && stage !== 'night') {
+        if (cfg.brute && st && !pastNight) {
           const r = bruteOver(fcSc[0], p0, st, list.flatMap(mustOf));
           polStats = { ...(polStats ?? {}), brute_night: r.gain, brute_night_info: r.info }; p0 = r.p; st = r.st;
         }
         // Live: the morning step comes hours later, so the night plan is always saved here.
-        if (split && stage !== 'night' && st && ((live && !draft) || !goOn())) { if (!draft) await publish('night', p0, st); return await save('night'); }
-        if ((kind === 'mr1' || kind === 'mrmc') && st && !draft) {
+        if (split && !pastNight && st && ((live && !draft) || !goOn())) { if (!draft) await publish('night', p0, st); return await save('night'); }
+        if ((kind === 'mr1' || kind === 'mrmc') && st && !draft && stage !== 'morning') {
           // Morning-of replan (Phil, 27 Oct 2026): the night's plan (v3, or the one
           // Monte Carlo chose) stands up to 30 min before sunrise; then the planner
           // sees whether the peaks are hidden (the airport or the camera, the
@@ -1795,7 +1809,45 @@ Deno.serve(async (req) => {
             const morning = show(pm, sm);
             mrStats = { ...mrStats, morning, changed: morning.join('|') !== mrStats.night.join('|'), dropped: list.length - l.length };
             p0 = pm; st = sm;
+            if (middayOn) list = l;
           } else mrStats.error = 'no morning route: the night plan stands';
+        }
+        if (middayOn && st) {
+          // Midday re-plan (v62, Phil 4 Nov 2026): the morning plan stands until local noon; then
+          // the latest report on the peaks (the hour before noon) re-conditions the odds from 13:00
+          // and the afternoon is re-planned on the midday build, same required places (dropped from
+          // the end only if they no longer fit). A visit already left for at noon is kept
+          // (mr_commit 'departure'). With split on, the morning plan is saved first (stage 'morning').
+          if (split && stage !== 'morning' && !goOn()) return await save('morning');
+          const atMs = zonedToUtc(days[0].date, 12 * 60, tz);
+          const leftBy = (v: { start: number; arrive: number; drive: number }) =>
+            cfg.mr_commit === 'departure' ? p0.dayStart + (v.arrive - v.drive) * 60000 < atMs : false;
+          const before = st.route.filter(v => p0.dayStart + v.start * 60000 < atMs || leftBy(v))
+            .map(v => ({ n: v.n, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor }));
+          let l = list, pd: DayPlan | null = null, sd: State | null = null;
+          for (;;) {
+            pd = planDay({ ...days[0], light: false }, dSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
+            sd = pd.routes[0] ?? null;
+            if (sd || !l.length) break;
+            l = l.slice(0, -1);
+          }
+          if (cfg.polish_k && sd && pd) {
+            const r = polish(dSc, pd, sd, l.flatMap(mustOf), { visits: before, atMs });
+            polStats = { ...(polStats ?? {}), midday: r.gain, ...(r.capped ? { midday_capped: true } : {}) }; pd = r.p; sd = r.st;
+          }
+          await mark('midday');
+          const { data: look } = await db.from('replay_hidden_truth').select('hr, hidden').eq('trip_id', tripId)
+            .gte('hr', new Date(atMs - 3600000).toISOString()).lte('hr', new Date(atMs).toISOString()).order('hr', { ascending: false }).limit(1);
+          const show = (p: DayPlan, s: State) => s.route.filter(v => nodes[v.n].w > 0)
+            .map(v => nodes[v.n].name + ' ' + new Date(p.dayStart + v.start * 60000).toISOString().slice(11, 16));
+          const was = show(p0, st);
+          const md: any = { look_at: new Date(atMs).toISOString(), hidden: look?.[0]?.hidden ?? null, kept: before.length };
+          if (sd && pd) {
+            const now = show(pd, sd);
+            Object.assign(md, { plan: now, changed: now.join('|') !== was.join('|'), dropped: list.length - l.length });
+            p0 = pd; st = sd;
+          } else md.error = 'no midday route: the morning plan stands';
+          mrStats = { ...(mrStats ?? {}), midday: md };
         }
         if (st) { missedNode = pickMissed(st.route); for (const v of st.route) if (v.n !== missedNode) seenIds.add(nodes[v.n].id); }
         nextSets = { seen: [...seenIds] };
