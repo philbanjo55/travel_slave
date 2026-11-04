@@ -2,6 +2,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v63 (4 Nov 2026): run config fog = builds at lead + 80, whose hidden-peaks odds before 10:00 local come
+// from those hours alone (valley inversion fog on clear mornings; planner version AG).
 // v62 (4 Nov 2026): run config midday = a second re-plan at local noon (planner version AF): the report on
 // the peaks in the hour before noon re-conditions the odds from 13:00 (replay_build kind 'midday' /
 // 'middayf'), and the afternoon is re-planned from where the morning plan is. Bench only (not live).
@@ -285,7 +287,8 @@ Deno.serve(async (req) => {
     // wx build never stands in for a plain one.
     // Drafts plan from light only (no forecast to carry rain or wind): no wx builds for them.
     const WX = cfg.wx && !cfg.draft ? 20 : 0;
-    const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX;
+    const FOG = cfg.fog && !cfg.draft ? 80 : 0;
+    const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX + FOG;
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
     const fcB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'forecast' && b.lead === leadOf(h.lead)));
@@ -309,12 +312,12 @@ Deno.serve(async (req) => {
     // ECMWF's night-before forecast for its overnight (00 UTC) run, ready before the look.
     const morning = (k0 === 'mr1' || k0 === 'mrmc') && !draft;
     const mKind = cfg.morning_fresh ? 'morningf' : 'morning';
-    const mB = morning ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === mKind && b.lead === 1 + WX) : undefined;
+    const mB = morning ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === mKind && b.lead === 1 + WX + FOG) : undefined;
     if (morning && !mB && !live) return json({ ok: false, error: 'morning build missing' }, 404);
     // midday (v62): the noon look's build, same models as the morning one.
     const middayOn = morning && !!cfg.midday && !live;
     const dKind = cfg.morning_fresh ? 'middayf' : 'midday';
-    const dB = middayOn ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === dKind && b.lead === 1 + WX) : undefined;
+    const dB = middayOn ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === dKind && b.lead === 1 + WX + FOG) : undefined;
     if (middayOn && !dB) return json({ ok: false, error: 'midday build missing' }, 404);
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();

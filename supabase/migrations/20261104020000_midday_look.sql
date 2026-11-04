@@ -7,6 +7,8 @@
 -- 'midday' / 'middayf' (the morning build's models), built by replay_run_tick for runs with
 -- midday on. Morning rows are lk 0 and unchanged.
 alter table public.replay_morning_counts add column if not exists lk smallint not null default 0;
+alter table public.replay_builds drop constraint if exists replay_builds_kind_check;
+alter table public.replay_builds add constraint replay_builds_kind_check check (kind = any (array['forecast', 'truth', 'morning', 'morningf', 'midday', 'middayf']));
 
 create or replace view public.replay_morning_fit as
 WITH g AS (
