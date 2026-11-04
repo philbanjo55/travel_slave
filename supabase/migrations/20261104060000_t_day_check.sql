@@ -59,15 +59,22 @@ begin
        and p.note in ('T: evening plan', 'T: morning re-plan', 'T: your day')
      order by p.note, r.created_at desc
   ), vis as (
-    select r.note, v->>'name' name, (v->>'start')::timestamptz st, (v->>'p_good')::float8 pg, (v->>'value')::float8 val
+    select r.note, v->>'name' name, (v->>'start')::timestamptz st, (v->>'p_good')::float8 pg, (v->>'value')::float8 val,
+           coalesce((v->>'peak_at')::timestamptz, (v->>'start')::timestamptz) pk,
+           coalesce((select i.fog_wanted from solver_stop_inputs i where i.stop_id = (v->>'stop_id')::uuid), false) fog
       from runs r cross join jsonb_array_elements(r.visits) v
      where v ? 'p_good' and (v->>'value') is not null
+       -- only stops T expected in at least civil twilight (a 06:15 November visit is in the dark)
+       and (select sp.altitude from sun_position(coalesce((v->>'peak_at')::timestamptz, (v->>'start')::timestamptz), v_lat, v_lng) sp) > -6
   ), j as (
-    select vis.*, date_trunc('hour', vis.st) hr,
-           (select o.hidden from replay_hidden_truth o where o.trip_id = p_trip and o.hr = date_trunc('hour', vis.st) limit 1) hidden
+    -- Judged at the time T expected the stop at its best (peak_at), on the nearest hourly report.
+    -- Fog shots (fog_wanted) want the hills in cloud: their "hidden" is a good outcome (4 Nov 2026).
+    select vis.*, date_trunc('hour', vis.pk + interval '30 minutes') hr,
+           (select case when vis.fog then 1 - o.hidden else o.hidden end from replay_hidden_truth o
+             where o.trip_id = p_trip and o.hr = date_trunc('hour', vis.pk + interval '30 minutes') limit 1) hidden
       from vis
   )
-  select jsonb_agg(jsonb_build_object('plan', replace(note, 'T: ', ''), 'stop', name, 'at', to_char(st at time zone v_tz, 'HH24:MI'),
+  select jsonb_agg(jsonb_build_object('plan', replace(note, 'T: ', ''), 'stop', name, 'at', to_char(st at time zone v_tz, 'HH24:MI'), 'fog_shot', fog,
                                       'said', round(pg::numeric, 2), 'value', round(val::numeric, 2), 'hidden', hidden,
                                       'miss', case when hidden = 0 and pg <= 0.2 then 'too gloomy' when hidden = 1 and pg >= 0.6 then 'too hopeful' end)
                    order by note, st),
@@ -84,7 +91,8 @@ begin
            || case when coalesce(v_n, 0) = 0 then ' No T plan to check.'
                    else format(' T: %s of %s planned stops misjudged', v_m, v_n)
                         || coalesce(': ' || (select string_agg(format('%s %s %s said %s%%', x->>'plan', x->>'stop', x->>'at', round(100 * (x->>'said')::numeric))
-                                                                 || case x->>'miss' when 'too gloomy' then ', peaks out' else ', peaks hidden' end, '; ')
+                                                                 || case when (x->>'fog_shot')::boolean then case x->>'miss' when 'too gloomy' then ', fog came (fog shot)' else ', no fog (fog shot)' end
+                                                                         when x->>'miss' = 'too gloomy' then ', peaks out' else ', peaks hidden' end, '; ')
                                                from jsonb_array_elements(v_miss) x), '') || '.' end;
 
   insert into t_day_checks (trip_id, plan_date, made_at, summary, misses, checked, detail)
