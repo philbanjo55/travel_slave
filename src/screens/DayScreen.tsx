@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
-import { useTripStore } from '../store/tripStore';
+import { useTripStore, useTripData } from '../store/tripStore';
 import DaySummary from '../components/DaySummary';
 import MissingScreen from '../components/MissingScreen';
 import DayWeatherSummary from '../components/DayWeatherSummary';
@@ -21,7 +21,9 @@ export default function DayScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { tripId, dayIndex } = route.params;
-  const { currentTripData, syncTrip } = useTripStore();
+  const { syncTrip, loadTrip } = useTripStore();
+  // Only this trip's data (see tripStore currentTripId).
+  const currentTripData = useTripData(tripId);
   const mapRef = useRef<MapView>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [weather, setWeather] = useState<Record<string, WeatherRow>>({});
@@ -34,8 +36,10 @@ export default function DayScreen() {
   // can't get stuck on a stale cache-first snapshot.
   useFocusEffect(
     useCallback(() => {
-      if (tripId) syncTrip(tripId);
-    }, [tripId, syncTrip])
+      if (!tripId) return;
+      if (useTripStore.getState().currentTripId === tripId) syncTrip(tripId);
+      else loadTrip(tripId);
+    }, [tripId, syncTrip, loadTrip])
   );
 
   const day = currentTripData?.days[dayIndex];

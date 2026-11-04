@@ -6,7 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { useTripStore } from '../store/tripStore';
+import { useTripStore, useTripData } from '../store/tripStore';
 import { supabase, checkDayForDelete, deleteDay } from '../services/supabase';
 import { calculateDriveTimesForTrip, recalculateTimeLabels } from '../services/driveTimes';
 import { pullWeatherForTrip, WeatherRow, conditionIcon, readScore, cToF } from '../services/weather';
@@ -32,7 +32,9 @@ export default function TripScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { tripId } = route.params;
-  const { currentTripData, loadTrip, isSyncing, setCurrentDay } = useTripStore();
+  const { loadTrip, isSyncing, setCurrentDay } = useTripStore();
+  // Only this trip's data: while another trip is in memory the page shows its spinner.
+  const currentTripData = useTripData(tripId);
   const tabScrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const [activeDay, setActiveDay] = useState(0);
   const [recalculating, setRecalculating] = useState(false);
@@ -51,7 +53,18 @@ export default function TripScreen() {
       .catch(() => {});
   }, [tripId]));
 
-  useEffect(() => { loadTrip(tripId); }, [tripId]);
+  // Load on open, and again on coming back to this page if another trip was opened
+  // in the meantime (a planner brief opens its trip on top). A new trip starts on its first day.
+  const loadedFor = useRef<string | null>(null);
+  useFocusEffect(useCallback(() => {
+    if (loadedFor.current !== tripId) {
+      if (loadedFor.current) { setActiveDay(0); setCurrentDay(0); }
+      loadedFor.current = tripId;
+      loadTrip(tripId);
+    } else if (useTripStore.getState().currentTripId !== tripId) {
+      loadTrip(tripId);
+    }
+  }, [tripId]));
 
   // TEST app (redesign A1 + C2/C4): what T's best plan changes on the shown day, against the
   // day as it stands, and ghost mode (the day in the best plan's order, accept all or not now).
@@ -238,7 +251,9 @@ export default function TripScreen() {
   // still carry photos is refused, because deleting the stops would delete
   // the photos with them.
   const confirmDeleteDay = useCallback(async () => {
-    const all = useTripStore.getState().currentTripData?.days ?? [];
+    // Never another trip's day, whatever is in memory.
+    const held = useTripStore.getState().currentTripData;
+    const all = held && held.trip?.id === tripId ? held.days ?? [] : [];
     const d = all[activeDay];
     if (!d) return;
     let chk;
