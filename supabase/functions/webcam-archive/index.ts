@@ -15,10 +15,11 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 // so the two can be compared. These are the place-specific fog truth the
 // solver's forecasts get scored against; METAR covers only airports.
 //
-// Storage (free plan, 1 GB): full frames kept 7 days, plus one frame per
-// camera per day kept permanently: the capture nearest the camera's solar
-// noon (12 UTC in the Faroes, 19 UTC at the Tetons; a fixed 12 UTC kept only
-// pre-dawn or night frames outside Europe, and those are never captured).
+// Storage: v17 (Phil, 5 Nov 2026: "keep more than the morning") keeps every
+// daylight picture for good (~23 MB a day for 12 cameras; night frames are never
+// captured). Only a frozen camera's repeat of the same picture is pruned after
+// KEEP_DAYS, unless it is the capture nearest the camera's solar noon (until v16
+// the only frame per camera per day kept past 7 days).
 //
 // POST {} archives this hour; {force: true} re-captures it; {backfill: n}
 // labels up to n stored daylight frames that have no label yet.
@@ -309,7 +310,7 @@ Deno.serve(async (req) => {
 
         const row = {
           camera_code: cam.code, captured_at: slot.toISOString(), storage_path: path, bytes: buf.length,
-          keep: slot.getUTCHours() === keepHourUtc(cam.lng), sun_altitude: alt, ...metrics,
+          keep: !repeat || slot.getUTCHours() === keepHourUtc(cam.lng), sun_altitude: alt, ...metrics,
           image_sha256: sha, fetched_at: fetchedAt, source_time: sourceTime, source_etag: etag ? etag.slice(0, 200) : null,
           ...labelColumns(l.lab, l.model, l.err),
           // A file named by its time is a better clock than reading the image.
