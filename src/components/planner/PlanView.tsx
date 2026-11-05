@@ -7,8 +7,9 @@ import { colors, spacing, radius, typography } from '../../theme';
 import {
   Plan, PlanRun, PlanVisit, applyPreview, fetchDayRuns, fetchMultiRuns, fetchPlans, hhmm, ago, latestByDay,
   planDay, planDays, planTitle, runTripDates, LIGHT_WORDS, usesT, latestT, waitForT, fetchTDays,
-  canApply, applyPlan, clock12, replanNow, waitForNow,
+  canApply, applyPlan, clock12,
 } from '../../services/planner';
+import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../../services/replanNowStore';
 import { VERDICT_COLOR, VERDICT_TEXT, countText, expShots, forecastCount, isLightOnly, lateReplan, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
 import { forgetWeek } from '../../services/plannerWeek';
 import { startReplan, ack } from '../../services/planningStatus';
@@ -89,23 +90,14 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
 
   // Re-plan now (Phil, 5 Nov 2026): today only, on trips T plans. Fresh camera pictures, then the
   // rest of today re-planned from where the plan says you are; the plan above stays until it is in.
+  // The request lives in a shared store (replanNowStore): it carries on if Phil leaves, and the trip
+  // page's day card shows the same one.
   const isToday = tripDate === format(new Date(), 'yyyy-MM-dd');
-  const [nowNote, setNowNote] = useState<string | null>(null);
-  const doNow = useCallback(async () => {
-    setError(null); setNowNote(null); setBusy('Getting fresh camera pictures, then re-planning the rest of today (about 1 minute). You can leave this screen.');
-    try {
-      const { id } = await replanNow(tripId);
-      const s = await waitForNow(tripId, id, () => mounted.current);
-      if (!mounted.current) return;
-      if (!s) throw new Error('T is still re-planning. Check back in a few minutes.');
-      if (s.status === 'error') throw new Error(`T could not re-plan now: ${s.note ?? 'unknown error'}`);
-      const r = await latestT(tripId, tripDate);
-      setRun(r); setPlans(r ? await fetchPlans(r.id) : []);
-      const peaks = s.hidden === 1 ? 'the cameras show the peaks hidden' : s.hidden === 0 ? 'the cameras show the peaks out' : 'no camera reading';
-      setNowNote(s.changed ? `Re-planned: ${peaks}.` : `Nothing better for the rest of today (${peaks}): the plan stands.`);
-    } catch (e: any) { setError(String(e?.message ?? e)); }
-    setBusy(null);
-  }, [tripId, tripDate]);
+  const nowView = useReplanNow(t && isToday ? tripId : null);
+  const { currentTripData } = useTripStore();
+  const doNow = () => startReplanNow(tripId, currentTripData?.trip?.title).catch((e: any) => failReplanNow(tripId, String(e?.message ?? e)));
+  useEffect(() => onPlanLanded(() => { if (t && isToday && mounted.current) loadT(); }), [t, isToday, loadT]);
+  const nowNote = nowView.phase === 'done' ? nowView.message : null;
 
   const badge = dayBadge(tripDate);
   const runDay = run?.stats?.days?.[0];
@@ -126,14 +118,17 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
         </TouchableOpacity>
       </View>
       {t && isToday ? (
-        <TouchableOpacity onPress={doNow} style={[styles.replan, styles.nowBtn]} disabled={!!busy} accessibilityLabel="Re-plan now">
-          <Ionicons name="camera-outline" size={16} color={colors.textPrimary} />
-          <Text style={[styles.replanText, { color: colors.textPrimary }]}>Re-plan now with the cameras</Text>
+        <TouchableOpacity onPress={doNow} style={[styles.replan, styles.nowBtn]} disabled={!!busy || nowView.phase === 'running'} accessibilityLabel="Re-plan now">
+          {nowView.phase === 'running' ? <ActivityIndicator size="small" color={colors.textPrimary} /> : <Ionicons name="camera-outline" size={16} color={colors.textPrimary} />}
+          <Text style={[styles.replanText, { color: colors.textPrimary }]}>
+            {nowView.phase === 'running' ? 'Re-planning with fresh camera pictures… (about 1 min)' : 'Re-plan now with the cameras'}
+          </Text>
         </TouchableOpacity>
       ) : null}
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>
           {nowNote ? <Text style={styles.warn}>{nowNote}</Text> : null}
+          {nowView.phase === 'error' ? <Text style={styles.error}>{nowView.message}</Text> : null}
           {(() => { const l = lateReplan(run, plans); return l && run ? (
             <Text style={styles.warn}>This morning's re-plan came at {clock12(run.created_at, run.params?.tz)}, after the first stop ({clock12(l, run.params?.tz)}).</Text>
           ) : null; })()}

@@ -95,19 +95,6 @@ export async function nowStatus(tripId: string): Promise<NowStatus | null> {
   if (error) throw error;
   return (data ?? null) as NowStatus | null;
 }
-// Waits (up to 6 min, only while the app is open and the screen is alive) for request `id`.
-export async function waitForNow(tripId: string, id: number, alive: () => boolean = () => true): Promise<NowStatus | null> {
-  const t0 = Date.now();
-  while (Date.now() - t0 < 6 * 60000) {
-    await new Promise(res => setTimeout(res, 5000));
-    if (!alive()) return null;
-    if (AppState.currentState !== 'active') continue;
-    const s = await nowStatus(tripId).catch(() => null);
-    if (s && s.id === id && (s.status === 'done' || s.status === 'error')) return s;
-  }
-  return null;
-}
-
 // T's newest plan for a trip day: the evening plan / morning re-plan, else the week draft.
 export async function latestT(tripId: string, tripDate: string): Promise<PlanRun | null> {
   const m = latestByDay(await fetchDayRuns(tripId)).get(tripDate) ?? {};
