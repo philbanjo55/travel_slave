@@ -1,11 +1,14 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
-// v68 (5 Nov 2026, Phil: "1 yes" / "why not both?"): run config predawn = a look before you leave, 2 h
-// before sunrise (the airport's report: it reports in the dark), re-planning the whole day before the
-// first departure (build kind 'predawn' / 'predawnf', morning fit lk 3); the dawn look follows as before
-// unless run config no_dawn. Bench only for now (planner versions AK = both, AL = before-you-leave only).
+// v69 (5 Nov 2026, Phil: "a sunrise look THEN a before I leave look", "do whatever is smarter"): run config
+// depart = a look 15 min before the plan's first departure (airport + cameras when light), as well as the
+// dawn look: leaving before the dawn look it comes first and can change the first stop; leaving later it
+// follows the dawn look. Its build is made here at that time (replay_build kind 'depart' / 'departf',
+// p_look; the nearest fitted look's odds) and reused by look time. Bench only for now (planner version AK).
+// (v68's fixed look 2 h before sunrise, run config predawn, was replaced before it ran.)
 // v66 (5 Nov 2026, Phil: "an async planner whenever, even mid day"): Re-plan now. A request
 // {run_id, kind, now: true, night, build_id, req_id} (queued by planner_t_now, sent by the tick once
 // fresh camera pictures are in and the 'now' build is made) rebuilds today's plan as it stands
@@ -129,7 +132,7 @@ const SUNRISE_MIN_P = 0.5;
 const REST_HOURS = 6;
 // Morning-of replan (mr1 / mrmc): the planner looks at the peaks this long before sunrise and re-plans the rest of the day.
 const LOOK_BEFORE_SUNRISE_MIN = 30;
-const PREDAWN_BEFORE_SUNRISE_MIN = 120;
+const DEPART_LOOK_MIN = 15;
 // Light-only scenarios: sun visibility (k/50)^2, k = 0..50. Same expansion
 // as SQL solver_light_scores; solver_light_terms gives dir/soft per slot.
 const SCENARIOS = Array.from({ length: 51 }, (_, k) => (k / 50) ** 2);
@@ -312,7 +315,7 @@ Deno.serve(async (req) => {
     const FOG = cfg.fog && !cfg.draft ? 80 : 0;
     const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = cfg.sun && !cfg.draft ? 320 : 0;
     const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX + FOG + SUN;
-    const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members')
+    const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members, look_at')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
     const fcB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'forecast' && b.lead === leadOf(h.lead)));
     const trB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'truth' && b.lead === WX));
@@ -348,11 +351,9 @@ Deno.serve(async (req) => {
     const eKind = cfg.morning_fresh ? 'earlyf' : 'early';
     const eB = earlyOn ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === eKind && b.lead === 1 + WX + FOG + FADE + SUN) : undefined;
     if (earlyOn && !eB && !live) return json({ ok: false, error: 'early build missing' }, 404);
-    // predawn (v68): the look before you leave, same models and lead as the morning one. Bench only.
-    const predawnOn = morning && !!cfg.predawn && !live;
-    const pKind = cfg.morning_fresh ? 'predawnf' : 'predawn';
-    const pB = predawnOn ? (blds ?? []).find(b => b.replay_day_id === horizon[0].dayId && b.kind === pKind && b.lead === 1 + WX + FOG + FADE + SUN) : undefined;
-    if (predawnOn && !pB) return json({ ok: false, error: 'predawn build missing' }, 404);
+    // depart (v69): the look before you leave, same models and lead as the morning one; built when needed.
+    const departOn = morning && !!cfg.depart && !live;
+    const depKind = cfg.morning_fresh ? 'departf' : 'depart';
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
     const tz: string = trip?.timezone ?? 'UTC';
@@ -419,8 +420,6 @@ Deno.serve(async (req) => {
     const dSc = dB ? await scoresOf(dB.id) : [];
     if (dB && !dSc.length) return json({ ok: false, error: 'empty midday build' }, 404);
     const eSc = eB ? await scoresOf(eB.id) : [];
-    const pSc = pB ? await scoresOf(pB.id) : [];
-    if (pB && !pSc.length) return json({ ok: false, error: 'empty predawn build' }, 404);
     if (eB && !eSc.length) return json({ ok: false, error: 'empty early build' }, 404);
     // Re-plan now (v66): the build made for this request (look = when it was asked).
     const nowReq = !!body.now && live && !draft;
@@ -1875,42 +1874,64 @@ Deno.serve(async (req) => {
         }
         // Live: the morning step comes hours later, so the night plan is always saved here.
         if (split && !pastNight && st && ((live && !draft) || !goOn())) { if (!draft) await publish('night', p0, st); return await save('night'); }
-        if (predawnOn && st && !draft && stage !== 'morning') {
-          // Look before you leave (v68, Phil 5 Nov 2026): 2 h before sunrise, before the first departure
-          // on nearly every day, the airport's latest report re-conditions the odds from an hour later
-          // and the whole day is re-planned on the predawn build (what is begun or left for by then is
-          // kept), same required places (dropped from the end only if they no longer fit).
-          const atMs = sunrise(days[0].date, mid.lat, mid.lng, tz) - PREDAWN_BEFORE_SUNRISE_MIN * 60000;
+        // Look before you leave (v69): 15 min before the plan's first departure, on a build made for that
+        // time; re-plans from there (what is begun or left for is kept), same required places.
+        const dawnAt = sunrise(days[0].date, mid.lat, mid.lng, tz) - LOOK_BEFORE_SUNRISE_MIN * 60000;
+        const departAt = () => {
+          if (!st || !st.route.length) return null;
+          const v = st.route[0], dep = p0.dayStart + (v.arrive - v.drive) * 60000;
+          return Math.floor((dep - DEPART_LOOK_MIN * 60000) / 300000) * 300000;
+        };
+        const departStep = async (atMs: number) => {
+          const LEAD = 1 + WX + FOG + FADE + SUN;
+          let id = (blds ?? []).find(x => x.replay_day_id === horizon[0].dayId && x.kind === depKind && x.lead === LEAD && x.look_at && Date.parse(x.look_at) === atMs)?.id as string | undefined;
+          if (!id) {
+            // Direct connection: the API stops a statement at 8 s and a build takes ~10 s.
+            const t = performance.now();
+            const sql = postgres(Deno.env.get('SUPABASE_DB_URL')!, { max: 1, prepare: false });
+            try {
+              const rows = await sql`select public.replay_build(${horizon[0].dayId}::bigint, ${depKind}::text, ${LEAD}::int, ${new Date(atMs).toISOString()}::timestamptz) id`;
+              id = rows[0].id as string;
+            } finally { await sql.end(); }
+            tWait += performance.now() - t;
+          }
+          const sc = await scoresOf(id!);
+          if (!sc.length) throw new Error('empty depart build');
           const leftBy = (v: { start: number; arrive: number; drive: number }) =>
             cfg.mr_commit === 'departure' ? p0.dayStart + (v.arrive - v.drive) * 60000 < atMs : false;
-          const before = st.route.filter(v => p0.dayStart + v.start * 60000 < atMs || leftBy(v))
+          const before = st!.route.filter(v => p0.dayStart + v.start * 60000 < atMs || leftBy(v))
             .map(v => ({ n: v.n, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor }));
           let l = list, pp: DayPlan | null = null, sp: State | null = null;
           for (;;) {
-            pp = planDay({ ...days[0], light: false }, pSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
+            pp = planDay({ ...days[0], light: false }, sc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
             sp = pp.routes[0] ?? null;
             if (sp || !l.length) break;
             l = l.slice(0, -1);
           }
           if (cfg.polish_k && sp && pp) {
-            const r = polish(pSc, pp, sp, l.flatMap(mustOf), { visits: before, atMs });
-            polStats = { ...(polStats ?? {}), predawn: r.gain, ...(r.capped ? { predawn_capped: true } : {}) }; pp = r.p; sp = r.st;
+            const r = polish(sc, pp, sp, l.flatMap(mustOf), { visits: before, atMs });
+            polStats = { ...(polStats ?? {}), depart: r.gain, ...(r.capped ? { depart_capped: true } : {}) }; pp = r.p; sp = r.st;
           }
-          await mark('predawn');
+          await mark('depart');
           const { data: look } = await db.from('replay_hidden_truth').select('hr, hidden').eq('trip_id', tripId)
             .gte('hr', new Date(atMs - 3600000).toISOString()).lte('hr', new Date(atMs).toISOString()).order('hr', { ascending: false }).limit(1);
           const show = (p: DayPlan, s: State) => s.route.filter(v => nodes[v.n].w > 0)
             .map(v => nodes[v.n].name + ' ' + new Date(p.dayStart + v.start * 60000).toISOString().slice(11, 16));
-          const was = show(p0, st);
-          const pd: any = { look_at: new Date(atMs).toISOString(), hidden: look?.[0]?.hidden ?? null, kept: before.length, night: was };
+          const was = show(p0, st!);
+          const dd: any = { look_at: new Date(atMs).toISOString(), before_dawn: atMs < dawnAt, hidden: look?.[0]?.hidden ?? null, kept: before.length, was };
           if (sp && pp) {
             const now = show(pp, sp);
-            Object.assign(pd, { plan: now, changed: now.join('|') !== was.join('|'), dropped: list.length - l.length });
+            Object.assign(dd, { plan: now, changed: now.join('|') !== was.join('|'), dropped: list.length - l.length });
             p0 = pp; st = sp; list = l;
-          } else pd.error = 'no predawn route: the night plan stands';
-          mrStats = { ...(mrStats ?? {}), predawn: pd };
+          } else dd.error = 'no route from the depart look: the plan stands';
+          mrStats = { ...(mrStats ?? {}), depart: dd };
+        };
+        let departDone = false;
+        if (departOn && st && !draft && stage !== 'morning') {
+          const at = departAt();
+          if (at != null && at < dawnAt) { await departStep(at); departDone = true; }
         }
-        if ((kind === 'mr1' || kind === 'mrmc') && st && !draft && stage !== 'morning' && !(predawnOn && cfg.no_dawn)) {
+        if ((kind === 'mr1' || kind === 'mrmc') && st && !draft && stage !== 'morning') {
           // Morning-of replan (Phil, 27 Oct 2026): the night's plan (v3, or the one
           // Monte Carlo chose) stands up to 30 min before sunrise; then the planner
           // sees whether the peaks are hidden (the airport or the camera, the
@@ -1918,7 +1939,7 @@ Deno.serve(async (req) => {
           // the morning build, with the same required places (dropped from the
           // end only if they no longer fit).
           if (!mSc.length) throw new Error('morning build missing');
-          const atMs = sunrise(days[0].date, mid.lat, mid.lng, tz) - LOOK_BEFORE_SUNRISE_MIN * 60000;
+          const atMs = dawnAt;
           // mr_commit 'departure' (27 Oct 2026, the first full test lost the sunrise
           // shot on 50 of 97 clear mornings): a visit you have already left for at
           // the look is kept too; without it the replan restarts from where you were.
@@ -1951,8 +1972,13 @@ Deno.serve(async (req) => {
             const morning = show(pm, sm);
             mrStats = { ...mrStats, morning, changed: morning.join('|') !== mrStats.night.join('|'), dropped: list.length - l.length };
             p0 = pm; st = sm;
-            if (middayOn || earlyOn || predawnOn) list = l;
+            if (middayOn || earlyOn || departOn) list = l;
           } else mrStats.error = 'no morning route: the night plan stands';
+        }
+        // Leaving after the dawn look: the look before you leave follows it.
+        if (departOn && !departDone && st && !draft && stage !== 'morning') {
+          const at = departAt();
+          if (at != null && at > dawnAt) await departStep(at);
         }
         if (earlyOn && st) {
           // Camera look (v65, Phil 5 Nov 2026): the morning plan stands until the first camera pictures
