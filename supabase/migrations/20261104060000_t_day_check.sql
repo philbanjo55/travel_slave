@@ -59,11 +59,11 @@ begin
        and p.note in ('T: evening plan', 'T: morning re-plan', 'T: your day')
      order by p.note, r.created_at desc
   ), vis as (
-    select r.note, v->>'name' name, (v->>'start')::timestamptz st, (v->>'p_good')::float8 pg, (v->>'value')::float8 val,
+    select r.note, v->>'name' name, (v->>'start')::timestamptz st, coalesce((v->>'chance')::float8, (v->>'p_good')::float8) pg, (v->>'value')::float8 val,
            coalesce((v->>'peak_at')::timestamptz, (v->>'start')::timestamptz) pk,
            coalesce((select i.fog_wanted from solver_stop_inputs i where i.stop_id = (v->>'stop_id')::uuid), false) fog
       from runs r cross join jsonb_array_elements(r.visits) v
-     where v ? 'p_good' and (v->>'value') is not null
+     where (v ? 'p_good' or v ? 'chance') and (v->>'value') is not null
        -- only stops T expected in daylight (visible = good shot applies there; blue hour depends on light too)
        and (select sp.altitude from sun_position(coalesce((v->>'peak_at')::timestamptz, (v->>'start')::timestamptz), v_lat, v_lng) sp) > 0
   ), j as (
