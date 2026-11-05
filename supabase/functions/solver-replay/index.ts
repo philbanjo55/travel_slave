@@ -2,6 +2,12 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v66 (5 Nov 2026, Phil: "an async planner whenever, even mid day"): Re-plan now. A request
+// {run_id, kind, now: true, night, build_id, req_id} (queued by planner_t_now, sent by the tick once
+// fresh camera pictures are in and the 'now' build is made) rebuilds today's plan as it stands
+// (replay_live_today, saved by every live day step), keeps what is begun or left for by now, and
+// re-plans the rest of today on the now build; published as 'T: re-plan now'. Nothing else of the run
+// changes (no record, no state), and an error marks only the request.
 // v65 (5 Nov 2026, Phil: "Yes do 1"): run config early = a second morning look at the first camera
 // pictures after sunrise (replay_early_at, ~45-100 min after it): the majority of the cameras and the
 // airport re-conditions the odds (replay_build kind 'early' / 'earlyf', morning fit lk 2) and the rest of
@@ -236,11 +242,13 @@ Deno.serve(async (req) => {
   // Timing (28 Oct 2026, Faroes nights ran out of CPU): stats.t = ms to data loaded / to done.
   const tReq = performance.now();
   let tLoaded = 0, tWait = 0, tLight = 0;
+  let nowReqId: number | null = null, nowOut: any = null;
   try {
     const body = await req.json().catch(() => ({}));
     dayId = body.day_id ?? null;
     runId = body.run_id ?? null;
     kindOf = body.kind ?? null;
+    nowReqId = body.now ? Number(body.req_id) : null;
     // What to plan: one replay day, or the next nights of a whole-trip run.
     let run: any = null, tripId: string;
     const week = kindOf === 'blk' || kindOf === 'imp' || kindOf === 'mc1' || kindOf === 'mrmc';
@@ -252,7 +260,7 @@ Deno.serve(async (req) => {
       if (!run) return json({ ok: false, error: 'replay run not found' }, 404);
       tripId = run.trip_id;
       // rescore (live runs): body.night is a night already planned whose truth came in.
-      const n: number = body.rescore ? Number(body.night) : run.night;
+      const n: number = body.rescore || body.now ? Number(body.night) : run.night;
       fcDays = Math.min(Math.max(Number(run.config?.fc_days ?? 3), 1), 7);
       const want = Array.from({ length: Math.min(week ? Infinity : kindOf === 'fm1' || kindOf === 'mr1' ? fcDays : 3, run.nights - n) }, (_, h) => n + h)
         .map(i => ({ i, date: addDays(run.start_date, i), trip_date: run.trip_dates[i], lead: i - n + 1 }));
@@ -310,7 +318,7 @@ Deno.serve(async (req) => {
     // remaining trip planned night after night from light only (no forecast reaches it yet), no
     // morning step, the day's expected value counted as shot; published as the week draft.
     const draft = !!cfg.draft;
-    const nFc = draft ? 0 : k0 == null ? horizon.length : k0 === 'fc3' || k0 === 'fm1' || k0 === 'mr1' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(fcDays, horizon.length) : 0;
+    const nFc = body.now ? 1 : draft ? 0 : k0 == null ? horizon.length : k0 === 'fc3' || k0 === 'fm1' || k0 === 'mr1' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(fcDays, horizon.length) : 0;
     const needLt = (h: number) => k0 == null || k0 === 'lt3' || (week && h >= nFc);
     const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
     // live (run config, 29 Oct 2026): real upcoming dates planned as the trip's days, so the
@@ -402,6 +410,12 @@ Deno.serve(async (req) => {
     if (dB && !dSc.length) return json({ ok: false, error: 'empty midday build' }, 404);
     const eSc = eB ? await scoresOf(eB.id) : [];
     if (eB && !eSc.length) return json({ ok: false, error: 'empty early build' }, 404);
+    // Re-plan now (v66): the build made for this request (look = when it was asked).
+    const nowReq = !!body.now && live && !draft;
+    const nB = nowReq ? (blds ?? []).find(b => b.id === body.build_id) : undefined;
+    if (nowReq && !nB) throw new Error('now build missing');
+    const nSc = nB ? await scoresOf(nB.id) : [];
+    if (nB && !nSc.length) throw new Error('empty now build');
     if (week && ltSc.some((x, i) => needLt(i) && !x.length)) return json({ ok: false, error: 'no light geometry for a later day' }, 404);
     // A draft plans tomorrow on light only too.
     if (draft) fcSc[0] = ltSc[0];
@@ -1041,7 +1055,7 @@ Deno.serve(async (req) => {
       const { data: ks } = await db.from('replay_run_state').select('night, state, sets, note').eq('run_id', runId).eq('kind', kind).single();
       tWait += performance.now() - tKs;
       if (!ks) return json({ ok: false, error: 'no state for this plan' }, 404);
-      const n: number = body.rescore ? Number(body.night) : run.night;
+      const n: number = body.rescore || body.now ? Number(body.night) : run.night;
       if (body.rescore) {
         // Live: score a night already planned against the truth that has come in since.
         if (!trSc[0].length) return json({ ok: false, error: 'no truth yet' }, 404);
@@ -1055,7 +1069,7 @@ Deno.serve(async (req) => {
         await db.from('replay_run_days').update({ realized, visits: scored }).eq('run_id', runId).eq('night', n).eq('kind', kind);
         return json({ ok: true, rescored: true, run_id: runId, kind, night: n, realized });
       }
-      if (ks.night !== n) {
+      if (ks.night !== n && !body.now) {
         await db.from('replay_run_state').update({ status: 'idle', updated_at: new Date().toISOString() }).eq('run_id', runId).eq('kind', kind);
         return json({ ok: true, skipped: 'already planned', run_id: runId, kind, night: ks.night });
       }
@@ -1223,7 +1237,7 @@ Deno.serve(async (req) => {
       // mean as a % of that ceiling. v52: a week draft counts its own earlier days as shot (to
       // plan the week), which made "your day" worth ~0 wherever T went earlier: drafts score
       // both plans and the ceiling on the day's own merit (live nights keep the real shots).
-      const publish = async (step: 'night' | 'morning' | 'early' | 'week', p: DayPlan, s: State, extra: any = {}) => {
+      const publish = async (step: 'night' | 'morning' | 'early' | 'now' | 'week', p: DayPlan, s: State, extra: any = {}) => {
         if (!cfg.publish || !live) return;
         const d0 = days[0];
         const visits = visitsOf(p, s);
@@ -1300,7 +1314,7 @@ Deno.serve(async (req) => {
           visits: mine, note: 'T: your day',
         }, {
           run_id: sr.id, rank: 1, objective: r3(s.j), mean: r3(bm.mean), cvar11: r3(bm.cvar), drive_minutes: Math.round(s.drive),
-          visits, note: step === 'night' ? 'T: evening plan' : step === 'week' ? 'T: week draft' : step === 'early' ? 'T: morning re-plan (cameras)' : 'T: morning re-plan',
+          visits, note: step === 'night' ? 'T: evening plan' : step === 'week' ? 'T: week draft' : step === 'early' ? 'T: morning re-plan (cameras)' : step === 'now' ? 'T: re-plan now' : 'T: morning re-plan',
         }]);
         if (e2) throw e2;
       };
@@ -1452,7 +1466,26 @@ Deno.serve(async (req) => {
         const stage: string | null = split && pend?.night === n ? (pend.stage ?? 'night') : null;
         const phase2 = stage != null && stage !== 'cands';
         let p0: DayPlan, st: State | null, list: number[][];
-        if (stage != null) {
+        // Today's plan as it stands (v66), for Re-plan now: every live day step saves it.
+        const saveToday = async (p: DayPlan, s: State, l: number[][], step: string, mr: any) => {
+          if (!live || draft || !cfg.publish) return;
+          const { error } = await db.from('replay_live_today').upsert({
+            run_id: runId, kind, replay_date: days[0].date, step, mr: mr ?? null, updated_at: new Date().toISOString(),
+            visits: s.route.map(v => ({ id: nodes[v.n].id, startMs: p.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
+            units: l.map(u => mustOf(u).map(x => nodes[x].id)),
+          }, { onConflict: 'run_id,kind,replay_date' });
+          if (error) throw error;
+        };
+        let today: any = null;
+        if (nowReq) {
+          today = (await db.from('replay_live_today').select('visits, units, mr').eq('run_id', runId).eq('kind', kind).eq('replay_date', days[0].date).maybeSingle()).data;
+          if (!today) throw new Error('T has not re-planned today yet (the morning re-plan comes first)');
+          const vis = (today.visits as any[]).filter(v => pos.has(v.id)).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
+          list = (today.units as string[][]).map(ids => ids.filter(id => pos.has(id)).map(id => pos.get(id)!)).filter(u => u.length);
+          p0 = planDay({ ...days[0], light: false }, nSc, false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
+          st = p0.routes[0] ?? null;
+          if (!st) throw new Error("today's plan could not be rebuilt");
+        } else if (stage != null) {
           const vis = (pend.visits as any[]).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
           list = (pend.units as string[][]).map(ids => ids.map(id => pos.get(id)!));
           // Rebuilt with the same required places, so its score (j) is the original's.
@@ -1499,6 +1532,47 @@ Deno.serve(async (req) => {
           const info = { tried: pb.brute?.tried ?? 0, ms: pb.ms, ...(pb.brute?.capped ? { capped: true } : {}) };
           return sb && sb !== s && sb.j > s.j + 1e-6 ? { p: pb, st: sb, gain: r3(sb.j - s.j), info } : { p, st: s, gain: 0, info };
         };
+        if (nowReq && st) {
+          // Re-plan now (v66): what is begun (or left for, mr_commit 'departure') by now stays; the
+          // rest of today is re-planned on the now build (the cameras' majority and the airport
+          // re-condition the odds from now), same required places (dropped from the end only if
+          // they no longer fit).
+          const atMs = Date.parse(body.at ?? new Date().toISOString());
+          const leftBy = (v: { start: number; arrive: number; drive: number }) =>
+            cfg.mr_commit === 'departure' ? p0.dayStart + (v.arrive - v.drive) * 60000 < atMs : false;
+          const before = st.route.filter(v => p0.dayStart + v.start * 60000 < atMs || leftBy(v))
+            .map(v => ({ n: v.n, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor }));
+          let l = list, pn: DayPlan | null = null, sn: State | null = null;
+          for (;;) {
+            pn = planDay({ ...days[0], light: false }, nSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
+            sn = pn.routes[0] ?? null;
+            if (sn || !l.length) break;
+            l = l.slice(0, -1);
+          }
+          let gain: number | null = null;
+          if (cfg.polish_k && sn && pn) {
+            const r = polish(nSc, pn, sn, l.flatMap(mustOf), { visits: before, atMs });
+            gain = r.gain; pn = r.p; sn = r.st;
+          }
+          await mark('now');
+          const { data: tt } = await db.rpc('t_truth', { p_trip: tripId, p_hr: new Date(Math.floor(atMs / 3600000) * 3600000).toISOString(), p_lat: mid.lat, p_lng: mid.lng });
+          const show = (p: DayPlan, s: State) => s.route.filter(v => nodes[v.n].w > 0)
+            .map(v => nodes[v.n].name + ' ' + new Date(p.dayStart + v.start * 60000).toISOString().slice(11, 16));
+          const was = show(p0, st);
+          const nd: any = { asked_at: new Date(atMs).toISOString(), hidden: (tt as any)?.a ?? (tt as any)?.old ?? null, majority: (tt as any)?.a ?? null,
+                            cams: (tt as any)?.cams ?? null, cams_hidden: (tt as any)?.cams_hidden ?? null, airport: (tt as any)?.airport ?? null,
+                            kept: before.length, was, ...(gain != null ? { polish: gain } : {}) };
+          if (sn && pn) {
+            const now = show(pn, sn);
+            Object.assign(nd, { plan: now, changed: now.join('|') !== was.join('|'), dropped: list.length - l.length });
+            p0 = pn; st = sn; list = l;
+          } else nd.error = 'no route from now: the plan stands';
+          const mr = { ...(today?.mr ?? {}), now: nd };
+          await publish('now', p0, st, { mr });
+          await saveToday(p0, st, list, 'now', mr);
+          nowOut = nd;
+          return null;
+        }
         if (cfg.exact_k && st && !phase2) {
           // Proof check (run config exact_k, stats only, the plan is unchanged):
           // tomorrow's night plan vs the near-exhaustive search. A higher exact
@@ -1841,7 +1915,7 @@ Deno.serve(async (req) => {
           // 'departure') by then are kept, so the sunrise spot stays. Live: the dawn re-plan goes to the
           // app now and is saved (stage 'morning'); the tick calls again once the pictures are in.
           if (stage !== 'morning' && (live || (split && !goOn()))) {
-            if (live) await publish('morning', p0, st, mrStats ? { mr: mrStats } : {});
+            if (live) { await publish('morning', p0, st, mrStats ? { mr: mrStats } : {}); await saveToday(p0, st, list, 'morning', mrStats); }
             return await save('morning');
           }
           if (!eSc.length) throw new Error('early build missing');
@@ -1873,7 +1947,7 @@ Deno.serve(async (req) => {
           if (se && pe) {
             const now = show(pe, se);
             Object.assign(ed, { plan: now, changed: now.join('|') !== was.join('|'), dropped: list.length - l.length });
-            p0 = pe; st = se;
+            p0 = pe; st = se; list = l;
           } else ed.error = 'no early route: the morning plan stands';
           mrStats = { ...(mrStats ?? {}), early: ed };
         }
@@ -1917,6 +1991,7 @@ Deno.serve(async (req) => {
         if (st) { missedNode = pickMissed(st.route); for (const v of st.route) if (v.n !== missedNode) seenIds.add(nodes[v.n].id); }
         nextSets = { seen: [...seenIds] };
         if (st) await publish(draft ? 'week' : earlyOn ? 'early' : 'morning', p0, st, mrStats ? { mr: mrStats } : {});
+        if (st && !draft) await saveToday(p0, st, list, earlyOn ? 'early' : 'morning', mrStats);
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members: fcB[0]?.members ?? 51, required: req.length, wanted: want.length, kept: list.length, open: open.length,
@@ -1926,6 +2001,11 @@ Deno.serve(async (req) => {
       let shot: Record<string, number>;
       if (kind === 'fm1' || kind === 'mc1' || kind === 'mr1' || kind === 'mrmc') {
         const cs = await coverPlan();
+        if (body.now) {
+          await db.from('planner_t_now').update({ status: nowOut?.error ? 'error' : 'done', done_at: new Date().toISOString(), result: nowOut ?? null,
+                                                  note: nowOut?.error ?? null }).eq('id', body.req_id);
+          return json({ ok: true, now: nowOut, run_id: runId, kind, night: n });
+        }
         if (!cs) return json({ ok: true, partial: 'night plan saved; the morning step comes next', run_id: runId, kind, night: n });
         shot = cs;
       }
@@ -2002,6 +2082,8 @@ Deno.serve(async (req) => {
     return json({ ok: true, day_id: dayId, config: cfgName, results: rows.map(r => ({ plan: r.plan, predicted: r.predicted, realized: r.realized, drive: r.drive_minutes })) });
   } catch (e) {
     const msg = String((e as any)?.message ?? e);
+    // Re-plan now: an error marks the request only, never the run.
+    if (nowReqId != null) { await db.from('planner_t_now').update({ status: 'error', note: msg.slice(0, 300), done_at: new Date().toISOString() }).eq('id', nowReqId); return json({ ok: false, error: msg }, 500); }
     if (runId != null) await db.from('replay_run_state').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('run_id', runId).eq('kind', kindOf);
     else if (dayId != null) await db.from('replay_days').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('id', dayId);
     return json({ ok: false, error: msg }, 500);

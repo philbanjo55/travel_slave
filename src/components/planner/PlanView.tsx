@@ -7,7 +7,7 @@ import { colors, spacing, radius, typography } from '../../theme';
 import {
   Plan, PlanRun, PlanVisit, applyPreview, fetchDayRuns, fetchMultiRuns, fetchPlans, hhmm, ago, latestByDay,
   planDay, planDays, planTitle, runTripDates, LIGHT_WORDS, usesT, latestT, waitForT, fetchTDays,
-  canApply, applyPlan, clock12,
+  canApply, applyPlan, clock12, replanNow, waitForNow,
 } from '../../services/planner';
 import { VERDICT_COLOR, VERDICT_TEXT, countText, expShots, forecastCount, isLightOnly, lateReplan, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
 import { forgetWeek } from '../../services/plannerWeek';
@@ -87,6 +87,26 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
   useEffect(() => { usesT(tripId).then(setT).catch(() => setT(false)); }, [tripId]);
   useEffect(() => { if (t !== null) load(preview); }, [preview, tripDate, t]);
 
+  // Re-plan now (Phil, 5 Nov 2026): today only, on trips T plans. Fresh camera pictures, then the
+  // rest of today re-planned from where the plan says you are; the plan above stays until it is in.
+  const isToday = tripDate === format(new Date(), 'yyyy-MM-dd');
+  const [nowNote, setNowNote] = useState<string | null>(null);
+  const doNow = useCallback(async () => {
+    setError(null); setNowNote(null); setBusy('Getting fresh camera pictures, then re-planning the rest of today (about 1 minute). You can leave this screen.');
+    try {
+      const { id } = await replanNow(tripId);
+      const s = await waitForNow(tripId, id, () => mounted.current);
+      if (!mounted.current) return;
+      if (!s) throw new Error('T is still re-planning. Check back in a few minutes.');
+      if (s.status === 'error') throw new Error(`T could not re-plan now: ${s.note ?? 'unknown error'}`);
+      const r = await latestT(tripId, tripDate);
+      setRun(r); setPlans(r ? await fetchPlans(r.id) : []);
+      const peaks = s.hidden === 1 ? 'the cameras show the peaks hidden' : s.hidden === 0 ? 'the cameras show the peaks out' : 'no camera reading';
+      setNowNote(s.changed ? `Re-planned: ${peaks}.` : `Nothing better for the rest of today (${peaks}): the plan stands.`);
+    } catch (e: any) { setError(String(e?.message ?? e)); }
+    setBusy(null);
+  }, [tripId, tripDate]);
+
   const badge = dayBadge(tripDate);
   const runDay = run?.stats?.days?.[0];
   const kind = (t ? 't' : '') + (runDay?.light_only ? 'light' : runDay && runDay.date !== runDay.trip_date ? 'preview' : 'forecast');
@@ -105,8 +125,15 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
           <Text style={styles.replanText}>Plan again</Text>
         </TouchableOpacity>
       </View>
+      {t && isToday ? (
+        <TouchableOpacity onPress={doNow} style={[styles.replan, styles.nowBtn]} disabled={!!busy} accessibilityLabel="Re-plan now">
+          <Ionicons name="camera-outline" size={16} color={colors.textPrimary} />
+          <Text style={[styles.replanText, { color: colors.textPrimary }]}>Re-plan now with the cameras</Text>
+        </TouchableOpacity>
+      ) : null}
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>
+          {nowNote ? <Text style={styles.warn}>{nowNote}</Text> : null}
           {(() => { const l = lateReplan(run, plans); return l && run ? (
             <Text style={styles.warn}>This morning's re-plan came at {clock12(run.created_at, run.params?.tz)}, after the first stop ({clock12(l, run.params?.tz)}).</Text>
           ) : null; })()}
@@ -433,6 +460,7 @@ const styles = StyleSheet.create({
   replan: { flexDirection: 'row', gap: 4, paddingHorizontal: 10, minHeight: 36, alignItems: 'center', justifyContent: 'center',
             borderRadius: radius.full, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
   replanText: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
+  nowBtn: { backgroundColor: colors.surface, borderRadius: radius.sm },
   center: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingVertical: spacing.xxl },
   hint: { fontSize: 12, color: colors.textTertiary, lineHeight: 17 },
   error: { fontSize: 13, color: '#e74c3c' },

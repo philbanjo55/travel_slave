@@ -80,6 +80,34 @@ export async function replanT(tripId: string): Promise<string> {
   return data.since as string;
 }
 
+// Re-plan now (Phil, 5 Nov 2026): T re-plans the rest of today from where the plan says you are,
+// with fresh camera pictures (RPC planner_t_now; one at a time, a running one is reused).
+export type NowStatus = { id: number; status: 'queued' | 'planning' | 'done' | 'error'; requested_at: string; done_at: string | null;
+                          note: string | null; changed: boolean | null; hidden: number | null };
+export async function replanNow(tripId: string): Promise<{ id: number; since: string }> {
+  const { data, error } = await supabase.rpc('planner_t_now', { p_trip: tripId });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error ?? 'T could not start');
+  return { id: data.id as number, since: data.since as string };
+}
+export async function nowStatus(tripId: string): Promise<NowStatus | null> {
+  const { data, error } = await supabase.rpc('planner_t_now_status', { p_trip: tripId });
+  if (error) throw error;
+  return (data ?? null) as NowStatus | null;
+}
+// Waits (up to 6 min, only while the app is open and the screen is alive) for request `id`.
+export async function waitForNow(tripId: string, id: number, alive: () => boolean = () => true): Promise<NowStatus | null> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 6 * 60000) {
+    await new Promise(res => setTimeout(res, 5000));
+    if (!alive()) return null;
+    if (AppState.currentState !== 'active') continue;
+    const s = await nowStatus(tripId).catch(() => null);
+    if (s && s.id === id && (s.status === 'done' || s.status === 'error')) return s;
+  }
+  return null;
+}
+
 // T's newest plan for a trip day: the evening plan / morning re-plan, else the week draft.
 export async function latestT(tripId: string, tripDate: string): Promise<PlanRun | null> {
   const m = latestByDay(await fetchDayRuns(tripId)).get(tripDate) ?? {};

@@ -102,6 +102,8 @@ export function planKindText(run: PlanRun | null | undefined): string {
   const step = run?.stats?.step;
   if (isLightOnly(run)) return 'Week draft · no forecast yet';
   if (step === 'morning') return 'Morning re-plan';
+  if (step === 'early') return 'Morning re-plan (cameras)';
+  if (step === 'now') return 'Re-plan now';
   if (step === 'night') return 'Evening plan';
   if (step === 'week') return 'Week draft';
   return 'T plan';
