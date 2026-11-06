@@ -3,6 +3,8 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v84 (6 Nov 2026, Phil: count blue hour): run config blue = builds and light-only days score a clear blue hour as a
+// good shot (lead + 10240); blue_judge = only the truth does (to judge plain T on the same rule).
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
 // v83 (6 Nov 2026): tool ops stop_detail {stop_id} and weather_detail for Claude.
 // v81 (6 Nov 2026, worksheet G1): {run_id, kind, night, tool: context | solve | score | grade}: read-only
@@ -345,13 +347,13 @@ Deno.serve(async (req) => {
     const FOG = cfg.fog && !cfg.draft ? 80 : 0;
     // vfit (v73, 6 Nov 2026, planner version AN): builds at lead + 640 use the hidden-peak and look odds
     // learned from the camera vote (counts hb + 10 / lk + 10); carried with SUN in every lead below.
-    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0) + (cfg.cons && !cfg.draft ? 2560 : 0) + (cfg.sbfix && !cfg.draft ? 5120 : 0);
+    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0) + (cfg.cons && !cfg.draft ? 2560 : 0) + (cfg.sbfix && !cfg.draft ? 5120 : 0) + (cfg.blue && !cfg.draft ? 10240 : 0);
     const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX + FOG + SUN;
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members, look_at')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
     const fcB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'forecast' && b.lead === leadOf(h.lead)));
     // truth_vote (run config, v71, Phil 6 Nov 2026): days judged by the camera vote (truth build lead + 5).
-    const trB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'truth' && b.lead === WX + (cfg.truth_vote ? 5 : 0) + (cfg.nopk || cfg.nopk_judge ? 1280 : 0)));
+    const trB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'truth' && b.lead === WX + (cfg.truth_vote ? 5 : 0) + (cfg.nopk || cfg.nopk_judge ? 1280 : 0) + (cfg.blue || cfg.blue_judge ? 10240 : 0)));
 
     // A run's plan loads only what it plans on (and the truth of the day it does).
     const k0 = runId != null ? kindOf : null;
@@ -425,7 +427,7 @@ Deno.serve(async (req) => {
       const h = cfg.far_hidden && !cfg.light_plain
         ? Number((await db.rpc('replay_clim_hidden', { p_trip: tripId, p_date: date, p_vote: !!cfg.vfit })).data ?? 0) : 0;
       const nh = Math.round(h * 51);
-      const key = `${tripId}|${date}|${nh}`, hit = LIGHT_CACHE.get(key);
+      const key = `${tripId}|${date}|${nh}|${cfg.blue ? 'b' : ''}`, hit = LIGHT_CACHE.get(key);
       if (hit && Date.now() - hit.at < 600000) return hit.rows;
       return all<any>((a, b) => db.rpc('solver_light_terms', { p_trip_id: tripId, p_dates: [date] }).order('slot_at').order('stop_id').range(a, b))
         .then(rows => {
@@ -435,7 +437,9 @@ Deno.serve(async (req) => {
             for (let k = 0; k < 51; k++) {
               const s = SCENARIOS[k], hid = k < nh;
               const f = r.fog_wanted ? (hid ? 1 : 0.6) : (hid ? 0.1 : 1);
-              v[k] = Math.round(250 * Math.max(0, Math.min(1, (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * f)));
+              // blue (v84): a clear blue hour counts as a good shot (0.6, 0.75 with soft light wanted; was 0.3 / 0.4).
+              const bdir = r.blue && cfg.blue ? (r.dir >= 0.35 ? 0.75 : 0.6) : r.dir;
+              v[k] = Math.round(250 * Math.max(0, Math.min(1, (r.blue ? bdir : s * r.dir + (1 - s) * r.soft) * f)));
             }
             return { stop_id: r.stop_id, ms: Date.parse(r.slot_at), v };
           });
