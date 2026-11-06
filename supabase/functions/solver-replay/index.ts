@@ -3,6 +3,9 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v76 (6 Nov 2026, worksheet A3): run config nopk = builds at lead + 1280, where a stop with
+// solver_stop_settings.needs_peaks false keeps its value when the peaks are hidden; nopk_judge = only
+// the truth builds do (to judge plain T on the same truth).
 // v75 (6 Nov 2026, worksheet B2): live day steps (morning, camera look, re-plan now) mark visits already
 // over as done: true in what they publish; the TEST app shows them as done instead of a chance.
 // v74 (6 Nov 2026, worksheet B1): run config polish_max lifts the 9-stop limit on the exact polish search
@@ -322,13 +325,13 @@ Deno.serve(async (req) => {
     const FOG = cfg.fog && !cfg.draft ? 80 : 0;
     // vfit (v73, 6 Nov 2026, planner version AN): builds at lead + 640 use the hidden-peak and look odds
     // learned from the camera vote (counts hb + 10 / lk + 10); carried with SUN in every lead below.
-    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0);
+    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0);
     const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX + FOG + SUN;
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members, look_at')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
     const fcB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'forecast' && b.lead === leadOf(h.lead)));
     // truth_vote (run config, v71, Phil 6 Nov 2026): days judged by the camera vote (truth build lead + 5).
-    const trB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'truth' && b.lead === WX + (cfg.truth_vote ? 5 : 0)));
+    const trB = horizon.map(h => (blds ?? []).find(b => b.replay_day_id === h.dayId && b.kind === 'truth' && b.lead === WX + (cfg.truth_vote ? 5 : 0) + (cfg.nopk || cfg.nopk_judge ? 1280 : 0)));
 
     // A run's plan loads only what it plans on (and the truth of the day it does).
     const k0 = runId != null ? kindOf : null;
