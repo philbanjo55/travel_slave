@@ -326,8 +326,9 @@ Deno.serve(async (req) => {
     // remaining trip planned night after night from light only (no forecast reaches it yet), no
     // morning step, the day's expected value counted as shot; published as the week draft.
     const draft = !!cfg.draft;
-    const nFc = body.now ? 1 : draft ? 0 : k0 == null ? horizon.length : k0 === 'fc3' || k0 === 'fm1' || k0 === 'mr1' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(fcDays, horizon.length) : 0;
-    const needLt = (h: number) => k0 == null || k0 === 'lt3' || (week && h >= nFc);
+    // A rescore (live) needs only the day's truth: the forecast builds may be gone by then.
+    const nFc = body.rescore ? 0 : body.now ? 1 : draft ? 0 : k0 == null ? horizon.length : k0 === 'fc3' || k0 === 'fm1' || k0 === 'mr1' ? horizon.length : k0 === 'fc1' ? 1 : week ? Math.min(fcDays, horizon.length) : 0;
+    const needLt = (h: number) => !body.rescore && (k0 == null || k0 === 'lt3' || (week && h >= nFc));
     const nTr = k0 == null || k0 === 'hs3' ? horizon.length : 1;
     // live (run config, 29 Oct 2026): real upcoming dates planned as the trip's days, so the
     // day's truth comes later (the night is scored by a rescore request once it is in).
