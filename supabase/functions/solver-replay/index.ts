@@ -3,6 +3,8 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v77 (6 Nov 2026, worksheet C5): week drafts chain their own steps within a night (run config chain:
+// true turns it on; off by default) instead of one step per 20-s tick.
 // v76 (6 Nov 2026, worksheet A3): run config nopk = builds at lead + 1280, where a stop with
 // solver_stop_settings.needs_peaks false keeps its value when the peaks are hidden; nopk_judge = only
 // the truth builds do (to judge plain T on the same truth).
@@ -1886,8 +1888,20 @@ Deno.serve(async (req) => {
         const save = async (stg: string) => {
           const pending = { night: n, stage: stg, visits: st!.route.map(v => ({ id: nodes[v.n].id, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
                             units: list.map(u => mustOf(u).map(x => nodes[x].id)), mc: mcStats, ex: exStats, pol: polStats, ...(mrStats ? { mr: mrStats } : {}) };
-          await db.from('replay_run_state').update({ sets: { ...(ks.sets ?? {}), pending }, status: 'idle', note: null, updated_at: new Date().toISOString() })
+          // Drafts chain their own steps (v77, worksheet C5, 6 Nov 2026): instead of waiting for the next
+          // 20-s tick, a draft marks its next step as planning and calls itself; the tick skips planning
+          // steps and resets one stuck for 2 min, so a lost call costs only that wait.
+          const chain = draft && cfg.chain === true; // off by default until a quiet-bench test shows it helps (6 Nov: 11 min vs 5 under load)
+          const now = new Date().toISOString();
+          await db.from('replay_run_state').update({ sets: { ...(ks.sets ?? {}), pending }, status: chain ? 'planning' : 'idle', note: null,
+                                                      ...(chain ? { started_at: now } : {}), updated_at: now })
             .eq('run_id', runId).eq('kind', kind);
+          if (chain) {
+            const go = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/solver-replay`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run_id: runId, kind }),
+            }).then(r => r.body?.cancel()).catch(() => {});
+            (globalThis as any).EdgeRuntime?.waitUntil?.(go);
+          }
           return null;
         };
         if (split && !phase2 && (cfg.polish_k || cfg.brute) && st && !goOn()) return await save('mc');
