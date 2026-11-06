@@ -7,3 +7,4 @@ create table if not exists claude_pilot (
   t_plan jsonb, t_realized real, solver_best_realized real, calls int, cost_usd real, note text, transcript jsonb,
   created_at timestamptz default now(), done_at timestamptz);
 create index if not exists claude_pilot_run on claude_pilot (run_id, night);
+alter table claude_pilot add column if not exists variant text not null default 'base';

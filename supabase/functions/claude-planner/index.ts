@@ -5,7 +5,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk';
 // tool, then both Claude's plan and T's are graded against what happened (nothing shot before, so the
 // two are on the same footing). Bench only; never touches a trip.
 //
-// POST {run_id, night, kind?: 'mrmc', model?: 'claude-opus-5-5', effort?: 'medium', max_calls?: 12}
+// POST {run_id, night, kind?: 'mrmc', model?: 'claude-opus-5-5', effort?: 'medium', max_calls?: 12, afd?: true}
 // returns at once with the claude_pilot row id; the work runs in the background and fills the row.
 // Tools (solver-replay tool mode, read only): solve_day {must?, skip?}, score_plan {visits},
 // submit_plan {visits, notes}. Spend is logged to claude_usage (fn claude-planner) and stops at
@@ -32,6 +32,7 @@ Deno.serve(async (req) => {
     const runId = Number(body.run_id), night = Number(body.night), kind = String(body.kind ?? 'mrmc');
     const model = String(body.model ?? 'claude-opus-5-5'), effort = String(body.effort ?? 'medium');
     const maxCalls = Math.min(Math.max(Number(body.max_calls ?? 12), 2), 20);
+    const afd = !!body.afd;
     if (!Number.isFinite(runId) || !Number.isFinite(night)) return json({ ok: false, error: 'run_id and night required' }, 400);
     const key = Deno.env.get('ANTHROPIC_API_KEY');
     if (!key || Deno.env.get('CLAUDE_LABELS') === 'false') return json({ ok: false, error: 'Claude off' });
@@ -41,7 +42,7 @@ Deno.serve(async (req) => {
     const { data: spent } = await db.from('claude_usage').select('cost_usd').eq('fn', 'claude-planner');
     const pilot = (spent ?? []).reduce((s: number, r: any) => s + Number(r.cost_usd ?? 0), 0);
     if (pilot >= PILOT_CAP_USD) return json({ ok: false, error: 'pilot cap reached', spent: pilot });
-    const { data: row, error: rowErr } = await db.from('claude_pilot').insert({ run_id: runId, night, kind, model }).select('id').single();
+    const { data: row, error: rowErr } = await db.from('claude_pilot').insert({ run_id: runId, night, kind, model, variant: afd ? 'afd' : 'base' }).select('id').single();
     if (rowErr) throw rowErr;
 
     const tool = async (op: string, extra: any = {}) => {
@@ -77,6 +78,17 @@ Deno.serve(async (req) => {
         const best = await tool('solve', { must: required });
         const bestVisits = (best.plans?.[0]?.stops ?? []).map((v: any) => ({ stop_id: v.stop_id, start: v.start_iso }));
 
+        // Forecaster's discussion (v3, run config afd, Phil 6 Nov 2026): the National Weather Service Area
+        // Forecast Discussion as it stood when the evening plan is made (the plan date's 03:30 UTC, about
+        // 8:30 PM the evening before in Wyoming), from the Iowa Environmental Mesonet AFOS archive. US trips only
+        // (office from the trip's time zone; Teton = Riverton).
+        let afdText = '';
+        if (afd && String(ctx.tz ?? '').startsWith('America/')) {
+          try {
+            const r = await fetch(`https://mesonet.agron.iastate.edu/cgi-bin/afos/retrieve.py?pil=AFDRIW&limit=1&edate=${ctx.date}T03:30Z&fmt=text`, { signal: AbortSignal.timeout(20000) });
+            if (r.ok) afdText = (await r.text()).replace(/\r/g, '').slice(0, 9000);
+          } catch { /* plan without it */ }
+        }
         const client = new Anthropic({ apiKey: key });
         const tools: any[] = [
           { name: 'solve_day', description: "The solver's best plans for the day (up to 3), each with its visits, forecast mean points, bad-day points and each visit's chance. must: stop_ids that have to be in; skip: stop_ids left out.",
@@ -86,7 +98,7 @@ Deno.serve(async (req) => {
           { name: 'submit_plan', description: 'Your final plan for the day. Ends the task.',
             input_schema: { type: 'object', required: ['visits'], properties: { visits: { type: 'array', items: { type: 'object', required: ['stop_id', 'start'], properties: { stop_id: { type: 'string' }, start: { type: 'string' } } } }, notes: { type: 'string', description: 'One or two sentences on why.' } } } },
         ];
-        const messages: any[] = [{ role: 'user', content: `Plan this day. You may call tools at most ${maxCalls} times in all, including submit_plan.\n\nThe trip so far (week): this is day ${week.day} of ${week.of_days}. Every place must be visited at least once on the trip, and these places can only be fitted in today, so they must be in your plan (use solve_day with them in must): ${JSON.stringify(week.required_today)}. Leaving one out costs its full tier points. Already done earlier this trip (a repeat only counts if the shot is better): ${JSON.stringify(week.already_done_earlier_this_trip)}.\n\n${JSON.stringify({ ...ctx, ok: undefined })}` }];
+        const messages: any[] = [{ role: 'user', content: `Plan this day. You may call tools at most ${maxCalls} times in all, including submit_plan.\n\nThe trip so far (week): this is day ${week.day} of ${week.of_days}. Every place must be visited at least once on the trip, and these places can only be fitted in today, so they must be in your plan (use solve_day with them in must): ${JSON.stringify(week.required_today)}. Leaving one out costs its full tier points. Already done earlier this trip (a repeat only counts if the shot is better): ${JSON.stringify(week.already_done_earlier_this_trip)}.${afdText ? `\n\nThe local weather forecaster's written discussion from that evening (National Weather Service). It can know things the models miss, like valley fog or cloud stuck on the peaks; weigh it against the numbers:\n${afdText}` : ''}\n\n${JSON.stringify({ ...ctx, ok: undefined })}` }];
         for (let turn = 0; turn < maxCalls + 2 && !submitted; turn++) {
           const res: any = await client.messages.create({
             model, max_tokens: 16000, system: SYSTEM, tools, messages,
