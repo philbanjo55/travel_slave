@@ -257,13 +257,15 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
 
 // A stop's T chance at its time on the shown day, its light, and one hint: a better time that
 // day, else a better trip day (both from T's own plans).
-export type StopHint = { p: number; light: string | null; chip: string | null; changed?: boolean; count: string };
+export type StopHint = { p: number; light: string | null; chip: string | null; changed?: boolean; done?: boolean; count: string };
 export function stopHint(stopId: string, planner: DayPlanner | null): StopHint | null {
   const v = planner?.byStop.get(stopId);
   if (!v || v.p_good == null) return null;
   const tz: string | undefined = planner?.run?.params?.tz;
   const light = v.light ? LIGHT_WORDS[v.light] ?? v.light : null;
   const count = countText(v, planner?.run).replace(/ forecasts$/, '');
+  // Over by the time of the newest re-plan: done, no chance or hint (worksheet B2).
+  if (v.done) return { p: v.p_good, light: null, chip: null, done: true, count: '' };
   if (planner?.changed.has(stopId)) return { p: v.p_good, light, chip: null, changed: true, count };
   const better = planner?.betterDay.get(stopId);
   const tryAt = v.best && verdictOf(v.best.p_good) !== verdictOf(v.p_good) && v.best.p_good > v.p_good ? v.best : null;
@@ -275,6 +277,12 @@ export function stopHint(stopId: string, planner: DayPlanner | null): StopHint |
 // The verdict, its count and the hint chip (day timeline, stop screen).
 export function ChanceLine({ hint, label, onChip }: { hint: StopHint; label?: boolean; onChip?: () => void }) {
   const vd = verdictOf(hint.p);
+  if (hint.done) return (
+    <View style={styles.chanceRow} accessibilityLabel="Done, this time has passed">
+      {label ? <Text style={styles.label}>T</Text> : null}
+      <Text style={styles.hintText} numberOfLines={1}>Done · this time has passed</Text>
+    </View>
+  );
   return (
     <View style={styles.chanceRow} accessibilityLabel={`${VERDICT_TEXT[vd]}, ${hint.count}${hint.changed ? ', from before your change' : ''}${hint.light ? `, ${hint.light}` : ''}${hint.chip ? `. ${hint.chip}` : ''}`}>
       {label ? <Text style={styles.label}>T</Text> : null}

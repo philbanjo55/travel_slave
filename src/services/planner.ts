@@ -12,6 +12,8 @@ export type PlanVisit = {
   arrive?: string; start: string | null; end?: string; wait_min?: number; drive_min?: number;
   value?: number; p_good?: number; peak_at?: string; light?: string | null; rated?: boolean;
   best?: { start: string; value: number; p_good: number; peak_at?: string } | null;
+  // Already over when a live re-plan was made (solver-replay v75): shown as done, not as a chance.
+  done?: boolean;
 };
 export type Plan = {
   rank: number; objective: number; mean: number; cvar11: number;

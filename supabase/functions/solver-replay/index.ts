@@ -3,6 +3,8 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v75 (6 Nov 2026, worksheet B2): live day steps (morning, camera look, re-plan now) mark visits already
+// over as done: true in what they publish; the TEST app shows them as done instead of a chance.
 // v74 (6 Nov 2026, worksheet B1): run config polish_max lifts the 9-stop limit on the exact polish search
 // (default 9 = unchanged); Y (polish_k 10) had never polished.
 // v73 (6 Nov 2026, Phil: "Yes" to relearning the odds from the cameras): run config vfit = every build at
@@ -1257,7 +1259,7 @@ Deno.serve(async (req) => {
       // mean as a % of that ceiling. v52: a week draft counts its own earlier days as shot (to
       // plan the week), which made "your day" worth ~0 wherever T went earlier: drafts score
       // both plans and the ceiling on the day's own merit (live nights keep the real shots).
-      const publish = async (step: 'night' | 'morning' | 'early' | 'now' | 'week', p: DayPlan, s: State, extra: any = {}) => {
+      const publish = async (step: 'night' | 'morning' | 'early' | 'now' | 'week', p: DayPlan, s: State, extra: any = {}, atMsPub?: number) => {
         if (!cfg.publish || !live) return;
         const d0 = days[0];
         const visits = visitsOf(p, s);
@@ -1311,6 +1313,17 @@ Deno.serve(async (req) => {
           if (mw) x.move_why = mw;
         }
         for (const x of mine as any[]) x.light = x.rated ? lightAt(x.stop_id, x.start) : null;
+        // Done stops (v75, worksheet B2, 6 Nov 2026: a 3:16 PM re-plan showed 85% for a stop shot at
+        // 6:15 AM): a live day step publishes in real time, so a visit already over is marked done and
+        // the app shows it as done, not as a chance. Night plans and drafts are all ahead: unchanged.
+        const doneBy = atMsPub ?? Date.now();
+        if (step !== 'night' && step !== 'week') {
+          for (const x of visits as any[]) if (Date.parse(x.end) <= doneBy) x.done = true;
+          for (const x of mine as any[]) {
+            const n0 = pos.get(x.stop_id);
+            if (n0 != null && Date.parse(x.start) + nodes[n0].dur * 60000 <= doneBy) x.done = true;
+          }
+        }
         const mm = scoreRoute(own.map(o => ({ n: o.n!, ms: zonedToUtc(d0.date, o.min!, tz) })));
         const bm = draft ? scoreRoute(s.route.map(v => ({ n: v.n, ms: p.dayStart + v.start * 60000 }))) : { mean: s.mean, cvar: s.cvar };
         const placeW = new Map<number, number>();
@@ -1591,7 +1604,7 @@ Deno.serve(async (req) => {
             p0 = pn; st = sn; list = l;
           } else nd.error = 'no route from now: the plan stands';
           const mr = { ...(today?.mr ?? {}), now: nd };
-          await publish('now', p0, st, { mr });
+          await publish('now', p0, st, { mr }, atMs);
           await saveToday(p0, st, list, 'now', mr);
           nowOut = nd;
           return null;

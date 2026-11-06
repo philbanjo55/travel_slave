@@ -419,7 +419,9 @@ export function VisitRow({ v, tz, mine, onPress, index, run }: { v: PlanVisit; t
           <Text style={[styles.visitName, muted && styles.muted]} numberOfLines={2}>{v.name}</Text>
           {v.booked ? <Text style={styles.booked}>BOOKED</Text> : null}
         </View>
-        {vd ? (
+        {v.done ? (
+          <Text style={styles.visitMeta}>Done · this time has passed</Text>
+        ) : vd ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={[styles.verdict, { color: VERDICT_COLOR[vd], borderColor: VERDICT_COLOR[vd] }]}>{VERDICT_TEXT[vd]}</Text>
             <Text style={styles.visitMeta} numberOfLines={1}>
@@ -433,7 +435,7 @@ export function VisitRow({ v, tz, mine, onPress, index, run }: { v: PlanVisit; t
             {v.drive_min ? `${v.drive_min} min drive` : ''}{v.drive_min && v.wait_min ? ' · ' : ''}{v.wait_min ? `${v.wait_min} min wait` : ''}
           </Text>
         ) : null}
-        {mine && v.best && verdictOf(v.best.p_good) !== vd && v.best.p_good > (v.p_good ?? 0) ? (
+        {mine && !v.done && v.best && verdictOf(v.best.p_good) !== vd && v.best.p_good > (v.p_good ?? 0) ? (
           <Text style={styles.hintChip}>Better at {clock12(v.best.start, tz)}: {VERDICT_TEXT[verdictOf(v.best.p_good)]}</Text>
         ) : null}
       </View>
