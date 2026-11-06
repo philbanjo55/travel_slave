@@ -511,8 +511,21 @@ Deno.serve(async (req) => {
     // 2026): the plans the app shows (publish) go by Phil's ticks instead: nailed = done for the
     // rest of the trip, got = only a clearly better shot is worth going back for, not shot =
     // still wanted, even where T had planned it before.
-    const ticks = !!cfg.publish;
-    if (!ticks) for (const r of inputs) { r.shot_status = null; r.shot_value = null; }
+    // Walk the trip (run config walk, v86, Phil 6 Nov 2026: "tests that mimic going through a
+    // week, marking things off each evening"): a bench run that plans through the app's ticks
+    // path. Its marks are not Phil's: each evening the day's visits are marked from the truth
+    // (replay_run_state.sets.ticks: hidden = missed, a good shot = got at its value, >= walk_nail
+    // = nailed) and the next night plans from those marks as the app would. Points are still
+    // scored on what was really shot (the run's state), so they compare with the usual bench.
+    const walk = !!cfg.walk && !cfg.publish;
+    const ticks = !!cfg.publish || walk;
+    let walkTicks: Record<string, { s: string; v: number }> = {};
+    if (walk && runId != null) {
+      const { data: wk } = await db.from('replay_run_state').select('sets').eq('run_id', runId).eq('kind', body.kind).maybeSingle();
+      walkTicks = ((wk?.sets as any)?.ticks ?? {}) as Record<string, { s: string; v: number }>;
+    }
+    if (walk) for (const r of inputs) { const t = walkTicks[r.stop_id]; r.shot_status = t?.s ?? null; r.shot_value = t?.v ?? null; }
+    else if (!ticks) for (const r of inputs) { r.shot_status = null; r.shot_value = null; }
     const tickedIds = new Set<string>(inputs.filter((r: any) => r.shot_status === 'got' || r.shot_status === 'nailed').map((r: any) => r.stop_id));
     const specs = horizon.map(h => ({ date: h.date, trip_date: h.trip_date, light: false }));
 
@@ -1267,13 +1280,18 @@ Deno.serve(async (req) => {
       // What a plan has shot, by group (key: the group's first stop id). The app's plans (ticks):
       // the days already done count only through Phil's ticks, not through what T planned for
       // them; a week draft still counts its own earlier draft days (its state from night 0 on).
-      const shotBefore: Record<string, number> = ticks && !draft ? {} : (ks.state ?? {});
+      const shotBefore: Record<string, number> = ticks && !draft && !walk ? {} : (ks.state ?? {});
       const keyOf = (g: number) => rated[g].stop_id;
       const groupOfKey = new Map(rated.map((r, i) => [r.stop_id, find(i)]));
       groupBase = new Map<number, number>(ticks ? tickBase : []);
+      // walk: plans see only the marks; the truth of what was shot scores the points (truthBase).
+      const truthBase = new Map<number, number>();
       for (const [k, v] of Object.entries(shotBefore)) {
-        const g = groupOfKey.get(k); if (g != null) groupBase.set(g, Math.max(groupBase.get(g) ?? 0, v));
+        const g = groupOfKey.get(k); if (g == null) continue;
+        if (walk) truthBase.set(g, Math.max(truthBase.get(g) ?? 0, v));
+        else groupBase.set(g, Math.max(groupBase.get(g) ?? 0, v));
       }
+      let walkStats: any = null;
       // What happened on the day being done (live: not known yet, scored later; what a
       // visit got is counted as the forecast's mean until then).
       const truthN = trSc[0].length ? planDay({ ...days[0], light: false }, trSc[0], false) : null;
@@ -1312,7 +1330,10 @@ Deno.serve(async (req) => {
       };
       const record = (visits0: { n: number; startMs: number }[], extra: any) => {
         const visits = missedNode == null ? visits0 : visits0.filter(v => v.n !== missedNode);
+        const planBase = groupBase;
+        if (walk) groupBase = truthBase;
         const realized = truthN ? evalVisits(truthN, visits) : null;
+        groupBase = planBase;
         const shot = { ...shotBefore };
         for (const v of visits) {
           if (nodes[v.n].w <= 0) continue;
@@ -1322,6 +1343,7 @@ Deno.serve(async (req) => {
         row = { run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: realized == null ? null : r3(realized), ...extra };
         if (Array.isArray(row.visits) && row.stats) row.stats = { ...row.stats, ...goodShots(row.visits) };
         if (row.stats && missedNode != null) row.stats = { ...row.stats, missed: nodes[missedNode].name };
+        if (row.stats && walkStats) row.stats = { ...row.stats, walk: walkStats };
         if (row.stats && cfg.slow_drive && truthN && visits.length) {
           const sl = slowOf(visits);
           row.stats = { ...row.stats, slow: { realized: r3(evalVisits(truthN, sl.out)), late: sl.late, delay_min: sl.delay } };
@@ -2268,6 +2290,34 @@ Deno.serve(async (req) => {
         }
         if (st) { missedNode = pickMissed(st.route); for (const v of st.route) if (v.n !== missedNode) seenIds.add(nodes[v.n].id); }
         nextSets = { seen: [...seenIds] };
+        if (walk) {
+          // The evening marks (walk): each rated visit of the day, scored on the truth at its time.
+          const nailAt = Number(cfg.walk_nail ?? 0.9), goodAt = 0.6;
+          const tk: Record<string, { s: string; v: number }> = { ...walkTicks };
+          const marked: any[] = [], bad: string[] = [];
+          const onceDone = new Set<number>(rated.map((r, i) => (onceIds.has(r.stop_id) && walkTicks[r.stop_id] ? find(i) : -1)).filter(g => g >= 0));
+          const byTog = new Map<string, number>();
+          for (const v of st?.route ?? []) {
+            const nd = nodes[v.n]; if (nd.w <= 0) continue;
+            const t0 = walkTicks[nd.id];
+            // Checks: a nailed place planned again; a once-only place repeated; a keep-together group split.
+            if (tickedGroups.has(nd.group) && rated.some((r, i) => find(i) === nd.group && walkTicks[r.stop_id]?.s === 'nailed')) bad.push('nailed again: ' + nd.name);
+            if (nd.once && onceDone.has(nd.group)) bad.push('once-only repeated: ' + nd.name);
+            if (nd.together) byTog.set(nd.together, (byTog.get(nd.together) ?? 0) + 1);
+            if (v.n === missedNode || !truthN) continue;
+            const t = truthAt(truthN, { n: v.n, startMs: p0.dayStart + v.start * 60000 }) / 250;
+            const s = t >= nailAt ? 'nailed' : t >= goodAt ? 'got' : null;
+            marked.push({ name: nd.name, truth: r2(t), mark: s ?? 'missed', was: t0?.s ?? null });
+            if (!s || t0?.s === 'nailed') continue;
+            if (s === 'nailed' || !t0 || t > (t0.v ?? 0)) tk[nd.id] = { s, v: r2(t) };
+          }
+          for (const [key, k] of byTog) {
+            const all = nodes.filter(x => x.together === key && x.free).length;
+            if (k < all) bad.push('together split: ' + key);
+          }
+          walkStats = { marked, bad, nailed: Object.values(tk).filter(x => x.s === 'nailed').length, got: Object.values(tk).filter(x => x.s === 'got').length };
+          (nextSets as any).ticks = tk;
+        }
         if (st) await publish(draft ? 'week' : earlyOn ? 'early' : 'morning', p0, st, mrStats ? { mr: mrStats } : {});
         if (st && !draft) await saveToday(p0, st, list, earlyOn ? 'early' : 'morning', mrStats);
         return record(st ? routeOf(p0, st) : [], {
