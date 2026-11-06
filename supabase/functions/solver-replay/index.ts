@@ -6,6 +6,7 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // v84 (6 Nov 2026, Phil: count blue hour): run config blue = builds and light-only days score a clear blue hour as a
 // good shot (lead + 10240); blue_judge = only the truth does (to judge plain T on the same rule).
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
+// v85 (6 Nov 2026): tool op audit {visits} (full rule check by exact search) and solve {polish: true} (grading).
 // v83 (6 Nov 2026): tool ops stop_detail {stop_id} and weather_detail for Claude.
 // v81 (6 Nov 2026, worksheet G1): {run_id, kind, night, tool: context | solve | score | grade}: read-only
 // tools for Claude planning a past night with the solver (claude-planner function).
@@ -1181,7 +1182,20 @@ Deno.serve(async (req) => {
         if (op === 'solve') {
           const must = (body.must ?? []).map((id: string) => nOf(id)).filter((x: any) => x != null) as number[];
           const skipS = new Set<number>((body.skip ?? []).map((id: string) => nOf(id)).filter((x: any) => x != null));
-          const r = planDay({ ...days[0], light: false }, fc, true, undefined, must, skipS);
+          let r = planDay({ ...days[0], light: false }, fc, true, undefined, must, skipS);
+          // polish (v85, grading only): the exact search T runs on its night plan, over the plan's places, the
+          // required ones and the next best by forecast up to 7, kept when it scores higher.
+          if (body.polish && r.routes[0]) {
+            const E = new Set<number>([...r.routes[0].route.filter(v => nodes[v.n].free).map(v => v.n), ...must]);
+            const mean = (x: number) => { let b = 0; for (let sl = p.winLo; sl <= p.winHi; sl++) { const w = p.W(x, sl); if (w) { let t = 0; for (const y of w) t += y; b = Math.max(b, t / w.length); } } return b * nodes[x].w; };
+            for (const x of freeNodes.filter(x => !E.has(x) && !skipS.has(x)).sort((a, b) => mean(b) - mean(a))) { if (E.size >= 7) break; E.add(x); }
+            if (E.size <= 9) {
+              exactCap = 250_000;
+              const pe = planDay({ ...days[0], light: false }, fc, true, undefined, must, skipS, undefined, [...E]);
+              exactCap = EXACT_MAX_EXTENDS;
+              if (pe.routes[0] && pe.routes[0].j > r.routes[0].j + 1e-6) r = pe;
+            }
+          }
           return json({ ok: true, plans: r.routes.slice(0, 3).map(st => ({
             ...valueOf(st.route.map(v => ({ n: v.n, startMs: p.dayStart + v.start * 60000 }))),
             stops: st.route.map(v => ({ stop_id: nodes[v.n].id, name: nodes[v.n].name, start_iso: new Date(p.dayStart + v.start * 60000).toISOString(),
@@ -1224,6 +1238,18 @@ Deno.serve(async (req) => {
           const hrs = Array.from({ length: 24 }, (_, h) => h);
           return json({ ok: true, point: pl?.fc_point ?? null, hours_utc: hrs,
             models: (wx ?? []).filter((m: any) => !/@[0-9]/.test(m.model)).map((m: any) => ({ model: m.model, cloud: m.cloud, sun: m.dr })) });
+        }
+        if (op === 'audit') {
+          // Full rule check (v85): can these places be scheduled together under every solver rule (window, early
+          // start, gear window, keep-together, dark, bookings)? The exact search must fit them all.
+          const E = [...new Set(visitsIn(body.visits).map(v => v.n))].filter(n => nodes[n].free);
+          if (E.length > 10) return json({ ok: true, checked: false, reason: 'too many places to check exactly' });
+          exactCap = 400_000;
+          const pe = planDay({ ...days[0], light: false }, fc, true, undefined, E, new Set<number>(), undefined, E);
+          exactCap = EXACT_MAX_EXTENDS;
+          const st = pe.routes.find(r => E.every(n => r.visited[n])) ?? null;
+          return json({ ok: true, checked: true, feasible: !!st, capped: !!pe.capped,
+            missing: st ? [] : E.filter(n => !(pe.routes[0]?.visited[n])).map(n => nodes[n].name) });
         }
         if (op === 'grade') {
           if (!trSc[0].length) return json({ ok: false, error: 'no truth for this night' }, 404);
