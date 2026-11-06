@@ -17,6 +17,9 @@ import Anthropic from 'npm:@anthropic-ai/sdk';
 // POST {save: 8} (v3, Phil 6 Nov 2026: "save them"): copies up to save (max 12) already-read frames
 // into Storage bucket webcams at history/<code>/<YYYY-MM-DD>/<HH-mm>.jpg (camera-local time) and
 // records image_path / image_bytes / image_url on the row. No Claude call, no spend.
+// POST {compare: 8, model: 'claude-haiku-5-5'} (v4, worksheet F1): labels up to compare (max 12) saved
+// frames again with another model into webcam_label_compare, to compare with the Opus labels. Its own
+// cap CLAUDE_COMPARE_CAP_USD (default 3), logged as purpose label_compare.
 
 const MODEL = Deno.env.get('CLAUDE_LABEL_MODEL') ?? 'claude-opus-5-5';
 const MONTHLY_CAP_USD = Number(Deno.env.get('CLAUDE_MONTHLY_CAP_USD') ?? 40);
@@ -53,12 +56,13 @@ const SCHEMA = {
   },
 };
 
-async function label(client: Anthropic, cam: any, buf: Uint8Array) {
+async function label(client: Anthropic, cam: any, buf: Uint8Array, model = MODEL) {
+  // Haiku has no server-side fallback (a fallbacks list is a 400), so only Opus/Sonnet send it.
+  const fb = model.startsWith('claude-haiku') ? {} : { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' };
   const msg: any = await client.beta.messages.create({
-    model: MODEL,
+    model,
     max_tokens: 4000,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
+    ...fb,
     output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
     messages: [{
       role: 'user',
@@ -129,6 +133,43 @@ async function saveFrames(supabase: any, n: number) {
   return { ok: true, saved: results.filter(r => !r.error).length, results };
 }
 
+const COMPARE_CAP_USD = Number(Deno.env.get('CLAUDE_COMPARE_CAP_USD') ?? 3);
+async function compareFrames(supabase: any, claude: Anthropic, model: string, n: number) {
+  const { data: spent } = await supabase.from('claude_usage').select('cost_usd').eq('purpose', 'label_compare');
+  const used = (spent ?? []).reduce((a: number, r: any) => a + Number(r.cost_usd ?? 0), 0);
+  if (used >= COMPARE_CAP_USD) return { ok: false, error: 'compare cap reached', spent: used };
+  const { data: rows, error } = await supabase.rpc('webcam_compare_next', { p_model: model, p_n: n });
+  if (error) throw error;
+  if (!rows?.length) return { ok: true, done: 0 };
+  const { data: cams } = await supabase.from('webcam_cameras').select('*').in('code', [...new Set(rows.map((f: any) => f.camera_code))]);
+  const results = await Promise.all(rows.map(async (f: any) => {
+    const cam = (cams ?? []).find((c: any) => c.code === f.camera_code);
+    let row: any = { camera_code: f.camera_code, taken_at: f.taken_at, model, updated_at: new Date().toISOString() };
+    try {
+      const { data: blob, error: dErr } = await supabase.storage.from('webcams').download(f.image_path);
+      if (dErr) throw dErr;
+      const l = await label(claude, cam, new Uint8Array(await blob.arrayBuffer()), model);
+      const inTok = l.usage?.input_tokens ?? 0, outTok = l.usage?.output_tokens ?? 0;
+      const cost = costUsd(l.model ?? model, inTok, outTok);
+      await supabase.from('claude_usage').insert({ fn: 'webcam-history', purpose: 'label_compare', model: l.model,
+        input_tokens: inTok, output_tokens: outTok, cost_usd: Math.round(cost * 1e5) / 1e5 });
+      const lab = l.lab;
+      row = { ...row, status: 'done', served_model: l.model, cost_usd: cost,
+        label: LABELS.includes(lab?.label) ? lab.label : null,
+        hills_visible: typeof lab?.hills_visible === 'boolean' ? lab.hills_visible : null,
+        cloud_on_hills: CLOUD.includes(lab?.cloud_on_hills) ? lab.cloud_on_hills : null,
+        sun_on_land: typeof lab?.sun_on_land === 'boolean' ? lab.sun_on_land : null,
+        confidence: typeof lab?.confidence === 'number' ? lab.confidence : null,
+        note: typeof lab?.note === 'string' ? lab.note.slice(0, 500) : null };
+    } catch (e: any) {
+      row = { ...row, status: 'error', error: String(e?.message ?? e).slice(0, 300) };
+    }
+    await supabase.from('webcam_label_compare').upsert(row);
+    return { camera: f.camera_code, local_time: f.local_time, status: row.status, hills: row.hills_visible ?? null, error: row.error ?? null };
+  }));
+  return { ok: true, done: results.filter(r => r.status === 'done').length, results };
+}
+
 Deno.serve(async (req) => {
   const json = (b: any, status = 200) =>
     new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
@@ -137,6 +178,12 @@ Deno.serve(async (req) => {
     const n = Math.min(Math.max(Number(body.n ?? 8), 1), 12);
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     if (body.save) return json(await saveFrames(supabase, Math.min(Math.max(Number(body.save), 1), 12)));
+    if (body.compare) {
+      const key = Deno.env.get('ANTHROPIC_API_KEY');
+      if (!key) return json({ ok: false, error: 'no API key' });
+      return json(await compareFrames(supabase, new Anthropic({ apiKey: key }), String(body.model ?? 'claude-haiku-5-5'),
+        Math.min(Math.max(Number(body.compare), 1), 12)));
+    }
     const apiKey = Deno.env.get('CLAUDE_LABELS') === 'false' ? undefined : Deno.env.get('ANTHROPIC_API_KEY');
     if (!apiKey) return json({ ok: false, error: 'Claude labels off' });
     const claude = new Anthropic({ apiKey });
