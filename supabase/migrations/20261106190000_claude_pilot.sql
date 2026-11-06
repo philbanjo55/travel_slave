@@ -8,3 +8,4 @@ create table if not exists claude_pilot (
   created_at timestamptz default now(), done_at timestamptz);
 create index if not exists claude_pilot_run on claude_pilot (run_id, night);
 alter table claude_pilot add column if not exists variant text not null default 'base';
+alter table claude_pilot add column if not exists audit jsonb, add column if not exists solver_pol_realized real, add column if not exists required jsonb;
