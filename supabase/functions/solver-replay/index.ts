@@ -3,6 +3,8 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v81 (6 Nov 2026, worksheet G1): {run_id, kind, night, tool: context | solve | score | grade}: read-only
+// tools for Claude planning a past night with the solver (claude-planner function).
 // v80 (6 Nov 2026, Phil: test pace options B-D): run config visit_price (tier points per optional rated
 // visit), chance_floor (optional stops only where that share of weather versions is good), end_at 'sunset'.
 // v79 (6 Nov 2026, worksheet E1): run config cons = builds at lead + 2560, hidden-peak odds from the
@@ -294,7 +296,7 @@ Deno.serve(async (req) => {
       if (!run) return json({ ok: false, error: 'replay run not found' }, 404);
       tripId = run.trip_id;
       // rescore (live runs): body.night is a night already planned whose truth came in.
-      const n: number = body.rescore || body.now ? Number(body.night) : run.night;
+      const n: number = body.rescore || body.now || body.tool ? Number(body.night) : run.night;
       fcDays = Math.min(Math.max(Number(run.config?.fc_days ?? 3), 1), 7);
       const want = Array.from({ length: Math.min(week ? Infinity : kindOf === 'fm1' || kindOf === 'mr1' ? fcDays : 3, run.nights - n) }, (_, h) => n + h)
         .map(i => ({ i, date: addDays(run.start_date, i), trip_date: run.trip_dates[i], lead: i - n + 1 }));
@@ -1113,7 +1115,7 @@ Deno.serve(async (req) => {
       const { data: ks } = await db.from('replay_run_state').select('night, state, sets, note').eq('run_id', runId).eq('kind', kind).single();
       tWait += performance.now() - tKs;
       if (!ks) return json({ ok: false, error: 'no state for this plan' }, 404);
-      const n: number = body.rescore || body.now ? Number(body.night) : run.night;
+      const n: number = body.rescore || body.now || body.tool ? Number(body.night) : run.night;
       if (body.rescore) {
         // Live: score a night already planned against the truth that has come in since.
         if (!trSc[0].length) return json({ ok: false, error: 'no truth yet' }, 404);
@@ -1126,6 +1128,81 @@ Deno.serve(async (req) => {
         const scored = ((rd.visits ?? []) as any[]).map(v => pos.has(v.stop_id) && v.start ? { ...v, truth: r2(truthAt(tN, { n: pos.get(v.stop_id)!, startMs: Date.parse(v.start) }) / 250) } : v);
         await db.from('replay_run_days').update({ realized, visits: scored }).eq('run_id', runId).eq('night', n).eq('kind', kind);
         return json({ ok: true, rescored: true, run_id: runId, kind, night: n, realized });
+      }
+      if (body.tool) {
+        // Tool mode (v81, worksheet G1, 6 Nov 2026): Claude plans one past night with the solver as a tool.
+        // Read only, never saves. Nothing shot before (groupBase empty), so Claude's plan and T's are
+        // graded on the same footing. ops: context | solve {must, skip} | score {visits} | grade {visits}.
+        groupBase = new Map();
+        const op = String(body.tool), fc = fcSc[0];
+        if (!fc.length) return json({ ok: false, error: 'no forecast build for this night' }, 404);
+        const p = planDay({ ...days[0], light: false }, fc, false);
+        const slotOf = (ms: number) => Math.round((ms - p.dayStart) / (SLOT * 60000));
+        const clock = (ms: number) => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: tz });
+        const ratedN = nodes.map((_, i) => i).filter(i => nodes[i].w > 0);
+        const nOf = (id: string) => pos.get(id);
+        const visitsIn = (vs: any[]) => (vs ?? []).map(v => ({ n: nOf(String(v.stop_id)), startMs: Date.parse(String(v.start)) }))
+          .filter(v => v.n != null && Number.isFinite(v.startMs)).sort((a, b) => a.startMs - b.startMs) as { n: number; startMs: number }[];
+        const valueOf = (vs: { n: number; startMs: number }[]) => {
+          const M = fc[0].v.length, total = new Float32Array(M), best = new Map<number, Uint8Array>();
+          const per = vs.map(v => {
+            const slot = slotOf(v.startMs), w = nodes[v.n].w > 0 ? p.W(v.n, slot) : null;
+            if (w) {
+              const g = nodes[v.n].group, prev = best.get(g);
+              for (let k = 0; k < M; k++) total[k] += nodes[v.n].w * gain(g, w[k], prev?.[k]) / 250;
+              best.set(g, prev ? Uint8Array.from(prev, (x, k) => Math.max(x, w[k])) : w);
+            }
+            const c = chance(p, v.n, slot);
+            return { stop_id: nodes[v.n].id, name: nodes[v.n].name, start: clock(v.startMs), p_good: c?.p_good ?? null, value: c?.value ?? null };
+          });
+          const m = metric(total);
+          return { mean: r3(m.mean), bad_day: r3(m.cvar), score: r3(m.j), visits: per };
+        };
+        if (op === 'context') {
+          const hours: number[] = [];
+          for (let sl = p.winLo; sl <= p.winHi; sl += 4) hours.push(sl);
+          return json({ ok: true, date: days[0].date, trip_date: days[0].tripDate, tz,
+            start_place: nodes[p.start].name, end_place: nodes[p.end].name,
+            window: { from: clock(p.dayStart + p.winLo * SLOT * 60000), to: clock(p.dayStart + p.winHi * SLOT * 60000),
+                      sunrise: clock(sunrise(days[0].date, mid.lat, mid.lng, tz)), dark: clock(civilDusk(days[0].date, mid.lat, mid.lng, tz)) },
+            tier_points: TIER_W,
+            stops: ratedN.map(n => ({ stop_id: nodes[n].id, name: nodes[n].name, tier: tierOf.get(nodes[n].id) ?? null, minutes: nodes[n].dur,
+              once_only: nodes[n].once, together: nodes[n].together,
+              drive_from_start: Math.round(D[p.start][n]), drive_to_end: Math.round(D[n][p.end]),
+              hourly: hours.map(sl => { const c = chance(p, n, sl); return [clock(p.dayStart + sl * SLOT * 60000), c ? Math.round(c.p_good * 100) : null]; }) })),
+            drive_minutes: Object.fromEntries(ratedN.map(a => [nodes[a].id, Object.fromEntries(ratedN.filter(b => b !== a).map(b => [nodes[b].id, Math.round(D[a][b])]))])) });
+        }
+        if (op === 'solve') {
+          const must = (body.must ?? []).map((id: string) => nOf(id)).filter((x: any) => x != null) as number[];
+          const skipS = new Set<number>((body.skip ?? []).map((id: string) => nOf(id)).filter((x: any) => x != null));
+          const r = planDay({ ...days[0], light: false }, fc, true, undefined, must, skipS);
+          return json({ ok: true, plans: r.routes.slice(0, 3).map(st => ({
+            ...valueOf(st.route.map(v => ({ n: v.n, startMs: p.dayStart + v.start * 60000 }))),
+            stops: st.route.map(v => ({ stop_id: nodes[v.n].id, name: nodes[v.n].name, start_iso: new Date(p.dayStart + v.start * 60000).toISOString(),
+              start: clock(p.dayStart + v.start * 60000), end: clock(p.dayStart + v.end * 60000), drive_min: Math.round(v.drive) })),
+            back: clock(p.dayStart + (st.t + D[st.loc][p.end]) * 60000) })) });
+        }
+        if (op === 'score') {
+          const vs = visitsIn(body.visits);
+          const problems: string[] = [];
+          let loc = p.start, free = p.dayStart + p.winLo * SLOT * 60000, last = 0;
+          for (const v of vs) {
+            const arrive = free + D[loc][v.n] * 60000;
+            if (v.startMs + 60000 < arrive) problems.push(`${nodes[v.n].name}: arrives ${Math.round((arrive - v.startMs) / 60000)} min after its start time`);
+            const end = v.startMs + nodes[v.n].dur * 60000;
+            if (end > civilDusk(days[0].date, mid.lat, mid.lng, tz) && nodes[v.n].w > 0) problems.push(`${nodes[v.n].name}: runs past dark`);
+            free = Math.max(end, arrive + nodes[v.n].dur * 60000); loc = v.n; last = free;
+          }
+          const back = (last || free) + D[loc][p.end] * 60000;
+          return json({ ok: true, ...valueOf(vs), back: clock(back), problems });
+        }
+        if (op === 'grade') {
+          if (!trSc[0].length) return json({ ok: false, error: 'no truth for this night' }, 404);
+          const tN = planDay({ ...days[0], light: false }, trSc[0], false);
+          const vs = visitsIn(body.visits);
+          return json({ ok: true, realized: r3(evalVisits(tN, vs)), visits: vs.map(v => ({ name: nodes[v.n].name, truth: r2(truthAt(tN, v) / 250) })) });
+        }
+        return json({ ok: false, error: `unknown tool ${op}` }, 400);
       }
       if (ks.night !== n && !body.now) {
         await db.from('replay_run_state').update({ status: 'idle', updated_at: new Date().toISOString() }).eq('run_id', runId).eq('kind', kind);
