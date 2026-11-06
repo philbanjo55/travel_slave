@@ -1,7 +1,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk';
 
-// CLAUDE PLANNER (worksheet G1, Phil 6 Nov 2026): Claude plans one past test night with the solver as a
+// CLAUDE PLANNER (worksheet G1, Phil 6 Nov 2026; v2 same day: week context, required places): Claude plans one past test night with the solver as a
 // tool, then both Claude's plan and T's are graded against what happened (nothing shot before, so the
 // two are on the same footing). Bench only; never touches a trip.
 //
@@ -9,9 +9,9 @@ import Anthropic from 'npm:@anthropic-ai/sdk';
 // returns at once with the claude_pilot row id; the work runs in the background and fills the row.
 // Tools (solver-replay tool mode, read only): solve_day {must?, skip?}, score_plan {visits},
 // submit_plan {visits, notes}. Spend is logged to claude_usage (fn claude-planner) and stops at
-// CLAUDE_PILOT_CAP_USD (default 5) or the shared CLAUDE_MONTHLY_CAP_USD.
+// CLAUDE_PILOT_CAP_USD (default 15) or the shared CLAUDE_MONTHLY_CAP_USD.
 
-const PILOT_CAP_USD = Number(Deno.env.get('CLAUDE_PILOT_CAP_USD') ?? 5);
+const PILOT_CAP_USD = Number(Deno.env.get('CLAUDE_PILOT_CAP_USD') ?? 15); // Phil 6 Nov 2026: OK for a 20-night run (~$11)
 const MONTHLY_CAP_USD = Number(Deno.env.get('CLAUDE_MONTHLY_CAP_USD') ?? 40);
 const PRICES: Record<string, [number, number]> = { 'claude-opus': [4, 20], 'claude-sonnet': [2, 10], 'claude-haiku': [0.1, 0.5] };
 const costUsd = (model: string, inTok: number, outTok: number) => {
@@ -58,9 +58,23 @@ Deno.serve(async (req) => {
       try {
         const ctx = await tool('context');
         if (!ctx.ok) throw new Error(`context: ${ctx.error}`);
-        const { data: rd } = await db.from('replay_run_days').select('visits').eq('run_id', runId).eq('night', night).eq('kind', kind).maybeSingle();
+        // Week context (v2, Phil 6 Nov 2026): T plans the whole trip with an every-place rule, so a place T
+        // covered only on this night is required today; leaving one out costs its full tier points.
+        const { data: allDays } = await db.from('replay_run_days').select('night, visits').eq('run_id', runId).eq('kind', kind).order('night');
+        const nightsOf = new Map<string, Set<number>>();
+        for (const d of allDays ?? []) for (const v of (d.visits ?? []) as any[]) if (v.stop_id) {
+          if (!nightsOf.has(v.stop_id)) nightsOf.set(v.stop_id, new Set()); nightsOf.get(v.stop_id)!.add(d.night);
+        }
+        const rd = (allDays ?? []).find(d => d.night === night);
         const tVisits = ((rd?.visits ?? []) as any[]).filter(v => v.stop_id && v.start).map(v => ({ stop_id: v.stop_id, start: v.start }));
-        const best = await tool('solve');
+        const ctxStops = new Map<string, any>((ctx.stops ?? []).map((x: any) => [x.stop_id, x]));
+        const required = [...new Set(tVisits.map(v => v.stop_id))].filter(id => ctxStops.has(id) && nightsOf.get(id)?.size === 1);
+        const doneBefore = [...nightsOf.entries()].filter(([id, ns]) => [...ns].some(x => x < night) && ctxStops.has(id)).map(([id]) => ctxStops.get(id).name);
+        const nNights = Math.max(...(allDays ?? []).map(d => d.night), night) + 1;
+        const week = { day: night + 1, of_days: nNights, days_left_after_today: nNights - night - 1,
+          required_today: required.map(id => ({ stop_id: id, name: ctxStops.get(id).name, tier: ctxStops.get(id).tier })),
+          already_done_earlier_this_trip: doneBefore };
+        const best = await tool('solve', { must: required });
         const bestVisits = (best.plans?.[0]?.stops ?? []).map((v: any) => ({ stop_id: v.stop_id, start: v.start_iso }));
 
         const client = new Anthropic({ apiKey: key });
@@ -72,7 +86,7 @@ Deno.serve(async (req) => {
           { name: 'submit_plan', description: 'Your final plan for the day. Ends the task.',
             input_schema: { type: 'object', required: ['visits'], properties: { visits: { type: 'array', items: { type: 'object', required: ['stop_id', 'start'], properties: { stop_id: { type: 'string' }, start: { type: 'string' } } } }, notes: { type: 'string', description: 'One or two sentences on why.' } } } },
         ];
-        const messages: any[] = [{ role: 'user', content: `Plan this day. You may call tools at most ${maxCalls} times in all, including submit_plan.\n\n${JSON.stringify({ ...ctx, ok: undefined })}` }];
+        const messages: any[] = [{ role: 'user', content: `Plan this day. You may call tools at most ${maxCalls} times in all, including submit_plan.\n\nThe trip so far (week): this is day ${week.day} of ${week.of_days}. Every place must be visited at least once on the trip, and these places can only be fitted in today, so they must be in your plan (use solve_day with them in must): ${JSON.stringify(week.required_today)}. Leaving one out costs its full tier points. Already done earlier this trip (a repeat only counts if the shot is better): ${JSON.stringify(week.already_done_earlier_this_trip)}.\n\n${JSON.stringify({ ...ctx, ok: undefined })}` }];
         for (let turn = 0; turn < maxCalls + 2 && !submitted; turn++) {
           const res: any = await client.messages.create({
             model, max_tokens: 16000, system: SYSTEM, tools, messages,
@@ -104,8 +118,13 @@ Deno.serve(async (req) => {
           tVisits.length ? tool('grade', { visits: tVisits }) : Promise.resolve(null),
           bestVisits.length ? tool('grade', { visits: bestVisits }) : Promise.resolve(null),
         ]);
+        // Required places Claude left out cost their full tier points (T's plan has them all by construction).
+        const tierPts: Record<string, number> = ctx.tier_points ?? {};
+        const missing = submitted ? week.required_today.filter(r => !(submitted as any[]).some(v => v.stop_id === r.stop_id)) : [];
+        const miss = missing.reduce((a, r) => a + (tierPts[r.tier] ?? 0), 0);
+        if (missing.length) notes = `${notes} [missed required: ${missing.map(m => m.name).join(', ')} (-${miss})]`;
         await db.from('claude_pilot').update({
-          status: submitted ? 'done' : 'no plan', claude_plan: submitted, claude_realized: cg?.realized ?? null,
+          status: submitted ? 'done' : 'no plan', claude_plan: submitted, claude_realized: cg?.realized != null ? cg.realized - miss : null,
           t_plan: tVisits, t_realized: tg?.realized ?? null, solver_best_realized: bg?.realized ?? null,
           calls, cost_usd: Math.round(cost * 1e4) / 1e4, note: notes.slice(0, 1000), transcript, done_at: new Date().toISOString(),
         }).eq('id', row.id);
