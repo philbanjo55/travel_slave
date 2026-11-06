@@ -3,6 +3,8 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v78 (6 Nov 2026, worksheet E2): run config far_hidden = light-only days count the peaks hidden in the
+// place's usual share of the cloudiest sun scenarios (replay_clim_hidden) instead of always visible.
 // v77 (6 Nov 2026, worksheet C5): week drafts chain their own steps within a night (run config chain:
 // true turns it on; off by default) instead of one step per 20-s tick.
 // v76 (6 Nov 2026, worksheet A3): run config nopk = builds at lead + 1280, where a stop with
@@ -399,16 +401,24 @@ Deno.serve(async (req) => {
           return out;
         });
     };
-    const lightOf = (date: string) => {
-      const key = `${tripId}|${date}`, hit = LIGHT_CACHE.get(key);
-      if (hit && Date.now() - hit.at < 600000) return Promise.resolve(hit.rows);
+    // far_hidden (run config, v78, worksheet E2, 6 Nov 2026): on light-only days (past the forecast) the
+    // cloudiest share of the 51 sun scenarios has the peaks hidden, that share being the place's usual
+    // hidden share for the time of year (replay_clim_hidden; the camera-vote counts with vfit). Before, a
+    // light-only day assumed the peaks were out (a 6:30 AM barn showed 100% on a draft).
+    const lightOf = async (date: string) => {
+      const h = cfg.far_hidden && !cfg.light_plain
+        ? Number((await db.rpc('replay_clim_hidden', { p_trip: tripId, p_date: date, p_vote: !!cfg.vfit })).data ?? 0) : 0;
+      const nh = Math.round(h * 51);
+      const key = `${tripId}|${date}|${nh}`, hit = LIGHT_CACHE.get(key);
+      if (hit && Date.now() - hit.at < 600000) return hit.rows;
       return all<any>((a, b) => db.rpc('solver_light_terms', { p_trip_id: tripId, p_dates: [date] }).order('slot_at').order('stop_id').range(a, b))
         .then(rows => {
           const t = performance.now();
           const out = rows.map(r => {
-            const v = new Uint8Array(51), f = r.fog_wanted ? 0.6 : 1;
+            const v = new Uint8Array(51);
             for (let k = 0; k < 51; k++) {
-              const s = SCENARIOS[k];
+              const s = SCENARIOS[k], hid = k < nh;
+              const f = r.fog_wanted ? (hid ? 1 : 0.6) : (hid ? 0.1 : 1);
               v[k] = Math.round(250 * Math.max(0, Math.min(1, (r.blue ? r.dir : s * r.dir + (1 - s) * r.soft) * f)));
             }
             return { stop_id: r.stop_id, ms: Date.parse(r.slot_at), v };
