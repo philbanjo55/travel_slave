@@ -4,6 +4,7 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
+// v83 (6 Nov 2026): tool ops stop_detail {stop_id} and weather_detail for Claude.
 // v81 (6 Nov 2026, worksheet G1): {run_id, kind, night, tool: context | solve | score | grade}: read-only
 // tools for Claude planning a past night with the solver (claude-planner function).
 // v80 (6 Nov 2026, Phil: test pace options B-D): run config visit_price (tier points per optional rated
@@ -1196,6 +1197,29 @@ Deno.serve(async (req) => {
           }
           const back = (last || free) + D[loc][p.end] * 60000;
           return json({ ok: true, ...valueOf(vs), back: clock(back), problems });
+        }
+        if (op === 'stop_detail') {
+          // Every weather version's value for one place in 15-min steps (0-100), with the light and sun height.
+          const n0 = nOf(String(body.stop_id));
+          if (n0 == null) return json({ ok: false, error: 'unknown stop_id' }, 400);
+          const vid = (rated.find(r => r.stop_id === nodes[n0].id) as any)?.star_vantage_id;
+          const { data: lc } = vid ? await db.from('solver_light_cache').select('slot_at, light, sun_alt')
+            .eq('vantage_id', vid).eq('local_date', days[0].date).order('slot_at') : { data: [] as any[] };
+          const lightAt = new Map((lc ?? []).map((r: any) => [Date.parse(r.slot_at), r]));
+          const raw: any[] = fcB[0] ? await scoresOf(fcB[0].id) : fc;  // the models' own values, not stretched to 51
+          const rows = raw.filter((r: any) => r.stop_id === nodes[n0].id).sort((a: any, b: any) => a.ms - b.ms);
+          return json({ ok: true, name: nodes[n0].name, minutes: nodes[n0].dur, versions: raw[0]?.v.length ?? 0,
+            note: 'Each number is one weather model\'s value for a shot at that time (100 = peaks out in the light wanted, 0 = hidden or rained out); a visit counts its best moment.',
+            slots: rows.map((r: any) => { const l: any = lightAt.get(r.ms);
+              return { t: clock(r.ms), light: l?.light ?? null, sun: l ? Math.round(l.sun_alt) : null, v: Array.from(r.v as Uint8Array, x => Math.round(x / 2.5)) }; }) });
+        }
+        if (op === 'weather_detail') {
+          // Each weather model's cloud cover (%) and direct sun (W/m2) by hour at the trip's forecast point.
+          const { data: pl } = await db.from('replay_places').select('fc_point').eq('trip_id', tripId).maybeSingle();
+          const { data: wx } = pl ? await db.from('replay_wx_day').select('model, cloud, dr').eq('point_key', pl.fc_point).eq('day', days[0].date) : { data: [] as any[] };
+          const hrs = Array.from({ length: 24 }, (_, h) => h);
+          return json({ ok: true, point: pl?.fc_point ?? null, hours_utc: hrs,
+            models: (wx ?? []).filter((m: any) => !/@[0-9]/.test(m.model)).map((m: any) => ({ model: m.model, cloud: m.cloud, sun: m.dr })) });
         }
         if (op === 'grade') {
           if (!trSc[0].length) return json({ ok: false, error: 'no truth for this night' }, 404);
