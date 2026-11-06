@@ -3,6 +3,9 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v73 (6 Nov 2026, Phil: "Yes" to relearning the odds from the cameras): run config vfit = every build at
+// lead + 640, whose hidden-peak odds and morning look odds are learned from the camera vote (replay_hidden_vote:
+// cameras + airport majority, else the old rule) instead of the airport / TetonCam rule (planner version AN).
 // v69 (5 Nov 2026, Phil: "a sunrise look THEN a before I leave look", "do whatever is smarter"): run config
 // depart = a look 15 min before the plan's first departure (airport + cameras when light), as well as the
 // dawn look: leaving before the dawn look it comes first and can change the first stop; leaving later it
@@ -313,7 +316,9 @@ Deno.serve(async (req) => {
     // Drafts plan from light only (no forecast to carry rain or wind): no wx builds for them.
     const WX = cfg.wx && !cfg.draft ? 20 : 0;
     const FOG = cfg.fog && !cfg.draft ? 80 : 0;
-    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = cfg.sun && !cfg.draft ? 320 : 0;
+    // vfit (v73, 6 Nov 2026, planner version AN): builds at lead + 640 use the hidden-peak and look odds
+    // learned from the camera vote (counts hb + 10 / lk + 10); carried with SUN in every lead below.
+    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0);
     const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX + FOG + SUN;
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members, look_at')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
