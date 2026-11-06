@@ -17,10 +17,10 @@ const STATES: { key: ShotStatus; text: string }[] = [
 const STATUS_TEXT: Record<string, string> = { got: 'go back for better', nailed: 'nailed it' };
 
 // One line for a stop's planner settings: "front, side light · fog good · go back for better".
-export function settingsSummary(s: Pick<StopSettings, 'light_wanted' | 'fog_wanted' | 'shot_status'> | null): string {
+export function settingsSummary(s: Pick<StopSettings, 'light_wanted' | 'fog_wanted' | 'needs_peaks' | 'shot_status'> | null): string {
   if (!s) return '';
   const lights = (s.light_wanted ?? []).join(', ');
-  return [lights ? `${lights} light` : null, s.fog_wanted ? 'fog good' : null, s.shot_status ? STATUS_TEXT[s.shot_status] : null]
+  return [lights ? `${lights} light` : null, s.fog_wanted ? 'fog good' : null, s.needs_peaks === false ? 'fine under cloud' : null, s.shot_status ? STATUS_TEXT[s.shot_status] : null]
     .filter(Boolean).join(' · ');
 }
 
@@ -74,6 +74,8 @@ export default function SettingsEditor({ stopId, initial, onChange }: {
           <Chip key={l.key} text={l.text} on={(setting?.light_wanted ?? []).includes(l.key)} disabled={saving} onPress={() => toggleLight(l.key)} />
         ))}
         <Chip text="Fog is good" on={!!setting?.fog_wanted} disabled={saving} onPress={() => save({ fog_wanted: !setting?.fog_wanted })} />
+        <Chip text="Fine under cloud" on={setting?.needs_peaks === false} disabled={saving}
+          onPress={() => save({ needs_peaks: setting?.needs_peaks === false })} />
       </Field>
       {shots.length > 1 ? (
         <Field label="★ Shot">

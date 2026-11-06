@@ -20,7 +20,7 @@ import postgres from 'npm:postgres@3.4.4';
 //                their Location header names)
 //   label_frame  {frame_id, label: clear|cloud_on_hills|fog|cant_tell|null}
 //   stop_settings {stop_id}  the stop's planner settings and its shots
-//   set_settings {stop_id, tier?, light_wanted?, fog_wanted?, star_vantage_id?}
+//   set_settings {stop_id, tier?, light_wanted?, fog_wanted?, needs_peaks?, star_vantage_id?}
 //                Phil's own settings from the stop screen (source -> 'phil';
 //                {stop_id} alone confirms Claude's suggestion as it is)
 //   confirm_all  {trip_id}  keep every suggested setting on the trip as Phil's
@@ -55,7 +55,7 @@ const TEST_TRIPS = new Set([
 ]);
 const TIERS = ['GOD', 'S', 'A', 'B', 'C', 'D', 'F'];
 const LIGHTS = ['front', 'side', 'back', 'soft'];
-const SETTING_COLS = 'stop_id, tier, light_wanted, fog_wanted, star_vantage_id, shot_status, source';
+const SETTING_COLS = 'stop_id, tier, light_wanted, fog_wanted, needs_peaks, star_vantage_id, shot_status, source';
 const SIGNED_URL_S = 3600;
 // A camera further than this says nothing about a stop (a Teton stop got
 // Faroe cameras 6,400 km away).
@@ -237,6 +237,8 @@ Deno.serve(async (req) => {
           patch.light_wanted = [...new Set(body.light_wanted)];
         }
         if ('fog_wanted' in body) patch.fog_wanted = !!body.fog_wanted;
+        // needs_peaks (v19, worksheet A3, Phil 6 Nov 2026: opt out per stop): false = looks fine under cloud.
+        if ('needs_peaks' in body) patch.needs_peaks = body.needs_peaks !== false;
         if ('star_vantage_id' in body) patch.star_vantage_id = body.star_vantage_id ?? null;
         const { data: have } = await db.from('solver_stop_settings').select('stop_id').eq('stop_id', body.stop_id).maybeSingle();
         const q = have

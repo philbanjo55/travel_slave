@@ -243,6 +243,8 @@ export type ShotStatus = 'got' | 'nailed' | null;
 export type Light = 'front' | 'side' | 'back' | 'soft';
 export type StopSettings = {
   tier: string | null; light_wanted: Light[] | null; fog_wanted: boolean | null;
+  // false = looks fine under cloud (Phil opts a stop out; worksheet A3). Missing = needs the peaks.
+  needs_peaks?: boolean | null;
   star_vantage_id: string | null; shot_status: ShotStatus; source: 'suggested' | 'phil';
 };
 export type StopShot = { vantage_id: string; position: number; name: string };
@@ -256,7 +258,7 @@ export async function fetchStopSettings(stopId: string) {
 }
 
 // Phil's own settings (source becomes 'phil'); an empty patch confirms the suggestion.
-export async function saveStopSettings(stopId: string, patch: Partial<Pick<StopSettings, 'tier' | 'light_wanted' | 'fog_wanted' | 'star_vantage_id'>>) {
+export async function saveStopSettings(stopId: string, patch: Partial<Pick<StopSettings, 'tier' | 'light_wanted' | 'fog_wanted' | 'needs_peaks' | 'star_vantage_id'>>) {
   const j = await solverAction<{ setting: StopSettings }>({ action: 'set_settings', stop_id: stopId, ...patch });
   return j.setting;
 }
@@ -264,7 +266,7 @@ export async function saveStopSettings(stopId: string, patch: Partial<Pick<StopS
 export type TripSetting = StopSettings & { stop_id: string; updated_at?: string };
 export async function fetchTripSettings(tripId: string): Promise<TripSetting[]> {
   const { data, error } = await supabase.from('solver_stop_settings')
-    .select('stop_id, tier, light_wanted, fog_wanted, star_vantage_id, shot_status, source, updated_at, stops!inner(trip_id)')
+    .select('stop_id, tier, light_wanted, fog_wanted, needs_peaks, star_vantage_id, shot_status, source, updated_at, stops!inner(trip_id)')
     .eq('stops.trip_id', tripId);
   if (error) throw error;
   return (data ?? []) as any;
