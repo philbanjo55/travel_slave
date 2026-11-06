@@ -3,6 +3,8 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v74 (6 Nov 2026, worksheet B1): run config polish_max lifts the 9-stop limit on the exact polish search
+// (default 9 = unchanged); Y (polish_k 10) had never polished.
 // v73 (6 Nov 2026, Phil: "Yes" to relearning the odds from the cameras): run config vfit = every build at
 // lead + 640, whose hidden-peak odds and morning look odds are learned from the camera vote (replay_hidden_vote:
 // cameras + airport majority, else the old rule) instead of the airport / TetonCam rule (planner version AN).
@@ -1526,7 +1528,10 @@ Deno.serve(async (req) => {
           [...E].forEach(addUnit);
           const others = freeNodes.filter(x => !E.has(x) && !skip.has(x)).sort((a, b) => best(b, 0) - best(a, 0));
           for (const x of others) { if (E.size >= k) break; addUnit(x); }
-          if (E.size > 9) return { E, pe: null, se: null };
+          // Run config polish_max (v74, worksheet B1, 6 Nov 2026): the search gave up silently above
+          // 9 stops, so polish_k 10 (Y) never polished. Default 9 keeps every earlier result; the
+          // node cap (polish_cap) keeps a bigger search inside the CPU limit.
+          if (E.size > Number(cfg.polish_max ?? 9)) return { E, pe: null, se: null };
           exactCap = cap;
           const pe = planDay({ ...days[0], light: draft }, scores, true, undefined, mustN, skip, from, [...E]);
           exactCap = EXACT_MAX_EXTENDS;
