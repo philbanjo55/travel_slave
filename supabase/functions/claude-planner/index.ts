@@ -1,11 +1,11 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk';
 
-// CLAUDE PLANNER (worksheet G1, Phil 6 Nov 2026; v2 same day: week context, required places): Claude plans one past test night with the solver as a
+// CLAUDE PLANNER (worksheet G1, Phil 6 Nov 2026; v2 week context; v5 guard: never worse than the planner): Claude plans one past test night with the solver as a
 // tool, then both Claude's plan and T's are graded against what happened (nothing shot before, so the
 // two are on the same footing). Bench only; never touches a trip.
 //
-// POST {run_id, night, kind?: 'mrmc', model?: 'claude-opus-5-5', effort?: 'medium', max_calls?: 12, afd?: true}
+// POST {run_id, night, kind?: 'mrmc', model?: 'claude-opus-5-5', effort?: 'medium', max_calls?: 12, afd?: true, guard?: true}
 // returns at once with the claude_pilot row id; the work runs in the background and fills the row.
 // Tools (solver-replay tool mode, read only): solve_day {must?, skip?}, score_plan {visits},
 // submit_plan {visits, notes}. Spend is logged to claude_usage (fn claude-planner) and stops at
@@ -32,7 +32,12 @@ Deno.serve(async (req) => {
     const runId = Number(body.run_id), night = Number(body.night), kind = String(body.kind ?? 'mrmc');
     const model = String(body.model ?? 'claude-opus-5-5'), effort = String(body.effort ?? 'medium');
     const maxCalls = Math.min(Math.max(Number(body.max_calls ?? 12), 2), 20);
-    const afd = !!body.afd;
+    // guard (v5, Phil 6 Nov 2026: "set it up so Claude + planner can never be worse"): Claude starts from the full
+    // planner's polished plan, its tools return polished plans and the full rule check, a rule-breaking hand-in is
+    // refused (the planner's plan stands), and it may only change the plan for a reason the planner can't see
+    // (the forecaster's discussion). Implies afd (discussion, detail tools, caching).
+    const guard = !!body.guard;
+    const afd = !!body.afd || guard;
     if (!Number.isFinite(runId) || !Number.isFinite(night)) return json({ ok: false, error: 'run_id and night required' }, 400);
     const key = Deno.env.get('ANTHROPIC_API_KEY');
     if (!key || Deno.env.get('CLAUDE_LABELS') === 'false') return json({ ok: false, error: 'Claude off' });
@@ -42,7 +47,7 @@ Deno.serve(async (req) => {
     const { data: spent } = await db.from('claude_usage').select('cost_usd').eq('fn', 'claude-planner');
     const pilot = (spent ?? []).reduce((s: number, r: any) => s + Number(r.cost_usd ?? 0), 0);
     if (pilot >= PILOT_CAP_USD) return json({ ok: false, error: 'pilot cap reached', spent: pilot });
-    const { data: row, error: rowErr } = await db.from('claude_pilot').insert({ run_id: runId, night, kind, model, variant: afd ? 'afd' : 'base' }).select('id').single();
+    const { data: row, error: rowErr } = await db.from('claude_pilot').insert({ run_id: runId, night, kind, model, variant: guard ? 'guard' : afd ? 'afd' : 'base' }).select('id').single();
     if (rowErr) throw rowErr;
 
     const tool = async (op: string, extra: any = {}) => {
@@ -75,7 +80,7 @@ Deno.serve(async (req) => {
         const week = { day: night + 1, of_days: nNights, days_left_after_today: nNights - night - 1,
           required_today: required.map(id => ({ stop_id: id, name: ctxStops.get(id).name, tier: ctxStops.get(id).tier })),
           already_done_earlier_this_trip: doneBefore };
-        const best = await tool('solve', { must: required });
+        const best = await tool('solve', { must: required, ...(guard ? { polish: true } : {}) });
         const bestVisits = (best.plans?.[0]?.stops ?? []).map((v: any) => ({ stop_id: v.stop_id, start: v.start_iso }));
 
         // Forecaster's discussion (v3, run config afd, Phil 6 Nov 2026): the National Weather Service Area
@@ -106,6 +111,7 @@ Deno.serve(async (req) => {
           { name: 'weather_detail', description: "Each weather model's cloud cover (%) and direct sun (W/m2) by hour (UTC) at the area's forecast point.",
             input_schema: { type: 'object', properties: {} } });
         const messages: any[] = [{ role: 'user', content: `Plan this day. You may call tools at most ${maxCalls} times in all, including submit_plan.\n\nThe trip so far (week): this is day ${week.day} of ${week.of_days}. Every place must be visited at least once on the trip, and these places can only be fitted in today, so they must be in your plan (use solve_day with them in must): ${JSON.stringify(week.required_today)}. Leaving one out costs its full tier points. Already done earlier this trip (a repeat only counts if the shot is better): ${JSON.stringify(week.already_done_earlier_this_trip)}.${afdText ? `\n\nThe local weather forecaster's written discussion from that evening (National Weather Service). It can know things the models miss, like valley fog or cloud stuck on the peaks; weigh it against the numbers:\n${afdText}` : ''}\n\n${JSON.stringify({ ...ctx, ok: undefined })}` }];
+        if (guard) messages[0].content = `${messages[0].content}\n\nTHE DEFAULT PLAN (the full planner's best day, after its exact polish): ${JSON.stringify(best.plans?.[0] ?? null)}\nKeep this plan unless you have a specific reason the planner cannot see: something in the forecaster's discussion above (fog, cloud stuck on the peaks, clearing times, a front's timing). The planner already uses every number you can see, so do not change the plan for reasons in the numbers alone. If you do change it, check it with score_plan (it lists every rule problem), and in submit_plan's notes quote the line of the discussion that made you change it. To keep the default, submit it as it is.`;
         if (afd) messages[0].content = [{ type: 'text', text: messages[0].content, cache_control: { type: 'ephemeral' } }];
         for (let turn = 0; turn < maxCalls + 2 && !submitted; turn++) {
           const res: any = await client.messages.create({
@@ -127,16 +133,29 @@ Deno.serve(async (req) => {
             transcript.push({ tool: u.name, input: u.input });
             let out: any;
             if (calls > maxCalls && u.name !== 'submit_plan') out = { error: 'tool call limit reached: submit your plan now' };
-            else if (u.name === 'solve_day') out = await tool('solve', { must: u.input.must ?? [], skip: u.input.skip ?? [] });
-            else if (u.name === 'score_plan') out = await tool('score', { visits: u.input.visits ?? [] });
+            else if (u.name === 'solve_day') out = await tool('solve', { must: u.input.must ?? [], skip: u.input.skip ?? [], ...(guard ? { polish: true } : {}) });
+            else if (u.name === 'score_plan') {
+              out = await tool('score', { visits: u.input.visits ?? [] });
+              if (guard) {
+                const au = await tool('audit', { visits: u.input.visits ?? [] });
+                if (au.checked && !au.feasible) out.problems = [...(out.problems ?? []), 'breaks a planner rule (early start before 6 AM for non-top places, ski-gear window, keep-together pairs, dark or bookings): these places cannot all be fitted'];
+              }
+            }
             else if (u.name === 'stop_detail') out = await tool('stop_detail', { stop_id: u.input.stop_id });
             else if (u.name === 'weather_detail') out = await tool('weather_detail');
-            else if (u.name === 'submit_plan') { submitted = u.input.visits ?? []; notes = String(u.input.notes ?? ''); out = { ok: true }; }
+            else if (u.name === 'submit_plan') {
+              const au = guard ? await tool('audit', { visits: u.input.visits ?? [] }) : null;
+              if (au && au.checked && !au.feasible) out = { error: 'refused: this plan breaks a planner rule (the places cannot all be fitted). Fix it, or submit the default plan.' };
+              else { submitted = u.input.visits ?? []; notes = String(u.input.notes ?? ''); out = { ok: true }; }
+            }
             else out = { error: 'unknown tool' };
             results.push({ type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(out).slice(0, 60000) });
           }
           messages.push({ role: 'user', content: results });
         }
+        if (guard && !submitted) { submitted = bestVisits; notes = `kept the planner's plan (no valid change submitted) ${notes}`.trim(); }
+        const keptDefault = guard && JSON.stringify((submitted ?? []).map((v: any) => v.stop_id + v.start).sort()) === JSON.stringify(bestVisits.map((v: any) => v.stop_id + v.start).sort());
+        if (guard && keptDefault) notes = `[kept default] ${notes}`;
         const [cg, tg, bg] = await Promise.all([
           submitted ? tool('grade', { visits: submitted }) : Promise.resolve(null),
           tVisits.length ? tool('grade', { visits: tVisits }) : Promise.resolve(null),
@@ -149,7 +168,7 @@ Deno.serve(async (req) => {
         if (missing.length) notes = `${notes} [missed required: ${missing.map(m => m.name).join(', ')} (-${miss})]`;
         await db.from('claude_pilot').update({
           status: submitted ? 'done' : 'no plan', claude_plan: submitted, claude_realized: cg?.realized != null ? cg.realized - miss : null,
-          t_plan: tVisits, t_realized: tg?.realized ?? null, solver_best_realized: bg?.realized ?? null,
+          t_plan: tVisits, t_realized: tg?.realized ?? null, solver_best_realized: bg?.realized ?? null, ...(guard ? { solver_pol_realized: bg?.realized ?? null, required: required } : {}),
           calls, cost_usd: Math.round(cost * 1e4) / 1e4, note: notes.slice(0, 1000), transcript, done_at: new Date().toISOString(),
         }).eq('id', row.id);
       } catch (e: any) {
