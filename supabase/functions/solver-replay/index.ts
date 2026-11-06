@@ -3,6 +3,8 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v79 (6 Nov 2026, worksheet E1): run config cons = builds at lead + 2560, hidden-peak odds from the
+// models' agreement at each hour (replay_cons_bin) instead of each model's own.
 // v78 (6 Nov 2026, worksheet E2): run config far_hidden = light-only days count the peaks hidden in the
 // place's usual share of the cloudiest sun scenarios (replay_clim_hidden) instead of always visible.
 // v77 (6 Nov 2026, worksheet C5): week drafts chain their own steps within a night (run config chain:
@@ -329,7 +331,7 @@ Deno.serve(async (req) => {
     const FOG = cfg.fog && !cfg.draft ? 80 : 0;
     // vfit (v73, 6 Nov 2026, planner version AN): builds at lead + 640 use the hidden-peak and look odds
     // learned from the camera vote (counts hb + 10 / lk + 10); carried with SUN in every lead below.
-    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0);
+    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0) + (cfg.cons && !cfg.draft ? 2560 : 0);
     const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX + FOG + SUN;
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members, look_at')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
