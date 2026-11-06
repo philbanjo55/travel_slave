@@ -255,6 +255,9 @@ Deno.serve(async (req) => {
     let spent = Number(spentMonth ?? 0);
     const tokens = { input: 0, output: 0 };
     const tryLabel = async (cam: any, buf: Uint8Array) => {
+      // v18 (Phil, 6 Nov 2026): a camera can be saved without being read (webcam_cameras.label_paused;
+      // the Faroes cameras Nov-Mar, when only the off-season practice trip uses them).
+      if (cam.label_paused) return { lab: null, model: null, err: 'labels paused for this camera' };
       if (!claude || budget <= 0) return { lab: null, model: null, err: claude ? 'daily cap reached' : null };
       if (spent >= MONTHLY_CAP_USD) return { lab: null, model: null, err: 'monthly spend cap reached' };
       budget--;

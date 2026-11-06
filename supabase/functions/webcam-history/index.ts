@@ -71,10 +71,17 @@ async function label(client: Anthropic, cam: any, buf: Uint8Array) {
   return { lab: JSON.parse(text), model: msg.model as string, usage: msg.usage };
 }
 
-// local_time is 'YYYY-MM-DD HH:MM' in the camera's tz.
+// local_time is 'YYYY-MM-DD HH:MM' in the camera's tz. Every token, every time it appears; {HH} and {mm}
+// too (Roundshot: .../{YYYY}-{MM}-{DD}/{HH}-{mm}-00/{YYYY}-{MM}-{DD}-{HH}-{mm}-00_quarter.jpg, v2 6 Nov 2026).
 const frameUrl = (template: string, local: string) => template
-  .replace('{YYYY}', local.slice(0, 4)).replace('{MM}', local.slice(5, 7)).replace('{DD}', local.slice(8, 10))
-  .replace('{HHmm}', local.slice(11, 13) + local.slice(14, 16));
+  .replaceAll('{YYYY}', local.slice(0, 4)).replaceAll('{MM}', local.slice(5, 7)).replaceAll('{DD}', local.slice(8, 10))
+  .replaceAll('{HHmm}', local.slice(11, 13) + local.slice(14, 16))
+  .replaceAll('{HH}', local.slice(11, 13)).replaceAll('{mm}', local.slice(14, 16));
+// A camera that takes a picture every 10 min may have none at the exact time: try the next two.
+const later = (local: string, min: number) => {
+  const d = new Date(local.replace(' ', 'T') + ':00Z'); d.setUTCMinutes(d.getUTCMinutes() + min);
+  return d.toISOString().slice(0, 16).replace('T', ' ');
+};
 
 Deno.serve(async (req) => {
   const json = (b: any, status = 200) =>
@@ -109,11 +116,18 @@ Deno.serve(async (req) => {
       const key = { camera_code: f.camera_code, taken_at: f.taken_at };
       let row: any;
       try {
-        const r = await fetch(frameUrl(cam.image_url, f.local_time), {
-          headers: { 'User-Agent': 'travel_slave webcam history (permission: see webcam_cameras.permission_note)' },
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        });
-        if (!r.ok) { await r.body?.cancel(); throw new Error(`image ${r.status}`); }
+        // webcam_cameras.history_url: the archive's address template when it differs from the live one.
+        const tpl: string = cam.history_url ?? cam.image_url;
+        let r: Response | null = null;
+        for (const off of tpl.includes('{mm}') ? [0, 10, 20] : [0]) {
+          r = await fetch(frameUrl(tpl, later(f.local_time, off)), {
+            headers: { 'User-Agent': 'travel_slave webcam history (permission: see webcam_cameras.permission_note)' },
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          });
+          if (r.ok || r.status !== 404) break;
+          await r.body?.cancel();
+        }
+        if (!r!.ok) { await r!.body?.cancel(); throw new Error(`image ${r!.status}`); }
         const buf = new Uint8Array(await r.arrayBuffer());
         const l = await label(claude, cam, buf);
         const inTok = l.usage?.input_tokens ?? 0, outTok = l.usage?.output_tokens ?? 0;
