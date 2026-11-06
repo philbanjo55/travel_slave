@@ -98,13 +98,23 @@ Deno.serve(async (req) => {
           { name: 'submit_plan', description: 'Your final plan for the day. Ends the task.',
             input_schema: { type: 'object', required: ['visits'], properties: { visits: { type: 'array', items: { type: 'object', required: ['stop_id', 'start'], properties: { stop_id: { type: 'string' }, start: { type: 'string' } } } }, notes: { type: 'string', description: 'One or two sentences on why.' } } } },
         ];
+        // Rich variant (afd, v4, Phil 6 Nov 2026: give Claude what the solver has): two look-closer tools and
+        // prompt caching, so rereading the big first message each turn costs about a tenth.
+        if (afd) tools.splice(2, 0,
+          { name: 'stop_detail', description: "Every weather model's own value for one place in 15-minute steps (0-100: 100 = peaks out in the light wanted, 0 = hidden or rained out), with the light (front/side/backlit/no sun...) and the sun's height. Use it to see where the models disagree.",
+            input_schema: { type: 'object', required: ['stop_id'], properties: { stop_id: { type: 'string' } } } },
+          { name: 'weather_detail', description: "Each weather model's cloud cover (%) and direct sun (W/m2) by hour (UTC) at the area's forecast point.",
+            input_schema: { type: 'object', properties: {} } });
         const messages: any[] = [{ role: 'user', content: `Plan this day. You may call tools at most ${maxCalls} times in all, including submit_plan.\n\nThe trip so far (week): this is day ${week.day} of ${week.of_days}. Every place must be visited at least once on the trip, and these places can only be fitted in today, so they must be in your plan (use solve_day with them in must): ${JSON.stringify(week.required_today)}. Leaving one out costs its full tier points. Already done earlier this trip (a repeat only counts if the shot is better): ${JSON.stringify(week.already_done_earlier_this_trip)}.${afdText ? `\n\nThe local weather forecaster's written discussion from that evening (National Weather Service). It can know things the models miss, like valley fog or cloud stuck on the peaks; weigh it against the numbers:\n${afdText}` : ''}\n\n${JSON.stringify({ ...ctx, ok: undefined })}` }];
+        if (afd) messages[0].content = [{ type: 'text', text: messages[0].content, cache_control: { type: 'ephemeral' } }];
         for (let turn = 0; turn < maxCalls + 2 && !submitted; turn++) {
           const res: any = await client.messages.create({
-            model, max_tokens: 16000, system: SYSTEM, tools, messages,
+            model, max_tokens: 16000, system: afd ? [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }] : SYSTEM, tools, messages,
             output_config: { effort },
           } as any);
-          const inTok = res.usage?.input_tokens ?? 0, outTok = res.usage?.output_tokens ?? 0, c = costUsd(res.model ?? model, inTok, outTok);
+          // Cache writes cost 1.25x, cache reads 0.1x the input price (counted here as equivalent input tokens).
+          const cw = res.usage?.cache_creation_input_tokens ?? 0, cr = res.usage?.cache_read_input_tokens ?? 0;
+          const inTok = (res.usage?.input_tokens ?? 0) + Math.round(1.25 * cw + 0.1 * cr), outTok = res.usage?.output_tokens ?? 0, c = costUsd(res.model ?? model, inTok, outTok);
           cost += c;
           await db.from('claude_usage').insert({ fn: 'claude-planner', purpose: 'pilot_plan', model: res.model, input_tokens: inTok, output_tokens: outTok, cost_usd: Math.round(c * 1e5) / 1e5 });
           messages.push({ role: 'assistant', content: res.content });
@@ -119,6 +129,8 @@ Deno.serve(async (req) => {
             if (calls > maxCalls && u.name !== 'submit_plan') out = { error: 'tool call limit reached: submit your plan now' };
             else if (u.name === 'solve_day') out = await tool('solve', { must: u.input.must ?? [], skip: u.input.skip ?? [] });
             else if (u.name === 'score_plan') out = await tool('score', { visits: u.input.visits ?? [] });
+            else if (u.name === 'stop_detail') out = await tool('stop_detail', { stop_id: u.input.stop_id });
+            else if (u.name === 'weather_detail') out = await tool('weather_detail');
             else if (u.name === 'submit_plan') { submitted = u.input.visits ?? []; notes = String(u.input.notes ?? ''); out = { ok: true }; }
             else out = { error: 'unknown tool' };
             results.push({ type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(out).slice(0, 60000) });
