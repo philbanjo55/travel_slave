@@ -3,6 +3,8 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v80 (6 Nov 2026, Phil: test pace options B-D): run config visit_price (tier points per optional rated
+// visit), chance_floor (optional stops only where that share of weather versions is good), end_at 'sunset'.
 // v79 (6 Nov 2026, worksheet E1): run config cons = builds at lead + 2560, hidden-peak odds from the
 // models' agreement at each hour (replay_cons_bin) instead of each model's own.
 // v78 (6 Nov 2026, worksheet E2): run config far_hidden = light-only days count the peaks hidden in the
@@ -165,6 +167,7 @@ type Visit = { n: number; arrive: number; start: number; end: number; drive: num
 type State = {
   t: number; loc: number; next: number; visited: Uint8Array; m0: number; m1: number; groupBest: Map<number, Uint8Array>;
   total: Float32Array; route: Visit[]; drive: number; over: number; j: number; mean: number; cvar: number; mc: number;
+  nopt?: number;  // optional rated visits so far (run config visit_price, v80)
 };
 type DayPlan = {
   date: string; tripDate: string | null; light: boolean; start: number; end: number; dayStart: number; nSlots: number;
@@ -212,6 +215,13 @@ function civilDusk(date: string, lat: number, lng: number, tz: string) {
 function sunrise(date: string, lat: number, lng: number, tz: string) {
   let t = zonedToUtc(date, 3 * 60, tz);
   for (let i = 0; i < 540 && sunAlt(lat, lng, t) <= -0.833; i++) t += 60000;
+  return t;
+}
+
+// Sunset after local noon on a date (UTC ms): run config end_at 'sunset' (v80, pace test D).
+function sunsetAfterNoon(date: string, lat: number, lng: number, tz: string) {
+  let t = zonedToUtc(date, 12 * 60, tz);
+  for (let i = 0; i < 720 && sunAlt(lat, lng, t) > -0.833; i++) t += 60000;
   return t;
 }
 
@@ -701,7 +711,9 @@ Deno.serve(async (req) => {
       const gearHiMin = !gTo ? Infinity : gearDate > gTo.date ? -Infinity : gearDate < gTo.date ? Infinity
         : (zonedToUtc(day.date, hhmm(gTo.time), tz!) - dayStart) / 60000;
       // Done by dark: free stops end by civil dusk.
-      const darkMin = placed.length && !cfg.no_dark ? (civilDusk(day.date, mid.lat, mid.lng, tz!) - dayStart) / 60000 : Infinity;
+      // Pace test D (v80, run config end_at 'sunset'): free stops end by sunset instead.
+      const darkMin = placed.length && !cfg.no_dark
+        ? ((cfg.end_at === 'sunset' ? sunsetAfterNoon(day.date, mid.lat, mid.lng, tz!) : civilDusk(day.date, mid.lat, mid.lng, tz!)) - dayStart) / 60000 : Infinity;
 
       // V per node per slot, W = best V over the visit window starting there.
       const V: (Uint8Array | null)[][] = nodes.map(() => new Array(nSlots).fill(null));
@@ -727,7 +739,12 @@ Deno.serve(async (req) => {
       const wMean = (ni: number, start: number) => { const w = W(ni, start); if (!w) return -1; let s = 0; for (const x of w) s += x; return s / M; };
       const pGood = (ni: number, start: number) => { const w = W(ni, start); if (!w) return 0; let g = 0; for (const x of w) if (x >= GOOD) g++; return g / M; };
       // Before the window only GOD/S stops, and only when the forecast is good.
-      const startOk = (ni: number, i: number) => i >= winLo || (nodes[ni].w >= 5 && i >= earlyLo && pGood(ni, i) >= SUNRISE_MIN_P);
+      // Pace test C (v80, run config chance_floor): an optional rated stop only where at least that share of
+      // weather versions is good; required places (every-place rule) and bookings are exempt.
+      const FLOOR = Number(cfg.chance_floor ?? 0);
+      const VISIT_PRICE = Number(cfg.visit_price ?? 0);
+      const floorOk = (ni: number, i: number) => !FLOOR || nodes[ni].w <= 0 || mustSet.has(ni) || pGood(ni, i) >= FLOOR;
+      const startOk = (ni: number, i: number) => (i >= winLo || (nodes[ni].w >= 5 && i >= earlyLo && pGood(ni, i) >= SUNRISE_MIN_P)) && floorOk(ni, i);
       // The slot in a visit window with the best mean V: when to shoot.
       const peak = (ni: number, start: number) => {
         let bt = start, bs = -1;
@@ -757,10 +774,12 @@ Deno.serve(async (req) => {
         const m0 = n < 32 ? (st.m0 | (1 << n)) >>> 0 : st.m0, m1 = n >= 32 ? (st.m1 | (1 << (n - 32))) >>> 0 : st.m1;
         const m = metric(total);
         const d = st.drive + drive, o = st.over + over(drive), mc = st.mc + (mustSet.has(n) ? 1 : 0);
+        // Pace test B (v80, run config visit_price): each optional rated visit costs that many tier points.
+        const nopt = (st.nopt ?? 0) + (nodes[n].w > 0 && !mustSet.has(n) && !anchor ? 1 : 0);
         return {
           t: (i + len) * SLOT, loc: n, next: st.next + (anchor ? 1 : 0), visited, m0, m1, groupBest, total, drive: d, over: o, mc,
-          route: [...st.route, { n, arrive: st.t + drive, start: i * SLOT, end: (i + len) * SLOT, drive, anchor }],
-          mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * (d + D[n][H]) - LONG_LEG_PENALTY * (o + over(D[n][H])) + MUST_BONUS * mc,
+          route: [...st.route, { n, arrive: st.t + drive, start: i * SLOT, end: (i + len) * SLOT, drive, anchor }], nopt,
+          mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * (d + D[n][H]) - LONG_LEG_PENALTY * (o + over(D[n][H])) + MUST_BONUS * mc - VISIT_PRICE * nopt,
         };
       };
 
