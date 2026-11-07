@@ -1667,12 +1667,15 @@ Deno.serve(async (req) => {
         // mustfix (v87, worksheet b6, 7 Nov 2026): when the beam finds no day with every required place,
         // try the exact search over just those places (as the audit tool does) before dropping one. On 2 of
         // 20 test nights Claude found such a day where the beam found none.
-        let mustRescued = 0;
+        let mustRescued = 0, rescueTries = 0;
         const rescue = (scores: any[], light: boolean, mustN: number[], from?: From): { p: DayPlan; st: State } | null => {
-          if (!cfg.mustfix || !mustN.length) return null;
+          // v88: at most rescue_tries (2) exact searches per request, capped at rescue_cap (150k): v87 retried after
+          // every dropped place at 400k and 16 of 112 test weeks ran out of time on the gear-pickup and flight days.
+          if (!cfg.mustfix || !mustN.length || rescueTries >= Number(cfg.rescue_tries ?? 2)) return null;
+          rescueTries++;
           const E = [...new Set(mustN)].filter(n => nodes[n].free && !skip.has(n));
           if (!E.length || E.length > 10) return null;
-          exactCap = 400_000;
+          exactCap = Number(cfg.rescue_cap ?? 150_000);
           const pe = planDay({ ...days[0], light }, scores, true, undefined, mustN, skip, from, E);
           exactCap = EXACT_MAX_EXTENDS;
           const st = pe.routes.find(r => E.every(x => r.visited[x])) ?? null;
