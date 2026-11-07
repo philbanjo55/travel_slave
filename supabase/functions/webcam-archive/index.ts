@@ -44,6 +44,7 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 const BUCKET = 'webcams';
 const KEEP_DAYS = 7;
 const NIGHT_ALT = -6;
+const SHARDS = 8;
 const FETCH_TIMEOUT_MS = 20_000;
 const TEMPLATE_STEP_MIN = 15;
 const MODEL = Deno.env.get('CLAUDE_LABEL_MODEL') ?? 'claude-opus-5-5';
@@ -242,6 +243,20 @@ Deno.serve(async (req) => {
     new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
   try {
     const body = await req.json().catch(() => ({}));
+    // Shards (v21, 7 Nov 2026): 44 cameras in one request ran past the edge CPU limit (each picture
+    // is decoded for the haze metrics), so the hourly run died partway and the cameras added on
+    // 6 Nov were almost never saved. A plain call (cron, planner_t_now) now sends the cameras out
+    // in SHARDS requests of its own (camera i of the list sorted by code goes to shard i % SHARDS)
+    // and returns their results; the backfill and the prune run in shard 0 only.
+    if (body.shard == null && !body.backfill) {
+      const url = `${Deno.env.get('SUPABASE_URL')}/functions/v1/webcam-archive`;
+      const parts = await Promise.all(Array.from({ length: SHARDS }, (_, i) =>
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ ...body, shard: i, shards: SHARDS }) })
+          .then(r => r.json()).catch(e => ({ ok: false, shard: i, error: String(e) }))));
+      return json({ ok: parts.every((x: any) => x.ok), shards: parts });
+    }
+    const shards = Number(body.shards ?? 1), shard = Number(body.shard ?? 0), lead = shard === 0;
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const apiKey = Deno.env.get('CLAUDE_LABELS') === 'false' ? undefined : Deno.env.get('ANTHROPIC_API_KEY');
     const claude = apiKey ? new Anthropic({ apiKey }) : null;
@@ -283,7 +298,9 @@ Deno.serve(async (req) => {
     if (cErr) throw cErr;
 
     const results: any[] = [];
-    for (const cam of body.backfill ? [] : cams ?? []) {
+    const mine = [...(cams ?? [])].sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
+      .filter((_: any, i: number) => i % shards === shard);
+    for (const cam of body.backfill ? [] : mine) {
       const res: any = { camera: cam.code };
       try {
         const alt = cam.lat != null ? sunAltitude(cam.lat, cam.lng, slot) : null;
@@ -331,7 +348,7 @@ Deno.serve(async (req) => {
     // Label stored daylight frames that have none yet (key added late, cap,
     // errors), newest first, while their image is still in storage.
     let backfilled = 0;
-    if (claude) {
+    if (claude && lead) {
       const { data: pending, error: pErr } = await supabase.from('webcam_frames')
         .select('id,camera_code,storage_path,captured_at').is('label', null).not('storage_path', 'is', null)
         .eq('stale', false).gte('sun_altitude', NIGHT_ALT).neq('captured_at', slot.toISOString())
@@ -352,7 +369,7 @@ Deno.serve(async (req) => {
 
     // Prune full images past KEEP_DAYS unless kept; labels and metrics stay.
     const cutoff = new Date(Date.now() - KEEP_DAYS * 86400000).toISOString();
-    const { data: old } = await supabase.from('webcam_frames').select('id,storage_path')
+    const { data: old } = !lead ? { data: [] as any[] } : await supabase.from('webcam_frames').select('id,storage_path')
       .eq('keep', false).lt('captured_at', cutoff).not('storage_path', 'is', null).limit(500);
     let pruned = 0;
     if (old?.length) {
