@@ -250,10 +250,14 @@ Deno.serve(async (req) => {
     // and returns their results; the backfill and the prune run in shard 0 only.
     if (body.shard == null && !body.backfill) {
       const url = `${Deno.env.get('SUPABASE_URL')}/functions/v1/webcam-archive`;
-      const parts = await Promise.all(Array.from({ length: SHARDS }, (_, i) =>
-        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                     body: JSON.stringify({ ...body, shard: i, shards: SHARDS }) })
-          .then(r => r.json()).catch(e => ({ ok: false, shard: i, error: String(e) }))));
+      // One after another (v22): run at once, the shards shared one worker's memory and the Teton
+      // ones (the 4K Kelly picture, Claude labels) died with WORKER_RESOURCE_LIMIT on 7 Nov.
+      const parts: any[] = [];
+      for (let i = 0; i < SHARDS; i++) {
+        parts.push(await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ ...body, shard: i, shards: SHARDS }) })
+          .then(r => r.json()).catch(e => ({ ok: false, shard: i, error: String(e) })));
+      }
       return json({ ok: parts.every((x: any) => x.ok), shards: parts });
     }
     const shards = Number(body.shards ?? 1), shard = Number(body.shard ?? 0), lead = shard === 0;
