@@ -1552,7 +1552,14 @@ Deno.serve(async (req) => {
         for (const x of freeNodes) unitsAll.set(unitKey(x), [...(unitsAll.get(unitKey(x)) ?? []), x]);
         const covered = (u: number[]) => nodes[u[0]].together ? u.every(done) : u.some(done);
         const open = [...unitsAll.values()].filter(u => !covered(u));
-        const skip = new Set(freeNodes.filter(x => nodes[x].once && done(x)));
+        // tickfix (v87, 7 Nov 2026, from the walk-the-trip test): a once-only place that is done stays
+        // off the plan, unless its keep-together partner is still wanted (Bradley is reached through
+        // Taggart: the pair goes again as a pair); and on the ticks path every entry of a nailed place
+        // stays off (nothing left to gain there).
+        const tickfix = !!cfg.tickfix;
+        const openTog = new Set<string>(tickfix ? [...unitsAll.entries()].filter(([k, u]) => k.startsWith('t:') && !covered(u)).map(([k]) => k) : []);
+        const nailedGroups = new Set<number>(tickfix && ticks ? rated.map((r, i) => (r.shot_status === 'nailed' ? find(i) : -1)).filter(g => g >= 0) : []);
+        const skip = new Set(freeNodes.filter(x => (nodes[x].once && done(x) && !openTog.has(unitKey(x))) || nailedGroups.has(nodes[x].group)));
         const remaining: string[] = (run.trip_dates as string[]).slice(n);
         const gFrom = cfg.gear?.from?.date, gTo = cfg.gear?.to?.date;
         const okOn = (u: number[], td: string) => !u.some(x => gear.has(nodes[x].id)) || ((!gFrom || td >= gFrom) && (!gTo || td <= gTo));
@@ -1657,6 +1664,21 @@ Deno.serve(async (req) => {
             .sort((a, b) => (val(b, 0) - Math.max(val(b, 1), val(b, 2))) - (val(a, 0) - Math.max(val(a, 1), val(a, 2))));
         }
         const mustOf = (u: number[]) => nodes[u[0]].together ? u : [u.reduce((a, b) => (best(b, 0) > best(a, 0) ? b : a))];
+        // mustfix (v87, worksheet b6, 7 Nov 2026): when the beam finds no day with every required place,
+        // try the exact search over just those places (as the audit tool does) before dropping one. On 2 of
+        // 20 test nights Claude found such a day where the beam found none.
+        let mustRescued = 0;
+        const rescue = (scores: any[], light: boolean, mustN: number[], from?: From): { p: DayPlan; st: State } | null => {
+          if (!cfg.mustfix || !mustN.length) return null;
+          const E = [...new Set(mustN)].filter(n => nodes[n].free && !skip.has(n));
+          if (!E.length || E.length > 10) return null;
+          exactCap = 400_000;
+          const pe = planDay({ ...days[0], light }, scores, true, undefined, mustN, skip, from, E);
+          exactCap = EXACT_MAX_EXTENDS;
+          const st = pe.routes.find(r => E.every(x => r.visited[x])) ?? null;
+          if (st) mustRescued++;
+          return st ? { p: pe, st } : null;
+        };
         // Plan tomorrow with these places required, dropping from the end when a day cannot hold them all.
         const planList = (l0: number[][]) => {
           let l = l0, pp: DayPlan, ss: State | null;
@@ -1664,6 +1686,7 @@ Deno.serve(async (req) => {
             pp = planDay({ ...days[0], light: draft }, fcSc[0], true, undefined, l.flatMap(mustOf), skip);
             ss = pp.routes[0] ?? null;
             if (ss || !l.length) break;
+            { const r = rescue(fcSc[0], draft, l.flatMap(mustOf)); if (r) { pp = r.p; ss = r.st; break; } }
             l = l.slice(0, -1);
           }
           return { p: pp, st: ss, list: l };
@@ -1773,6 +1796,7 @@ Deno.serve(async (req) => {
             pn = planDay({ ...days[0], light: false }, nSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
             sn = pn.routes[0] ?? null;
             if (sn || !l.length) break;
+            { const r = rescue(nSc, false, l.flatMap(mustOf), { visits: before, atMs }); if (r) { pn = r.p; sn = r.st; break; } }
             l = l.slice(0, -1);
           }
           let gain: number | null = null;
@@ -2133,6 +2157,7 @@ Deno.serve(async (req) => {
             pp = planDay({ ...days[0], light: false }, sc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
             sp = pp.routes[0] ?? null;
             if (sp || !l.length) break;
+            { const r = rescue(sc, false, l.flatMap(mustOf), { visits: before, atMs }); if (r) { pp = r.p; sp = r.st; break; } }
             l = l.slice(0, -1);
           }
           if (cfg.polish_k && sp && pp) {
@@ -2179,6 +2204,7 @@ Deno.serve(async (req) => {
             pm = planDay({ ...days[0], light: false }, mSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
             sm = pm.routes[0] ?? null;
             if (sm || !l.length) break;
+            { const r = rescue(mSc, false, l.flatMap(mustOf), { visits: before, atMs }); if (r) { pm = r.p; sm = r.st; break; } }
             l = l.slice(0, -1);
           }
           if (cfg.polish_k && sm && pm) {
@@ -2231,6 +2257,7 @@ Deno.serve(async (req) => {
             pe = planDay({ ...days[0], light: false }, eSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
             se = pe.routes[0] ?? null;
             if (se || !l.length) break;
+            { const r = rescue(eSc, false, l.flatMap(mustOf), { visits: before, atMs }); if (r) { pe = r.p; se = r.st; break; } }
             l = l.slice(0, -1);
           }
           if (cfg.polish_k && se && pe) {
@@ -2268,6 +2295,7 @@ Deno.serve(async (req) => {
             pd = planDay({ ...days[0], light: false }, dSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
             sd = pd.routes[0] ?? null;
             if (sd || !l.length) break;
+            { const r = rescue(dSc, false, l.flatMap(mustOf), { visits: before, atMs }); if (r) { pd = r.p; sd = r.st; break; } }
             l = l.slice(0, -1);
           }
           if (cfg.polish_k && sd && pd) {
@@ -2323,7 +2351,7 @@ Deno.serve(async (req) => {
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members: fcB[0]?.members ?? 51, required: req.length, wanted: want.length, kept: list.length, open: open.length,
-                   ms: p0.ms, ...(exStats ? { exact: exStats } : {}), ...(polStats ? { polish: polStats } : {}), ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route', why: whyNot(days[0]) }) },
+                   ms: p0.ms, ...(mustRescued ? { must_rescued: mustRescued } : {}), ...(exStats ? { exact: exStats } : {}), ...(polStats ? { polish: polStats } : {}), ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route', why: whyNot(days[0]) }) },
         });
       };
       let shot: Record<string, number>;
