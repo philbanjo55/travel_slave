@@ -7,6 +7,8 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // good shot (lead + 10240); blue_judge = only the truth does (to judge plain T on the same rule).
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
 // v85 (6 Nov 2026): tool op audit {visits} (full rule check by exact search) and solve {polish: true} (grading).
+// v92 (8 Nov 2026, worksheet E4/E7, version BD): run config runs = builds at lead + 81920 keep each member's
+// hidden chance per slot, and a visit is valued by its expected best moment with persisting hidden / clear spells.
 // v91 (8 Nov 2026): published plans carry params/stats.version = the planner_versions winner.
 // v90 (8 Nov 2026, F5 / version BC): run config layers = builds at lead + 40960, ECMWF's hidden-peak odds
 // from its low cloud (replay_layer_fit, single ECMWF runs in replay_wx_layers).
@@ -351,7 +353,7 @@ Deno.serve(async (req) => {
     const FOG = cfg.fog && !cfg.draft ? 80 : 0;
     // vfit (v73, 6 Nov 2026, planner version AN): builds at lead + 640 use the hidden-peak and look odds
     // learned from the camera vote (counts hb + 10 / lk + 10); carried with SUN in every lead below.
-    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0) + (cfg.cons && !cfg.draft ? 2560 : 0) + (cfg.sbfix && !cfg.draft ? 5120 : 0) + (cfg.blue && !cfg.draft ? 10240 : 0) + (cfg.layers && !cfg.draft ? 40960 : 0);
+    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0) + (cfg.cons && !cfg.draft ? 2560 : 0) + (cfg.sbfix && !cfg.draft ? 5120 : 0) + (cfg.blue && !cfg.draft ? 10240 : 0) + (cfg.layers && !cfg.draft ? 40960 : 0) + (cfg.runs && !cfg.draft ? 81920 : 0);
     const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX + FOG + SUN;
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members, look_at')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
@@ -410,7 +412,7 @@ Deno.serve(async (req) => {
     const scoresOf = (buildId: string, to51 = false) => {
       const key = `${buildId}|${to51 ? 51 : 0}`, hit = SCORE_CACHE.get(key);
       if (hit && Date.now() - hit.at < 600000) return Promise.resolve(hit.rows);
-      return all<any>((a, b) => db.from('replay_scores_c').select('stop_id, t0, offs, v')
+      return all<any>((a, b) => db.from('replay_scores_c').select('stop_id, t0, offs, v, h')
         .eq('build_id', buildId).order('stop_id').range(a, b))
         .then(rows => {
           const out = rows.flatMap(r => {
@@ -418,7 +420,10 @@ Deno.serve(async (req) => {
             return (r.offs as number[]).map((o, i) => {
               const src = r.v[i] as number[], m = src.length;
               const v = to51 && m !== 51 ? Uint8Array.from({ length: 51 }, (_, k) => src[Math.floor(k * m / 51)]) : Uint8Array.from(src);
-              return { stop_id: r.stop_id, ms: t0 + o * SLOT * 60000, v };
+              // E4 (v92): each member's hidden-peak chance per slot (x 250), builds with the runs switch only.
+              const hs = r.h?.[i] as number[] | undefined;
+              const h = hs ? (to51 && m !== 51 ? Uint8Array.from({ length: 51 }, (_, k) => hs[Math.floor(k * m / 51)]) : Uint8Array.from(hs)) : null;
+              return { stop_id: r.stop_id, ms: t0 + o * SLOT * 60000, v, h };
             });
           });
           if (out.length) {
@@ -490,6 +495,7 @@ Deno.serve(async (req) => {
     if (week) for (const day of fcSc) for (const r of day) {
       const m = r.v.length; if (m === 51) continue;
       const src = r.v; r.v = Uint8Array.from({ length: 51 }, (_, k) => src[Math.floor(k * m / 51)]);
+      if (r.h) { const hs = r.h; r.h = Uint8Array.from({ length: 51 }, (_, k) => hs[Math.floor(k * m / 51)]); }
     }
     // Careful score (run config shrink, v60, Phil 3 Nov 2026: "test the more careful score idea";
     // Y showed that searching harder on the forecast lost points): each forecast value is blended
@@ -747,17 +753,49 @@ Deno.serve(async (req) => {
 
       // V per node per slot, W = best V over the visit window starting there.
       const V: (Uint8Array | null)[][] = nodes.map(() => new Array(nSlots).fill(null));
+      const HP: (Uint8Array | null)[][] = nodes.map(() => new Array(nSlots).fill(null));
       for (const r of scores) {
         const ni = pos.get(r.stop_id); if (ni == null) continue;
         const ti = Math.round((r.ms - dayStart) / (SLOT * 60000));
-        if (ti >= 0 && ti < nSlots) V[ni][ti] = r.v;  // read only (W copies before merging)
+        if (ti >= 0 && ti < nSlots) { V[ni][ti] = r.v; HP[ni][ti] = (r as any).h ?? null; }  // read only (W copies before merging)
       }
+      // E4 / E7 whole-day weather (v92, run config runs): a visit is worth its best moment, and hidden / clear
+      // spells persist (Teton winter: a hidden hour stays hidden ~90%, a clear one turns hidden ~10%), so a long
+      // visit that starts under cloud has a real chance of a clear spell. Per member, the peaks' state is
+      // followed slot by slot (it stays put with chance rho per 15 min, else is drawn fresh from that slot's
+      // hidden chance) and the visit's value is the expected best moment. Before: the best slot's expected value.
+      const RUNS = !!cfg.runs && !cfg.draft;
+      const RHO = Math.pow(Math.max(0, Math.min(0.99, Number(cfg.runs_rho ?? 0.8))), 0.25);
+      const runBest = (ni: number, start: number, len: number): Uint8Array | null => {
+        const ts: number[] = [];
+        for (let t = start; t < Math.min(start + len, nSlots); t++) if (V[ni][t]) { if (!HP[ni][t]) return null; ts.push(t); }
+        if (!ts.length) return null;
+        const out = new Uint8Array(M);
+        for (let k = 0; k < M; k++) {
+          let vis = new Map<number, number>(), hid = new Map<number, number>();
+          ts.forEach((t, j) => {
+            const v = V[ni][t]![k], p = HP[ni][t]![k] / 250;
+            const b = Math.min(250, Math.round(v / (1 - 0.9 * p))), c = Math.round(b * 0.1);
+            if (j === 0) { vis.set(b, 1 - p); hid.set(c, p); return; }
+            const p11 = RHO + (1 - RHO) * p, p01 = (1 - RHO) * p;
+            const nv = new Map<number, number>(), nh = new Map<number, number>();
+            const add = (m: Map<number, number>, val: number, pr: number) => { if (pr > 0) m.set(val, (m.get(val) ?? 0) + pr); };
+            for (const [val, pr] of hid) { add(nh, Math.max(val, c), pr * p11); add(nv, Math.max(val, b), pr * (1 - p11)); }
+            for (const [val, pr] of vis) { add(nh, Math.max(val, c), pr * p01); add(nv, Math.max(val, b), pr * (1 - p01)); }
+            vis = nv; hid = nh;
+          });
+          let e = 0; for (const [val, pr] of vis) e += val * pr; for (const [val, pr] of hid) e += val * pr;
+          out[k] = Math.max(0, Math.min(250, Math.round(e)));
+        }
+        return out;
+      };
       const wCache = new Map<number, Uint8Array | null>();
       const W = (ni: number, start: number): Uint8Array | null => {
         if (start < 0 || start >= nSlots) return null;
         const key = ni * 10000 + start;
         if (wCache.has(key)) return wCache.get(key)!;
         const len = Math.ceil(nodes[ni].dur / SLOT);
+        if (RUNS) { const rb = runBest(ni, start, len); if (rb) { wCache.set(key, rb); return rb; } }
         let best: Uint8Array | null = null;
         for (let t = start; t < Math.min(start + len, nSlots); t++) {
           const v = V[ni][t]; if (!v) continue;
