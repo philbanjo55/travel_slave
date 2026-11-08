@@ -390,6 +390,11 @@ Deno.serve(async (req) => {
     if (earlyOn && !eB && !live) return json({ ok: false, error: 'early build missing' }, 404);
     // depart (v69): the look before you leave, same models and lead as the morning one; built when needed.
     const departOn = morning && !!cfg.depart && !live;
+    // hourly (v89, Phil 7 Nov 2026: "async mid day planning will help"): bench only. From hourly_from to
+    // hourly_to (local hours), each hour the camera vote (replay_hidden_vote, the hour just ended) is read;
+    // when it flips (peaks came out / clouded over) the rest of the day is re-planned on a look build made
+    // for that time (as the look before you leave), at most hourly_max times a day.
+    const hourlyOn = morning && !!cfg.hourly && !live;
     const depKind = cfg.morning_fresh ? 'departf' : 'depart';
 
     const { data: trip } = await db.from('trips').select('timezone').eq('id', tripId).single();
@@ -1672,6 +1677,10 @@ Deno.serve(async (req) => {
           // v88: at most rescue_tries (2) exact searches per request, capped at rescue_cap (150k): v87 retried after
           // every dropped place at 400k and 16 of 112 test weeks ran out of time on the gear-pickup and flight days.
           if (!cfg.mustfix || !mustN.length || rescueTries >= Number(cfg.rescue_tries ?? 2)) return null;
+          // v89: skip when the request has used most of its CPU already (the gear-pickup and flight days sat
+          // near the 2 s limit before the rescue and timed out on 12 of 168 test weeks): the plan then does
+          // what it did before the fix.
+          if (performance.now() - tReq - tWait > Number(cfg.rescue_ms ?? 1000)) return null;
           rescueTries++;
           const E = [...new Set(mustN)].filter(n => nodes[n].free && !skip.has(n));
           if (!E.length || E.length > 10) return null;
@@ -2136,7 +2145,7 @@ Deno.serve(async (req) => {
           const v = st.route[0], dep = p0.dayStart + (v.arrive - v.drive) * 60000;
           return Math.floor((dep - DEPART_LOOK_MIN * 60000) / 300000) * 300000;
         };
-        const departStep = async (atMs: number) => {
+        const departStep = async (atMs: number, key = 'depart') => {
           const LEAD = 1 + WX + FOG + FADE + SUN;
           let id = (blds ?? []).find(x => x.replay_day_id === horizon[0].dayId && x.kind === depKind && x.lead === LEAD && x.look_at && Date.parse(x.look_at) === atMs)?.id as string | undefined;
           if (!id) {
@@ -2165,9 +2174,9 @@ Deno.serve(async (req) => {
           }
           if (cfg.polish_k && sp && pp) {
             const r = polish(sc, pp, sp, l.flatMap(mustOf), { visits: before, atMs });
-            polStats = { ...(polStats ?? {}), depart: r.gain, ...(r.capped ? { depart_capped: true } : {}) }; pp = r.p; sp = r.st;
+            polStats = { ...(polStats ?? {}), [key]: r.gain, ...(r.capped ? { [key + '_capped']: true } : {}) }; pp = r.p; sp = r.st;
           }
-          await mark('depart');
+          await mark(key);
           const { data: look } = await db.from('replay_hidden_truth').select('hr, hidden').eq('trip_id', tripId)
             .gte('hr', new Date(atMs - 3600000).toISOString()).lte('hr', new Date(atMs).toISOString()).order('hr', { ascending: false }).limit(1);
           const show = (p: DayPlan, s: State) => s.route.filter(v => nodes[v.n].w > 0)
@@ -2179,7 +2188,8 @@ Deno.serve(async (req) => {
             Object.assign(dd, { plan: now, changed: now.join('|') !== was.join('|'), dropped: list.length - l.length });
             p0 = pp; st = sp; list = l;
           } else dd.error = 'no route from the depart look: the plan stands';
-          mrStats = { ...(mrStats ?? {}), depart: dd };
+          if (key === 'depart') mrStats = { ...(mrStats ?? {}), depart: dd };
+          else mrStats = { ...(mrStats ?? {}), [key]: [...((mrStats ?? {})[key] ?? []), dd] };
         };
         let departDone = false;
         if (departOn && st && !draft && stage !== 'morning') {
@@ -2318,6 +2328,28 @@ Deno.serve(async (req) => {
             p0 = pd; st = sd;
           } else md.error = 'no midday route: the morning plan stands';
           mrStats = { ...(mrStats ?? {}), midday: md };
+        }
+        if (hourlyOn && st) {
+          const fromH = Number(cfg.hourly_from ?? 9), toH = Number(cfg.hourly_to ?? 15), maxN = Number(cfg.hourly_max ?? 2);
+          const ats: number[] = [];
+          for (let h = fromH; h <= toH; h++) ats.push(zonedToUtc(days[0].date, h * 60, tz));
+          const { data: hv } = await db.from('replay_hidden_vote').select('hr, hidden').eq('trip_id', tripId)
+            .gte('hr', new Date(ats[0] - 2 * 3600000).toISOString()).lte('hr', new Date(ats[ats.length - 1]).toISOString());
+          const voteAt = new Map<number, boolean>((hv ?? []).map((r: any) => [Date.parse(r.hr), !!r.hidden]));
+          let prev = voteAt.get(ats[0] - 2 * 3600000) ?? null, done = 0, skipped = 0;
+          const flips: string[] = [];
+          for (const at of ats) {
+            const cur = voteAt.get(at - 3600000) ?? null;
+            if (cur != null && prev != null && cur !== prev) {
+              flips.push(new Date(at).toISOString().slice(11, 16) + (cur ? ' hidden' : ' clear'));
+              if (done < maxN && st) {
+                if (reqBudget > 0 && !goOn()) skipped++;
+                else { await departStep(at, 'hourly'); done++; }
+              }
+            }
+            if (cur != null) prev = cur;
+          }
+          mrStats = { ...(mrStats ?? {}), hourly_flips: flips, hourly_done: done, ...(skipped ? { hourly_skipped: skipped } : {}) };
         }
         if (st) { missedNode = pickMissed(st.route); for (const v of st.route) if (v.n !== missedNode) seenIds.add(nodes[v.n].id); }
         nextSets = { seen: [...seenIds] };
