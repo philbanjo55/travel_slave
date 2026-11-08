@@ -7,6 +7,7 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // good shot (lead + 10240); blue_judge = only the truth does (to judge plain T on the same rule).
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
 // v85 (6 Nov 2026): tool op audit {visits} (full rule check by exact search) and solve {polish: true} (grading).
+// v91 (8 Nov 2026): published plans carry params/stats.version = the planner_versions winner.
 // v90 (8 Nov 2026, F5 / version BC): run config layers = builds at lead + 40960, ECMWF's hidden-peak odds
 // from its low cloud (replay_layer_fit, single ECMWF runs in replay_wx_layers).
 // v83 (6 Nov 2026): tool ops stop_detail {stop_id} and weather_detail for Claude.
@@ -1457,6 +1458,10 @@ Deno.serve(async (req) => {
       // plan the week), which made "your day" worth ~0 wherever T went earlier: drafts score
       // both plans and the ceiling on the day's own merit (live nights keep the real shots).
       const publish = async (step: 'night' | 'morning' | 'early' | 'now' | 'week', p: DayPlan, s: State, extra: any = {}, atMsPub?: number) => {
+        // v91 (Phil, 8 Nov 2026: "add the version label"): every published plan carries the planner
+        // version it ran as = the winner in planner_versions (what the live planner runs); the app shows it.
+        const { data: pvw } = await db.from('planner_versions').select('letter').eq('status', 'winner').maybeSingle();
+        const version: string | null = pvw?.letter ?? null;
         if (!cfg.publish || !live) return;
         const d0 = days[0];
         const visits = visitsOf(p, s);
@@ -1530,8 +1535,8 @@ Deno.serve(async (req) => {
         let ceiling = 0;
         for (const [g, w] of placeW) ceiling += w * gainB(g, 250, undefined) / 250;
         const { data: sr, error: e1 } = await db.from('solver_runs').insert({
-          trip_id: tripId, plan_date: d0.date, params: { planner: 'T', replay_run: runId, night: n, step, tz },
-          stats: { kind: 'day', planner: 'T', variant: 'T', step, ceiling: r3(ceiling), ...extra,
+          trip_id: tripId, plan_date: d0.date, params: { planner: 'T', version, replay_run: runId, night: n, step, tz },
+          stats: { kind: 'day', planner: 'T', variant: 'T', version, step, ceiling: r3(ceiling), ...extra,
                    n_fc: draft ? null : M, exp_big: goodShots(visits).exp_big, exp_big_mine: goodShots(mine).exp_big,
                    exp_all: goodShots(visits).exp_all, exp_all_mine: goodShots(mine).exp_all,
                    days: [{ date: d0.date, trip_date: d0.tripDate, light_only: draft,

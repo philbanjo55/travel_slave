@@ -98,7 +98,20 @@ export function expShots(plan: Plan | undefined, tierOf: (id: string) => string 
 export const shotsText = (x: number) => (x >= 9.95 ? String(Math.round(x)) : x.toFixed(1));
 
 // Which plan this is and when it was made: "Evening plan · 9:30 PM", "Morning re-plan · 6:40 AM".
+// The planner version that made the plan (Phil, 8 Nov 2026): "T (BA)" once solver-replay v91 stamps it.
+export function planVersionText(run: PlanRun | null | undefined): string {
+  const v = run?.stats?.version ?? run?.params?.version;
+  return v ? `T (${v})` : 'T';
+}
+
 export function planKindText(run: PlanRun | null | undefined): string {
+  const v = run?.stats?.version ?? run?.params?.version;
+  const base = planKindBase(run);
+  if (!v) return base;
+  return base === 'T plan' ? planVersionText(run) : `${planVersionText(run)}: ${base.charAt(0).toLowerCase()}${base.slice(1)}`;
+}
+
+function planKindBase(run: PlanRun | null | undefined): string {
   const step = run?.stats?.step;
   if (isLightOnly(run)) return 'Week draft · no forecast yet';
   if (step === 'morning') return 'Morning re-plan';
