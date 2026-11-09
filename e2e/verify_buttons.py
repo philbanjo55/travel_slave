@@ -60,11 +60,11 @@ def open_today():
     d = datetime.datetime.now(ZoneInfo('America/Denver'))
     want = f", {d.strftime('%b')} {d.day}"
     s = C.capture(1)
+    short = want.strip(', ')  # 'Nov 9': the tab's own date line (exact match, so 'Nov 19' never matches)
     for _ in range(4):
-        for c in s.clickables:
-            if c['label'].strip().endswith(want) and c['label'].strip().upper().startswith('DAY'):
-                C.tap(c['xy']); t = C.capture(4)
-                V.check('btn-today-tab', True, c['label'].strip()); return t
+        if V.tap_text(s, short, exact=True):
+            t = C.capture(4)
+            V.check('btn-today-tab', True, short); return t
         C.adb('shell', 'input', 'swipe', '900', '700', '200', '700', '300'); s = C.capture(0.8)
     V.check('btn-today-tab', False, 'no tab ending ' + want); return None
 
