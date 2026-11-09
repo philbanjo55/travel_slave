@@ -7,7 +7,7 @@
 // environment here is a placeholder: the proxy replaces it.
 //
 //   SUPABASE_URL=https://ohshrzlvvxyovcjmdajc.supabase.co SUPABASE_SERVICE_ROLE_KEY=placeholder \
-//     deno run -A --node-modules-dir=none tools/bench_local/worker.ts
+//     deno run -A --no-lock --node-modules-dir=none tools/bench_local/worker.ts
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? 'placeholder';
 const PORT = 8000; // Deno.serve's default port (index.ts calls Deno.serve itself)
@@ -45,7 +45,7 @@ async function poll() {
 }
 
 const server = new Deno.Command(Deno.execPath(), {
-  args: ['run', '-A', '--node-modules-dir=none', new URL('../../supabase/functions/solver-replay/index.ts', import.meta.url).pathname],
+  args: ['run', '-A', '--no-lock', '--node-modules-dir=none', new URL('../../supabase/functions/solver-replay/index.ts', import.meta.url).pathname],
   env: { SUPABASE_URL: URL_, SUPABASE_SERVICE_ROLE_KEY: KEY }, stdout: 'inherit', stderr: 'inherit',
 }).spawn();
 await new Promise(r => setTimeout(r, 4000));
