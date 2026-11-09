@@ -3,6 +3,7 @@
 Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`faroes-web/`, `iceland-web/`), and a Supabase backend (project `ohshrzlvvxyovcjmdajc`). Most backend logic lives in the database and edge functions, not in this repo — read the live definitions before changing anything.
 
 - **Talking to Phil:** give him times in US Eastern time (EDT, EST from 1 Nov 2026), never UTC; keep UTC for cron and code.
+- **Status updates (Phil, 9 Nov 2026):** when he asks what's on the board / what's running, list only current and upcoming items. Leave out anything finished, retired or left off.
 
 ## Data safety (hard rules)
 
