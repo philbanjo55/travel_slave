@@ -83,12 +83,18 @@ Deno.serve(async (req) => {
         return `- ${hm(v.start)}-${hm(v.end)} ${v.name}${s ? ` (${Number(s.lat).toFixed(4)}, ${Number(s.lng).toFixed(4)})` : ''}\n  Notes: ${info.replace(/\s+/g, ' ')}`;
       }).join('\n');
       const day = visits[0]?.trip_date ?? rv.plan_date;
-      const prompt = `Area: ${area}. Trip time zone: ${tz}. Today is ${new Date().toISOString().slice(0, 10)} (UTC).\nThe plan (${plan?.note ?? rv.note}) for ${day}:\n${lines}\n\nCheck this plan as described, then call submit_review.`;
+      // Official pages to read first (fetching a known page saves the searches; v2, 9 Nov 2026: the first
+      // review spent all 8 searches on one trail and never got to roads, warnings or avalanche danger).
+      const mLat = lat.toFixed(3), mLng = ((stops ?? []).reduce((t: number, s: any) => t + Number(s.lng ?? 0), 0) / Math.max(1, (stops ?? []).length)).toFixed(3);
+      const start = lat > 55
+        ? `Start with: Landsverk road information (landsverk.fo), the Faroese weather office warnings (Veðurstova Føroya, vedur.fo), and Atlantic Airways / Strandfaraskip Landsins for any flight, ferry or boat in the plan.`
+        : `Start by reading these pages: https://www.nps.gov/grte/planyourvisit/conditions.htm (park alerts, road and trail closures), https://www.nps.gov/grte/planyourvisit/hours.htm (visitor centers), https://api.weather.gov/alerts/active?point=${mLat},${mLng} (National Weather Service warnings, JSON). Search the Bridger-Teton Avalanche Center forecast only if the plan has a ski or snowshoe outing off groomed trail, and WYDOT (wyoroad.info) only for roads outside the park.`;
+      const prompt = `Area: ${area}. Trip time zone: ${tz}. Today is ${new Date().toISOString().slice(0, 10)} (UTC).\nThe plan (${plan?.note ?? rv.note}) for ${day}:\n${lines}\n\n${start}\nCover all four kinds of check (closures, warnings, avalanche, hours) briefly before going deeper on any one. Check this plan as described, then call submit_review.`;
 
       const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! });
       const tools: any[] = [
-        { type: 'web_search_20260209', name: 'web_search', max_uses: 8 },
-        { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 5 },
+        { type: 'web_search_20260209', name: 'web_search', max_uses: 12 },
+        { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 8 },
         SUBMIT,
       ];
       const messages: any[] = [{ role: 'user', content: prompt }];
