@@ -88,13 +88,32 @@ Deno.serve(async (req) => {
       const mLat = lat.toFixed(3), mLng = ((stops ?? []).reduce((t: number, s: any) => t + Number(s.lng ?? 0), 0) / Math.max(1, (stops ?? []).length)).toFixed(3);
       const start = lat > 55
         ? `Start with: Landsverk road information (landsverk.fo), the Faroese weather office warnings (Veðurstova Føroya, vedur.fo), and Atlantic Airways / Strandfaraskip Landsins for any flight, ferry or boat in the plan.`
-        : `Start by reading these pages: https://www.nps.gov/grte/planyourvisit/conditions.htm (park alerts, road and trail closures), https://www.nps.gov/grte/planyourvisit/hours.htm (visitor centers), https://api.weather.gov/alerts/active?point=${mLat},${mLng} (National Weather Service warnings, JSON). Search the Bridger-Teton Avalanche Center forecast only if the plan has a ski or snowshoe outing off groomed trail, and WYDOT (wyoroad.info) only for roads outside the park.`;
-      const prompt = `Area: ${area}. Trip time zone: ${tz}. Today is ${new Date().toISOString().slice(0, 10)} (UTC).\nThe plan (${plan?.note ?? rv.note}) for ${day}:\n${lines}\n\n${start}\nCover all four kinds of check (closures, warnings, avalanche, hours) briefly before going deeper on any one. Check this plan as described, then call submit_review.`;
+        : `Start by reading these pages: https://www.nps.gov/grte/planyourvisit/conditions.htm (park alerts, road and trail closures), https://www.nps.gov/grte/planyourvisit/hours.htm (visitor centers), and WYDOT (wyoroad.info) only for roads outside the park. Weather warnings and avalanche danger are given below; do not search for them.`;
+      // v3: warnings and avalanche danger are fetched here and handed over (Claude's fetcher was refused by
+      // weather.gov, and searching for them used up the budget). Faroes: none of these, Claude searches.
+      let given = '';
+      if (lat <= 55) {
+        const ua = { 'User-Agent': 'philmframe-trip-planner (t-review)', Accept: 'application/geo+json' };
+        try {
+          const r = await fetch(`https://api.weather.gov/alerts/active?point=${mLat},${mLng}`, { headers: ua, signal: AbortSignal.timeout(15000) });
+          const j: any = await r.json();
+          const al = (j.features ?? []).map((f: any) => f.properties).map((a: any) => `${a.event}: ${a.headline ?? ''} (${a.effective} to ${a.ends ?? a.expires})`);
+          given += `\nNational Weather Service active alerts for this point, fetched now (${r.status}): ${al.length ? al.join(' | ') : 'none'}.`;
+        } catch (e) { given += `\nNational Weather Service alerts: could not fetch (${String(e).slice(0, 80)}).`; }
+        try {
+          const r = await fetch('https://api.avalanche.org/v2/public/products/map-layer', { signal: AbortSignal.timeout(15000) });
+          const j: any = await r.json();
+          const zs = (j.features ?? []).map((f: any) => f.properties).filter((z: any) => z.center_id === 'BTAC')
+            .map((z: any) => `${z.name}: ${z.danger ?? 'no rating'}${z.travel_advice ? ` - ${String(z.travel_advice).slice(0, 200)}` : ''}${z.off_season ? ' (off season)' : ''}`);
+          given += `\nBridger-Teton Avalanche Center danger by zone, fetched now (avalanche.org): ${zs.length ? zs.join(' | ') : 'no BTAC zones found'}.`;
+        } catch (e) { given += `\nAvalanche danger: could not fetch (${String(e).slice(0, 80)}).`; }
+      }
+      const prompt = `Area: ${area}. Trip time zone: ${tz}. Today is ${new Date().toISOString().slice(0, 10)} (UTC).\nThe plan (${plan?.note ?? rv.note}) for ${day}:\n${lines}\n\n${start}${given}\nCover all four kinds of check (closures, warnings, avalanche, hours) briefly before going deeper on any one. Check this plan as described, then call submit_review.`;
 
       const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! });
       const tools: any[] = [
-        { type: 'web_search_20260209', name: 'web_search', max_uses: 12 },
-        { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 8 },
+        { type: 'web_search_20260209', name: 'web_search', max_uses: 8 },
+        { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 6 },
         SUBMIT,
       ];
       const messages: any[] = [{ role: 'user', content: prompt }];
