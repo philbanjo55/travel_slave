@@ -8,6 +8,8 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
 // v85 (6 Nov 2026): tool op audit {visits} (full rule check by exact search) and solve {polish: true} (grading).
 // v93 (9 Nov 2026): the whole-day calculation steps an hour at a time and copies repeated members (v92 timed out).
+// v94 (9 Nov 2026, version BE): run config slay = builds at lead + 163840, every model's hidden-peak odds
+// also read ECMWF's low cloud (replay_slayer_fit). BC fed it to the ECMWF member alone.
 // v92 (8 Nov 2026, worksheet E4/E7, version BD): run config runs = builds at lead + 81920 keep each member's
 // hidden chance per slot, and a visit is valued by its expected best moment with persisting hidden / clear spells.
 // v91 (8 Nov 2026): published plans carry params/stats.version = the planner_versions winner.
@@ -354,7 +356,7 @@ Deno.serve(async (req) => {
     const FOG = cfg.fog && !cfg.draft ? 80 : 0;
     // vfit (v73, 6 Nov 2026, planner version AN): builds at lead + 640 use the hidden-peak and look odds
     // learned from the camera vote (counts hb + 10 / lk + 10); carried with SUN in every lead below.
-    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0) + (cfg.cons && !cfg.draft ? 2560 : 0) + (cfg.sbfix && !cfg.draft ? 5120 : 0) + (cfg.blue && !cfg.draft ? 10240 : 0) + (cfg.layers && !cfg.draft ? 40960 : 0) + (cfg.runs && !cfg.draft ? 81920 : 0);
+    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0) + (cfg.cons && !cfg.draft ? 2560 : 0) + (cfg.sbfix && !cfg.draft ? 5120 : 0) + (cfg.blue && !cfg.draft ? 10240 : 0) + (cfg.layers && !cfg.draft ? 40960 : 0) + (cfg.runs && !cfg.draft ? 81920 : 0) + (cfg.slay && !cfg.draft ? 163840 : 0);
     const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX + FOG + SUN;
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members, look_at')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
