@@ -11,6 +11,8 @@ import {
 import { VERDICT_COLOR, VERDICT_TEXT, countText, isBig, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
 import { TDay, TWeek, bestElsewhere, tripWeek } from '../../services/plannerWeek';
 import { DayScore } from '../../services/plannerDay';
+import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../../services/replanNowStore';
+import { useTripStore } from '../../store/tripStore';
 export { dayScore, moveReasons } from '../../services/plannerDay';
 export type { DayScore } from '../../services/plannerDay';
 
@@ -116,6 +118,8 @@ export function useDayPlanner(tripId: string | null, date: string | null | undef
   const lastRead = useRef(0);
   const again = () => { if (Date.now() - lastRead.current > 60_000) setReads(n => n + 1); };
   useEffect(() => { if (focused) again(); }, [focused]);
+  // A Re-plan now just landed: read the plan again at once.
+  useEffect(() => onPlanLanded(() => setReads(n => n + 1)), []);
   useEffect(() => {
     const sub = AppState.addEventListener('change', st => { if (st === 'active') again(); });
     return () => sub.remove();
@@ -227,6 +231,7 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
         </Text>
       ) : null}
       {score.lowerWhy ? <Text style={styles.cardSub}>{score.lowerWhy}</Text> : null}
+      {!past && date === format(new Date(), 'yyyy-MM-dd') ? <ReplanNowRow tripId={tripId} /> : null}
       {past ? <Text style={styles.cardSub}>This day is over: nothing to change.</Text> : score.reasons.length ? (
         <View style={styles.reasons}>
           <TouchableOpacity onPress={onShowChanges} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Show T's changes on the timeline">
@@ -252,13 +257,15 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
 
 // A stop's T chance at its time on the shown day, its light, and one hint: a better time that
 // day, else a better trip day (both from T's own plans).
-export type StopHint = { p: number; light: string | null; chip: string | null; changed?: boolean; count: string };
+export type StopHint = { p: number; light: string | null; chip: string | null; changed?: boolean; done?: boolean; count: string };
 export function stopHint(stopId: string, planner: DayPlanner | null): StopHint | null {
   const v = planner?.byStop.get(stopId);
   if (!v || v.p_good == null) return null;
   const tz: string | undefined = planner?.run?.params?.tz;
   const light = v.light ? LIGHT_WORDS[v.light] ?? v.light : null;
   const count = countText(v, planner?.run).replace(/ forecasts$/, '');
+  // Over by the time of the newest re-plan: done, no chance or hint (worksheet B2).
+  if (v.done) return { p: v.p_good, light: null, chip: null, done: true, count: '' };
   if (planner?.changed.has(stopId)) return { p: v.p_good, light, chip: null, changed: true, count };
   const better = planner?.betterDay.get(stopId);
   const tryAt = v.best && verdictOf(v.best.p_good) !== verdictOf(v.p_good) && v.best.p_good > v.p_good ? v.best : null;
@@ -270,6 +277,12 @@ export function stopHint(stopId: string, planner: DayPlanner | null): StopHint |
 // The verdict, its count and the hint chip (day timeline, stop screen).
 export function ChanceLine({ hint, label, onChip }: { hint: StopHint; label?: boolean; onChip?: () => void }) {
   const vd = verdictOf(hint.p);
+  if (hint.done) return (
+    <View style={styles.chanceRow} accessibilityLabel="Done, this time has passed">
+      {label ? <Text style={styles.label}>T</Text> : null}
+      <Text style={styles.hintText} numberOfLines={1}>Done · this time has passed</Text>
+    </View>
+  );
   return (
     <View style={styles.chanceRow} accessibilityLabel={`${VERDICT_TEXT[vd]}, ${hint.count}${hint.changed ? ', from before your change' : ''}${hint.light ? `, ${hint.light}` : ''}${hint.chip ? `. ${hint.chip}` : ''}`}>
       {label ? <Text style={styles.label}>T</Text> : null}
@@ -287,7 +300,29 @@ export function ChanceLine({ hint, label, onChip }: { hint: StopHint; label?: bo
   );
 }
 
+// Re-plan now on today's card (Phil, 5 Nov 2026): fresh camera pictures, then the rest of today
+// re-planned from where the plan says you are; the result shows here.
+export function ReplanNowRow({ tripId }: { tripId: string }) {
+  const v = useReplanNow(tripId);
+  const { currentTripData } = useTripStore();
+  const go = () => startReplanNow(tripId, currentTripData?.trip?.title).catch((e: any) => failReplanNow(tripId, String(e?.message ?? e)));
+  if (v.phase === 'running') {
+    return <Text style={styles.cardSub}>Re-planning the rest of today with fresh camera pictures (about 1 minute). The new plan shows here.</Text>;
+  }
+  return (
+    <View style={{ gap: 4 }}>
+      {v.phase === 'done' ? <Text style={styles.warn}>{v.status.done_at ? `${clock12(v.status.done_at, currentTripData?.trip?.timezone ?? undefined)}: ` : ''}{v.message}</Text> : null}
+      {v.phase === 'error' ? <Text style={[styles.cardSub, { color: '#e74c3c' }]}>{v.message}</Text> : null}
+      <TouchableOpacity onPress={go} style={styles.nowBtn} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Re-plan the rest of today now with the cameras">
+        <Text style={styles.nowText}>Re-plan now with the cameras ›</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  nowBtn: { alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: 12, borderRadius: radius.sm, backgroundColor: colors.surface },
+  nowText: { fontSize: 13, fontWeight: '700', color: colors.signalOk },
   card: {
     marginHorizontal: spacing.xl, marginTop: spacing.sm, marginBottom: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 6,
     borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,

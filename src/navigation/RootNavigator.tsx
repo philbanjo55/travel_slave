@@ -3,6 +3,7 @@ import { NavigationContainer, DarkTheme, createNavigationContainerRef } from '@r
 import * as Notifications from 'expo-notifications';
 import { IS_TEST_APP } from '../utils/variant';
 import { refreshNightly, setupPlannerNotifications } from '../services/plannerNotify';
+import { resumeReplanNow } from '../services/replanNowStore';
 import { createStackNavigator } from '@react-navigation/stack';
 import TripsScreen from '../screens/TripsScreen';
 import TripScreen from '../screens/TripScreen';
@@ -60,7 +61,7 @@ const navigationRef = createNavigationContainerRef<RootStackParamList>();
 // trip page, which loads the trip).
 function usePlannerNotificationTaps() {
   const last = Notifications.useLastNotificationResponse();
-  useEffect(() => { if (IS_TEST_APP) { setupPlannerNotifications(); refreshNightly().catch(() => {}); } }, []);
+  useEffect(() => { if (IS_TEST_APP) { setupPlannerNotifications(); refreshNightly().catch(() => {}); resumeReplanNow().catch(() => {}); } }, []);
   useEffect(() => {
     const data: any = last?.notification.request.content.data;
     if (!IS_TEST_APP || data?.kind !== 'planner_brief' || !data.tripId) return;

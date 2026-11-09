@@ -8,7 +8,7 @@ adb emu geo fix -77.1067 38.8816 || true
 adb logcat -c || true
 adb logcat -v time > out/logcat.txt 2>&1 &
 LOGCAT=$!
-python3 e2e/verify_tripjump.py || echo "verify_tripjump exited with $?"
+python3 e2e/verify_buttons.py || echo "verify_buttons exited with $?"
 adb shell svc wifi enable || true
 adb shell svc data enable || true
 

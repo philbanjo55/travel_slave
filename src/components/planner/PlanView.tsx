@@ -9,6 +9,7 @@ import {
   planDay, planDays, planTitle, runTripDates, LIGHT_WORDS, usesT, latestT, waitForT, fetchTDays,
   canApply, applyPlan, clock12,
 } from '../../services/planner';
+import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../../services/replanNowStore';
 import { VERDICT_COLOR, VERDICT_TEXT, countText, expShots, forecastCount, isLightOnly, lateReplan, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
 import { forgetWeek } from '../../services/plannerWeek';
 import { startReplan, ack } from '../../services/planningStatus';
@@ -87,6 +88,17 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
   useEffect(() => { usesT(tripId).then(setT).catch(() => setT(false)); }, [tripId]);
   useEffect(() => { if (t !== null) load(preview); }, [preview, tripDate, t]);
 
+  // Re-plan now (Phil, 5 Nov 2026): today only, on trips T plans. Fresh camera pictures, then the
+  // rest of today re-planned from where the plan says you are; the plan above stays until it is in.
+  // The request lives in a shared store (replanNowStore): it carries on if Phil leaves, and the trip
+  // page's day card shows the same one.
+  const isToday = tripDate === format(new Date(), 'yyyy-MM-dd');
+  const nowView = useReplanNow(t && isToday ? tripId : null);
+  const { currentTripData } = useTripStore();
+  const doNow = () => startReplanNow(tripId, currentTripData?.trip?.title).catch((e: any) => failReplanNow(tripId, String(e?.message ?? e)));
+  useEffect(() => onPlanLanded(() => { if (t && isToday && mounted.current) loadT(); }), [t, isToday, loadT]);
+  const nowNote = nowView.phase === 'done' ? nowView.message : null;
+
   const badge = dayBadge(tripDate);
   const runDay = run?.stats?.days?.[0];
   const kind = (t ? 't' : '') + (runDay?.light_only ? 'light' : runDay && runDay.date !== runDay.trip_date ? 'preview' : 'forecast');
@@ -105,8 +117,18 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
           <Text style={styles.replanText}>Plan again</Text>
         </TouchableOpacity>
       </View>
+      {t && isToday ? (
+        <TouchableOpacity onPress={doNow} style={[styles.replan, styles.nowBtn]} disabled={!!busy || nowView.phase === 'running'} accessibilityLabel="Re-plan now">
+          {nowView.phase === 'running' ? <ActivityIndicator size="small" color={colors.textPrimary} /> : <Ionicons name="camera-outline" size={16} color={colors.textPrimary} />}
+          <Text style={[styles.replanText, { color: colors.textPrimary }]}>
+            {nowView.phase === 'running' ? 'Re-planning with fresh camera pictures… (about 1 min)' : 'Re-plan now with the cameras'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>
+          {nowNote ? <Text style={styles.warn}>{nowNote}</Text> : null}
+          {nowView.phase === 'error' ? <Text style={styles.error}>{nowView.message}</Text> : null}
           {(() => { const l = lateReplan(run, plans); return l && run ? (
             <Text style={styles.warn}>This morning's re-plan came at {clock12(run.created_at, run.params?.tz)}, after the first stop ({clock12(l, run.params?.tz)}).</Text>
           ) : null; })()}
@@ -397,7 +419,9 @@ export function VisitRow({ v, tz, mine, onPress, index, run }: { v: PlanVisit; t
           <Text style={[styles.visitName, muted && styles.muted]} numberOfLines={2}>{v.name}</Text>
           {v.booked ? <Text style={styles.booked}>BOOKED</Text> : null}
         </View>
-        {vd ? (
+        {v.done ? (
+          <Text style={styles.visitMeta}>Done · this time has passed</Text>
+        ) : vd ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={[styles.verdict, { color: VERDICT_COLOR[vd], borderColor: VERDICT_COLOR[vd] }]}>{VERDICT_TEXT[vd]}</Text>
             <Text style={styles.visitMeta} numberOfLines={1}>
@@ -411,7 +435,7 @@ export function VisitRow({ v, tz, mine, onPress, index, run }: { v: PlanVisit; t
             {v.drive_min ? `${v.drive_min} min drive` : ''}{v.drive_min && v.wait_min ? ' · ' : ''}{v.wait_min ? `${v.wait_min} min wait` : ''}
           </Text>
         ) : null}
-        {mine && v.best && verdictOf(v.best.p_good) !== vd && v.best.p_good > (v.p_good ?? 0) ? (
+        {mine && !v.done && v.best && verdictOf(v.best.p_good) !== vd && v.best.p_good > (v.p_good ?? 0) ? (
           <Text style={styles.hintChip}>Better at {clock12(v.best.start, tz)}: {VERDICT_TEXT[verdictOf(v.best.p_good)]}</Text>
         ) : null}
       </View>
@@ -433,6 +457,7 @@ const styles = StyleSheet.create({
   replan: { flexDirection: 'row', gap: 4, paddingHorizontal: 10, minHeight: 36, alignItems: 'center', justifyContent: 'center',
             borderRadius: radius.full, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
   replanText: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
+  nowBtn: { backgroundColor: colors.surface, borderRadius: radius.sm },
   center: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingVertical: spacing.xxl },
   hint: { fontSize: 12, color: colors.textTertiary, lineHeight: 17 },
   error: { fontSize: 13, color: '#e74c3c' },

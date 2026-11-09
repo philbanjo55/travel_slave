@@ -12,6 +12,8 @@ export type PlanVisit = {
   arrive?: string; start: string | null; end?: string; wait_min?: number; drive_min?: number;
   value?: number; p_good?: number; peak_at?: string; light?: string | null; rated?: boolean;
   best?: { start: string; value: number; p_good: number; peak_at?: string } | null;
+  // Already over when a live re-plan was made (solver-replay v75): shown as done, not as a chance.
+  done?: boolean;
 };
 export type Plan = {
   rank: number; objective: number; mean: number; cvar11: number;
@@ -80,6 +82,21 @@ export async function replanT(tripId: string): Promise<string> {
   return data.since as string;
 }
 
+// Re-plan now (Phil, 5 Nov 2026): T re-plans the rest of today from where the plan says you are,
+// with fresh camera pictures (RPC planner_t_now; one at a time, a running one is reused).
+export type NowStatus = { id: number; status: 'queued' | 'planning' | 'done' | 'error'; requested_at: string; done_at: string | null;
+                          note: string | null; changed: boolean | null; hidden: number | null };
+export async function replanNow(tripId: string): Promise<{ id: number; since: string }> {
+  const { data, error } = await supabase.rpc('planner_t_now', { p_trip: tripId });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error ?? 'T could not start');
+  return { id: data.id as number, since: data.since as string };
+}
+export async function nowStatus(tripId: string): Promise<NowStatus | null> {
+  const { data, error } = await supabase.rpc('planner_t_now_status', { p_trip: tripId });
+  if (error) throw error;
+  return (data ?? null) as NowStatus | null;
+}
 // T's newest plan for a trip day: the evening plan / morning re-plan, else the week draft.
 export async function latestT(tripId: string, tripDate: string): Promise<PlanRun | null> {
   const m = latestByDay(await fetchDayRuns(tripId)).get(tripDate) ?? {};
@@ -226,6 +243,8 @@ export type ShotStatus = 'got' | 'nailed' | null;
 export type Light = 'front' | 'side' | 'back' | 'soft';
 export type StopSettings = {
   tier: string | null; light_wanted: Light[] | null; fog_wanted: boolean | null;
+  // false = looks fine under cloud (Phil opts a stop out; worksheet A3). Missing = needs the peaks.
+  needs_peaks?: boolean | null;
   star_vantage_id: string | null; shot_status: ShotStatus; source: 'suggested' | 'phil';
 };
 export type StopShot = { vantage_id: string; position: number; name: string };
@@ -239,7 +258,7 @@ export async function fetchStopSettings(stopId: string) {
 }
 
 // Phil's own settings (source becomes 'phil'); an empty patch confirms the suggestion.
-export async function saveStopSettings(stopId: string, patch: Partial<Pick<StopSettings, 'tier' | 'light_wanted' | 'fog_wanted' | 'star_vantage_id'>>) {
+export async function saveStopSettings(stopId: string, patch: Partial<Pick<StopSettings, 'tier' | 'light_wanted' | 'fog_wanted' | 'needs_peaks' | 'star_vantage_id'>>) {
   const j = await solverAction<{ setting: StopSettings }>({ action: 'set_settings', stop_id: stopId, ...patch });
   return j.setting;
 }
@@ -247,7 +266,7 @@ export async function saveStopSettings(stopId: string, patch: Partial<Pick<StopS
 export type TripSetting = StopSettings & { stop_id: string; updated_at?: string };
 export async function fetchTripSettings(tripId: string): Promise<TripSetting[]> {
   const { data, error } = await supabase.from('solver_stop_settings')
-    .select('stop_id, tier, light_wanted, fog_wanted, star_vantage_id, shot_status, source, updated_at, stops!inner(trip_id)')
+    .select('stop_id, tier, light_wanted, fog_wanted, needs_peaks, star_vantage_id, shot_status, source, updated_at, stops!inner(trip_id)')
     .eq('stops.trip_id', tripId);
   if (error) throw error;
   return (data ?? []) as any;
