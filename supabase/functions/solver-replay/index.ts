@@ -7,6 +7,7 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // good shot (lead + 10240); blue_judge = only the truth does (to judge plain T on the same rule).
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
 // v85 (6 Nov 2026): tool op audit {visits} (full rule check by exact search) and solve {polish: true} (grading).
+// v93 (9 Nov 2026): the whole-day calculation steps an hour at a time and copies repeated members (v92 timed out).
 // v92 (8 Nov 2026, worksheet E4/E7, version BD): run config runs = builds at lead + 81920 keep each member's
 // hidden chance per slot, and a visit is valued by its expected best moment with persisting hidden / clear spells.
 // v91 (8 Nov 2026): published plans carry params/stats.version = the planner_versions winner.
@@ -771,20 +772,28 @@ Deno.serve(async (req) => {
         for (let t = start; t < Math.min(start + len, nSlots); t++) if (V[ni][t]) { if (!HP[ni][t]) return null; ts.push(t); }
         if (!ts.length) return null;
         const out = new Uint8Array(M);
+        // v93 (speed): slots with the same hidden chance (one hour of a member) are one step, and a member
+        // identical to the one before it (week plans stretch ~9 models to 51) is copied, not recomputed.
         for (let k = 0; k < M; k++) {
-          let vis = new Map<number, number>(), hid = new Map<number, number>();
-          ts.forEach((t, j) => {
-            const v = V[ni][t]![k], p = HP[ni][t]![k] / 250;
-            const b = Math.min(250, Math.round(v / (1 - 0.9 * p))), c = Math.round(b * 0.1);
-            if (j === 0) { vis.set(b, 1 - p); hid.set(c, p); return; }
-            const p11 = RHO + (1 - RHO) * p, p01 = (1 - RHO) * p;
+          if (k > 0 && ts.every(t => V[ni][t]![k] === V[ni][t]![k - 1] && HP[ni][t]![k] === HP[ni][t]![k - 1])) { out[k] = out[k - 1]; continue; }
+          let vis: number[] = [], vp: number[] = [], hid: number[] = [], hp: number[] = [];
+          let j = 0, prevT = -1;
+          while (j < ts.length) {
+            const t0 = ts[j], h0 = HP[ni][t0]![k], p = h0 / 250;
+            let bmax = 0;
+            while (j < ts.length && HP[ni][ts[j]]![k] === h0) { const v = V[ni][ts[j]]![k]; const b = Math.min(250, Math.round(v / (1 - 0.9 * p))); if (b > bmax) bmax = b; j++; }
+            const c = Math.round(bmax * 0.1);
+            if (prevT < 0) { vis = [bmax]; vp = [1 - p]; hid = [c]; hp = [p]; prevT = t0; continue; }
+            const rho = Math.pow(RHO, t0 - prevT); prevT = t0;
+            const p11 = rho + (1 - rho) * p, p01 = (1 - rho) * p;
             const nv = new Map<number, number>(), nh = new Map<number, number>();
-            const add = (m: Map<number, number>, val: number, pr: number) => { if (pr > 0) m.set(val, (m.get(val) ?? 0) + pr); };
-            for (const [val, pr] of hid) { add(nh, Math.max(val, c), pr * p11); add(nv, Math.max(val, b), pr * (1 - p11)); }
-            for (const [val, pr] of vis) { add(nh, Math.max(val, c), pr * p01); add(nv, Math.max(val, b), pr * (1 - p01)); }
-            vis = nv; hid = nh;
-          });
-          let e = 0; for (const [val, pr] of vis) e += val * pr; for (const [val, pr] of hid) e += val * pr;
+            for (let q = 0; q < hid.length; q++) { const val = hid[q], pr = hp[q];
+              nh.set(Math.max(val, c), (nh.get(Math.max(val, c)) ?? 0) + pr * p11); nv.set(Math.max(val, bmax), (nv.get(Math.max(val, bmax)) ?? 0) + pr * (1 - p11)); }
+            for (let q = 0; q < vis.length; q++) { const val = vis[q], pr = vp[q];
+              nh.set(Math.max(val, c), (nh.get(Math.max(val, c)) ?? 0) + pr * p01); nv.set(Math.max(val, bmax), (nv.get(Math.max(val, bmax)) ?? 0) + pr * (1 - p01)); }
+            vis = [...nv.keys()]; vp = [...nv.values()]; hid = [...nh.keys()]; hp = [...nh.values()];
+          }
+          let e = 0; for (let q = 0; q < vis.length; q++) e += vis[q] * vp[q]; for (let q = 0; q < hid.length; q++) e += hid[q] * hp[q];
           out[k] = Math.max(0, Math.min(250, Math.round(e)));
         }
         return out;
