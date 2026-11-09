@@ -7,7 +7,8 @@ without changing anything: each check looks for the button, presses the safe one
 and then checks that the app is alive and the blocked request was the one expected
 (E2E_BLOCKED in the log). Prints CHECK / TEXT / INFO lines to the job log.
 """
-import os, re, sys, time
+import os, re, sys, time, datetime
+from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.dirname(__file__))
 import crawl as C
 import verify as V
@@ -54,8 +55,22 @@ def open_live():
     return p if ok else None
 
 
+def open_today():
+    """Tap today's day tab (labels read like 'DAY 3, Nov 9'); Teton Live is on Mountain time."""
+    d = datetime.datetime.now(ZoneInfo('America/Denver'))
+    want = f", {d.strftime('%b')} {d.day}"
+    s = C.capture(1)
+    for _ in range(4):
+        for c in s.clickables:
+            if c['label'].strip().endswith(want) and c['label'].strip().upper().startswith('DAY'):
+                C.tap(c['xy']); t = C.capture(4)
+                V.check('btn-today-tab', True, c['label'].strip()); return t
+        C.adb('shell', 'input', 'swipe', '900', '700', '200', '700', '300'); s = C.capture(0.8)
+    V.check('btn-today-tab', False, 'no tab ending ' + want); return None
+
+
 def replan_now_card():
-    if open_live() is None:
+    if open_live() is None or open_today() is None:
         return
     s = scroll_find('Re-plan now with the cameras')
     V.check('btn-replan-now-on-card', s is not None, "today's card on the trip page")
@@ -74,7 +89,7 @@ def replan_now_card():
 
 
 def ghost_accept():
-    if open_live() is None:
+    if open_live() is None or open_today() is None:
         return
     s = C.capture(1)
     hit = None
@@ -116,6 +131,8 @@ def plans_tab():
     print('INFO blocked after Plan again: ' + ' | '.join(a[-160:] for a in after)[:800], flush=True)
     V.check('btn-plan-again-sent', bool(tapped) and any('planner_t_replan' in a or 'solver-actions' in a for a in after), 'the tap sent a plan request (blocked)')
     V.check('btn-plan-again-alive', C.app_alive())
+    seen2, _ = V.texts_all(2)
+    V.check('btn-no-object-text', not seen_has(seen2, '[object Object]'), 'no raw [object Object] on screen after the blocked request')
     V.show('btn-plan-again-after', C.capture(1))
 
 
