@@ -78,6 +78,11 @@ def replan_now_card():
         seen, _ = V.texts_all(6)
         print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
     V.show('btn-replan-now-card', s)
+    seen0, _ = V.texts_all(2)
+    mine = [t for t in seen0 if t.startswith('Your day as planned:')]
+    print('INFO your-day line: ' + ' | '.join(mine), flush=True)
+    V.check('btn-your-day-no-bare-zero', not any(t.strip().endswith(': 0.0') for t in mine), ' | '.join(mine)[:200] or 'line not shown')
+    s = scroll_find('Re-plan now with the cameras')
     before = len(blocked_lines())
     V.tap_text(s, 'Re-plan now with the cameras')
     time.sleep(6)

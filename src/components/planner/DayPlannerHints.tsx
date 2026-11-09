@@ -223,7 +223,10 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
         <Text style={styles.headline}>No big subjects this day{score.others >= 0.05 ? ` · ${shotsText(score.others)} good shots of the others` : ''}.</Text>
       )}
       {score.mine != null && real.length && score.bigOnDay ? (
-        <Text style={styles.cardSub}>Your day as planned: {shotsText(score.mine)}</Text>
+        <Text style={styles.cardSub}>Your day as planned: {score.mine >= 0.05 ? shotsText(score.mine)
+          // Never a bare 0 (emulator test, 9 Nov 2026: Teton Live Day 3 read "0.0" because its own stops are all tier A).
+          : (planner.mine?.visits ?? []).some(v => isBig(tierOf(v.stop_id))) ? 'none of its big subjects look like a good bet'
+          : 'no big subjects (S or GOD) on it'}</Text>
       ) : score.reason && score.bigOnDay ? <Text style={styles.cardSub}>{score.reason}</Text> : null}
       {f ? (
         <Text style={styles.first} numberOfLines={2}>
