@@ -45,6 +45,8 @@ begin
     join planner_t_trips t on t.trip_id = sr.trip_id and t.review
    where sr.created_at > now() - interval '3 hours'
      and p.note in ('T: evening plan', 'T: morning re-plan', 'T: morning re-plan (cameras)')
+     -- practice trips: the evening plan only (~$0.60 a review, 9 Nov 2026); real trips: every plan
+     and (p.note = 'T: evening plan' or not exists (select 1 from trips tr where tr.id = sr.trip_id and tr.training_of is not null))
      and jsonb_array_length(coalesce(p.visits, '[]'::jsonb)) > 0
   on conflict (run_id) do nothing;
   for r in select id from t_reviews where status = 'queued' and created_at > now() - interval '3 hours' order by id limit 3 loop
