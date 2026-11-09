@@ -17,6 +17,7 @@ import { useTripStore } from '../../store/tripStore';
 import { dayBadge } from './dayBadge';
 import { useTierOf, forgetTiers } from './DayPlannerHints';
 import { ShotsText } from './ScoreBar';
+import { errText } from '../../utils/errText';
 
 const MODE_TEXT: Record<string, string> = {
   forecast: 'Forecast for this day',
@@ -62,7 +63,7 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
       if (replan) ack(tripId);
       setRun(r); setPlans(r ? await fetchPlans(r.id) : []);
       if (!r) setError("T hasn't planned this day yet. Tap Plan again.");
-    } catch (e: any) { setError(String(e?.message ?? e)); }
+    } catch (e: any) { setError(errText(e)); }
     setBusy(null);
   }, [tripId, tripDate]);
 
@@ -81,7 +82,7 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
       }
       const r = (await fetchDayRuns(tripId, 40)).find(x => x.id === runId) ?? null;
       setRun(r); setPlans(await fetchPlans(runId));
-    } catch (e: any) { setError(String(e?.message ?? e)); }
+    } catch (e: any) { setError(errText(e)); }
     setBusy(null);
   }, [tripId, tripDate, t, loadT]);
 
@@ -95,7 +96,7 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
   const isToday = tripDate === format(new Date(), 'yyyy-MM-dd');
   const nowView = useReplanNow(t && isToday ? tripId : null);
   const { currentTripData } = useTripStore();
-  const doNow = () => startReplanNow(tripId, currentTripData?.trip?.title).catch((e: any) => failReplanNow(tripId, String(e?.message ?? e)));
+  const doNow = () => startReplanNow(tripId, currentTripData?.trip?.title).catch((e: any) => failReplanNow(tripId, errText(e)));
   useEffect(() => onPlanLanded(() => { if (t && isToday && mounted.current) loadT(); }), [t, isToday, loadT]);
   const nowNote = nowView.phase === 'done' ? nowView.message : null;
 
@@ -168,7 +169,7 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
       const j = await fetchTDays(tripId, tripDates);
       setRun(j.run); setPlans(j.plans);
       if (j.missing.length) setNote(`T has no plan yet for ${j.missing.map(d => format(parseISO(d), 'EEE d MMM')).join(', ')}.`);
-    } catch (e: any) { setError(String(e?.message ?? e)); }
+    } catch (e: any) { setError(errText(e)); }
     setBusy(null);
   }, [tripId, key]);
 
@@ -183,7 +184,7 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
         r = (await fetchMultiRuns(tripId, 10)).find(x => x.id === id);
       }
       setRun(r ?? null); setPlans(r ? await fetchPlans(r.id) : []);
-    } catch (e: any) { setError(String(e?.message ?? e)); }
+    } catch (e: any) { setError(errText(e)); }
     setBusy(null);
   }, [tripId, key, t, loadT]);
 
@@ -233,7 +234,7 @@ export function PlanBody({ tripId, run, plans, byDay, initialRank, onRank }: {
   const openApply = async () => {
     if (!run || !plan) return;
     setBusy(true); setError(null);
-    try { setApply((await applyPreview(run.id, plan.rank)).result); } catch (e: any) { setError(String(e?.message ?? e)); }
+    try { setApply((await applyPreview(run.id, plan.rank)).result); } catch (e: any) { setError(errText(e)); }
     setBusy(false);
   };
 
@@ -320,7 +321,7 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, onAccepted
       onClose();
       onAccepted?.(j.result);
       Alert.alert('Plan accepted', acceptedText(j.result));
-    } catch (e: any) { Alert.alert('Not applied', String(e?.message ?? e)); }
+    } catch (e: any) { Alert.alert('Not applied', errText(e)); }
     setBusy(false);
   };
   return (
