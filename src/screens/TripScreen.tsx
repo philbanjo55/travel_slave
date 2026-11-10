@@ -28,6 +28,12 @@ import { GhostTag, TimelineRow } from '../components/planner/DayTimeline';
 import PlanningStrip from '../components/planner/PlanningStrip';
 import { acceptedText } from '../components/planner/PlanView';
 
+// Today's date in the trip's time zone (the phone's date if the zone is unknown).
+function tripToday(tz?: string): string {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()); }
+  catch { return format(new Date(), 'yyyy-MM-dd'); }
+}
+
 export default function TripScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -131,6 +137,22 @@ export default function TripScreen() {
     setCurrentDay(index);
     tabScrollRef.current?.scrollTo({ x: Math.max(0, index * 72 - 100), animated: true });
   }, []);
+
+  // Live trip (Phil, 10 Nov 2026): the trip opens on today's day (in the trip's time zone), and
+  // jumps to it again when a new day starts while the page stays open. Once Phil picks another
+  // day himself it stays there until the date changes.
+  const tripTz: string | undefined = currentTripData?.trip?.timezone ?? undefined;
+  const todayDate = tripToday(tripTz);
+  const todayIndex = (currentTripData?.days ?? []).findIndex((d: any) => d.date === todayDate);
+  const jumpedFor = useRef<string | null>(null);
+  useFocusEffect(useCallback(() => {
+    if (todayIndex < 0) return;
+    const key = `${tripId}:${todayDate}`;
+    if (jumpedFor.current === key) return;
+    jumpedFor.current = key;
+    const t = setTimeout(() => goToDay(todayIndex), 50);  // after the tab bar has laid out
+    return () => clearTimeout(t);
+  }, [tripId, todayDate, todayIndex, goToDay]));
 
   const cycleDayStatus = useCallback(async (dayId: string, checked: boolean, review: boolean) => {
     // Cycle: off → green → yellow → off
@@ -378,10 +400,11 @@ export default function TripScreen() {
         >
           {days.map((d: any, index: number) => {
             const isActive = index === activeDay;
+            const isToday = index === todayIndex;
             return (
               <TouchableOpacity
                 key={d.id}
-                style={[styles.tab, isActive && styles.tabActive]}
+                style={[styles.tab, isToday && styles.tabToday, isActive && styles.tabActive, isActive && isToday && styles.tabTodayActive]}
                 onPress={() => goToDay(index)}
                 onLongPress={() => cycleDayStatus(d.id, d.checked, d.review)}
               >
@@ -391,6 +414,7 @@ export default function TripScreen() {
                 <Text style={[styles.tabDate, isActive && styles.tabDateActive]}>
                   {d.date ? format(parseISO(d.date), 'MMM d') : ''}
                 </Text>
+                {isToday ? <Text style={styles.tabTodayText}>TODAY</Text> : null}
                 {d.checked && <View style={styles.checkedDot} />}
                 {d.review && <View style={styles.reviewDot} />}
               </TouchableOpacity>
@@ -648,6 +672,10 @@ const styles = StyleSheet.create({
   tabDayNumActive: { color: colors.textSecondary },
   tabDate: { fontSize: 12, fontWeight: '600', color: colors.textTertiary, marginTop: 2 },
   tabDateActive: { color: colors.textPrimary },
+  // Today's day on a live trip: green underline and a TODAY mark (Phil, 10 Nov 2026).
+  tabToday: { borderBottomColor: colors.signalOk },
+  tabTodayActive: { borderBottomColor: colors.signalOk, borderBottomWidth: 3 },
+  tabTodayText: { fontSize: 8, fontWeight: '800', letterSpacing: 1, color: colors.signalOk, marginTop: 2 },
   checkedDot: { position: 'absolute', top: 8, right: 8, width: 5, height: 5, borderRadius: 3, backgroundColor: colors.signalOk },
   reviewDot: { position: 'absolute', top: 8, left: 8, width: 5, height: 5, borderRadius: 3, backgroundColor: '#d4a017' },
   dayHeader: {
