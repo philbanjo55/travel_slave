@@ -82,7 +82,10 @@ def replan_now_card():
     mine = [t for t in seen0 if t.startswith('Your day as planned:')]
     print('INFO your-day line: ' + ' | '.join(mine), flush=True)
     V.check('btn-your-day-no-bare-zero', not any(t.strip().endswith(': 0.0') for t in mine), ' | '.join(mine)[:200] or 'line not shown')
+    scroll_top()  # texts_all scrolled past the button (the card is taller since the plan-check line)
     s = scroll_find('Re-plan now with the cameras')
+    if s is None:
+        V.check('btn-replan-now-refind', False, 'button not found again after scrolling back up'); return
     before = len(blocked_lines())
     V.tap_text(s, 'Re-plan now with the cameras')
     time.sleep(6)
