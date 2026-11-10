@@ -97,7 +97,47 @@ rules without a trip.
 5. **Live trial on Teton Live** for a few days with real notes, then ask Phil before it goes to
    his phone.
 
-## Later (not in the first build)
+## More ideas (10 Nov 2026, Phil asked for a wider look; staged, none approved yet)
 
-- Plan check -> note: a closure flag on the day card gets a "Tell T" button that fills the note.
-- Yesterday's results in Claude's context ("you got the barns, Taggart was clouded out").
+**Stage 1 extras (how the feature behaves; no new planner rules):**
+- **Ask, don't guess:** when a note is unclear ("the barns" = which? "Friday" = which Friday?
+  "early" = what time?), Claude returns one question with 2-3 tap answers instead of a rule.
+- **Quick buttons** under the box, no typing and no Claude call (gloves, cold): Sleep in, Easy day,
+  Day off, Back by..., Skip a place..., Want a place.... Each makes the same rule a note would.
+- **Notes ahead of time + trip rules:** a note can be about any trip day, typed weeks before
+  ("New Year's Eve dinner at 8", "sleep in on the 1st"). Rest-of-trip notes ("never before
+  6:30", "always back by 6") are listed as "Trip rules" in the Planner's Setup tab.
+- **No signal:** the note is kept on the phone and sent when signal returns (the card says
+  "waiting for signal"); the last plan stays on screen.
+
+**Stage 2 (more rules; each small, each gets the bench rule test):**
+- `max_stops {n}` / easy day ("easy day", "only 3 stops") and `day_off` (nothing planned, or
+  "afternoon off" = back_by).
+- `slow_roads {factor}` ("roads are icy", "snowing"): every drive that day x1.25 / x1.5
+  (the bench already replays plans with slower drives: `slow_drive`; this plans with them).
+- `no_gear` ("no skis today", "returning the skis early"): ski outings off that day, or the
+  gear window moved.
+- `order` ("start at the barns", "end at Snake River Overlook", "Oxbow before Mormon Row"):
+  first / last / before.
+- `optional {places}` ("don't make me do Taggart if the weather's bad"): the place loses its
+  every-place requirement, so T only plans it on a good chance.
+- `only_top {tier}` ("just the best spots today"): only GOD / S places that day.
+
+**Stage 3 (bigger; each is its own build and test):**
+- **Evening recap:** one box in the evening: "nailed the barns, Oxbow was clouded out, sleep
+  in tomorrow" -> proposed ticks (Nailed it / Go back for better / Missed it) plus tomorrow's
+  rules, all shown for one OK before the 8:45 PM plan. (Changes "a note never touches ticks":
+  it would, but only after Phil confirms each one.)
+- **Where I really am:** "I'm at Dornans", "running an hour late", "staying here 30 more
+  minutes" -> Re-plan now from Phil's real place and time, not where the plan says he is.
+- **Your eyes as a camera:** "peaks are out" / "socked in here" counts as the look for
+  Re-plan now (Phil outvotes the cameras).
+- **A place not on the trip:** "sleigh ride at the Elk Refuge at 2" -> needs a location
+  lookup and new drive times (Google); shown on the map for Phil to confirm.
+- **Ask T:** questions that change nothing: "what if we skip Jenny Lake?", "why is Oxbow on
+  Thursday?", "best day for Mormon Row?".
+- **Plan check -> note:** a closure or avalanche flag gets a "Tell T" button that fills the note.
+
+**Looked at, not worth building:** a per-day risk dial ("gamble today" / "play it safe": the
+ablation showed the risk setting doesn't change plans); per-day light wishes (that is the
+stop's own Settings tab).
