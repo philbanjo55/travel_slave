@@ -141,8 +141,34 @@ def plans_tab():
     V.show('btn-plan-again-after', C.capture(1))
 
 
+def plan_check_card():
+    """Claude's plan check on today's day card (10 Nov 2026): the line shows, opens, and lists what was checked."""
+    if open_live() is None or open_today() is None:
+        return
+    s = scroll_find('Plan check')
+    V.check('plan-check-shown', s is not None, "today's card on the trip page")
+    if s is None:
+        seen, _ = V.texts_all(6)
+        print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
+    V.show('plan-check-line', s)
+    V.check('plan-check-open-tap', V.tap_text(s, "Claude's plan check"), 'tap the line')
+    t = C.capture(2)
+    V.show('plan-check-open', t)
+    seen, _ = V.texts_all(3)
+    V.check('plan-check-details', seen_has(seen, 'Claude checks the plan only'), 'details shown after the tap')
+    w = scroll_find('What was checked')
+    V.check('plan-check-checks-link', w is not None)
+    if w is not None:
+        V.tap_text(w, 'What was checked')
+        seen2, _ = V.texts_all(3)
+        V.check('plan-check-checks-list', seen_has(seen2, 'Weather warnings') or seen_has(seen2, 'Avalanche'), 'checked items listed')
+        V.show('plan-check-checks', C.capture(1))
+    V.check('plan-check-no-object-text', not seen_has(seen, '[object Object]'))
+    V.check('plan-check-alive', C.app_alive())
+
+
 def main():
-    for st in (replan_now_card, ghost_accept, plans_tab):
+    for st in (plan_check_card, replan_now_card, ghost_accept, plans_tab):
         try:
             st()
         except Exception as e:
