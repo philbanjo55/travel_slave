@@ -15,10 +15,11 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 // so the two can be compared. These are the place-specific fog truth the
 // solver's forecasts get scored against; METAR covers only airports.
 //
-// Storage (free plan, 1 GB): full frames kept 7 days, plus one frame per
-// camera per day kept permanently: the capture nearest the camera's solar
-// noon (12 UTC in the Faroes, 19 UTC at the Tetons; a fixed 12 UTC kept only
-// pre-dawn or night frames outside Europe, and those are never captured).
+// Storage: v17 (Phil, 5 Nov 2026: "keep more than the morning") keeps every
+// daylight picture for good (~23 MB a day for 12 cameras; night frames are never
+// captured). Only a frozen camera's repeat of the same picture is pruned after
+// KEEP_DAYS, unless it is the capture nearest the camera's solar noon (until v16
+// the only frame per camera per day kept past 7 days).
 //
 // POST {} archives this hour; {force: true} re-captures it; {backfill: n}
 // labels up to n stored daylight frames that have no label yet.
@@ -43,6 +44,7 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 const BUCKET = 'webcams';
 const KEEP_DAYS = 7;
 const NIGHT_ALT = -6;
+const SHARDS = 8;
 const FETCH_TIMEOUT_MS = 20_000;
 const TEMPLATE_STEP_MIN = 15;
 const MODEL = Deno.env.get('CLAUDE_LABEL_MODEL') ?? 'claude-opus-5-5';
@@ -52,10 +54,17 @@ const MONTHLY_CAP_USD = Number(Deno.env.get('CLAUDE_MONTHLY_CAP_USD') ?? 40);
 const PRICES: Record<string, [number, number]> = {
   'claude-opus': [4, 20], 'claude-sonnet': [2, 10], 'claude-haiku': [0.1, 0.5],
 };
-const costUsd = (model: string, inTok: number, outTok: number) => {
+// Prompt caching (v23, Phil 8 Nov 2026, worksheet C7): cache writes cost 1.25x input, reads 0.05x
+// on Opus 5.5 (0.1x on the others).
+const costUsd = (model: string, inTok: number, outTok: number, cacheWrite = 0, cacheRead = 0) => {
   const p = Object.entries(PRICES).find(([k]) => model.startsWith(k))?.[1] ?? PRICES['claude-opus'];
-  return (inTok * p[0] + outTok * p[1]) / 1e6;
+  const readX = model.startsWith('claude-opus-5-5') ? 0.05 : 0.1;
+  return (inTok * p[0] + outTok * p[1] + cacheWrite * p[0] * 1.25 + cacheRead * p[0] * readX) / 1e6;
 };
+// CLAUDE_LABEL_CACHE=true: the fixed instructions go first as a cached system block and the
+// picture + camera line after, so every label after the first in an hourly batch re-reads the
+// instructions from cache. Off by default until {compare: n} has shown the labels match.
+const LABEL_CACHE = Deno.env.get('CLAUDE_LABEL_CACHE') === 'true';
 
 const LABELS = ['clear', 'haze', 'low_cloud', 'fog', 'dark', 'camera_problem'];
 const CLOUD = ['none', 'above_hills', 'touching_tops', 'covering_hills', 'unknown'];
@@ -63,9 +72,8 @@ const CLOUD = ['none', 'above_hills', 'touching_tops', 'covering_hills', 'unknow
 // UTC hour of the capture kept forever: nearest the camera's solar noon.
 const keepHourUtc = (lng: number | null) => lng == null ? 12 : ((Math.round(12 - lng / 15) % 24) + 24) % 24;
 
-const PROMPT = (region: string, name: string, place: string, hint: string) => `You are labelling a ${region ? region + ' ' : ''}webcam frame for a landscape photographer's weather archive. The labels are scored against forecasts, so judge only what the image shows.
-Camera: ${name}${place ? ` (${place})` : ''}. ${hint}
-Foreground (road, verges, buildings, trees, snow, rock) filling much of the frame is normal. Judge the weather from whatever part shows sky, mountains, hills or distance, even a thin strip.
+const CAMERA_LINE = (name: string, place: string, hint: string) => `Camera: ${name}${place ? ` (${place})` : ''}. ${hint}`;
+const RULES = `Foreground (road, verges, buildings, trees, snow, rock) filling much of the frame is normal. Judge the weather from whatever part shows sky, mountains, hills or distance, even a thin strip.
 label:
 - clear: hills or mountains and distance clearly visible, no fog or cloud on them
 - haze: visibility reduced by haze or mist but hills still discernible
@@ -78,6 +86,12 @@ cloud_on_hills: where the lowest cloud sits relative to the hills.
 sun_on_land: direct sunlight is falling on the land or sea in view (shadows, sunlit patches), not just a bright overcast sky.
 camera_time: the date and time printed on the image (caption bar or overlay), written YYYY-MM-DD HH:MM exactly as shown (do not convert time zones); an empty string if none is printed.
 confidence: 0 to 1. note: one short sentence on what decided it.`;
+const PROMPT = (region: string, name: string, place: string, hint: string) => `You are labelling a ${region ? region + ' ' : ''}webcam frame for a landscape photographer's weather archive. The labels are scored against forecasts, so judge only what the image shows.
+${CAMERA_LINE(name, place, hint)}
+${RULES}`;
+// Cached layout: the same words, with the camera line (and region) moved after the picture.
+const SYSTEM_CACHED = `You are labelling webcam frames for a landscape photographer's weather archive. The labels are scored against forecasts, so judge only what the image shows. Each message has one frame and a line naming the camera and its region.
+${RULES}`;
 
 const SCHEMA = {
   type: 'object',
@@ -135,19 +149,20 @@ function hazeMetrics(buf: Uint8Array) {
            contrast_top: r(top.contrast), edge_full: r(full.edge), edge_top: r(top.edge) };
 }
 
-async function label(client: Anthropic, cam: any, buf: Uint8Array) {
+async function label(client: Anthropic, cam: any, buf: Uint8Array, cached = LABEL_CACHE) {
+  const image = { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: encodeBase64(buf) } };
   const msg: any = await client.beta.messages.create({
     model: MODEL,
     max_tokens: 4000,
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
     output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+    ...(cached ? { system: [{ type: 'text', text: SYSTEM_CACHED, cache_control: { type: 'ephemeral' } }] } : {}),
     messages: [{
       role: 'user',
-      content: [
-        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: encodeBase64(buf) } },
-        { type: 'text', text: PROMPT(cam.region ?? '', cam.name, cam.island ?? '', cam.hint ?? '') },
-      ],
+      content: cached
+        ? [image, { type: 'text', text: `${CAMERA_LINE(cam.name, cam.island ?? '', cam.hint ?? '')} Region: ${cam.region ?? 'unknown'}.` }]
+        : [image, { type: 'text', text: PROMPT(cam.region ?? '', cam.name, cam.island ?? '', cam.hint ?? '') }],
     }],
   } as any);
   if (msg.stop_reason === 'refusal') throw new Error(`refused: ${msg.stop_details?.category ?? ''}`);
@@ -241,6 +256,61 @@ Deno.serve(async (req) => {
     new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
   try {
     const body = await req.json().catch(() => ({}));
+    // Shards (v21, 7 Nov 2026): 44 cameras in one request ran past the edge CPU limit (each picture
+    // is decoded for the haze metrics), so the hourly run died partway and the cameras added on
+    // 6 Nov were almost never saved. A plain call (cron, planner_t_now) now sends the cameras out
+    // in SHARDS requests of its own (camera i of the list sorted by code goes to shard i % SHARDS)
+    // and returns their results; the backfill and the prune run in shard 0 only.
+    // {compare: n, offset?} (v23): re-read the n newest labelled daylight pictures twice, the old way
+    // and the cached way, and report how often each matches the stored label (the old-way rerun is
+    // the baseline: the same model asked twice does not always answer the same). Writes no labels.
+    if (body.compare) {
+      const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      const key = Deno.env.get('ANTHROPIC_API_KEY');
+      if (!key) return json({ ok: false, error: 'no ANTHROPIC_API_KEY' });
+      const cl = new Anthropic({ apiKey: key });
+      const { data: frames } = await sb.from('webcam_frames')
+        .select('id,camera_code,storage_path,captured_at,label,hills_visible,cloud_on_hills')
+        .like('label_model', 'claude%').not('hills_visible', 'is', null).not('storage_path', 'is', null).eq('stale', false)
+        .order('captured_at', { ascending: false }).range(Number(body.offset ?? 0), Number(body.offset ?? 0) + Math.min(Number(body.compare), 12) - 1);
+      const { data: camsAll } = await sb.from('webcam_cameras').select('*');
+      const out: any[] = [];
+      for (const f of frames ?? []) {
+        const cam = (camsAll ?? []).find((c: any) => c.code === f.camera_code);
+        const { data: blob } = await sb.storage.from(BUCKET).download(f.storage_path);
+        if (!cam || !blob) continue;
+        const buf = new Uint8Array(await blob.arrayBuffer());
+        const row: any = { camera: f.camera_code, at: f.captured_at, stored: [f.label, f.hills_visible] };
+        for (const [k, c] of [['old', false], ['cached', true]] as const) {
+          try {
+            const r = await label(cl, cam, buf, c);
+            const u = r.usage ?? {};
+            const cost = costUsd(r.model ?? MODEL, u.input_tokens ?? 0, u.output_tokens ?? 0, u.cache_creation_input_tokens ?? 0, u.cache_read_input_tokens ?? 0);
+            await sb.from('claude_usage').insert({ fn: 'webcam-archive', purpose: 'label_compare_cache_' + k, model: r.model,
+              input_tokens: u.input_tokens ?? 0, output_tokens: u.output_tokens ?? 0,
+              cache_write_tokens: u.cache_creation_input_tokens ?? 0, cache_read_tokens: u.cache_read_input_tokens ?? 0,
+              cost_usd: Math.round(cost * 1e5) / 1e5 });
+            row[k] = [r.lab?.label, r.lab?.hills_visible, u.input_tokens, u.cache_creation_input_tokens ?? 0, u.cache_read_input_tokens ?? 0];
+          } catch (e) { row[k] = String(e).slice(0, 200); }
+        }
+        out.push(row);
+      }
+      const agree = (k: string) => out.filter(r => Array.isArray(r[k]) && r[k][1] === r.stored[1]).length;
+      return json({ ok: true, n: out.length, hills_agree_old: agree('old'), hills_agree_cached: agree('cached'), rows: out });
+    }
+    if (body.shard == null && !body.backfill) {
+      const url = `${Deno.env.get('SUPABASE_URL')}/functions/v1/webcam-archive`;
+      // One after another (v22): run at once, the shards shared one worker's memory and the Teton
+      // ones (the 4K Kelly picture, Claude labels) died with WORKER_RESOURCE_LIMIT on 7 Nov.
+      const parts: any[] = [];
+      for (let i = 0; i < SHARDS; i++) {
+        parts.push(await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ ...body, shard: i, shards: SHARDS }) })
+          .then(r => r.json()).catch(e => ({ ok: false, shard: i, error: String(e) })));
+      }
+      return json({ ok: parts.every((x: any) => x.ok), shards: parts });
+    }
+    const shards = Number(body.shards ?? 1), shard = Number(body.shard ?? 0), lead = shard === 0;
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const apiKey = Deno.env.get('CLAUDE_LABELS') === 'false' ? undefined : Deno.env.get('ANTHROPIC_API_KEY');
     const claude = apiKey ? new Anthropic({ apiKey }) : null;
@@ -254,17 +324,22 @@ Deno.serve(async (req) => {
     let spent = Number(spentMonth ?? 0);
     const tokens = { input: 0, output: 0 };
     const tryLabel = async (cam: any, buf: Uint8Array) => {
+      // v18 (Phil, 6 Nov 2026): a camera can be saved without being read (webcam_cameras.label_paused;
+      // the Faroes cameras Nov-Mar, when only the off-season practice trip uses them).
+      if (cam.label_paused) return { lab: null, model: null, err: 'labels paused for this camera' };
       if (!claude || budget <= 0) return { lab: null, model: null, err: claude ? 'daily cap reached' : null };
       if (spent >= MONTHLY_CAP_USD) return { lab: null, model: null, err: 'monthly spend cap reached' };
       budget--;
       try {
         const r = await label(claude, cam, buf);
         const inTok = r.usage?.input_tokens ?? 0, outTok = r.usage?.output_tokens ?? 0;
+        const cw = r.usage?.cache_creation_input_tokens ?? 0, cr = r.usage?.cache_read_input_tokens ?? 0;
         tokens.input += inTok; tokens.output += outTok;
-        const cost = costUsd(r.model ?? MODEL, inTok, outTok);
+        const cost = costUsd(r.model ?? MODEL, inTok, outTok, cw, cr);
         spent += cost;
         await supabase.from('claude_usage').insert({ fn: 'webcam-archive', purpose: 'webcam_label', model: r.model,
-          input_tokens: inTok, output_tokens: outTok, cost_usd: Math.round(cost * 1e5) / 1e5 });
+          input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cw, cache_read_tokens: cr,
+          cost_usd: Math.round(cost * 1e5) / 1e5 });
         return { lab: r.lab, model: r.model, err: null };
       } catch (e) { return { lab: null, model: null, err: String(e).slice(0, 300) }; }
     };
@@ -279,7 +354,9 @@ Deno.serve(async (req) => {
     if (cErr) throw cErr;
 
     const results: any[] = [];
-    for (const cam of body.backfill ? [] : cams ?? []) {
+    const mine = [...(cams ?? [])].sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
+      .filter((_: any, i: number) => i % shards === shard);
+    for (const cam of body.backfill ? [] : mine) {
       const res: any = { camera: cam.code };
       try {
         const alt = cam.lat != null ? sunAltitude(cam.lat, cam.lng, slot) : null;
@@ -309,7 +386,7 @@ Deno.serve(async (req) => {
 
         const row = {
           camera_code: cam.code, captured_at: slot.toISOString(), storage_path: path, bytes: buf.length,
-          keep: slot.getUTCHours() === keepHourUtc(cam.lng), sun_altitude: alt, ...metrics,
+          keep: !repeat || slot.getUTCHours() === keepHourUtc(cam.lng), sun_altitude: alt, ...metrics,
           image_sha256: sha, fetched_at: fetchedAt, source_time: sourceTime, source_etag: etag ? etag.slice(0, 200) : null,
           ...labelColumns(l.lab, l.model, l.err),
           // A file named by its time is a better clock than reading the image.
@@ -327,7 +404,7 @@ Deno.serve(async (req) => {
     // Label stored daylight frames that have none yet (key added late, cap,
     // errors), newest first, while their image is still in storage.
     let backfilled = 0;
-    if (claude) {
+    if (claude && lead) {
       const { data: pending, error: pErr } = await supabase.from('webcam_frames')
         .select('id,camera_code,storage_path,captured_at').is('label', null).not('storage_path', 'is', null)
         .eq('stale', false).gte('sun_altitude', NIGHT_ALT).neq('captured_at', slot.toISOString())
@@ -348,7 +425,7 @@ Deno.serve(async (req) => {
 
     // Prune full images past KEEP_DAYS unless kept; labels and metrics stay.
     const cutoff = new Date(Date.now() - KEEP_DAYS * 86400000).toISOString();
-    const { data: old } = await supabase.from('webcam_frames').select('id,storage_path')
+    const { data: old } = !lead ? { data: [] as any[] } : await supabase.from('webcam_frames').select('id,storage_path')
       .eq('keep', false).lt('captured_at', cutoff).not('storage_path', 'is', null).limit(500);
     let pruned = 0;
     if (old?.length) {

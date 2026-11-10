@@ -14,6 +14,12 @@ import Anthropic from 'npm:@anthropic-ai/sdk';
 // or at the shared CLAUDE_MONTHLY_CAP_USD.
 //
 // POST {n: 8} labels up to n queued frames (max 12) in parallel.
+// POST {save: 8} (v3, Phil 6 Nov 2026: "save them"): copies up to save (max 12) already-read frames
+// into Storage bucket webcams at history/<code>/<YYYY-MM-DD>/<HH-mm>.jpg (camera-local time) and
+// records image_path / image_bytes / image_url on the row. No Claude call, no spend.
+// POST {compare: 8, model: 'claude-haiku-5-5'} (v4, worksheet F1): labels up to compare (max 12) saved
+// frames again with another model into webcam_label_compare, to compare with the Opus labels. Its own
+// cap CLAUDE_COMPARE_CAP_USD (default 3), logged as purpose label_compare.
 
 const MODEL = Deno.env.get('CLAUDE_LABEL_MODEL') ?? 'claude-opus-5-5';
 const MONTHLY_CAP_USD = Number(Deno.env.get('CLAUDE_MONTHLY_CAP_USD') ?? 40);
@@ -50,12 +56,13 @@ const SCHEMA = {
   },
 };
 
-async function label(client: Anthropic, cam: any, buf: Uint8Array) {
+async function label(client: Anthropic, cam: any, buf: Uint8Array, model = MODEL) {
+  // Haiku has no server-side fallback (a fallbacks list is a 400), so only Opus/Sonnet send it.
+  const fb = model.startsWith('claude-haiku') ? {} : { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' };
   const msg: any = await client.beta.messages.create({
-    model: MODEL,
+    model,
     max_tokens: 4000,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
+    ...fb,
     output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
     messages: [{
       role: 'user',
@@ -71,10 +78,97 @@ async function label(client: Anthropic, cam: any, buf: Uint8Array) {
   return { lab: JSON.parse(text), model: msg.model as string, usage: msg.usage };
 }
 
-// local_time is 'YYYY-MM-DD HH:MM' in the camera's tz.
+// local_time is 'YYYY-MM-DD HH:MM' in the camera's tz. Every token, every time it appears; {HH} and {mm}
+// too (Roundshot: .../{YYYY}-{MM}-{DD}/{HH}-{mm}-00/{YYYY}-{MM}-{DD}-{HH}-{mm}-00_quarter.jpg, v2 6 Nov 2026).
 const frameUrl = (template: string, local: string) => template
-  .replace('{YYYY}', local.slice(0, 4)).replace('{MM}', local.slice(5, 7)).replace('{DD}', local.slice(8, 10))
-  .replace('{HHmm}', local.slice(11, 13) + local.slice(14, 16));
+  .replaceAll('{YYYY}', local.slice(0, 4)).replaceAll('{MM}', local.slice(5, 7)).replaceAll('{DD}', local.slice(8, 10))
+  .replaceAll('{HHmm}', local.slice(11, 13) + local.slice(14, 16))
+  .replaceAll('{HH}', local.slice(11, 13)).replaceAll('{mm}', local.slice(14, 16));
+// A camera that takes a picture every 10 min may have none at the exact time: try the next two.
+const later = (local: string, min: number) => {
+  const d = new Date(local.replace(' ', 'T') + ':00Z'); d.setUTCMinutes(d.getUTCMinutes() + min);
+  return d.toISOString().slice(0, 16).replace('T', ' ');
+};
+
+// Fetch a past frame: the exact time, then (10-min cameras) the next two pictures.
+async function fetchFrame(tpl: string, local: string) {
+  let r: Response | null = null, url = '';
+  for (const off of tpl.includes('{mm}') ? [0, 10, 20] : [0]) {
+    url = frameUrl(tpl, later(local, off));
+    r = await fetch(url, {
+      headers: { 'User-Agent': 'travel_slave webcam history (permission: see webcam_cameras.permission_note)' },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (r.ok || r.status !== 404) break;
+    await r.body?.cancel();
+  }
+  if (!r!.ok) { await r!.body?.cancel(); throw new Error(`image ${r!.status}`); }
+  return { buf: new Uint8Array(await r!.arrayBuffer()), url };
+}
+
+async function saveFrames(supabase: any, n: number) {
+  const { data: rows, error } = await supabase.from('webcam_history_labels')
+    .select('camera_code,taken_at,local_time').in('status', ['done', 'error']).is('image_path', null).is('save_error', null)
+    .order('taken_at').limit(n);
+  if (error) throw error;
+  if (!rows?.length) return { ok: true, saved: 0 };
+  const { data: cams } = await supabase.from('webcam_cameras').select('code,history_url,image_url')
+    .in('code', [...new Set(rows.map((f: any) => f.camera_code))]);
+  const results = await Promise.all(rows.map(async (f: any) => {
+    const cam = (cams ?? []).find((c: any) => c.code === f.camera_code);
+    let upd: any;
+    try {
+      const { buf, url } = await fetchFrame(cam.history_url ?? cam.image_url, f.local_time);
+      const path = `history/${f.camera_code}/${f.local_time.slice(0, 10)}/${f.local_time.slice(11, 13)}-${f.local_time.slice(14, 16)}.jpg`;
+      const { error: upErr } = await supabase.storage.from('webcams')
+        .upload(path, buf, { contentType: 'image/jpeg', upsert: true });
+      if (upErr) throw upErr;
+      upd = { image_path: path, image_bytes: buf.length, image_url: url, save_error: null };
+    } catch (e: any) {
+      upd = { save_error: String(e?.message ?? e).slice(0, 300) };
+    }
+    await supabase.from('webcam_history_labels').update(upd).eq('camera_code', f.camera_code).eq('taken_at', f.taken_at);
+    return { camera: f.camera_code, local_time: f.local_time, bytes: upd.image_bytes ?? null, error: upd.save_error ?? null };
+  }));
+  return { ok: true, saved: results.filter(r => !r.error).length, results };
+}
+
+const COMPARE_CAP_USD = Number(Deno.env.get('CLAUDE_COMPARE_CAP_USD') ?? 3);
+async function compareFrames(supabase: any, claude: Anthropic, model: string, n: number) {
+  const { data: spent } = await supabase.from('claude_usage').select('cost_usd').eq('purpose', 'label_compare');
+  const used = (spent ?? []).reduce((a: number, r: any) => a + Number(r.cost_usd ?? 0), 0);
+  if (used >= COMPARE_CAP_USD) return { ok: false, error: 'compare cap reached', spent: used };
+  const { data: rows, error } = await supabase.rpc('webcam_compare_next', { p_model: model, p_n: n });
+  if (error) throw error;
+  if (!rows?.length) return { ok: true, done: 0 };
+  const { data: cams } = await supabase.from('webcam_cameras').select('*').in('code', [...new Set(rows.map((f: any) => f.camera_code))]);
+  const results = await Promise.all(rows.map(async (f: any) => {
+    const cam = (cams ?? []).find((c: any) => c.code === f.camera_code);
+    let row: any = { camera_code: f.camera_code, taken_at: f.taken_at, model, updated_at: new Date().toISOString() };
+    try {
+      const { data: blob, error: dErr } = await supabase.storage.from('webcams').download(f.image_path);
+      if (dErr) throw dErr;
+      const l = await label(claude, cam, new Uint8Array(await blob.arrayBuffer()), model);
+      const inTok = l.usage?.input_tokens ?? 0, outTok = l.usage?.output_tokens ?? 0;
+      const cost = costUsd(l.model ?? model, inTok, outTok);
+      await supabase.from('claude_usage').insert({ fn: 'webcam-history', purpose: 'label_compare', model: l.model,
+        input_tokens: inTok, output_tokens: outTok, cost_usd: Math.round(cost * 1e5) / 1e5 });
+      const lab = l.lab;
+      row = { ...row, status: 'done', served_model: l.model, cost_usd: cost,
+        label: LABELS.includes(lab?.label) ? lab.label : null,
+        hills_visible: typeof lab?.hills_visible === 'boolean' ? lab.hills_visible : null,
+        cloud_on_hills: CLOUD.includes(lab?.cloud_on_hills) ? lab.cloud_on_hills : null,
+        sun_on_land: typeof lab?.sun_on_land === 'boolean' ? lab.sun_on_land : null,
+        confidence: typeof lab?.confidence === 'number' ? lab.confidence : null,
+        note: typeof lab?.note === 'string' ? lab.note.slice(0, 500) : null };
+    } catch (e: any) {
+      row = { ...row, status: 'error', error: String(e?.message ?? e).slice(0, 300) };
+    }
+    await supabase.from('webcam_label_compare').upsert(row);
+    return { camera: f.camera_code, local_time: f.local_time, status: row.status, hills: row.hills_visible ?? null, error: row.error ?? null };
+  }));
+  return { ok: true, done: results.filter(r => r.status === 'done').length, results };
+}
 
 Deno.serve(async (req) => {
   const json = (b: any, status = 200) =>
@@ -83,6 +177,13 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const n = Math.min(Math.max(Number(body.n ?? 8), 1), 12);
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    if (body.save) return json(await saveFrames(supabase, Math.min(Math.max(Number(body.save), 1), 12)));
+    if (body.compare) {
+      const key = Deno.env.get('ANTHROPIC_API_KEY');
+      if (!key) return json({ ok: false, error: 'no API key' });
+      return json(await compareFrames(supabase, new Anthropic({ apiKey: key }), String(body.model ?? 'claude-haiku-5-5'),
+        Math.min(Math.max(Number(body.compare), 1), 12)));
+    }
     const apiKey = Deno.env.get('CLAUDE_LABELS') === 'false' ? undefined : Deno.env.get('ANTHROPIC_API_KEY');
     if (!apiKey) return json({ ok: false, error: 'Claude labels off' });
     const claude = new Anthropic({ apiKey });
@@ -109,12 +210,8 @@ Deno.serve(async (req) => {
       const key = { camera_code: f.camera_code, taken_at: f.taken_at };
       let row: any;
       try {
-        const r = await fetch(frameUrl(cam.image_url, f.local_time), {
-          headers: { 'User-Agent': 'travel_slave webcam history (permission: see webcam_cameras.permission_note)' },
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        });
-        if (!r.ok) { await r.body?.cancel(); throw new Error(`image ${r.status}`); }
-        const buf = new Uint8Array(await r.arrayBuffer());
+        // webcam_cameras.history_url: the archive's address template when it differs from the live one.
+        const { buf } = await fetchFrame(cam.history_url ?? cam.image_url, f.local_time);
         const l = await label(claude, cam, buf);
         const inTok = l.usage?.input_tokens ?? 0, outTok = l.usage?.output_tokens ?? 0;
         const cost = costUsd(l.model ?? MODEL, inTok, outTok);

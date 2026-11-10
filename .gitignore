@@ -13,3 +13,6 @@ web-build/
 .env.local
 android/
 ios/
+
+# Supabase CLI local cache (deploys from this environment)
+supabase/.temp/
