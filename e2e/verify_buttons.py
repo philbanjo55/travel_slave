@@ -144,6 +144,19 @@ def plans_tab():
     V.show('btn-plan-again-after', C.capture(1))
 
 
+def today_auto_open():
+    """The trip page opens on today's day and marks its tab TODAY (10 Nov 2026)."""
+    p = open_live()
+    if p is None:
+        return
+    s = C.capture(2)
+    V.show('today-open', s)
+    V.check('today-badge', V.has(s, 'TODAY'), "today's tab marked")
+    r = scroll_find('Re-plan now with the cameras')
+    V.check('today-auto-open', r is not None, "opened on today's card without tapping a tab")
+    V.check('today-alive', C.app_alive())
+
+
 def plan_check_card():
     """Claude's plan check on today's day card (10 Nov 2026): the line shows, opens, and lists what was checked."""
     if open_live() is None or open_today() is None:
@@ -171,7 +184,7 @@ def plan_check_card():
 
 
 def main():
-    for st in (plan_check_card, replan_now_card, ghost_accept, plans_tab):
+    for st in (today_auto_open, plan_check_card, replan_now_card, ghost_accept, plans_tab):
         try:
             st()
         except Exception as e:
