@@ -35,6 +35,28 @@ def scroll_top(n=8):
     time.sleep(1)
 
 
+def mid_screen(s, needle):
+    """Scroll by small steps until the button holding needle sits between 35% and 70% of the screen height."""
+    h = 1920
+    try:
+        m = re.search(r'(\d+)x(\d+)', C.adb('shell', 'wm', 'size') or '')
+        if m: h = int(m.group(2))
+    except Exception:
+        pass
+    for _ in range(4):
+        c = next((c for c in s.clickables if needle.lower() in c['label'].lower()), None)
+        if c is None:
+            return s
+        y = c['xy'][1]
+        if 0.35 * h <= y <= 0.70 * h:
+            return s
+        d = int(y - 0.5 * h)  # > 0: move content up; < 0: move it down
+        d = max(-500, min(500, d))
+        C.adb('shell', 'input', 'swipe', '540', str(int(0.6 * h)), '540', str(int(0.6 * h) - d), '600')
+        s = C.capture(1.2)
+    return s
+
+
 def nudge_up():
     # Move the content up a little so a target found at the bottom edge sits mid-screen before a tap.
     C.adb('shell', 'input', 'swipe', '540', '1500', '540', '1050', '400')
@@ -187,9 +209,7 @@ def plan_check_card():
     w = scroll_find('What was checked')
     V.check('plan-check-checks-link', w is not None)
     if w is not None:
-        w2 = nudge_up()
-        if V.has(w2, 'What was checked'):
-            w = w2
+        w = mid_screen(w, 'What was checked')
         V.tap_text(w, 'What was checked')
         time.sleep(1.5)
         seen2, _ = V.texts_all(3)
