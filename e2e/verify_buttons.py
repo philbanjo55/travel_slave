@@ -28,10 +28,17 @@ def scroll_find(needle, max_scrolls=10):
     return None
 
 
-def scroll_top(n=6):
+def scroll_top(n=8):
+    # Start the swipe inside the list (y 1000): the fixed header is taller since the TODAY line on the tab.
     for _ in range(n):
-        C.adb('shell', 'input', 'swipe', '540', '700', '540', '1800', '250')
+        C.adb('shell', 'input', 'swipe', '540', '1000', '540', '1850', '250')
     time.sleep(1)
+
+
+def nudge_up():
+    # Move the content up a little so a target found at the bottom edge sits mid-screen before a tap.
+    C.adb('shell', 'input', 'swipe', '540', '1500', '540', '1050', '400')
+    return C.capture(1.2)
 
 
 def blocked_lines():
@@ -88,6 +95,9 @@ def replan_now_card():
         seen3, _ = V.texts_all(6, up_first=6)
         print('INFO page after scrolling back up: ' + ' | '.join(t for t in seen3 if len(t) > 3)[:2500], flush=True)
         V.check('btn-replan-now-refind', False, 'button not found again after scrolling back up'); return
+    s2 = nudge_up()
+    if V.has(s2, 'Re-plan now with the cameras'):
+        s = s2
     before = len(blocked_lines())
     V.tap_text(s, 'Re-plan now with the cameras')
     time.sleep(6)
@@ -177,6 +187,9 @@ def plan_check_card():
     w = scroll_find('What was checked')
     V.check('plan-check-checks-link', w is not None)
     if w is not None:
+        w2 = nudge_up()
+        if V.has(w2, 'What was checked'):
+            w = w2
         V.tap_text(w, 'What was checked')
         time.sleep(1.5)
         seen2, _ = V.texts_all(3)
