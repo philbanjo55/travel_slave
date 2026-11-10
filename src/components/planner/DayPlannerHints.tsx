@@ -13,6 +13,7 @@ import { TDay, TWeek, bestElsewhere, tripWeek } from '../../services/plannerWeek
 import { DayScore } from '../../services/plannerDay';
 import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../../services/replanNowStore';
 import { useTripStore } from '../../store/tripStore';
+import { PlanCheckRow } from './PlanCheck';
 export { dayScore, moveReasons } from '../../services/plannerDay';
 export type { DayScore } from '../../services/plannerDay';
 
@@ -234,6 +235,7 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
         </Text>
       ) : null}
       {score.lowerWhy ? <Text style={styles.cardSub}>{score.lowerWhy}</Text> : null}
+      {!past ? <PlanCheckRow tripId={tripId} date={date} tz={tz} /> : null}
       {!past && date === format(new Date(), 'yyyy-MM-dd') ? <ReplanNowRow tripId={tripId} /> : null}
       {past ? <Text style={styles.cardSub}>This day is over: nothing to change.</Text> : score.reasons.length ? (
         <View style={styles.reasons}>
