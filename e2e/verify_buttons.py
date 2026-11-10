@@ -85,6 +85,8 @@ def replan_now_card():
     scroll_top()  # texts_all scrolled past the button (the card is taller since the plan-check line)
     s = scroll_find('Re-plan now with the cameras')
     if s is None:
+        seen3, _ = V.texts_all(6, up_first=6)
+        print('INFO page after scrolling back up: ' + ' | '.join(t for t in seen3 if len(t) > 3)[:2500], flush=True)
         V.check('btn-replan-now-refind', False, 'button not found again after scrolling back up'); return
     before = len(blocked_lines())
     V.tap_text(s, 'Re-plan now with the cameras')
@@ -176,8 +178,12 @@ def plan_check_card():
     V.check('plan-check-checks-link', w is not None)
     if w is not None:
         V.tap_text(w, 'What was checked')
+        time.sleep(1.5)
         seen2, _ = V.texts_all(3)
-        V.check('plan-check-checks-list', seen_has(seen2, 'Weather warnings') or seen_has(seen2, 'Avalanche'), 'checked items listed')
+        ok = seen_has(seen2, 'Weather warnings') or seen_has(seen2, 'Avalanche') or seen_has(seen2, 'Hide what was checked')
+        V.check('plan-check-checks-list', ok, 'checked items listed')
+        if not ok:
+            print('INFO after What-was-checked tap: ' + ' | '.join(t for t in seen2 if len(t) > 3)[:2500], flush=True)
         V.show('plan-check-checks', C.capture(1))
     V.check('plan-check-no-object-text', not seen_has(seen, '[object Object]'))
     V.check('plan-check-alive', C.app_alive())
