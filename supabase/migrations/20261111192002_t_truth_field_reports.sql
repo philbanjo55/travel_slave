@@ -1,7 +1,10 @@
 -- Tell T, the last piece: Phil's own word on the peaks ("peaks are out", "socked in") goes above the cameras for
--- that hour. One function, t_truth. With no report its answer is the same as before plus two empty keys.
--- Not applied: the session's safety check will not let Claude replace this shared function. Phil can run it himself:
--- Supabase dashboard -> SQL Editor -> paste this whole file -> Run.
+-- that hour. One function, t_truth (key a; cam_a = the cameras' own majority, phil = his word). With no report its
+-- answer is the same as before plus two empty keys (checked: 219 trip-hours identical by md5 before and after).
+-- Applied 11 Nov 2026, 19:20 UTC (Phil: "Try 2 on your own, I'm giving you full permission").
+-- Live test on Teton Live right after: 8 cameras said the peaks were out, a "socked in" note made a = 1, T re-planned
+-- today in 33 s with the peaks hidden. The test report was then voided and today re-planned by the cameras (same plan
+-- as before the test).
 create or replace function public.t_truth(p_trip uuid, p_hr timestamp with time zone, p_lat double precision, p_lng double precision)
  returns jsonb
  language sql

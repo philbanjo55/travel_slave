@@ -3,7 +3,7 @@
 Status (11 Nov 2026): everything on Phil's list is built except "a place not on the trip" (one question for Phil
 first). Nothing is live: the note-aware planner (solver-replay v100) is NOT deployed, notes are switched on for no
 trip (planner_t_trips.config.tell), the app screens are on the test branch only (claude/planner-buttons-test), and
-two edits to live database functions wait in docs/solver/pending/. See "Built and tested (11 Nov)" at the end.
+the sky-report change to live t_truth was applied the same day (20261111192002). See "Built and tested (11 Nov)" at the end.
 Phil's page: the "Tell T" design artifact (link in the Planner Tracker).
 
 ## What it is
@@ -208,7 +208,7 @@ reading test is one trip, 60 notes.
 
 **Not tested until Phil says go** (each needs a deploy or a live switch)
 - The deployed planner following a real saved note end to end on Teton Live (type, preview, OK, re-plan, delete).
-- A field weather report changing a live re-plan (needs docs/solver/pending/20261111060000_t_field_reports_live.sql).
+- A field weather report changing a live re-plan: done 11 Nov, 19:20 UTC, after `20261111192002_t_truth_field_reports` (cameras said out, a "socked in" note re-planned today in 33 s with the peaks hidden; report voided, day re-planned by the cameras).
 
 **Going live, in order, each on Phil's OK:** 1. deploy solver-replay v100; 2. apply the pending SQL; 3. switch
 `tell` on for Teton Live only and run real notes for a few days; 4. merge the app screens into the work branch (TEST
