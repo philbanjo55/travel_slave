@@ -241,32 +241,61 @@ def tell_logs():
     return [l for l in V.logcat().splitlines() if 'E2E_TELL' in l]
 
 
+def open_tell_sheet():
+    """From the trip page: today's card -> Tell T sheet. Returns the sheet screen or None."""
+    s = scroll_find('Tell T about this day')
+    if s is None:
+        return None
+    s = mid_screen(s, 'Tell T about this day')
+    V.tap_text(s, 'Tell T about this day')
+    sh = C.capture(2.5)
+    return sh if (V.has(sh, 'Send the note to T') or V.has(sh, 'Send to T')) else None
+
+
+def tell_send(note):
+    """Tap the box, type, send. Returns nothing; the caller waits for what comes next."""
+    s = C.capture(1)
+    V.tap_text(s, 'Your note for T')
+    time.sleep(1.2)
+    type_text(note)
+    s = C.capture(1.2)
+    seen = ' | '.join(c['label'] for c in s.clickables)[:300]
+    print('INFO tell before send: ' + seen, flush=True)
+    return V.tap_text(s, 'Send the note to T') or V.tap_text(s, 'Send to T')
+
+
+def close_tell_sheet():
+    s = C.capture(1)
+    if not V.tap_text(s, 'Close Tell T'):
+        V.back()
+    time.sleep(1.5)
+
+
 def tell_t():
     """Tell T on today's day card (11 Nov 2026). The test build says notes are on, reads are dry and saves are blocked:
     the box opens, a typed note comes back as plain-words rules, the OK is sent (and blocked), a question is answered,
     a quick button is sent (and blocked), and the app stays up."""
     if open_live() is None or open_today() is None:
         return
-    s = scroll_find('Tell T about this day')
-    V.check('tell-button-on-card', s is not None, "today's card on the trip page")
-    if s is None:
+    sh = open_tell_sheet()
+    V.check('tell-button-on-card', sh is not None, "today's card on the trip page -> sheet")
+    if sh is None:
         seen, _ = V.texts_all(6)
         print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
-    s = mid_screen(s, 'Tell T about this day')
-    V.tap_text(s, 'Tell T about this day')
-    sh = C.capture(2.5)
     V.show('tell-sheet', sh)
-    V.check('tell-sheet-open', V.has(sh, 'Send the note to T') or V.has(sh, 'Send to T'))
     V.check('tell-quick-buttons', V.has(sh, 'Sleep in') and V.has(sh, 'Day off'), 'one-tap buttons shown')
     # 1. A typed note -> what T understood, before anything changes.
-    type_text('dinner at 7')
-    hide = C.capture(1)
-    V.tap_text(hide, 'Send the note to T') or V.tap_text(hide, 'Send to T')
-    p = wait_text('Looks right', 45)
-    V.check('tell-preview', p is not None, 'preview with Looks right')
-    if p is not None:
+    sent = tell_send('dinner at 7')
+    p = wait_text('Looks right', 50) if sent else None
+    V.check('tell-preview', p is not None, 'preview with Looks right' if sent else 'Send not tapped')
+    print('INFO tell reads: ' + ' | '.join(l[-300:] for l in tell_logs() if 'read' in l)[-900:], flush=True)
+    if p is None:
+        V.show('tell-no-preview', C.capture(1))
+    else:
         V.show('tell-preview', p)
-        seen, _ = V.texts_all(1)
+        seen = [c['label'] for c in p.clickables] + [t for t in getattr(p, 'texts', [])]
+        seen2, _ = V.texts_all(0)
+        seen = seen + list(seen2)
         V.check('tell-preview-plain-words', seen_has(seen, 'Be back at') and seen_has(seen, 'T WILL'), ' | '.join(t for t in seen if len(t) > 3)[:400])
         V.check('tell-preview-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined'))
         before = len(blocked_lines())
@@ -278,43 +307,40 @@ def tell_t():
         e = C.capture(1)
         V.show('tell-after-ok', e)
         V.check('tell-ok-error-shown', V.has(e, 'blocked by emulator test') or V.has(e, 'Back to the note'), 'the refusal is shown, not swallowed')
-        V.tap_text(e, 'Back to the note')
-    print('INFO tell reads: ' + ' | '.join(l[-300:] for l in tell_logs()[-3:])[:1200], flush=True)
     V.check('tell-alive-1', C.app_alive())
+    close_tell_sheet()
     # 2. A question changes nothing and gets an answer from T's own plans.
-    w = C.capture(1.5)
-    if not (V.has(w, 'Send the note to T') or V.has(w, 'Send to T')):
-        V.back(); w = C.capture(1.5)
-        s = scroll_find('Tell T about this day')
-        if s is not None:
-            V.tap_text(mid_screen(s, 'Tell T about this day'), 'Tell T about this day'); w = C.capture(2.5)
-    C.adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END')
-    for _ in range(40):
-        C.adb('shell', 'input', 'keyevent', 'KEYCODE_DEL')
-    type_text('what is the best day for Oxbow Bend?')
-    w = C.capture(1)
-    V.tap_text(w, 'Send the note to T') or V.tap_text(w, 'Send to T')
-    a = wait_text('T SAYS', 45)
-    V.check('tell-question-answered', a is not None, 'T SAYS shown')
-    if a is not None:
-        V.show('tell-answer', a)
-        seen, _ = V.texts_all(1)
-        V.check('tell-answer-text', seen_has(seen, 'Oxbow Bend') and seen_has(seen, 'A question changes nothing'), ' | '.join(t for t in seen if len(t) > 3)[:500])
+    scroll_top()
+    sh = open_tell_sheet()
+    if sh is None:
+        V.check('tell-question-answered', False, 'sheet did not reopen')
+    else:
+        sent = tell_send('what is the best day for Oxbow Bend?')
+        a = wait_text('T SAYS', 50) if sent else None
+        V.check('tell-question-answered', a is not None, 'T SAYS shown')
+        if a is None:
+            V.show('tell-no-answer', C.capture(1))
+        else:
+            V.show('tell-answer', a)
+            seen, _ = V.texts_all(0)
+            V.check('tell-answer-text', seen_has(seen, 'Oxbow Bend') and seen_has(seen, 'A question changes nothing'), ' | '.join(t for t in seen if len(t) > 3)[:500])
+        close_tell_sheet()
     V.check('tell-alive-2', C.app_alive())
     # 3. A quick button is sent at once (blocked here).
-    q = C.capture(1)
-    V.tap_text(q, 'Ask or tell T something else')
-    q = C.capture(1.5)
-    C.adb('shell', 'input', 'keyevent', 'KEYCODE_BACK') if not V.has(q, 'Day off') else None   # hide the keyboard if it covers the buttons
-    q = C.capture(1.5)
-    before = len(blocked_lines())
-    tapped = V.tap_text(q, 'Quick: Day off') or V.tap_text(q, 'Day off')
-    time.sleep(5)
-    after = blocked_lines()[before:]
-    V.check('tell-quick-sent', bool(tapped) and any('t-notes action=quick' in x for x in after), 'Day off sent a quick note (blocked)')
-    V.show('tell-after-quick', C.capture(1))
+    scroll_top()
+    sh = open_tell_sheet()
+    if sh is None:
+        V.check('tell-quick-sent', False, 'sheet did not reopen')
+    else:
+        before = len(blocked_lines())
+        tapped = V.tap_text(sh, 'Quick: Day off') or V.tap_text(sh, 'Day off')
+        time.sleep(6)
+        after = blocked_lines()[before:]
+        print('INFO blocked after Day off: ' + ' | '.join(x[-160:] for x in after)[:500], flush=True)
+        V.check('tell-quick-sent', bool(tapped) and any('t-notes action=quick' in x for x in after), 'Day off sent a quick note (blocked)')
+        V.show('tell-after-quick', C.capture(1))
+        close_tell_sheet()
     V.check('tell-alive-3', C.app_alive())
-    V.back(2)
 
 
 def tell_t_setup():

@@ -55,7 +55,14 @@ export function TellTSheet({ visible, onClose, tripId, date, dayLabel, places, s
   const [text, setText] = useState('');
   const [phase, setPhase] = useState<Phase>({ k: 'write' });
   const alive = useRef(true);
+  const box = useRef<TextInput>(null);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  // Android does not reliably focus a box inside a pop-up by itself (emulator test, 11 Nov 2026): ask for it once the sheet is up.
+  useEffect(() => {
+    if (!visible || phase.k !== 'write') return;
+    const t = setTimeout(() => box.current?.focus(), 350);
+    return () => clearTimeout(t);
+  }, [visible, phase.k]);
   useEffect(() => {
     if (!visible) return;
     setText(startNote?.text ?? startText ?? '');
@@ -125,7 +132,7 @@ export function TellTSheet({ visible, onClose, tripId, date, dayLabel, places, s
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.xl }}>
             {phase.k === 'write' ? (
               <>
-                <TextInput value={text} onChangeText={setText} multiline autoFocus placeholder={HINT} placeholderTextColor={colors.textTertiary}
+                <TextInput ref={box} value={text} onChangeText={setText} multiline placeholder={HINT} placeholderTextColor={colors.textTertiary}
                   style={styles.input} accessibilityLabel="Your note for T" maxLength={1000} />
                 <TouchableOpacity onPress={() => send()} disabled={text.trim().length < 2} style={[styles.primary, text.trim().length < 2 && { opacity: 0.4 }]}
                   activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Send the note to T">
