@@ -53,7 +53,7 @@ export async function askT(db: any, ctx: TripCtx, q: { kind: string; places: str
       } else L.push(`T has no forecast or light numbers for ${p.name} yet.`);
       // deno-lint-ignore no-explicit-any
       // deno-lint-ignore no-explicit-any
-      const onBest = ranked.length && (on as any[]).some(v => (v.trip_date ?? v.date) === ranked[0][0]);
+      const onBest = ranked.length && (on as any[]).some(v => ranked.some(r => r[0] === (v.trip_date ?? v.date) && ranked[0][1].mean - r[1].mean <= 0.05));
       L.push(on.length ? `T has it on ${list((on as any[]).map(where))}.${on.length === 1 ? pct(on[0]) : ''}${ranked.length && !onBest ? ' T picked that day to fit the rest of the week (every place once, the drives, your bookings).' : ''}` : `T has not put it on a day yet.`);
     }
   }
