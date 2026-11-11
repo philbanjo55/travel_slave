@@ -13,9 +13,9 @@ import { MODEL, SYSTEM, buildSchema, userText, toRules, sayLines, sunTimes, type
 //       -> the same rules without Claude, saved at once (a quick button).
 //   {action: 'save', id}  -> draft -> active, then the affected days are re-planned (planner_t_note_replan).
 //   {action: 'clear', id} -> active / draft -> cleared, re-planned.
-// Spend: claude_usage (fn t-notes), stops at CLAUDE_NOTES_CAP_USD (default 5 a month) or CLAUDE_MONTHLY_CAP_USD.
+// Spend: claude_usage (fn t-notes), stops at CLAUDE_NOTES_CAP_USD (default 15 a month) or CLAUDE_MONTHLY_CAP_USD.
 
-const NOTES_CAP_USD = Number(Deno.env.get('CLAUDE_NOTES_CAP_USD') ?? 5);
+const NOTES_CAP_USD = Number(Deno.env.get('CLAUDE_NOTES_CAP_USD') ?? 15);  // 15: the reading tests alone used ~$5 in November 2026
 const MONTHLY_CAP_USD = Number(Deno.env.get('CLAUDE_MONTHLY_CAP_USD') ?? 40);
 const PRICE_IN = 4, PRICE_OUT = 20;  // $ per million tokens (Opus)
 
@@ -55,7 +55,7 @@ async function tripCtx(db: any, tripId: string, asOf: Date): Promise<TripCtx | n
   const lat = placed.reduce((t: number, s: any) => t + s.lat, 0) / (placed.length || 1), lng = placed.reduce((t: number, s: any) => t + s.lng, 0) / (placed.length || 1);
   const sun = placed.length ? Object.fromEntries((days ?? []).map((d: any) => [d.date, sunTimes(d.date, lat, lng, tz)])) : undefined;
   return { tripId, name: trip.title, tz, sun, gear, dates: (days ?? []).map((d: any) => d.date), places: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)),
-           bookings, hotels: (accs ?? []).map((a: any) => ({ name: String(a.name ?? 'the hotel').split(/[,(]/)[0].trim(), from: a.check_in, to: a.check_out })),
+           bookings, hotels: (accs ?? []).map((a: any) => ({ name: String(a.name ?? 'the hotel').split(/[,(]| — /)[0].trim(), from: a.check_in, to: a.check_out })),
            today: `${parts.year}-${parts.month}-${parts.day}`, nowClock: `${parts.hour}:${parts.minute}` };
 }
 

@@ -113,9 +113,39 @@ MORE = [
  ("icy roads, easy day, back by 4", [r('slow_roads', 'wed', factor=1.25), r('max_stops', 'wed', count=3), r('max_visit', 'wed', minutes=120), r('back_by', 'wed', time='16:00')]),
 ]
 
+# Faroes set (11 Nov 2026): the other trip, never used while writing the instructions. Sun 16 May 2027, 9:00 AM there.
+FO_TRIP, FO_NOW, FO_CARD = 'e04fbc9d-86b1-42b2-bf08-fc65a18e665d', '2027-05-16T08:00:00Z', '2027-05-16'
+def f(type, days, **kw): return dict(type=type, dates=[f'2027-05-{d}' for d in days.split()], **kw)
+def frest(type, day, **kw): return dict(type=type, rest=f'2027-05-{day}', **kw)
+BOUR = ['Bøur — West Viewpoint', 'Bøur — Panoramic Viewpoint', 'Bøur — Evening', 'Bøur Viewpoint']
+FO = [
+ ("skip sandavagur church", [f('skip', '16', places=['Sandavágur Church'])]),
+ ("kallur on the 27th no matter what", [f('must', '27', places=['Kallur'])]),
+ ("mulafossur at sunset tomorrow", [f('must', '17', places=['🐦 Múlafossur'], **{'from': '20:47', 'to': '21:47', 'tol': 15})]),
+ ("ferry to sandoy is cancelled wednesday", {'any': ['ask', [f('skip', '19', places=['Sandoy — Drangarnir + Søltuvík'])]]}),
+ ("dinner in torshavn at 8 on the 23rd", [f('back_by', '23', time='19:40', tol=15)]),
+ ("too windy for the cliffs today", {'any': ['ask', 'none']}),
+ ("saksun and tjornuvik before fossa on sunday", [f('before', '23', places=['Saksun', 'Tjørnuvík'], then_places=['Fossá'])]),
+ ("easy day tuesday", [f('max_stops', '18', count=3), f('max_visit', '18', minutes=120)]),
+ ("day off tomorrow", [f('day_off', '17')]),
+ ("no skis today", 'none'),
+ ("roads are foggy and slow today", [f('slow_roads', '16', factor=1.25)]),
+ ("trollkonufingur first today", [f('first', '16', places=['Trøllkonufingur'])]),
+ ("be at gjogv by 10 on the 25th", [f('arrive_by', '25', places=['🐦 Gjógv Gorge'], time='10:00')]),
+ ("only the god tier spots tomorrow", [f('only_top', '17', tier='GOD')]),
+ ("spend 2 hours at bour west viewpoint", [f('stay', '16', places=['Bøur — West Viewpoint'], minutes=120)], None, None, [f('must', '16', places=['Bøur — West Viewpoint'])]),
+ ("skip bour", {'any': ['ask', [f('skip', '16', places=BOUR)]]}),
+ ("want tindholmur landing on the 26th in the morning", [f('must', '26', places=['⚓ Tindhólmur — Landing on the Islet'], to='11:00')]),
+ ("sleep in on the 20th and 21st", [f('leave_after', '20 21', time='09:00')]),
+ ("nothing longer than 3 hours for the rest of the trip", [frest('max_visit', '16', minutes=180)]),
+ ("ravnagjogv only if its foggy", {'any': ['ask', 'none', [frest('optional', '16', places=['Ravnagjógv Gorge'])]]}),
+]
+TRIP_OF = {}
+
 def call(case):
     text, exp, card, asof = (list(case) + [None, None, None])[:4]
     body = dict(action='read', dry=True, trip_id=TRIP, date=D[card or 'wed'], as_of=asof or A, text=text)
+    if CASES is FO: body.update(trip_id=FO_TRIP, date=FO_CARD, as_of=FO_NOW)
     out = subprocess.run(['curl', '-s', '-m', '90', '-X', 'POST', URL, '-H', 'Content-Type: application/json', '-H', 'apikey: placeholder', '-d', json.dumps(body)], capture_output=True, text=True).stdout
     try: return json.loads(out)
     except Exception: return {'ok': False, 'error': out[:200]}
@@ -124,7 +154,7 @@ mins = lambda t: int(t[:2]) * 60 + int(t[3:])
 def scope(a): return ('rest', a['from_date']) if 'dates' not in a else ('dates', tuple(sorted(a['dates'])))
 def same_scope(e, a):
     if 'rest' in e:   # "rest of the trip" may also come as every remaining day listed
-        return scope(a) == ('rest', e['rest']) or scope(a) == ('dates', tuple(d for d in REST if d >= e['rest']))
+        return scope(a) == ('rest', e['rest']) or scope(a) == ('dates', tuple(d for d in REST if d >= e['rest'])) or (a.get('dates') and len(a['dates']) >= 6 and a['dates'][0] == e['rest'])
     return scope(a) == ('dates', tuple(sorted(e['dates'])))
 def match(e, a):
     if e['type'] != a['type'] or not same_scope(e, a): return False
@@ -166,6 +196,7 @@ if __name__ == '__main__':
     if '--held' in sys.argv: CASES = HELD; sys.argv.remove('--held')
     if '--easy' in sys.argv: CASES = EASY; sys.argv.remove('--easy')
     if '--more' in sys.argv: CASES = MORE; sys.argv.remove('--more')
+    if '--fo' in sys.argv: CASES = FO; sys.argv.remove('--fo')
     pick = [int(x) for x in sys.argv[1:]] or range(1, len(CASES) + 1)
     with cf.ThreadPoolExecutor(6) as ex: results = list(ex.map(lambda i: (i, call(CASES[i - 1])), pick))
     ok = 0; cost = 0.0; bad = []
