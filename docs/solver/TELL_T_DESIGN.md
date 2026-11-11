@@ -1,6 +1,10 @@
 # "Tell T about your day" (worksheet g4): design
 
-Status: design, waiting for Phil's OK (10 Nov 2026). Nothing built yet.
+Status (10 Nov 2026, evening): Phil: build ALL of the ideas below and test everything before anything goes live
+("All of them for the not built. Let's get the others tested etc before we go live."), plus weather reports
+from the field. Built and bench-tested so far: back_by, leave_after, busy, skip, must (+ time band), max_visit,
+max_leg, stay, day_off in solver-replay v96 (not deployed), t_notes, edge function t-notes (deployed, unused),
+reading tests 40/40 and 19/20 (tools/tell_t/notes_test.py). solver-replay v96 deploy waits for Phil's OK.
 Phil's page: the "Tell T" design artifact (link in the Planner Tracker).
 
 ## What it is
@@ -141,3 +145,20 @@ rules without a trip.
 **Looked at, not worth building:** a per-day risk dial ("gamble today" / "play it safe": the
 ablation showed the risk setting doesn't change plans); per-day light wishes (that is the
 stop's own Settings tab).
+
+
+## Decided 10 Nov 2026 (Phil): everything, tested before live
+
+Still to build, all of it: max_stops / easy day; slow_roads; no_gear / gear window change; order (first, last,
+before); optional (only on a good chance); only_top; arrive_by per stop; cost warning in the preview (what a note
+makes T give up, before the OK); evening recap (ticks after one OK); where I really am / running late / staying
+longer; **weather reports from the field** (Phil, 10 Nov: "I wanna be able to give weather reports in the field
+too": "peaks are out", "socked in at Jenny Lake", "fog in the valley": counts as the look for the rest of today's
+plan, above the cameras, and is kept as truth for the day check); a place not on the trip; Ask T; plan check ->
+note button; quick buttons, trip rules list, no-signal queue in the app.
+
+Test gaps to close before live (my own review, 10 Nov): rule tests ran on 8 Teton weeks with hand-picked days,
+not all 56 with random notes; nothing on the Faroes trip; every bench run was on the local runner (no 2 s CPU
+limit), so the edge function's limit is untested with notes; the live path (save, re-plan, delete, a note typed
+mid-day) is untested; the checker was written with the rules (an independent SQL check is still to do); the
+reading test is one trip, 60 notes.
