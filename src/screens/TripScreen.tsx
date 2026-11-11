@@ -460,6 +460,9 @@ export default function TripScreen() {
         data={ghostRows ? ghostRows.map(r => r.item) : stops}
         keyExtractor={(item: any) => item.id}
         showsVerticalScrollIndicator={false}
+        // Tell T's sheet opens from the day card in this list's header: without this, a tap on its Send or quick
+        // buttons while the keyboard is up only closes the keyboard (emulator test, 11 Nov 2026).
+        keyboardShouldPersistTaps="handled"
         ListHeaderComponent={IS_TEST_APP ? (
           <View style={styles.listHead}>
             <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />
