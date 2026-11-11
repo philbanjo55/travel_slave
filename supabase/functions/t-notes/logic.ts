@@ -54,7 +54,7 @@ Places:
 - Never work out a place from a description alone ("the cliffs", "the waterfall", "the lake"): use it only if exactly one listed place has that word in its name, else ask or leave it in cant_use.
 - A road or trail closure: skip the listed places you are confident need that road or trail; if you are not confident which places it affects, ask.
 
-Right now (now): only when the trip is under way and the note is about today. These are not rules; T re-plans the rest of today from them once. Leave now null otherwise.
+Right now (now): only when the trip is under way. These are about this very moment, whichever day card they were typed on; they are not rules: T re-plans the rest of today from them once. Leave now null otherwise.
 - here_place: where he says he is ("I'm at Oxbow", "still at the barns", "back at the hotel" = "hotel"). A listed place or "hotel"; a place that is not listed goes in cant_use.
 - late_minutes: how far behind the plan he is ("running an hour late" = 60, "half an hour behind" = 30, "a bit behind" = 20).
 - stay_minutes: how much longer he will stay where he is ("staying another half hour" = 30, "give me 20 more minutes here" = 20).
@@ -246,7 +246,8 @@ export function toNow(ctx: TripCtx, date: string, raw: any): { now: NowWord | nu
   if (['out', 'hidden', 'mixed'].includes(raw.sky)) out.sky = raw.sky;
   if (!out.here && !out.late_min && !out.stay_min && !out.sky) return { now: null, cant: [] };
   const under = ctx.today >= ctx.dates[0] && ctx.today <= ctx.dates[ctx.dates.length - 1];
-  if (!under || date !== ctx.today) return { now: null, cant: ['T can only use where you are, or what you see, on the day itself while the trip is on.'] };
+  // About this moment, whichever day card it was typed on (the preview says "right now"); only while the trip is on.
+  if (!under) return { now: null, cant: ['T can only use where you are, or what you see, while the trip is on.'] };
   if (typeof raw.why === 'string') out.why = raw.why.slice(0, 120);
   return { now: out, cant: [] };
 }

@@ -58,9 +58,11 @@ try:
     check('now save: report kept', s.get('ok') and len(rep) == 1 and rep[0]['sky'] == 'hidden', (s, rep))
     check('now save: re-plan refused cleanly (no live plan today)', isinstance(s.get('now'), dict) and s['now'].get('ok') is False, s)
     check('now save: note done', row(n['id'])['status'] == 'done')
-    # 4. Not on the day itself: no "now".
+    # 4. Typed on another day's card: still about right now. Before the trip: not used, and said so.
     r = read('peaks out', date='2026-05-16', now=dict(here_place=None, late_minutes=None, stay_minutes=None, sky='out', why='test')); n = r.get('note') or {}
-    check('now on another day: not used, said so', r.get('ok') and n.get('now') is None and any('on the day itself' in x for x in n.get('info') or []), r)
+    check("now on tomorrow's card: still right now", r.get('ok') and (n.get('now') or {}).get('sky') == 'out' and n['say'][0]['when'] == 'right now', r)
+    r = read('peaks out', asof='2026-05-01T12:00:00Z', now=dict(here_place=None, late_minutes=None, stay_minutes=None, sky='out', why='test')); n = r.get('note') or {}
+    check('now before the trip: not used, said so', r.get('ok') and n.get('now') is None and any('while the trip is on' in x for x in n.get('info') or []), r)
     # 5. A note on a past day is refused.
     r = read('skip it', date='2026-05-14', rules=[])
     check('past day refused', r.get('ok') is False and 'is over' in str(r.get('error')), r)
