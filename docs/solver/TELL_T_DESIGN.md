@@ -186,11 +186,13 @@ reading test is one trip, 60 notes.
   fit is said, with the reason where it is plain (needs the rental gear before pickup).
 
 **Tests** (tools/tell_t)
-- No notes = identical plans: 56 of 56 nights on six code versions (latest v99; v100 rerun pending at the time of writing).
+- No notes = identical plans: 56 of 56 nights on seven code versions (the last, tellId8, on v100).
 - Random notes, 5 rules a week: 56 Teton weeks + 14 more + 9 Faroes periods, judged by the planner's own check and by
   an independent checker (check_runs.py: by stop name, stored visits, drive table, keep-together). Found and fixed on
   the way: a Faroes "by 11:00" met the night before (v98); one night with no plan and three nights with one barn
-  planned alone (v99).
+  planned alone (v99). Final pass on the fixed code (tellZ3 56 weeks, tellZ4 14 weeks, tellP1 8 weeks, foZ3 9
+  periods; 681 nights): 0 rule breaks, 0 nights without a plan; every wanted place that did not fit says so, mostly
+  a ski or snowshoe place asked for on a day without the rental gear.
 - Pair fixture (tellP1): wanted barn + max stops, nothing-long, day off + wanted barn, skip one + want the other.
 - The 2-second edge limit: a deployed test copy ran 28 weeks with and without notes, same timing.
 - Reading: 130 notes with answers written beforehand (main 40, held-out 20, easy 6, more 12, Faroes 20, field /
@@ -199,7 +201,10 @@ reading test is one trip, 60 notes.
   questions, what-if, refusals; every row it makes is removed.
 - "Where I really am": dry Re-plan now runs against a past Teton Live day (late, at another place, staying longer,
   an honest "can't fit" when a booking would be missed); nothing published.
-- App: emulator checks tell-* on the test branch (the test build says notes are on, forces dry reads, blocks saves).
+- App: emulator checks tell-* on the test branch (the test build says notes are on, forces dry reads, blocks saves):
+  15 of 15 pass (run 39, 11 Nov). Found and fixed on the way: the note box did not take focus by itself inside the
+  pop-up, and with the keyboard up the first tap on Send or a quick button only closed the keyboard (the trip page's
+  list swallowed it: `keyboardShouldPersistTaps="handled"` on that list).
 
 **Not tested until Phil says go** (each needs a deploy or a live switch)
 - The deployed planner following a real saved note end to end on Teton Live (type, preview, OK, re-plan, delete).
