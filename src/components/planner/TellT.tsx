@@ -113,7 +113,7 @@ export function TellTSheet({ visible, onClose, tripId, date, dayLabel, places, s
   const keep = async () => { await queueNote(tripId, date, text.trim()); onClose(); };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.back}>
         <View style={styles.sheet}>
           <View style={styles.head}>
@@ -306,8 +306,9 @@ export function TripRules({ tripId }: { tripId: string }) {
 }
 
 const styles = StyleSheet.create({
-  back: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
-  sheet: { maxHeight: '88%', backgroundColor: colors.surfaceElevated, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.lg, gap: spacing.md },
+  // The sheet hangs from the top of the screen, so the box and its Send button stay clear of the keyboard.
+  back: { flex: 1, justifyContent: 'flex-start', paddingTop: 44, backgroundColor: 'rgba(0,0,0,0.7)' },
+  sheet: { maxHeight: '86%', backgroundColor: colors.surfaceElevated, borderRadius: radius.lg, marginHorizontal: spacing.sm, padding: spacing.lg, gap: spacing.md },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontSize: 16, fontWeight: '700', color: colors.textPrimary },
   close: { fontSize: 14, fontWeight: '700', color: colors.textSecondary },
