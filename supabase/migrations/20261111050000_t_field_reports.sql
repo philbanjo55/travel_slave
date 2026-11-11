@@ -1,5 +1,5 @@
 -- Tell T, word from the field, part 1 of 2: new things only (worksheet g4; Phil, 10 Nov 2026: "I wanna be able to
--- give weather reports in the field too"). Nothing existing changes here; part 2 (20261111060000) has the two edits
+-- give weather reports in the field too"). Nothing existing changes here; part 2 (docs/solver/pending/20261111060000_t_field_reports_live.sql) has the two edits
 -- to live functions (t_truth, replay_run_tick) and waits for Phil's OK.
 --  t_reports: what Phil says the sky is doing where he is ("peaks are out", "socked in"). t_truth puts his word for
 --    that hour above the cameras (key a; cam_a = the cameras' own majority, phil = his word), so it is the look for
