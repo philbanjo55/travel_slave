@@ -26,6 +26,8 @@ tz = ZoneInfo(q(f"select coalesce(timezone,'UTC') tz from trips where id='{trip}
 stops = {r['id']: r for r in q(f"select s.id, s.name, s.time_locked, s.duration_minutes dur, d.date, ss.tier from stops s left join days d on d.id=s.day_id left join solver_stop_settings ss on ss.stop_id=s.id where d.trip_id='{trip}'")}
 dm = {(r['f'], r['t']): r['m'] for r in q(f"select from_stop_id f, to_stop_id t, minutes m from solver_drive_matrix where trip_id='{trip}'")}
 accs = q(f"select name, check_in, check_out from accommodations where trip_id='{trip}'")
+# Keep together (the trip's own setting plus a run's guessed pairs): key -> the places' names.
+tog_db = {r['stop_id']: r['together'] for r in q(f"select ss.stop_id, ss.together from solver_stop_settings ss join stops s on s.id=ss.stop_id join days d on d.id=s.day_id where d.trip_id='{trip}' and ss.together is not null and ss.tier is not null")}
 days = sorted({s['date'] for s in stops.values() if s['date']})
 name_of = lambda sid: stops[sid]['name'] if sid in stops else sid
 TOP = {'GOD': 3, 'S': 2, 'A': 1}
@@ -75,12 +77,32 @@ for cfg in cfgs:
         total['nights'] += 1
         tag = f"{cfg} week {r['s']} {td}"
         if (r['st'] or {}).get('error'): problems.append(f'{tag}: NO ROUTE ({r["st"]["error"]})'); continue
+        # 0. Keep together: all of a pair on the day or none of it (every night, noted or not), unless a note that day
+        # skips one of them by name while the other is asked for.
+        tog0 = {} if r['c'].get('no_together') else {**tog_db, **(r['c'].get('together_add') or {})}
+        pr0 = defaultdict(set)
+        for sid, k in tog0.items():
+            if sid in stops and stops[sid]['tier']: pr0[k].add(name_of(sid))
+        seen = {v['name'] for v in vs if not v.get('booked')}
+        sk0 = set().union(*[names(n.get('stops')) for n in rules if n['type'] == 'skip']) if rules else set()
+        for k, ns in pr0.items():
+            if len(ns) > 1 and (ns & seen) and not ns <= seen and not ((ns - seen) <= sk0):
+                problems.append(f"{tag}: keep together '{k}' is split: planned {sorted(ns & seen)}, missing {sorted(ns - seen)}")
         if not rules and not any(n['type'] in ('gear_to', 'gear_from') for n in notes): total['plain'] += 1; continue
         total['noted'] += 1
         slow = max([float(n.get('factor') or 1) for n in rules if n['type'] == 'slow_roads'] + [1.0])
         H0, H = hotel_stop(td, False), hotel_stop(td, True)
         free = [v for v in vs if not v.get('booked')]
         want = set().union(*[names(n.get('stops')) for n in rules if n['type'] in ('must', 'first', 'last')]) if rules else set()
+        # A wanted place brings its keep-together partner (it passes the day's other notes too), unless a note skips it.
+        tog = {} if r['c'].get('no_together') else {**tog_db, **(r['c'].get('together_add') or {})}
+        pairs = defaultdict(set)
+        for sid, k in tog.items():
+            if sid in stops and stops[sid]['tier']: pairs[k].add(name_of(sid))
+        skipped = set().union(*[names(n.get('stops')) for n in rules if n['type'] == 'skip']) if rules else set()
+        asked = set(want)
+        for k, ns in pairs.items():
+            if ns & asked: want |= {x for x in ns if x not in skipped or x in asked}
         wanted = lambda v: v['name'] in want
         bad = lambda msg: problems.append(f'{tag}: {msg}')
         # 1. The day is physically possible: no visit starts before the last one ended plus the drive.
@@ -144,7 +166,7 @@ for cfg in cfgs:
                     if not wanted(v): bad(f"day_off: {v['name']} is planned")
             elif t == 'max_stops':
                 others = [v for v in free if not wanted(v)]
-                if len(others) > max(0, n['count'] - len(want)): bad(f"max_stops {n['count']}: {len(free)} stops ({len(want)} wanted)")
+                if len(others) > max(0, n['count'] - len(asked)): bad(f"max_stops {n['count']}: {len(free)} stops ({len(want)} wanted)")
             elif t == 'no_gear':
                 for v in free:
                     if v['stop_id'] in gear_ids and not wanted(v): bad(f"no_gear: {v['name']} needs the gear")
