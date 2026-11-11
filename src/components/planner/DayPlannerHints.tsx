@@ -15,6 +15,7 @@ import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../..
 import { useTripStore } from '../../store/tripStore';
 import { PlanCheckRow } from './PlanCheck';
 import { TellTRow } from './TellT';
+import { errText } from '../../utils/errText';
 export { dayScore, moveReasons } from '../../services/plannerDay';
 export type { DayScore } from '../../services/plannerDay';
 
@@ -320,7 +321,7 @@ export function ChanceLine({ hint, label, onChip }: { hint: StopHint; label?: bo
 export function ReplanNowRow({ tripId }: { tripId: string }) {
   const v = useReplanNow(tripId);
   const { currentTripData } = useTripStore();
-  const go = () => startReplanNow(tripId, currentTripData?.trip?.title).catch((e: any) => failReplanNow(tripId, String(e?.message ?? e)));
+  const go = () => startReplanNow(tripId, currentTripData?.trip?.title).catch((e: any) => failReplanNow(tripId, errText(e)));
   if (v.phase === 'running') {
     return <Text style={styles.cardSub}>Re-planning the rest of today with fresh camera pictures (about 1 minute). The new plan shows here.</Text>;
   }

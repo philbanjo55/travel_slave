@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { colors, radius, spacing, typography } from '../../theme';
+import { errText } from '../../utils/errText';
 import {
   TNote, QuickKind, clearNote, covers, dropWaiting, fetchNote, queueNote, quickNote, readNote, refreshNotes, restOfTrip,
   saveNote, useNotes, useNotesOn,
@@ -84,7 +85,7 @@ export function TellTSheet({ visible, onClose, tripId, date, dayLabel, places, s
   }, [pv?.id, pv?.cost]);
 
   const show = (note: TNote) => setPhase(note.status === 'asking' ? { k: 'asking', note } : note.status === 'answer' ? { k: 'answer', note } : { k: 'preview', note });
-  const fail = (e: any) => setPhase({ k: 'error', message: String(e?.message ?? e), offline: !!e?.offline });
+  const fail = (e: any) => setPhase({ k: 'error', message: errText(e), offline: !!e?.offline });
   const send = async (answer?: { question: string; choice: string }) => {
     const t = text.trim();
     if (t.length < 2) return;

@@ -127,7 +127,9 @@ def replan_now_card():
     print('INFO blocked after Re-plan now: ' + ' | '.join(a[-160:] for a in after)[:800], flush=True)
     V.check('btn-replan-now-sent', any('planner_t_now' in a for a in after), 'the tap sent planner_t_now (blocked)')
     V.check('btn-replan-now-alive', C.app_alive())
-    V.show('btn-replan-now-after', C.capture(1))
+    aft = C.capture(1)
+    V.show('btn-replan-now-after', aft)
+    V.check('btn-replan-now-no-object-text', not V.has(aft, '[object Object]'), 'the refusal reads as words on the card')
 
 
 def ghost_accept():
