@@ -9,7 +9,7 @@ import { MODEL, SYSTEM, buildSchema, userText, toRules, sayLines, sunTimes, type
 //       the plain-words lines Phil sees before his OK, what T can't use, or one question back (status asking).
 //       answer = Phil's pick for a question (the note is read again with it). dry = nothing stored (tests).
 //       as_of = "now" for tests (ISO); else the real time.
-//   {action: 'quick', trip_id, date, kind: 'sleep_in' | 'nothing_long' | 'day_off' | 'back_by' | 'skip' | 'want', time?, place?}
+//   {action: 'quick', trip_id, date, kind: 'sleep_in' | 'nothing_long' | 'easy_day' | 'day_off' | 'back_by' | 'skip' | 'want', time?, place?}
 //       -> the same rules without Claude, saved at once (a quick button).
 //   {action: 'save', id}  -> draft -> active, then the affected days are re-planned (planner_t_note_replan).
 //   {action: 'clear', id} -> active / draft -> cleared, re-planned.
@@ -87,20 +87,23 @@ Deno.serve(async (req) => {
     if (!ctx) return json({ ok: false, error: 'trip not found' }, 404);
     const date = String(body.date ?? '');
     if (!ctx.dates.includes(date)) return json({ ok: false, error: 'that date is not a day of this trip' }, 400);
+    // A past day's card takes no notes (the app shows no box there; never left to Claude to pick another day).
+    if (date < ctx.today) return json({ ok: false, error: 'That day is over, so T can\'t change it. Put the note on today or a later day.' }, 400);
 
     let out: { rules: any[]; cant: string[]; ask: any; raw: any[] }, cost: number | null = null, model: string | null = null;
     let text = String(body.text ?? '').trim().slice(0, 1000);
     if (body.action === 'quick') {
       const k = String(body.kind ?? ''), place = ctx.places.find(p => p.name === body.place)?.name;
-      const one = (r: any) => [{ dates: [date], rest_of_trip: false, time: null, from: null, to: null, places: [], at_place: null, minutes: null, label: null, why: 'Quick button', ...r }];
+      const one = (r: any) => [{ dates: [date], rest_of_trip: false, time: null, from: null, to: null, places: [], at_place: null, minutes: null, count: null, label: null, why: 'Quick button', ...r }];
       const raw = k === 'sleep_in' ? one({ type: 'leave_after', time: body.time ?? '08:30' })
         : k === 'nothing_long' ? one({ type: 'max_visit', minutes: 90 })
         : k === 'day_off' ? one({ type: 'day_off' })
+        : k === 'easy_day' ? [...one({ type: 'max_stops', count: 3 }), ...one({ type: 'max_visit', minutes: 120 })]
         : k === 'back_by' && body.time ? one({ type: 'back_by', time: body.time })
         : k === 'skip' && place ? one({ type: 'skip', places: [place] })
         : k === 'want' && place ? one({ type: 'must', places: [place] }) : null;
       if (!raw) return json({ ok: false, error: 'that quick button needs a time or a place' }, 400);
-      text = k === 'sleep_in' ? 'Sleep in' : k === 'nothing_long' ? 'Nothing long' : k === 'day_off' ? 'Day off' : k === 'back_by' ? `Back by ${body.time}` : k === 'skip' ? `Skip ${place}` : `Want ${place}`;
+      text = k === 'sleep_in' ? 'Sleep in' : k === 'nothing_long' ? 'Nothing long' : k === 'day_off' ? 'Day off' : k === 'easy_day' ? 'Easy day' : k === 'back_by' ? `Back by ${body.time}` : k === 'skip' ? `Skip ${place}` : `Want ${place}`;
       out = { ...toRules(ctx, date, raw), ask: null, raw };
     } else {
       if (text.length < 2) return json({ ok: false, error: 'the note is empty' }, 400);

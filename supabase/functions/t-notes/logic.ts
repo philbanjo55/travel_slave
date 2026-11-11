@@ -11,9 +11,9 @@ export type TripCtx = {
 };
 // A rule as the planner reads it (solver-replay NoteRule): stop ids, HH:MM in the trip's time zone, dates.
 export type Rule = { type: string; dates?: string[]; from_date?: string; to_date?: null; time?: string; from?: string; to?: string;
-  at?: string | null; label?: string; stops?: string[]; places?: string[]; minutes?: number; why?: string };
+  at?: string | null; label?: string; stops?: string[]; places?: string[]; minutes?: number; count?: number; why?: string };
 
-const TYPES = ['back_by', 'leave_after', 'busy', 'skip', 'must', 'max_visit', 'max_leg', 'stay', 'day_off'] as const;
+const TYPES = ['back_by', 'leave_after', 'busy', 'skip', 'must', 'max_visit', 'max_leg', 'stay', 'day_off', 'max_stops'] as const;
 
 export const SYSTEM = `You read a short note from a landscape photographer on a trip and turn it into rules for his day planner ("T"). T plans each day's photo stops around weather and light. It follows only the rule types below; you never plan the day yourself.
 
@@ -26,6 +26,8 @@ Rule types (use only these):
 - max_visit {minutes}: no single stop longer than this ("tired", "nothing long", "easy on the legs" = 90 unless he gives a number).
 - max_leg {minutes}: no drive longer than this ("stay close to town" = 30 unless he gives a number).
 - stay {places, minutes}: how long to stay at a place ("spend 3 hours at ...").
+- max_stops {count}: at most this many stops that day ("only 3 stops", "just a couple of stops" = 2). Places he asks for the same day count first.
+- "Easy day" / "light day" / "take it easy" with nothing more exact = two rules: max_stops 3 and max_visit 120.
 - day_off: nothing planned that day ("day off", "rest day", "staying in today", someone is sick). Bookings stay. Never use a busy block for a whole day.
 
 Days:
@@ -54,14 +56,14 @@ export function buildSchema(ctx: TripCtx) {
       ask: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, required: ['question', 'options'],
         properties: { question: { type: 'string' }, options: { type: 'array', items: { type: 'string' } } } }] },
       rules: { type: 'array', items: { type: 'object', additionalProperties: false,
-        required: ['type', 'dates', 'rest_of_trip', 'time', 'from', 'to', 'places', 'at_place', 'minutes', 'label', 'why'],
+        required: ['type', 'dates', 'rest_of_trip', 'time', 'from', 'to', 'places', 'at_place', 'minutes', 'count', 'label', 'why'],
         properties: {
           type: { type: 'string', enum: [...TYPES] },
           dates: { type: 'array', items: { type: 'string', enum: ctx.dates } },
           rest_of_trip: { type: 'boolean' },
           time: NULLSTR, from: NULLSTR, to: NULLSTR,
           places: { type: 'array', items: { type: 'string', enum: places } },
-          at_place: NULLSTR, minutes: { type: ['integer', 'null'] }, label: NULLSTR, why: { type: 'string' },
+          at_place: NULLSTR, minutes: { type: ['integer', 'null'] }, count: { type: ['integer', 'null'] }, label: NULLSTR, why: { type: 'string' },
         } } },
       cant_use: { type: 'array', items: { type: 'string' } },
     },
@@ -136,6 +138,7 @@ export function toRules(ctx: TripCtx, date: string, raw: any[]): { rules: Rule[]
       case 'max_visit': if (!n || n < 15 || n > 600) { bad('the longest stop'); break; } rules.push({ type: 'max_visit', minutes: n, ...scope, why }); break;
       case 'max_leg': if (!n || n < 5 || n > 240) { bad('the longest drive'); break; } rules.push({ type: 'max_leg', minutes: n, ...scope, why }); break;
       case 'day_off': rules.push({ type: 'day_off', ...scope, why }); break;
+      case 'max_stops': { const c = Number.isFinite(Number(r.count)) && r.count != null ? Math.round(Number(r.count)) : null; if (!c || c < 1 || c > 12) { bad('how many stops'); break; } rules.push({ type: 'max_stops', count: c, ...scope, why }); break; }
       case 'stay': if (!stops.length || !n || n < 15 || n > 600) { bad('how long to stay'); break; } rules.push({ type: 'stay', stops, places: names, minutes: n, ...scope, why }); break;
     }
   }
@@ -162,6 +165,7 @@ export function sayLines(ctx: TripCtx, rules: Rule[]): { text: string; when: str
       : r.type === 'max_visit' ? `Keep every stop under ${mins(r.minutes!)}`
       : r.type === 'max_leg' ? `No drive over ${mins(r.minutes!)}`
       : r.type === 'day_off' ? 'Plan nothing: a day off (your bookings stay)'
+      : r.type === 'max_stops' ? `At most ${r.count} stop${r.count === 1 ? '' : 's'}`
       : `Stay ${mins(r.minutes!)} at ${p}`;
     return { text, when: when(r), ...(r.why ? { why: r.why } : {}) };
   });

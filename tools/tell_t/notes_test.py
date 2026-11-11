@@ -39,7 +39,7 @@ CASES = [
  ("skip the overlook", 'ask'),
  ("asdf qwer zxcv", 'none'),
  ("The light was amazing at Oxbow yesterday!", 'none'),
- ("skip Cunningham Cabin", ('none', 'ask'), 'tue', A),
+ ("skip Cunningham Cabin", 'over', 'tue', A),   # typed on yesterday's card: refused before Claude is asked
  ("sleep in tomorrow till 9", [r('leave_after', 'thu', time='09:00')], 'wed', '2026-12-31T05:30:00Z'),
  ("sleep in tomorrow till 9", 'ask', 'thu', '2026-12-31T07:30:00Z'),
  ("massage at 3 for an hour in town tomorrow", [r('busy', 'thu', **{'from': '15:00', 'to': '16:00'})]),
@@ -86,6 +86,16 @@ HELD = [
  ("blacktail ponds for 45 min around 10 tomorrow", [r('must', 'thu', places=[BP], **{'from': '09:30', 'to': '10:30'}), r('stay', 'thu', places=[BP], minutes=45)]),
 ]
 
+# Easy day / only N stops (11 Nov 2026).
+EASY = [
+ ("easy day tomorrow", [r('max_stops', 'thu', count=3), r('max_visit', 'thu', minutes=120)]),
+ ("only 3 stops today", [r('max_stops', 'wed', count=3)]),
+ ("just 2 stops friday and I want oxbow", [r('max_stops', 'fri', count=2), r('must', 'fri', places=[OX])]),
+ ("lets take it easy today", [r('max_stops', 'wed', count=3), r('max_visit', 'wed', minutes=120)]),
+ ("one stop tmrw then done", [r('max_stops', 'thu', count=1)]),
+ ("easy day saturday, back by 3", [r('max_stops', 'sat', count=3), r('max_visit', 'sat', minutes=120), r('back_by', 'sat', time='15:00')]),
+]
+
 def call(case):
     text, exp, card, asof = (list(case) + [None, None, None])[:4]
     body = dict(action='read', dry=True, trip_id=TRIP, date=D[card or 'wed'], as_of=asof or A, text=text)
@@ -103,6 +113,7 @@ def match(e, a):
     if e['type'] != a['type'] or not same_scope(e, a): return False
     if 'places' in e and sorted(e['places']) != sorted(a.get('places') or []): return False
     if 'minutes' in e and e['minutes'] != a.get('minutes'): return False
+    if 'count' in e and e['count'] != a.get('count'): return False
     tol = e.get('tol', 0)
     for k in ('time', 'from', 'to'):
         if k in e:
@@ -112,6 +123,7 @@ def match(e, a):
 
 def grade(case, res):
     exp, extra_ok = case[1], (list(case) + [None] * 5)[4] or []
+    if exp == 'over': return (not res.get('ok') and 'is over' in str(res.get('error'))), str(res.get('error') or 'was read'), False
     if not res.get('ok'): return False, 'error: ' + str(res.get('error')), True
     if isinstance(exp, dict):   # any one of several right answers
         tries = [grade((case[0], alt) + tuple(case[2:]), res) for alt in exp['any']]
@@ -132,6 +144,7 @@ def grade(case, res):
 
 if __name__ == '__main__':
     if '--held' in sys.argv: CASES = HELD; sys.argv.remove('--held')
+    if '--easy' in sys.argv: CASES = EASY; sys.argv.remove('--easy')
     pick = [int(x) for x in sys.argv[1:]] or range(1, len(CASES) + 1)
     with cf.ThreadPoolExecutor(6) as ex: results = list(ex.map(lambda i: (i, call(CASES[i - 1])), pick))
     ok = 0; cost = 0.0; bad = []
