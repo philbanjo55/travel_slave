@@ -196,14 +196,21 @@ type State = {
 // One stored rule (run config notes for the bench, table t_notes for live runs with run config tell):
 // back_by {time} | leave_after {time} | busy {from, to, at?, label?} | skip {stops} | must {stops, from?, to?}
 // | max_visit {minutes} | max_leg {minutes} | stay {stops, minutes} | day_off (no free stop that day, bookings stay)
-// | max_stops {count} (at most that many stops that day; wanted places count first, bookings do not count); scope = dates [trip dates], else
+// | max_stops {count} (at most that many stops that day; wanted places count first, bookings do not count)
+// | slow_roads {factor} (every drive that day x factor) | no_gear (no rental-gear stops that day)
+// | gear_to / gear_from {time, dates: [day]} (the gear return / pickup moves: the shop stop and the gear window)
+// | first / last {stops} (the day starts / ends at that place; it is wanted) | before {stops, then} (stops come before then)
+// | optional {stops} (never forced; planned only on a good chance) | only_top {tier} (only places of that tier or better)
+// | arrive_by {stops, time} (a visit there starts no later than that); scope = dates [trip dates], else
 // from_date..to_date (to_date null = the rest of the trip). Times are HH:MM in the trip's time zone.
 type NoteRule = { type: string; dates?: string[]; from_date?: string | null; to_date?: string | null; time?: string; from?: string; to?: string;
-  at?: string | null; label?: string; stops?: string[]; minutes?: number; count?: number; priority?: boolean };
+  at?: string | null; label?: string; stops?: string[]; then?: string[]; minutes?: number; count?: number; factor?: number; tier?: string; priority?: boolean };
 // A day's rules on the plan's nodes: skip / must by subject group (a place = every stop of it).
 type DayNotes = { n: number; backBy: number | null; leaveAfter: number | null; busy: { from: number; to: number; id: string; label: string }[];
   skipG: Set<number>; must: { g: number; name: string; lo: number | null; hi: number | null }[]; mustG: Set<number>;
-  maxVisit: number | null; maxLeg: number | null; stay: Map<number, number>; off: boolean; maxStops: number | null };
+  maxVisit: number | null; maxLeg: number | null; stay: Map<number, number>; off: boolean; maxStops: number | null;
+  slow: number | null; noGear: boolean; first: number | null; last: number | null; before: [number, number][]; optG: Set<number>;
+  minW: number | null; byG: Map<number, number> };
 type DayPlan = {
   date: string; tripDate: string | null; light: boolean; start: number; end: number; dayStart: number; nSlots: number;
   routes: State[]; anchors: number; ms: number; winLo: number; winHi: number; extends?: number; capped?: boolean;
@@ -663,6 +670,15 @@ Deno.serve(async (req) => {
     const noteOn = (td: string | null) => td == null ? [] : noteRules.filter(r => Array.isArray(r.dates) ? r.dates.includes(td)
       : (!r.from_date || td >= r.from_date) && (!r.to_date || td <= r.to_date));
     const noteMin = (t?: string) => (t && /^\d{1,2}:\d{2}$/.test(t) ? hhmm(t) : null);
+    // gear_to / gear_from: the rental return / pickup moves to that day and time. The shop stop (the booking on the
+    // old day, run config anchors_on) moves with it; the gear is usable from 30 min after pickup to 20 min before return.
+    const clockOf = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    for (const r of noteRules) {
+      if ((r.type !== 'gear_to' && r.type !== 'gear_from') || !cfg.gear || !r.dates?.[0] || noteMin(r.time) == null) continue;
+      const side = r.type === 'gear_to' ? 'to' : 'from', old = cfg.gear[side]?.date, t = noteMin(r.time)!;
+      cfg.gear = { ...cfg.gear, [side]: { date: r.dates[0], time: clockOf(Math.max(0, Math.min(1439, side === 'to' ? t - 20 : t + 30))) } };
+      if (old) cfg.anchors_on = ((cfg.anchors_on ?? []) as any[]).map(a => (a.date === old && !a.moved ? { ...a, date: r.dates![0], time: r.time, moved: true } : a));
+    }
 
     // Per-day setup: hotels, bookings, own stops.
     const lockedInputs = inputs.filter(r => r.time_locked);
@@ -675,9 +691,9 @@ Deno.serve(async (req) => {
         .map(r => ({ r, s: stopById.get(r.stop_id), min: labelMinutes(stopById.get(r.stop_id)?.time_label) }))
         .filter(a => a.s && dayIds.has(a.s.day_id) && a.min != null && a.s.lat != null)
         .map(a => ({ id: a.r.stop_id, startMs: zonedToUtc(sp.date, a.min!, tz), dur: a.s.duration_minutes ?? 15 }))
-        .concat(((cfg.anchors_on ?? []) as any[]).filter(a => a.date === tripDate).map(a => stopById.get(a.stop_id))
-          .filter((s: any) => s && s.lat != null && labelMinutes(s.time_label) != null)
-          .map((s: any) => ({ id: s.id, startMs: zonedToUtc(sp.date, labelMinutes(s.time_label)!, tz), dur: s.duration_minutes ?? 15 })))
+        .concat(((cfg.anchors_on ?? []) as any[]).filter(a => a.date === tripDate).map(a => ({ s: stopById.get(a.stop_id) as any, at: noteMin(a.time) }))
+          .filter(({ s, at }) => s && s.lat != null && (at ?? labelMinutes(s.time_label)) != null)
+          .map(({ s, at }) => ({ id: s.id, startMs: zonedToUtc(sp.date, (at ?? labelMinutes(s.time_label))!, tz), dur: s.duration_minutes ?? 15 })))
         .concat(noteOn(tripDate).filter(r => r.type === 'busy' && noteMin(r.from) != null && noteMin(r.to) != null && noteMin(r.to)! > noteMin(r.from)!)
           .map(r => ({ id: (r.at && stopById.get(r.at)?.lat != null ? r.at : h.end) as string, startMs: zonedToUtc(sp.date, noteMin(r.from)!, tz), dur: noteMin(r.to)! - noteMin(r.from)!, label: r.label ?? 'Busy (your note)' }))
           .filter(a => !!a.id) as any[])
@@ -737,13 +753,23 @@ Deno.serve(async (req) => {
           maxVisit: mins(rs.filter(r => r.type === 'max_visit').map(r => (Number(r.minutes) > 0 ? Number(r.minutes) : null)), Math.min),
           maxLeg: mins(rs.filter(r => r.type === 'max_leg').map(r => (Number(r.minutes) > 0 ? Number(r.minutes) : null)), Math.min),
           stay: new Map(), off: rs.some(r => r.type === 'day_off'),
-          maxStops: mins(rs.filter(r => r.type === 'max_stops').map(r => (Number(r.count) >= 1 ? Math.floor(Number(r.count)) : null)), Math.min) };
+          maxStops: mins(rs.filter(r => r.type === 'max_stops').map(r => (Number(r.count) >= 1 ? Math.floor(Number(r.count)) : null)), Math.min),
+          slow: mins(rs.filter(r => r.type === 'slow_roads').map(r => (Number(r.factor) > 1 ? Math.min(2, Number(r.factor)) : null)), Math.max),
+          noGear: rs.some(r => r.type === 'no_gear'), first: null, last: null, before: [], optG: new Set(),
+          minW: mins(rs.filter(r => r.type === 'only_top').map(r => DEFAULTS.TIER_W[String(r.tier)] ?? null), Math.max), byG: new Map() };
+        // first / last: the place is wanted that day, and the day starts / ends there.
+        const wantG = (r: NoteRule, lo: number | null, hi: number | null) => { for (const g of groupsOf(r.stops)) {
+          if (o.mustG.has(g)) continue;
+          o.mustG.add(g);
+          o.must.push({ g, name: nodes.find(x => x.group === g && r.stops!.includes(x.id))?.name ?? nodes.find(x => x.group === g)!.name, lo, hi });
+        } };
         for (const r of rs) {
-          if (r.type === 'must') for (const g of groupsOf(r.stops)) {
-            if (o.mustG.has(g)) continue;
-            o.mustG.add(g);
-            o.must.push({ g, name: nodes.find(x => x.group === g && r.stops!.includes(x.id))?.name ?? nodes.find(x => x.group === g)!.name, lo: noteMin(r.from), hi: noteMin(r.to) });
-          }
+          if (r.type === 'must') wantG(r, noteMin(r.from), noteMin(r.to));
+          if (r.type === 'first' && o.first == null && groupsOf(r.stops).length) { wantG(r, null, null); o.first = groupsOf(r.stops)[0]; }
+          if (r.type === 'last' && o.last == null && groupsOf(r.stops).length) { wantG(r, null, null); o.last = groupsOf(r.stops)[0]; }
+          if (r.type === 'before') for (const a of groupsOf(r.stops)) for (const b of groupsOf(r.then)) if (a !== b) o.before.push([a, b]);
+          if (r.type === 'optional') for (const g of groupsOf(r.stops)) o.optG.add(g);
+          if (r.type === 'arrive_by' && noteMin(r.time) != null) for (const g of groupsOf(r.stops)) o.byG.set(g, Math.min(o.byG.get(g) ?? Infinity, noteMin(r.time)!));
           if (r.type === 'stay' && Number(r.minutes) >= SLOT) for (const g of groupsOf(r.stops)) nodes.forEach((x, i) => { if (x.group === g) o.stay.set(i, Number(r.minutes)); });
         }
         // A place both wanted and skipped that day: the want wins (the newer, more specific ask).
@@ -775,6 +801,8 @@ Deno.serve(async (req) => {
     // search = false: only the day's values (W), no routes (scoring against the truth).
     // only: plan just these stops (the week plans), visiting all that fit.
     const gear = new Set<string>(cfg.gear?.stops ?? []);
+    const D0 = D, slowCache = new Map<number, Float64Array[]>();
+    const slowD = (f: number) => { let m = slowCache.get(f); if (!m) { m = D0.map(row => row.map(x => x * f)); slowCache.set(f, m); } return m; };
     // must: stops the route has to include (fm1); skip: stops left out (once-only, done).
     // from (mr1): the visits already under way at atMs stay; the route goes on from there, no earlier than atMs.
     type From = { visits: { n: number; startMs: number; drive: number; anchor: boolean }[]; atMs: number };
@@ -793,13 +821,16 @@ Deno.serve(async (req) => {
       // Tell T: the day's note rules. A place the note wants is a candidate whatever the caller's lists say
       // (bookings and time-locked stops stay as they are); skipped places and too-long visits leave them.
       const R = day.notes;
+      // slow_roads: the day's own drive table (every leg x the factor); everything below reads it as D.
+      const D = R?.slow ? slowD(R.slow) : D0;
       const durN = (n: number) => R?.stay.get(n) ?? nodes[n].dur;
-      const noteOut = (n: number) => !!R && !R.mustG.has(nodes[n].group) && (R.off || R.skipG.has(nodes[n].group) || (R.maxVisit != null && durN(n) > R.maxVisit));
+      const noteOut = (n: number) => !!R && !R.mustG.has(nodes[n].group) && (R.off || R.skipG.has(nodes[n].group) || (R.maxVisit != null && durN(n) > R.maxVisit)
+        || (R.noGear && gear.has(nodes[n].id)) || (R.minW != null && nodes[n].w < R.minW));
       const cand0 = (exact ?? only ?? freeNodes).filter(n => !skip?.has(n));
       const cand = !R ? cand0 : [...new Set([...cand0.filter(n => !noteOut(n)),
         ...(search && !only ? nodes.map((x, i) => (R.mustG.has(x.group) && x.w > 0 && !lockedIds.has(x.id) ? i : -1)).filter(i => i >= 0) : [])])];
       let nExt = 0, capped = false;
-      const mustSet = new Set((must ?? []).filter(n => !noteOut(n)));
+      const mustSet = new Set((must ?? []).filter(n => !noteOut(n) && !R?.optG.has(nodes[n].group)));
       const H0 = pos.get(day.startId!)!, H = pos.get(day.endId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
       const slotMs = scores.map(r => r.ms);
@@ -924,10 +955,22 @@ Deno.serve(async (req) => {
       const noteBand = new Map<number, [number, number]>((R?.must ?? []).filter(m => m.lo != null || m.hi != null).map(m => [m.g, [
         m.lo != null ? Math.ceil((zonedToUtc(day.date, m.lo, tz!) - dayStart) / (SLOT * 60000)) : -Infinity,
         m.hi != null ? Math.floor((zonedToUtc(day.date, m.hi, tz!) - dayStart) / (SLOT * 60000)) : Infinity] as [number, number]]));
+      // arrive_by: a visit there starts no later than that (whether or not the place is wanted).
+      for (const [g, by] of R?.byG ?? []) { const b = noteBand.get(g) ?? [-Infinity, Infinity], hi = Math.floor((zonedToUtc(day.date, by, tz!) - dayStart) / (SLOT * 60000));
+        noteBand.set(g, [b[0], Math.min(b[1], hi)]); }
       // max_stops: the stops that are not wanted places fill what the wanted ones leave (a wanted place always fits).
       const noteRoom = R?.maxStops != null ? Math.max(0, R.maxStops - R.must.length) : null;
-      const noteFull = (st: State, s: number) => noteRoom != null && !R!.mustG.has(nodes[s].group)
-        && st.route.filter(v => !v.anchor && !R!.mustG.has(nodes[v.n].group)).length >= noteRoom;
+      // Order: nothing after the day's last place, nothing before its first, and "a before b" never the other way round.
+      const noteFull = (st: State, s: number) => {
+        if (!R) return false;
+        const g = nodes[s].group, fr = st.route.filter(v => !v.anchor);
+        if (R.last != null && fr.some(v => nodes[v.n].group === R.last)) return true;
+        if (R.first != null && g !== R.first && !fr.length) return true;
+        if (R.before.some(([a, b]) => g === a && fr.some(v => nodes[v.n].group === b))) return true;
+        return noteRoom != null && !R.mustG.has(g) && fr.filter(v => !R.mustG.has(nodes[v.n].group)).length >= noteRoom;
+      };
+      // optional: only where at least half the weather versions give a good shot (light-only days: no forecast to ask).
+      const optOk = (s: number, i: number) => !R || !R.optG.has(nodes[s].group) || R.mustG.has(nodes[s].group) || day.light || pGood(s, i) >= 0.5;
       const noteDawn = R ? Math.ceil((civilDawn(day.date, mid.lat, mid.lng, tz!) - dayStart) / (SLOT * 60000)) : 0;
       const noteSlots = (s: number, drive: number, home: number): [number, number] => {
         if (!R) return [-Infinity, Infinity];
@@ -1141,7 +1184,7 @@ Deno.serve(async (req) => {
             // Its earliest start is kept beside its best one (one state per stops + place otherwise): a wanted pair
             // whose best moments clash still fits with one of them early.
             let firstS = true;
-            for (const i of [...opts].sort((a, b) => a - b)) if (W(s, i) ? startOk(s, i) : (wantS && i >= Math.max(winLo, noteDawn))) {
+            for (const i of [...opts].sort((a, b) => a - b)) if ((W(s, i) ? startOk(s, i) : (wantS && i >= Math.max(winLo, noteDawn))) && optOk(s, i)) {
               keep(extend(st, s, i, drive, false), wantS && firstS ? '|e' : '');
               firstS = false;
             }
@@ -1180,6 +1223,10 @@ Deno.serve(async (req) => {
         const most = Math.max(0, ...pool.map(seen));
         pool = pool.filter(st => seen(st) === most);
       }
+      // first: when no day starts at that place, the day is planned without that rule (the check says so).
+      if (R?.first != null && search && !exact && !only && !(from?.visits ?? []).some(v => !v.anchor)
+          && !pool.some(st => { const f = st.route.find(v => !v.anchor); return !!f && nodes[f.n].group === R.first; }))
+        return planDay({ ...day, notes: { ...R, first: null } }, scores, search, only, must, skip, from, exact, brute);
       // Tell T: the routes with the most places the notes want (all of them when they fit).
       if (R?.must.length && pool.length) { const top = Math.max(...pool.map(st => st.nm ?? 0)); pool = pool.filter(st => (st.nm ?? 0) === top); }
       // fm1: only routes with every required stop count.
@@ -1242,13 +1289,21 @@ Deno.serve(async (req) => {
       const loc = (iso: string) => localMin(Date.parse(iso), d.date);
       const clock = (m: number) => `${Math.floor(m / 60)}:${String(Math.round(m % 60)).padStart(2, '0')}`;
       const H0 = pos.get(d.startId!)!, H = pos.get(d.endId!)!;
+      const D = R.slow ? slowD(R.slow) : D0;
       const free = vs.filter(v => !v.booked), nOf = (v: any) => pos.get(v.stop_id)!;
+      const gOf = (v: any) => nodes[nOf(v)].group, at = (g: number) => free.findIndex(v => gOf(v) === g);
+      if (R.first != null && free.length && gOf(free[0]) !== R.first) broken.push(`the day does not start at ${R.must.find(m => m.g === R.first)?.name ?? 'the place asked'}`);
+      if (R.last != null && at(R.last) >= 0 && gOf(free[free.length - 1]) !== R.last) broken.push(`the day does not end at ${R.must.find(m => m.g === R.last)?.name ?? 'the place asked'}`);
+      for (const [a, b] of R.before) if (at(a) >= 0 && at(b) >= 0 && at(a) > at(b)) broken.push(`${free[at(b)].name} comes before ${free[at(a)].name}`);
       const wanted = (v: any) => R.mustG.has(nodes[nOf(v)].group);
       for (const v of free) {
         const n = nOf(v), home = D[n][H], len = (Date.parse(v.end) - Date.parse(v.start)) / 60000;
         if (R.backBy != null && loc(v.end) + home > R.backBy + 0.5) broken.push(`${v.name} gets back at ${clock(loc(v.end) + home)}, after ${clock(R.backBy)}`);
         if (R.leaveAfter != null && loc(v.start) - D[H0][n] < R.leaveAfter - 0.5) broken.push(`${v.name} at ${clock(loc(v.start))} means leaving before ${clock(R.leaveAfter)}`);
         if (R.off && !wanted(v)) broken.push(`${v.name} is planned on a day off`);
+        if (R.noGear && gear.has(v.stop_id) && !wanted(v)) broken.push(`${v.name} needs the rental gear`);
+        if (R.minW != null && nodes[n].w < R.minW && !wanted(v)) broken.push(`${v.name} is not one of the top spots`);
+        if (R.byG.has(nodes[n].group) && loc(v.start) > R.byG.get(nodes[n].group)! + 0.5) broken.push(`${v.name} starts at ${clock(loc(v.start))}, after ${clock(R.byG.get(nodes[n].group)!)}`);
         if (R.skipG.has(nodes[n].group)) broken.push(`${v.name} is planned but the note skips it`);
         if (R.maxVisit != null && len > R.maxVisit + 0.5 && !wanted(v)) broken.push(`${v.name} is ${Math.round(len)} min, over ${R.maxVisit}`);
         if (R.maxLeg != null && !wanted(v) && (v.drive_min > R.maxLeg + 0.5 || home > R.maxLeg + 0.5)) broken.push(`${v.name} is a ${Math.round(Math.max(v.drive_min, home))} min drive, over ${R.maxLeg}`);
@@ -1805,7 +1860,7 @@ Deno.serve(async (req) => {
         const farOn = (x: number, td: string, leg: number) => { const h = hotelsFor(td), a = pos.get(h.start ?? ''), b = pos.get(h.end ?? '');
           return a != null && b != null && (D[a][x] > leg || D[x][b] > leg); };
         const noteOk = (u: number[], td: string) => { const R = notesFor(td); return !R || u.some(x => R.mustG.has(nodes[x].group))
-          || !(R.off || u.some(x => R.skipG.has(nodes[x].group)) || (R.maxVisit != null && u.every(x => (R.stay.get(x) ?? nodes[x].dur) > R.maxVisit!))
+          || !(R.off || u.some(x => R.skipG.has(nodes[x].group)) || (R.noGear && u.some(x => gear.has(nodes[x].id))) || (R.minW != null && u.every(x => nodes[x].w < R.minW!)) || (R.maxVisit != null && u.every(x => (R.stay.get(x) ?? nodes[x].dur) > R.maxVisit!))
                || (R.maxLeg != null && u.some(x => farOn(x, td, R.maxLeg!)))); };
         const okOn = (u: number[], td: string) => noteOk(u, td) && (!u.some(x => gear.has(nodes[x].id)) || ((!gFrom || td >= gFrom) && (!gTo || td <= gTo)));
         const lastDay = (u: number[]) => { for (let i = remaining.length - 1; i >= 0; i--) if (okOn(u, remaining[i])) return i; return -1; };
@@ -1918,7 +1973,7 @@ Deno.serve(async (req) => {
             .sort((a, b) => (val(b, 0) - Math.max(val(b, 1), val(b, 2))) - (val(a, 0) - Math.max(val(a, 1), val(a, 2))));
         }
         const mustOf = (u: number[]) => nodes[u[0]].together ? u : [u.reduce((a, b) => (best(b, 0) > best(a, 0) ? b : a))];
-        lastChance = days[0].notes ? open.filter(u => lastDay(u) === 0).map(u => ({ name: u.map(x => nodes[x].name).filter((x, i, a) => a.indexOf(x) === i).join(' + '), ids: u.map(x => nodes[x].id) })) : [];
+        lastChance = days[0].notes ? open.filter(u => lastDay(u) === 0 && !u.some(x => days[0].notes!.optG.has(nodes[x].group))).map(u => ({ name: u.map(x => nodes[x].name).filter((x, i, a) => a.indexOf(x) === i).join(' + '), ids: u.map(x => nodes[x].id) })) : [];
         // mustfix (v87, worksheet b6, 7 Nov 2026): when the beam finds no day with every required place,
         // try the exact search over just those places (as the audit tool does) before dropping one. On 2 of
         // 20 test nights Claude found such a day where the beam found none.

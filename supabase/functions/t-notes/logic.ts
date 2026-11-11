@@ -8,12 +8,15 @@ export type TripCtx = {
   tripId: string; name: string; tz: string; dates: string[]; places: Place[];
   bookings: { name: string; date: string; time: string }[]; hotels: { name: string; from: string; to: string }[];
   today: string; nowClock: string; sun?: Record<string, { first_light: string; sunrise: string; sunset: string }>;
+  // Rental gear (skis, snowshoes), when the trip has it: the places that need it and when it is picked up / returned.
+  gear?: { places: string[]; pickup?: { date: string; time: string }; ret?: { date: string; time: string } };
 };
 // A rule as the planner reads it (solver-replay NoteRule): stop ids, HH:MM in the trip's time zone, dates.
 export type Rule = { type: string; dates?: string[]; from_date?: string; to_date?: null; time?: string; from?: string; to?: string;
-  at?: string | null; label?: string; stops?: string[]; places?: string[]; minutes?: number; count?: number; why?: string };
+  at?: string | null; label?: string; stops?: string[]; places?: string[]; then?: string[]; then_places?: string[]; minutes?: number; count?: number; factor?: number; tier?: string; why?: string };
 
-const TYPES = ['back_by', 'leave_after', 'busy', 'skip', 'must', 'max_visit', 'max_leg', 'stay', 'day_off', 'max_stops'] as const;
+const TYPES = ['back_by', 'leave_after', 'busy', 'skip', 'must', 'max_visit', 'max_leg', 'stay', 'day_off', 'max_stops',
+  'slow_roads', 'no_gear', 'gear_to', 'gear_from', 'first', 'last', 'before', 'optional', 'only_top', 'arrive_by'] as const;
 
 export const SYSTEM = `You read a short note from a landscape photographer on a trip and turn it into rules for his day planner ("T"). T plans each day's photo stops around weather and light. It follows only the rule types below; you never plan the day yourself.
 
@@ -28,6 +31,14 @@ Rule types (use only these):
 - stay {places, minutes}: how long to stay at a place ("spend 3 hours at ...").
 - max_stops {count}: at most this many stops that day ("only 3 stops", "just a couple of stops" = 2). Places he asks for the same day count first.
 - "Easy day" / "light day" / "take it easy" with nothing more exact = two rules: max_stops 3 and max_visit 120.
+- slow_roads {factor}: the roads are slow, so every drive that day takes longer. "Icy", "snowy", "slow going" = 1.25; "really bad", "chains", "crawling" = 1.5.
+- no_gear: no ski or snowshoe outings that day ("no skis today", "legs are done, no skiing"). Only if the trip has rental gear.
+- gear_to {time} / gear_from {time}: the rental gear is returned / picked up at a different day or time. dates = that one day; time = when he is at the shop. Only if the trip has rental gear.
+- first {places} / last {places}: start / end the day at that place ("start at the barns", "finish at Snake River Overlook"). One place each. It is wanted that day, so do not add a must for it as well. "First thing" with a time of day in mind is a must with a time, not this.
+- before {places, then_places}: go to places before then_places if both are on the day ("Oxbow before Mormon Row").
+- optional {places}: only plan it when its chance of a good shot is good; never force it ("only if the weather's good", "don't make me do X in bad weather"). Usually rest of trip unless he names a day.
+- only_top {tier}: only his best places that day. tier is the lowest tier allowed: "S" (S and GOD, the usual meaning of "just the best spots") or "GOD" (only the very best) or "A".
+- arrive_by {places, time}: be at that place no later than this time whenever it is planned ("get to Taggart by 8", "lot fills by 9"). Usually rest of trip unless he names a day.
 - day_off: nothing planned that day ("day off", "rest day", "staying in today", someone is sick). Bookings stay. Never use a busy block for a whole day.
 
 Days:
@@ -56,13 +67,15 @@ export function buildSchema(ctx: TripCtx) {
       ask: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, required: ['question', 'options'],
         properties: { question: { type: 'string' }, options: { type: 'array', items: { type: 'string' } } } }] },
       rules: { type: 'array', items: { type: 'object', additionalProperties: false,
-        required: ['type', 'dates', 'rest_of_trip', 'time', 'from', 'to', 'places', 'at_place', 'minutes', 'count', 'label', 'why'],
+        required: ['type', 'dates', 'rest_of_trip', 'time', 'from', 'to', 'places', 'then_places', 'at_place', 'minutes', 'count', 'factor', 'tier', 'label', 'why'],
         properties: {
           type: { type: 'string', enum: [...TYPES] },
           dates: { type: 'array', items: { type: 'string', enum: ctx.dates } },
           rest_of_trip: { type: 'boolean' },
           time: NULLSTR, from: NULLSTR, to: NULLSTR,
           places: { type: 'array', items: { type: 'string', enum: places } },
+          then_places: { type: 'array', items: { type: 'string', enum: places } },
+          factor: { type: ['number', 'null'] }, tier: { type: ['string', 'null'] },
           at_place: NULLSTR, minutes: { type: ['integer', 'null'] }, count: { type: ['integer', 'null'] }, label: NULLSTR, why: { type: 'string' },
         } } },
       cant_use: { type: 'array', items: { type: 'string' } },
@@ -93,6 +106,8 @@ export function userText(ctx: TripCtx, date: string, text: string, answer: { que
     const lo = Math.min(...p.minutes), hi = Math.max(...p.minutes);
     L.push(`- ${p.name} | ${lo === hi ? lo : `${lo}-${hi}`} min | ${[...new Set(p.days)].sort().map(dayWords).join(', ')}`);
   }
+  if (ctx.gear?.places.length) L.push('', `Rental gear (skis / snowshoes): picked up ${ctx.gear.pickup ? `${dayWords(ctx.gear.pickup.date)} ${ctx.gear.pickup.time}` : 'on the trip'}, returned ${ctx.gear.ret ? `${dayWords(ctx.gear.ret.date)} ${ctx.gear.ret.time}` : 'on the trip'}. Places that need it: ${ctx.gear.places.join(', ')}.`);
+  else L.push('', 'This trip has no rental gear: do not use no_gear, gear_to or gear_from.');
   L.push('', `Note: "${text}"`);
   if (answer) L.push('', `You asked: "${answer.question}". He answered: "${answer.choice}". Do not ask again; use the answer.`);
   return L.join('\n');
@@ -138,6 +153,18 @@ export function toRules(ctx: TripCtx, date: string, raw: any[]): { rules: Rule[]
       case 'max_visit': if (!n || n < 15 || n > 600) { bad('the longest stop'); break; } rules.push({ type: 'max_visit', minutes: n, ...scope, why }); break;
       case 'max_leg': if (!n || n < 5 || n > 240) { bad('the longest drive'); break; } rules.push({ type: 'max_leg', minutes: n, ...scope, why }); break;
       case 'day_off': rules.push({ type: 'day_off', ...scope, why }); break;
+      case 'slow_roads': { const f = Number(r.factor); if (!(f > 1 && f <= 2)) { bad('how slow the roads are'); break; } rules.push({ type: 'slow_roads', factor: Math.round(f * 100) / 100, ...scope, why }); break; }
+      case 'no_gear': if (!ctx.gear?.places.length) { bad('the rental gear (this trip has none)'); break; } rules.push({ type: 'no_gear', ...scope, why }); break;
+      case 'gear_to': case 'gear_from': { const x = t(r.time); if (!ctx.gear?.places.length || !x) { bad('the gear time'); break; } rules.push({ type: r.type, time: x, dates: [dates[0]], why }); break; }
+      case 'first': case 'last': if (!names.length) { bad(r.type === 'first' ? 'where to start' : 'where to end'); break; } rules.push({ type: r.type, stops: ctx.places.find(p => p.name === names[0])!.ids, places: [names[0]], ...scope, why }); break;
+      case 'before': {
+        const tn = [...new Set(((r.then_places ?? []) as string[]).filter(n => ctx.places.some(p => p.name === n) && !names.includes(n)))];
+        if (!names.length || !tn.length) { bad('the order of the places'); break; }
+        rules.push({ type: 'before', stops, places: names, then: tn.flatMap(n => ctx.places.find(p => p.name === n)!.ids), then_places: tn, ...scope, why }); break;
+      }
+      case 'optional': if (!stops.length) { bad('the place to keep optional'); break; } rules.push({ type: 'optional', stops, places: names, ...scope, why }); break;
+      case 'only_top': { const tr = ['GOD', 'S', 'A'].includes(String(r.tier)) ? String(r.tier) : 'S'; rules.push({ type: 'only_top', tier: tr, ...scope, why }); break; }
+      case 'arrive_by': { const x = t(r.time); if (!stops.length || !x) { bad('the time to be there by'); break; } rules.push({ type: 'arrive_by', stops, places: names, time: x, ...scope, why }); break; }
       case 'max_stops': { const c = Number.isFinite(Number(r.count)) && r.count != null ? Math.round(Number(r.count)) : null; if (!c || c < 1 || c > 12) { bad('how many stops'); break; } rules.push({ type: 'max_stops', count: c, ...scope, why }); break; }
       case 'stay': if (!stops.length || !n || n < 15 || n > 600) { bad('how long to stay'); break; } rules.push({ type: 'stay', stops, places: names, minutes: n, ...scope, why }); break;
     }
@@ -165,6 +192,16 @@ export function sayLines(ctx: TripCtx, rules: Rule[]): { text: string; when: str
       : r.type === 'max_visit' ? `Keep every stop under ${mins(r.minutes!)}`
       : r.type === 'max_leg' ? `No drive over ${mins(r.minutes!)}`
       : r.type === 'day_off' ? 'Plan nothing: a day off (your bookings stay)'
+      : r.type === 'slow_roads' ? `Plan every drive ${Math.round((r.factor! - 1) * 100)}% longer`
+      : r.type === 'no_gear' ? 'No ski or snowshoe outings'
+      : r.type === 'gear_to' ? `Return the rental gear at ${clock12(r.time!)}`
+      : r.type === 'gear_from' ? `Pick up the rental gear at ${clock12(r.time!)}`
+      : r.type === 'first' ? `Start the day at ${p}`
+      : r.type === 'last' ? `End the day at ${p}`
+      : r.type === 'before' ? `${p} before ${list(r.then_places ?? [])}`
+      : r.type === 'optional' ? `Only plan ${p} when its chance is good (never forced)`
+      : r.type === 'only_top' ? `Only your top spots (${r.tier === 'GOD' ? 'GOD' : r.tier === 'A' ? 'A and better' : 'S and GOD'})`
+      : r.type === 'arrive_by' ? `Be at ${p} by ${clock12(r.time!)}`
       : r.type === 'max_stops' ? `At most ${r.count} stop${r.count === 1 ? '' : 's'}`
       : `Stay ${mins(r.minutes!)} at ${p}`;
     return { text, when: when(r), ...(r.why ? { why: r.why } : {}) };

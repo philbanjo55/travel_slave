@@ -43,12 +43,18 @@ async function tripCtx(db: any, tripId: string, asOf: Date): Promise<TripCtx | n
     byName.set(s.name, p);
   }
   const bookings = (stops ?? []).filter((s: any) => s.time_locked).map((s: any) => ({ name: s.name, date: dateOf.get(s.day_id)!, time: s.time_label ?? '' }));
+  // Rental gear from the trip's planner settings (planner_t_trips.config.gear): the window is 30 min after pickup to
+  // 20 min before the return, so the shop times are worked back from it.
+  const { data: pt } = await db.from('planner_t_trips').select('config').eq('trip_id', tripId).maybeSingle();
+  const g = pt?.config?.gear, shift = (x: any, m: number) => { if (!x?.time) return undefined; const [h, mi] = String(x.time).split(':').map(Number), v = h * 60 + mi + m; return { date: x.date, time: `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}` }; };
+  const gearIds = new Set<string>((g?.stops ?? []) as string[]);
+  const gear = gearIds.size ? { places: [...byName.values()].filter(p => p.ids.some(id => gearIds.has(id))).map(p => p.name).sort(), pickup: shift(g.from, -30), ret: shift(g.to, 20) } : undefined;
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   const parts = Object.fromEntries(fmt.formatToParts(asOf).map(p => [p.type, p.value]));
   const placed = (stops ?? []).filter((s: any) => s.lat != null && s.lng != null);
   const lat = placed.reduce((t: number, s: any) => t + s.lat, 0) / (placed.length || 1), lng = placed.reduce((t: number, s: any) => t + s.lng, 0) / (placed.length || 1);
   const sun = placed.length ? Object.fromEntries((days ?? []).map((d: any) => [d.date, sunTimes(d.date, lat, lng, tz)])) : undefined;
-  return { tripId, name: trip.title, tz, sun, dates: (days ?? []).map((d: any) => d.date), places: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  return { tripId, name: trip.title, tz, sun, gear, dates: (days ?? []).map((d: any) => d.date), places: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)),
            bookings, hotels: (accs ?? []).map((a: any) => ({ name: String(a.name ?? 'the hotel').split(/[,(]/)[0].trim(), from: a.check_in, to: a.check_out })),
            today: `${parts.year}-${parts.month}-${parts.day}`, nowClock: `${parts.hour}:${parts.minute}` };
 }
@@ -94,7 +100,7 @@ Deno.serve(async (req) => {
     let text = String(body.text ?? '').trim().slice(0, 1000);
     if (body.action === 'quick') {
       const k = String(body.kind ?? ''), place = ctx.places.find(p => p.name === body.place)?.name;
-      const one = (r: any) => [{ dates: [date], rest_of_trip: false, time: null, from: null, to: null, places: [], at_place: null, minutes: null, count: null, label: null, why: 'Quick button', ...r }];
+      const one = (r: any) => [{ dates: [date], rest_of_trip: false, time: null, from: null, to: null, places: [], then_places: [], at_place: null, minutes: null, count: null, factor: null, tier: null, label: null, why: 'Quick button', ...r }];
       const raw = k === 'sleep_in' ? one({ type: 'leave_after', time: body.time ?? '08:30' })
         : k === 'nothing_long' ? one({ type: 'max_visit', minutes: 90 })
         : k === 'day_off' ? one({ type: 'day_off' })
