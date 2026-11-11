@@ -1,10 +1,9 @@
 # "Tell T about your day" (worksheet g4): design
 
-Status (10 Nov 2026, evening): Phil: build ALL of the ideas below and test everything before anything goes live
-("All of them for the not built. Let's get the others tested etc before we go live."), plus weather reports
-from the field. Built and bench-tested so far: back_by, leave_after, busy, skip, must (+ time band), max_visit,
-max_leg, stay, day_off in solver-replay v96 (not deployed), t_notes, edge function t-notes (deployed, unused),
-reading tests 40/40 and 19/20 (tools/tell_t/notes_test.py). solver-replay v96 deploy waits for Phil's OK.
+Status (11 Nov 2026): everything on Phil's list is built except "a place not on the trip" (one question for Phil
+first). Nothing is live: the note-aware planner (solver-replay v100) is NOT deployed, notes are switched on for no
+trip (planner_t_trips.config.tell), the app screens are on the test branch only (claude/planner-buttons-test), and
+two edits to live database functions wait in docs/solver/pending/. See "Built and tested (11 Nov)" at the end.
 Phil's page: the "Tell T" design artifact (link in the Planner Tracker).
 
 ## What it is
@@ -162,3 +161,50 @@ not all 56 with random notes; nothing on the Faroes trip; every bench run was on
 limit), so the edge function's limit is untested with notes; the live path (save, re-plan, delete, a note typed
 mid-day) is untested; the checker was written with the rules (an independent SQL check is still to do); the
 reading test is one trip, 60 notes.
+
+## Built and tested (11 Nov 2026)
+
+**What a note can be now**
+- A rule for a day or the rest of the trip: back_by, leave_after, busy, skip, must (+ time band), max_visit, max_leg,
+  stay, day_off, max_stops, slow_roads, no_gear, gear_to / gear_from, first, last, before, optional, only_top,
+  arrive_by. "Easy day" = at most 3 stops, none over 2 hours.
+- Word from the field (today only, used once): where Phil is (a trip place or the hotel), how late he is, how much
+  longer he is staying, what he sees of the peaks (out / hidden / in and out). T re-plans the rest of today from it
+  (planner_t_now_here -> the Re-plan now path with `here`); a sky report is kept in t_reports and, once the pending
+  t_truth edit is applied, goes above the cameras for that hour (the look for the re-plan, the truth for the day check).
+- An evening recap: "nailed the barns, Oxbow was clouded out" -> proposed ticks, set only after the OK, never lowered
+  ("missed" changes nothing).
+- A question (changes nothing): why a place is on a day, the best day for a place, what a change would cost ("what
+  if we skip Jenny Lake?"). Answers are put together from T's stored plans and the forecast grid, not written by Claude.
+- Before the OK, a note that touches later days shows what it would make T give up (the rest of the trip planned
+  with and without it; only what the note itself costs).
+
+**Rules the planner keeps under notes**
+- Bookings first, then notes, then T's own wishes. A wanted place brings its keep-together partner (both Moulton
+  barns); a general note that takes one of a pair out takes the other out too; a partner skipped by name leaves the
+  other free to go alone. A note is about its calendar day (matters in the far north). A wanted place that cannot
+  fit is said, with the reason where it is plain (needs the rental gear before pickup).
+
+**Tests** (tools/tell_t)
+- No notes = identical plans: 56 of 56 nights on six code versions (latest v99; v100 rerun pending at the time of writing).
+- Random notes, 5 rules a week: 56 Teton weeks + 14 more + 9 Faroes periods, judged by the planner's own check and by
+  an independent checker (check_runs.py: by stop name, stored visits, drive table, keep-together). Found and fixed on
+  the way: a Faroes "by 11:00" met the night before (v98); one night with no plan and three nights with one barn
+  planned alone (v99).
+- Pair fixture (tellP1): wanted barn + max stops, nothing-long, day off + wanted barn, skip one + want the other.
+- The 2-second edge limit: a deployed test copy ran 28 weeks with and without notes, same timing.
+- Reading: 130 notes with answers written beforehand (main 40, held-out 20, easy 6, more 12, Faroes 20, field /
+  recap / questions 32): 129-130 right on the last pass, never a wrong day or place.
+- Flow test (flow_test.py, 27 checks on the test-bed trip): draft -> OK -> ticks / report / re-plan request -> clear,
+  questions, what-if, refusals; every row it makes is removed.
+- "Where I really am": dry Re-plan now runs against a past Teton Live day (late, at another place, staying longer,
+  an honest "can't fit" when a booking would be missed); nothing published.
+- App: emulator checks tell-* on the test branch (the test build says notes are on, forces dry reads, blocks saves).
+
+**Not tested until Phil says go** (each needs a deploy or a live switch)
+- The deployed planner following a real saved note end to end on Teton Live (type, preview, OK, re-plan, delete).
+- A field weather report changing a live re-plan (needs docs/solver/pending/20261111060000_t_field_reports_live.sql).
+
+**Going live, in order, each on Phil's OK:** 1. deploy solver-replay v100; 2. apply the pending SQL; 3. switch
+`tell` on for Teton Live only and run real notes for a few days; 4. merge the app screens into the work branch (TEST
+app); 5. later, the real trips.

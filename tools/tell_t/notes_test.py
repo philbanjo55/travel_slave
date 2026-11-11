@@ -132,7 +132,8 @@ NOWC = [
  ("back at the hotel", 'none', None, None, None, dict(now=dict(here='hotel'))),
  ("socked in here, skip Oxbow today", [r('skip', 'wed', places=[OX])], None, None, None, dict(now=dict(sky='hidden'))),
  ("I'm at Dornans", 'none'),
- ("peaks are out", 'none', 'thu', None),   # typed on tomorrow's card: not a report for that day
+ ("peaks are out", ('none', 'ask'), 'thu', None, None, dict(now=dict(sky='out'), now_opt=True)),   # typed on tomorrow's card: still about right now (or a question back)
+ ("peaks are out", 'none', 'wed', '2026-11-20T18:00:00Z'),   # weeks before the trip: nothing to report on
  ("it cleared! Tetons are completely out", 'none', None, None, None, dict(now=dict(sky='out'))),
  ("nailed the barns this morning", 'none', None, None, None, dict(recap={TA: 'nailed', JM: 'nailed'})),
  ("Oxbow was clouded out", 'none', None, None, None, dict(recap={OX: 'missed'})),
@@ -219,7 +220,8 @@ def grade(case, res):
     en = ex.get('now')
     if en is None:
         if now: errs.append(f'now not expected: {json.dumps(now)}')
-    elif not now: errs.append(f'no now, wanted {en}')
+    elif not now:
+        if not ex.get('now_opt'): errs.append(f'no now, wanted {en}')
     else:
         here = (now.get('here') or {}); hname = 'hotel' if here.get('hotel') else here.get('place')
         if 'here' in en and hname != en['here']: errs.append(f"here {hname}, wanted {en['here']}")

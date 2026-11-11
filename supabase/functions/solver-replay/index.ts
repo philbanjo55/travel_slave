@@ -1347,7 +1347,15 @@ Deno.serve(async (req) => {
       if (R.maxStops != null && free.filter(v => !wanted(v)).length > Math.max(0, R.maxStops - R.must.length)) broken.push(`${free.length} stops, over ${R.maxStops}`);
       for (const m of R.must) {
         const hit = vs.filter(v => nodes[nOf(v)].group === m.g);
-        if (!hit.length) broken.push(`${m.name} did not fit`);
+        if (!hit.length) {
+          // Say why where the reason is plain: the place needs the rental gear and the day has it only part of the time.
+          const gF = cfg.gear?.from as { date: string; time: string } | undefined, gT = cfg.gear?.to as { date: string; time: string } | undefined;
+          const gd = d.tripDate ?? d.date, needs = nodes.some(x => x.group === m.g && gear.has(x.id)) && !nodes.some(x => x.group === m.g && x.w > 0 && !gear.has(x.id));
+          const c12 = (t: string) => { const [h, mi] = t.split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(mi).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
+          const why = !needs ? '' : gF && gd < gF.date ? ' (it needs the rental gear, which you do not have yet that day)' : gT && gd > gT.date ? ' (it needs the rental gear, which is back at the shop by then)'
+            : gF && gd === gF.date ? ` (it needs the rental gear, which you only have from ${c12(gF.time)} that day)` : gT && gd === gT.date ? ` (it needs the rental gear, which goes back by ${c12(gT.time)} that day)` : '';
+          broken.push(`${m.name} did not fit${why}`);
+        }
         else if (!hit.some(v => v.booked || ((m.lo == null || loc(v.start) >= m.lo - 0.5) && (m.hi == null || loc(v.start) <= m.hi + 0.5)))) broken.push(`${m.name} is not at the time asked`);
       }
       for (const a of d.anchors.filter(a => a.label)) {
