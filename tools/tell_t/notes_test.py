@@ -75,7 +75,7 @@ HELD = [
  ("taking tomorrow morning off, nothing before noon", [r('leave_after', 'thu', time='12:00')]),
  ("teton pines saturday afternoon", [r('must', 'sat', places=[TP], **{'from': '12:00'})]),
  ("willow flats and oxbow tmrw", [r('must', 'thu', places=[WF]), r('must', 'thu', places=[OX])]),
- ("not doing taggart, too tired", {'any': ['ask', [r('skip', 'wed', places=['Taggart & Bradley Lakes'])]]}),
+ ("not doing taggart, too tired", 'ask'),   # Taggart is on Saturday, the note has no day: must ask (first passes: skipped Wed, or the whole trip)
  ("hour and a half at oxbow on sunday", [r('stay', 'sun', places=[OX], minutes=90)], None, None, [r('must', 'sun', places=[OX])]),
  ("the road to antelope flats is drifted shut today", {'any': ['ask', 'none', [r('skip', 'wed', places=[TA, JM])], [r('skip', 'wed', places=[TA]), r('skip', 'wed', places=[JM])]]}),
  ("holly is sick. day off", [r('day_off', 'wed')]),   # first run (before day_off existed): a whole-day busy block; day_off added because of it

@@ -8,6 +8,9 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
 // v85 (6 Nov 2026): tool op audit {visits} (full rule check by exact search) and solve {polish: true} (grading).
 // v93 (9 Nov 2026): the whole-day calculation steps an hour at a time and copies repeated members (v92 timed out).
+// v97 (11 Nov 2026): run config whatif = a week draft that publishes nothing (what a note would cost, driven by
+// edge function t-notes: planner_t_whatif_start / _step / _result); more note rules (max_stops, slow_roads, no_gear,
+// gear_to / gear_from, first / last / before, optional, only_top, arrive_by).
 // v96 (11 Nov 2026, worksheet g4 "Tell T about your day"): note rules. Run config notes (bench fixtures) or, on
 // published runs with run config tell, the trip's active t_notes rows: back_by, leave_after, busy, skip, must (with a
 // time band), max_visit, max_leg, stay, day_off, per trip day. Every plan made under a note carries stats.notes =
@@ -1742,7 +1745,8 @@ Deno.serve(async (req) => {
         // version it ran as = the winner in planner_versions (what the live planner runs); the app shows it.
         const { data: pvw } = await db.from('planner_versions').select('letter').eq('status', 'winner').maybeSingle();
         const version: string | null = pvw?.letter ?? null;
-        if (!cfg.publish || !live) return;
+        // whatif (v97, Tell T): a what-if run plans like a week draft but never publishes anything.
+        if (!cfg.publish || !live || cfg.whatif) return;
         const d0 = days[0];
         const visits = visitsOf(p, s);
         const slotOf = (ms: number) => Math.round((ms - p.dayStart) / (SLOT * 60000));
