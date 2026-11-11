@@ -1,6 +1,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk';
 import { MODEL, SYSTEM, buildSchema, userText, toRules, sayLines, sunTimes, type Place, type TripCtx } from './logic.ts';
+import { whatIf, costLines } from './whatif.ts';
 
 // T-NOTES ("Tell T about your day", worksheet g4, Phil 10 Nov 2026). Phil types a note on a trip day in the
 // TEST app; Claude turns it into rules the planner already knows how to follow (table t_notes, read by
@@ -11,6 +12,8 @@ import { MODEL, SYSTEM, buildSchema, userText, toRules, sayLines, sunTimes, type
 //       as_of = "now" for tests (ISO); else the real time.
 //   {action: 'quick', trip_id, date, kind: 'sleep_in' | 'nothing_long' | 'easy_day' | 'day_off' | 'back_by' | 'skip' | 'want', time?, place?}
 //       -> the same rules without Claude, saved at once (a quick button).
+//   A draft that changes days after today also gets t_notes.cost a few seconds later: what the note would make T give
+//       up (the rest of the trip planned with and without it; whatif.ts). Only where notes are switched on for the trip.
 //   {action: 'save', id}  -> draft -> active, then the affected days are re-planned (planner_t_note_replan).
 //   {action: 'clear', id} -> active / draft -> cleared, re-planned.
 // Spend: claude_usage (fn t-notes), stops at CLAUDE_NOTES_CAP_USD (default 15 a month) or CLAUDE_MONTHLY_CAP_USD.
@@ -149,6 +152,17 @@ Deno.serve(async (req) => {
     if (body.dry) return json({ ok: true, note: row, raw: out.raw });
     const { data: ins, error } = await db.from('t_notes').insert(row).select('*').single();
     if (error) throw error;
+    // What the note would cost, worked out after the answer has gone back (the app reads t_notes.cost when it lands).
+    if (ins.status === 'draft' && out.rules.length && (to == null || to > ctx.today)) {
+      const job = (async () => {
+        try {
+          const c = await whatIf(db, ctx.tripId, out.rules, `${Deno.env.get('SUPABASE_URL')}/functions/v1/solver-replay`, { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` });
+          await db.from('t_notes').update({ cost: { ...c, lines: costLines(c), at: new Date().toISOString() } }).eq('id', ins.id);
+        } catch (e) { await db.from('t_notes').update({ cost: { status: 'none', why: String((e as Error)?.message ?? e).slice(0, 200) } }).eq('id', ins.id); }
+      })();
+      // deno-lint-ignore no-explicit-any
+      (globalThis as any).EdgeRuntime?.waitUntil ? (globalThis as any).EdgeRuntime.waitUntil(job) : await job;
+    }
     return json({ ok: true, note: ins, ...(body.action === 'quick' ? { replan: await replan(ctx.tripId, from, to) } : {}) });
   } catch (e) {
     return json({ ok: false, error: String((e as Error)?.message ?? e).slice(0, 300) }, 500);
