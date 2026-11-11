@@ -8,6 +8,10 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
 // v85 (6 Nov 2026): tool op audit {visits} (full rule check by exact search) and solve {polish: true} (grading).
 // v93 (9 Nov 2026): the whole-day calculation steps an hour at a time and copies repeated members (v92 timed out).
+// v96 (11 Nov 2026, worksheet g4 "Tell T about your day"): note rules. Run config notes (bench fixtures) or, on
+// published runs with run config tell, the trip's active t_notes rows: back_by, leave_after, busy, skip, must (with a
+// time band), max_visit, max_leg, stay, day_off, per trip day. Every plan made under a note carries stats.notes =
+// { rules, broken, lost } from noteCheck. With no note in force nothing changes (56 of 56 bench nights identical).
 // v95 (9 Nov 2026, version BF): run config svis = builds at lead + 327680, every model's hidden-peak odds
 // also read the UK model's day-ahead visibility (replay_svis_fit).
 // v94 (9 Nov 2026, version BE): run config slay = builds at lead + 163840, every model's hidden-peak odds
