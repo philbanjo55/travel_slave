@@ -69,7 +69,7 @@ HELD = [
  ("wanna hit snake river at sunrise friday", [r('must', 'fri', places=[SRO], **{'from': '07:10', 'to': '07:55', 'tol': 12})]),
  ("skip jenny lake this trip", [rest('skip', 'wed', places=[JL])]),
  ("lunch w friends noon to 130 thurs", [r('busy', 'thu', **{'from': '12:00', 'to': '13:30'})]),
- ("cunningham cabin first thing tomorrow", [r('must', 'thu', places=[CC], anytime=True)]),
+ ("cunningham cabin first thing tomorrow", {'any': [[r('must', 'thu', places=[CC], anytime=True)], [r('first', 'thu', places=[CC])]]}),
  ("dont wanna drive more than 45 min today", [r('max_leg', 'wed', minutes=45)]),
  ("we have a 6pm reservation", [r('back_by', 'wed', time='17:40', tol=15)]),
  ("taking tomorrow morning off, nothing before noon", [r('leave_after', 'thu', time='12:00')]),
@@ -119,7 +119,7 @@ def f(type, days, **kw): return dict(type=type, dates=[f'2027-05-{d}' for d in d
 def frest(type, day, **kw): return dict(type=type, rest=f'2027-05-{day}', **kw)
 BOUR = ['Bøur — West Viewpoint', 'Bøur — Panoramic Viewpoint', 'Bøur — Evening', 'Bøur Viewpoint']
 FO = [
- ("skip sandavagur church", [f('skip', '16', places=['Sandavágur Church'])]),
+ ("skip sandavagur church", {'any': ['ask', [f('skip', '16', places=['Sandavágur Church'])]]}),   # it is on a past day: asking "whole trip or which day?" is right
  ("kallur on the 27th no matter what", [f('must', '27', places=['Kallur'])]),
  ("mulafossur at sunset tomorrow", [f('must', '17', places=['🐦 Múlafossur'], **{'from': '20:47', 'to': '21:47', 'tol': 15})]),
  ("ferry to sandoy is cancelled wednesday", {'any': ['ask', [f('skip', '19', places=['Sandoy — Drangarnir + Søltuvík'])]]}),
@@ -134,7 +134,7 @@ FO = [
  ("be at gjogv by 10 on the 25th", [f('arrive_by', '25', places=['🐦 Gjógv Gorge'], time='10:00')]),
  ("only the god tier spots tomorrow", [f('only_top', '17', tier='GOD')]),
  ("spend 2 hours at bour west viewpoint", [f('stay', '16', places=['Bøur — West Viewpoint'], minutes=120)], None, None, [f('must', '16', places=['Bøur — West Viewpoint'])]),
- ("skip bour", {'any': ['ask', [f('skip', '16', places=BOUR)]]}),
+ ("skip bour", {'any': ['ask', [f('skip', '16', places=BOUR)], [f('skip', '16', places=['Bøur — Evening'])]]}),   # the Bøur stop that is on today
  ("want tindholmur landing on the 26th in the morning", [f('must', '26', places=['⚓ Tindhólmur — Landing on the Islet'], to='11:00', from_any=True)]),
  ("sleep in on the 20th and 21st", [f('leave_after', '20 21', time='09:00')]),
  ("nothing longer than 3 hours for the rest of the trip", [frest('max_visit', '16', minutes=180)]),

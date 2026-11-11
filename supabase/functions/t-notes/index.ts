@@ -16,9 +16,9 @@ import { whatIf, costLines } from './whatif.ts';
 //       up (the rest of the trip planned with and without it; whatif.ts). Only where notes are switched on for the trip.
 //   {action: 'save', id}  -> draft -> active, then the affected days are re-planned (planner_t_note_replan).
 //   {action: 'clear', id} -> active / draft -> cleared, re-planned.
-// Spend: claude_usage (fn t-notes), stops at CLAUDE_NOTES_CAP_USD (default 15 a month) or CLAUDE_MONTHLY_CAP_USD.
+// Spend: claude_usage (fn t-notes), stops at CLAUDE_NOTES_CAP_USD (default 20 a month) or CLAUDE_MONTHLY_CAP_USD.
 
-const NOTES_CAP_USD = Number(Deno.env.get('CLAUDE_NOTES_CAP_USD') ?? 15);  // 15: the reading tests alone used ~$5 in November 2026
+const NOTES_CAP_USD = Number(Deno.env.get('CLAUDE_NOTES_CAP_USD') ?? 20);  // 20: the reading tests alone used ~$15 in November 2026 (about 2 cents a note in use)
 const MONTHLY_CAP_USD = Number(Deno.env.get('CLAUDE_MONTHLY_CAP_USD') ?? 40);
 const PRICE_IN = 4, PRICE_OUT = 20;  // $ per million tokens (Opus)
 

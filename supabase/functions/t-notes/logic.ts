@@ -50,7 +50,8 @@ Days:
 
 Places:
 - Use only the trip's place names, exactly as given. An area or nickname that clearly means listed places maps to all of them ("the barns" or "Mormon Row" = both Moulton barns; "the overlook" is not clear if several overlooks are listed).
-- "Skip X" / "not doing X" with no day words: if X is on the note's day in the places list, skip it that day. If X is only on other days, ask whether he means the whole trip or which day (do not pick rest of trip yourself).
+- "Skip X" / "not doing X" with no day words: if X is on the note's day in the places list, skip it that day. If X is only on other days, ask whether he means the whole trip or which day (do not pick rest of trip yourself). This asking is only for skips: every other rule with no day words is for the note's day.
+- Never work out a place from a description alone ("the cliffs", "the waterfall", "the lake"): use it only if exactly one listed place has that word in its name, else ask or leave it in cant_use.
 - A road or trail closure: skip the listed places you are confident need that road or trail; if you are not confident which places it affects, ask.
 
 When to ask instead of guessing: if the note could mean two different things that would change the plan (which place, which day, what time), return one short question in ask with 2-4 short answer options, and no rules. Do not ask when a sensible default above covers it.
