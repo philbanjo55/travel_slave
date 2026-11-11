@@ -7,6 +7,8 @@ import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
+import { startReplanNow } from './replanNowStore';
+import { startReplan } from './planningStatus';
 
 const NOTES_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/t-notes';
 
@@ -62,9 +64,18 @@ export function useNotesOn(tripId: string | null | undefined): boolean {
 export const readNote = (tripId: string, date: string, text: string, answer?: { question: string; choice: string }) =>
   call<{ note: TNote }>({ action: 'read', trip_id: tripId, date, text, ...(answer ? { answer } : {}) }).then(r => r.note);
 export const quickNote = (tripId: string, date: string, kind: QuickKind, extra: { time?: string; place?: string } = {}) =>
-  call<{ note: TNote }>({ action: 'quick', trip_id: tripId, date, kind, ...extra }).then(r => r.note);
+  call<{ note: TNote; replan?: any }>({ action: 'quick', trip_id: tripId, date, kind, ...extra });
 export const saveNote = (id: number) => call<{ replan?: any; now?: any; marks?: { place: string; result: string; set: boolean }[] }>({ action: 'save', id });
-export const clearNote = (id: number) => call({ action: 'clear', id });
+export const clearNote = (id: number) => call<{ replan?: any }>({ action: 'clear', id });
+
+// After a note is saved or removed the server has already started the re-plans it needs. This puts the app's own
+// trackers on them (the same ones the Re-plan now and Plan again buttons use), so the day card says T is working
+// and loads the new plan when it lands. Both calls pick up the request already running; neither starts a second.
+export function followReplan(tripId: string, r: any) {
+  const did: string[] = r?.replan?.did ?? [];
+  if (r?.now?.ok || did.includes('now')) startReplanNow(tripId).catch(() => {});
+  if (did.includes('week')) startReplan(tripId).catch(() => {});
+}
 
 // The trip's notes that matter now: in force, waiting for the OK, or a question back. Kept on the phone for no signal.
 const cacheKey = (tripId: string) => `tnotes:${tripId}`;

@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, Scroll
 import { colors, radius, spacing, typography } from '../../theme';
 import { errText } from '../../utils/errText';
 import {
-  TNote, QuickKind, clearNote, covers, dropWaiting, fetchNote, queueNote, quickNote, readNote, refreshNotes, restOfTrip,
+  TNote, QuickKind, clearNote, covers, dropWaiting, fetchNote, followReplan, queueNote, quickNote, readNote, refreshNotes, restOfTrip,
   saveNote, useNotes, useNotesOn,
 } from '../../services/tNotes';
 
@@ -96,7 +96,9 @@ export function TellTSheet({ visible, onClose, tripId, date, dayLabel, places, s
   const quick = async (q: typeof QUICK[number], extra: { time?: string; place?: string } = {}) => {
     setPhase({ k: 'busy', what: 'Telling T…' });
     try {
-      const note = await quickNote(tripId, date, q.kind, extra);
+      const qr = await quickNote(tripId, date, q.kind, extra);
+      const note = qr.note;
+      followReplan(tripId, qr);
       refreshNotes(tripId);
       if (alive.current) setPhase({ k: 'saved', lines: [...(note.say ?? []).map(l => `${l.text} (${l.when})`), 'T is re-planning the days this touches.'] });
     } catch (e) { if (alive.current) fail(e); }
@@ -105,6 +107,7 @@ export function TellTSheet({ visible, onClose, tripId, date, dayLabel, places, s
     setPhase({ k: 'busy', what: 'Saving…' });
     try {
       const r = await saveNote(note.id);
+      followReplan(tripId, r);
       refreshNotes(tripId);
       const lines: string[] = [];
       for (const m of r.marks ?? []) lines.push(m.set ? `${m.place}: marked ${m.result === 'nailed' ? 'Nailed it' : 'Go back for better'}.` : `${m.place}: your ticks stay as they are.`);
@@ -251,7 +254,7 @@ export function TellTRow({ tripId, date, dayLabel, places, open, onOpened }: {
   const wait = waiting.filter(w => w.date === date);
   const remove = (n: TNote) => Alert.alert('Remove this note?', `“${n.text}”\nT re-plans the days it touched.`, [
     { text: 'Keep it', style: 'cancel' },
-    { text: 'Remove', style: 'destructive', onPress: () => clearNote(n.id).then(() => refreshNotes(tripId)).catch((e: any) => Alert.alert('Could not remove it', String(e?.message ?? e))) },
+    { text: 'Remove', style: 'destructive', onPress: () => clearNote(n.id).then(r => { followReplan(tripId, r); return refreshNotes(tripId); }).catch((e: any) => Alert.alert('Could not remove it', errText(e))) },
   ]);
   return (
     <View style={{ gap: 6 }}>
@@ -304,7 +307,7 @@ export function TripRules({ tripId }: { tripId: string }) {
           </View>
           <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel={`Remove the trip rule: ${n.text}`}
             onPress={() => Alert.alert('Remove this rule?', `“${n.text}”`, [{ text: 'Keep it', style: 'cancel' },
-              { text: 'Remove', style: 'destructive', onPress: () => clearNote(n.id).then(() => refreshNotes(tripId)).catch(() => {}) }])}>
+              { text: 'Remove', style: 'destructive', onPress: () => clearNote(n.id).then(r => { followReplan(tripId, r); return refreshNotes(tripId); }).catch(() => {}) }])}>
             <Text style={styles.x}>✕</Text>
           </TouchableOpacity>
         </View>
