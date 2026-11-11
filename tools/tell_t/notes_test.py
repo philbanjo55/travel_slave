@@ -96,6 +96,23 @@ EASY = [
  ("easy day saturday, back by 3", [r('max_stops', 'sat', count=3), r('max_visit', 'sat', minutes=120), r('back_by', 'sat', time='15:00')]),
 ]
 
+# More things to say (11 Nov 2026): icy roads, no skis, gear return, order, only in good weather, top spots, arrive by.
+TG = 'Taggart & Bradley Lakes'
+MORE = [
+ ("roads are icy today", [r('slow_roads', 'wed', factor=1.25)]),
+ ("chains required, roads are really bad tomorrow", [r('slow_roads', 'thu', factor=1.5)]),
+ ("no skis today", [r('no_gear', 'wed')]),
+ ("returning the skis saturday at 4", [r('gear_to', 'sat', time='16:00')]),
+ ("start at Oxbow tomorrow", [r('first', 'thu', places=[OX])]),
+ ("finish at snake river overlook today", [r('last', 'wed', places=[SRO])]),
+ ("oxbow before mormon row on friday", [r('before', 'fri', places=[OX], then_places=[TA, JM])]),
+ ("only do taggart if the weather's good", [rest('optional', 'wed', places=[TG])]),
+ ("just the best spots today", [r('only_top', 'wed', tier='S')]),
+ ("get to taggart by 8", [rest('arrive_by', 'wed', places=[TG], time='08:00')]),
+ ("jenny lake lot fills by 9 on saturday", [r('arrive_by', 'sat', places=[JL], time='09:00')]),
+ ("icy roads, easy day, back by 4", [r('slow_roads', 'wed', factor=1.25), r('max_stops', 'wed', count=3), r('max_visit', 'wed', minutes=120), r('back_by', 'wed', time='16:00')]),
+]
+
 def call(case):
     text, exp, card, asof = (list(case) + [None, None, None])[:4]
     body = dict(action='read', dry=True, trip_id=TRIP, date=D[card or 'wed'], as_of=asof or A, text=text)
@@ -114,6 +131,9 @@ def match(e, a):
     if 'places' in e and sorted(e['places']) != sorted(a.get('places') or []): return False
     if 'minutes' in e and e['minutes'] != a.get('minutes'): return False
     if 'count' in e and e['count'] != a.get('count'): return False
+    if 'factor' in e and abs(e['factor'] - (a.get('factor') or 0)) > 0.001: return False
+    if 'tier' in e and e['tier'] != a.get('tier'): return False
+    if 'then_places' in e and sorted(e['then_places']) != sorted(a.get('then_places') or []): return False
     tol = e.get('tol', 0)
     for k in ('time', 'from', 'to'):
         if k in e:
@@ -145,6 +165,7 @@ def grade(case, res):
 if __name__ == '__main__':
     if '--held' in sys.argv: CASES = HELD; sys.argv.remove('--held')
     if '--easy' in sys.argv: CASES = EASY; sys.argv.remove('--easy')
+    if '--more' in sys.argv: CASES = MORE; sys.argv.remove('--more')
     pick = [int(x) for x in sys.argv[1:]] or range(1, len(CASES) + 1)
     with cf.ThreadPoolExecutor(6) as ex: results = list(ex.map(lambda i: (i, call(CASES[i - 1])), pick))
     ok = 0; cost = 0.0; bad = []
