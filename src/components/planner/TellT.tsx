@@ -55,7 +55,7 @@ export function TellTSheet({ visible, onClose, tripId, date, dayLabel, places, s
   const [text, setText] = useState('');
   const [phase, setPhase] = useState<Phase>({ k: 'write' });
   const alive = useRef(true);
-  const box = useRef<TextInput>(null);
+  const box = useRef<any>(null);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   // Android does not reliably focus a box inside a pop-up by itself (emulator test, 11 Nov 2026): ask for it once the sheet is up.
   useEffect(() => {
