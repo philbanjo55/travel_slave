@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../services/supabase';
 import { colors } from '../../theme';
 import { clock12 } from '../../services/planner';
+import { useNotesOn } from '../../services/tNotes';
 
 // Claude's plan check (worksheet g3, edge function t-review): each evening (real trips: every plan)
 // Claude reads T's plan against the park's closures and hours, weather warnings and avalanche danger.
@@ -58,8 +59,10 @@ export function headline(r: PlanReview): string {
   return `${where}${first.issue.split(/(?<=\.)\s/)[0]}${rest}`;
 }
 
-export function PlanCheckRow({ tripId, date, tz }: { tripId: string; date: string; tz?: string }) {
+export function PlanCheckRow({ tripId, date, tz, onTellT }: { tripId: string; date: string; tz?: string; onTellT?: (text: string) => void }) {
   const r = usePlanReview(tripId, date);
+  // Tell T (worksheet g4): a flag can be handed to T as a note (Phil still sees what T understood and gives the OK).
+  const notes = useNotesOn(onTellT ? tripId : null);
   const [open, setOpen] = useState(false);
   const [showChecks, setShowChecks] = useState(false);
   if (!r || !r.verdict) return null;
@@ -86,6 +89,12 @@ export function PlanCheckRow({ tripId, date, tz }: { tripId: string; date: strin
               <Text style={styles.flagText}>{f.issue}</Text>
               {f.action && f.action !== 'none' ? <Text style={styles.flagAction}>Do: {f.action}</Text> : null}
               {f.source ? <Text style={styles.source}>{f.source}</Text> : null}
+              {notes && onTellT && f.severity !== 'info' ? (
+                <TouchableOpacity onPress={() => onTellT(`${f.stop ? `${f.stop.replace(/\s*\(.*\)\s*$/, '')}: ` : ''}${f.issue}`)} hitSlop={{ top: 8, bottom: 8 }}
+                  accessibilityRole="button" accessibilityLabel="Tell T about this">
+                  <Text style={styles.more}>Tell T about this ›</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           ))}
           {(r.checks ?? []).length ? (

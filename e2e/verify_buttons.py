@@ -222,8 +222,121 @@ def plan_check_card():
     V.check('plan-check-alive', C.app_alive())
 
 
+def type_text(t):
+    """Type into the focused box (adb wants %s for a space)."""
+    C.adb('shell', 'input', 'text', t.replace(' ', '%s').replace("'", ''))
+    time.sleep(1.0)
+
+
+def wait_text(needle, secs=40):
+    s = C.capture(1.5)
+    for _ in range(int(secs / 2.5)):
+        if V.has(s, needle):
+            return s
+        s = C.capture(2.5)
+    return None
+
+
+def tell_logs():
+    return [l for l in V.logcat().splitlines() if 'E2E_TELL' in l]
+
+
+def tell_t():
+    """Tell T on today's day card (11 Nov 2026). The test build says notes are on, reads are dry and saves are blocked:
+    the box opens, a typed note comes back as plain-words rules, the OK is sent (and blocked), a question is answered,
+    a quick button is sent (and blocked), and the app stays up."""
+    if open_live() is None or open_today() is None:
+        return
+    s = scroll_find('Tell T about this day')
+    V.check('tell-button-on-card', s is not None, "today's card on the trip page")
+    if s is None:
+        seen, _ = V.texts_all(6)
+        print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
+    s = mid_screen(s, 'Tell T about this day')
+    V.tap_text(s, 'Tell T about this day')
+    sh = C.capture(2.5)
+    V.show('tell-sheet', sh)
+    V.check('tell-sheet-open', V.has(sh, 'Send the note to T') or V.has(sh, 'Send to T'))
+    V.check('tell-quick-buttons', V.has(sh, 'Sleep in') and V.has(sh, 'Day off'), 'one-tap buttons shown')
+    # 1. A typed note -> what T understood, before anything changes.
+    type_text('dinner at 7')
+    hide = C.capture(1)
+    V.tap_text(hide, 'Send the note to T') or V.tap_text(hide, 'Send to T')
+    p = wait_text('Looks right', 45)
+    V.check('tell-preview', p is not None, 'preview with Looks right')
+    if p is not None:
+        V.show('tell-preview', p)
+        seen, _ = V.texts_all(1)
+        V.check('tell-preview-plain-words', seen_has(seen, 'Be back at') and seen_has(seen, 'T WILL'), ' | '.join(t for t in seen if len(t) > 3)[:400])
+        V.check('tell-preview-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined'))
+        before = len(blocked_lines())
+        V.tap_text(C.capture(1), 'Looks right')
+        time.sleep(5)
+        after = blocked_lines()[before:]
+        print('INFO blocked after Looks right: ' + ' | '.join(a[-160:] for a in after)[:600], flush=True)
+        V.check('tell-ok-sent', any('t-notes action=save' in a for a in after), 'the OK sent a save (blocked)')
+        e = C.capture(1)
+        V.show('tell-after-ok', e)
+        V.check('tell-ok-error-shown', V.has(e, 'blocked by emulator test') or V.has(e, 'Back to the note'), 'the refusal is shown, not swallowed')
+        V.tap_text(e, 'Back to the note')
+    print('INFO tell reads: ' + ' | '.join(l[-300:] for l in tell_logs()[-3:])[:1200], flush=True)
+    V.check('tell-alive-1', C.app_alive())
+    # 2. A question changes nothing and gets an answer from T's own plans.
+    w = C.capture(1.5)
+    if not (V.has(w, 'Send the note to T') or V.has(w, 'Send to T')):
+        V.back(); w = C.capture(1.5)
+        s = scroll_find('Tell T about this day')
+        if s is not None:
+            V.tap_text(mid_screen(s, 'Tell T about this day'), 'Tell T about this day'); w = C.capture(2.5)
+    C.adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END')
+    for _ in range(40):
+        C.adb('shell', 'input', 'keyevent', 'KEYCODE_DEL')
+    type_text('what is the best day for Oxbow Bend?')
+    w = C.capture(1)
+    V.tap_text(w, 'Send the note to T') or V.tap_text(w, 'Send to T')
+    a = wait_text('T SAYS', 45)
+    V.check('tell-question-answered', a is not None, 'T SAYS shown')
+    if a is not None:
+        V.show('tell-answer', a)
+        seen, _ = V.texts_all(1)
+        V.check('tell-answer-text', seen_has(seen, 'Oxbow Bend') and seen_has(seen, 'A question changes nothing'), ' | '.join(t for t in seen if len(t) > 3)[:500])
+    V.check('tell-alive-2', C.app_alive())
+    # 3. A quick button is sent at once (blocked here).
+    q = C.capture(1)
+    V.tap_text(q, 'Ask or tell T something else')
+    q = C.capture(1.5)
+    C.adb('shell', 'input', 'keyevent', 'KEYCODE_BACK') if not V.has(q, 'Day off') else None   # hide the keyboard if it covers the buttons
+    q = C.capture(1.5)
+    before = len(blocked_lines())
+    tapped = V.tap_text(q, 'Quick: Day off') or V.tap_text(q, 'Day off')
+    time.sleep(5)
+    after = blocked_lines()[before:]
+    V.check('tell-quick-sent', bool(tapped) and any('t-notes action=quick' in x for x in after), 'Day off sent a quick note (blocked)')
+    V.show('tell-after-quick', C.capture(1))
+    V.check('tell-alive-3', C.app_alive())
+    V.back(2)
+
+
+def tell_t_setup():
+    """Planner Setup tab lists the trip rules from notes (empty here: says so)."""
+    p = open_live()
+    if p is None:
+        return
+    scroll_top()
+    if not V.tap_text(C.capture(1), 'Open the Planner'):
+        V.check('tell-setup-planner-open', False); return
+    o = C.capture(5)
+    if not V.tap_text(o, 'Setup', exact=True):
+        V.check('tell-setup-tab', False, 'no Setup tab'); return
+    t = C.capture(4)
+    V.show('tell-setup', t)
+    seen, _ = V.texts_all(2)
+    V.check('tell-trip-rules-shown', seen_has(seen, 'TRIP RULES'), 'trip rules box on the Setup tab')
+    V.check('tell-setup-alive', C.app_alive())
+
+
 def main():
-    for st in (today_auto_open, plan_check_card, replan_now_card, ghost_accept, plans_tab):
+    for st in (today_auto_open, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup):
         try:
             st()
         except Exception as e:

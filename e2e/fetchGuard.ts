@@ -28,6 +28,25 @@ globalThis.fetch = (async (input: any, init?: any) => {
   const path = url.split(SUPABASE_HOST)[1] ?? '';
   const rpc = path.match(/^\/rest\/v1\/rpc\/([a-z0-9_]+)/i);
   if (rpc && READ_RPCS.has(rpc[1])) return realFetch(input, init);
+  // Tell T (11 Nov 2026): the box shows only where notes are switched on. This test build says "on" for every trip so
+  // the screens can be tapped through; nothing can be stored (reads are forced dry, every other notes call is blocked).
+  if (rpc && rpc[1] === 'planner_t_tell') {
+    console.warn('E2E_TELL on (test build only)');
+    return new Response('true', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (path.startsWith('/functions/v1/t-notes')) {
+    let b: any = {};
+    try { b = JSON.parse(String(init?.body ?? '{}')); } catch { /* unreadable body: block */ }
+    if (b.action === 'read') {
+      const r = await realFetch(input, { ...init, body: JSON.stringify({ ...b, dry: true }) });
+      try {
+        const j = await r.clone().json();
+        console.warn(`E2E_TELL read ok=${j.ok} status=${j.note?.status} say=${JSON.stringify((j.note?.say ?? []).map((l: any) => l.text))} answer=${JSON.stringify(j.note?.answer?.lines ?? null)} err=${j.error ?? ''}`);
+      } catch (e) { console.warn(`E2E_TELL unreadable ${String(e)}`); }
+      return r;
+    }
+    return blocked(method, url, `t-notes action=${b.action ?? ''}`);
+  }
   if (path.startsWith('/functions/v1/solver-actions')) {
     let action = '';
     try { action = JSON.parse(String(init?.body ?? '{}')).action ?? ''; } catch { /* unreadable body: block */ }

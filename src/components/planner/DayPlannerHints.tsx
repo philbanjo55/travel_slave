@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
@@ -14,6 +14,7 @@ import { DayScore } from '../../services/plannerDay';
 import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../../services/replanNowStore';
 import { useTripStore } from '../../store/tripStore';
 import { PlanCheckRow } from './PlanCheck';
+import { TellTRow } from './TellT';
 export { dayScore, moveReasons } from '../../services/plannerDay';
 export type { DayScore } from '../../services/plannerDay';
 
@@ -179,6 +180,14 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
 }) {
   const navigation = useNavigation<any>();
   const [more, setMore] = useState(false);
+  // Tell T (worksheet g4): a plan-check flag can start a note; the places a quick button offers are the trip's rated ones.
+  const [tell, setTell] = useState<string | null>(null);
+  const { currentTripData: tripData } = useTripStore();
+  const places = useMemo(() => {
+    const names = new Set<string>();
+    for (const d of tripData?.days ?? []) for (const st of d.stops ?? []) if (planner?.tiers.has(st.id) && !st.time_locked) names.add(st.name);
+    return [...names].sort();
+  }, [tripData, planner]);
   const open = () => navigation.navigate('Planner', { tripId, tab: 'plans', date });
   if (!planner?.run || !score) {
     return (
@@ -235,8 +244,9 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
         </Text>
       ) : null}
       {score.lowerWhy ? <Text style={styles.cardSub}>{score.lowerWhy}</Text> : null}
-      {!past ? <PlanCheckRow tripId={tripId} date={date} tz={tz} /> : null}
+      {!past ? <PlanCheckRow tripId={tripId} date={date} tz={tz} onTellT={setTell} /> : null}
       {!past && date === format(new Date(), 'yyyy-MM-dd') ? <ReplanNowRow tripId={tripId} /> : null}
+      {!past ? <TellTRow tripId={tripId} date={date} dayLabel={format(new Date(`${date}T12:00:00`), 'EEE d MMM')} places={places} open={tell} onOpened={() => setTell(null)} /> : null}
       {past ? <Text style={styles.cardSub}>This day is over: nothing to change.</Text> : score.reasons.length ? (
         <View style={styles.reasons}>
           <TouchableOpacity onPress={onShowChanges} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Show T's changes on the timeline">
