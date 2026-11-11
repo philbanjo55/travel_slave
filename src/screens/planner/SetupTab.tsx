@@ -5,6 +5,7 @@ import { format, parseISO } from 'date-fns';
 import { colors, spacing, radius, typography } from '../../theme';
 import { StopSettings, TripSetting, confirmAllSettings, fetchTripSettings } from '../../services/planner';
 import SettingsEditor, { settingsSummary } from '../../components/planner/SettingsEditor';
+import { TripRules } from '../../components/planner/TellT';
 
 type Filter = 'guess' | 'mine' | 'unrated' | 'all';
 
@@ -53,6 +54,7 @@ export default function SetupTab({ tripId, days }: { tripId: string; days: any[]
         <View style={[styles.barGuess, { flex: counts.guess || 0.0001 }]} />
         <View style={[styles.barNone, { flex: counts.unrated || 0.0001 }]} />
       </View>
+      <TripRules tripId={tripId} />
       <View style={styles.filters}>
         {([['guess', 'My guesses'], ['mine', 'Confirmed'], ['unrated', 'Not rated'], ['all', 'All']] as [Filter, string][]).map(([f, t]) => (
           <TouchableOpacity key={f} onPress={() => setFilter(f)} style={[styles.chip, filter === f && styles.chipOn]}>
