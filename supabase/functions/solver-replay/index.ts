@@ -2173,7 +2173,10 @@ Deno.serve(async (req) => {
             if (hereN != null) {
               // At a named place: visits that had ended by now stay; one under way or left for elsewhere is let go.
               before = before.filter(v => v.anchor || v.n === hereN || endOf(v) <= askMs);
-              const cur = before.length && before[before.length - 1].n === hereN && !before[before.length - 1].anchor ? before[before.length - 1] : null;
+              // The plan's own visit there counts as this one only if it is under way or ended within the last 45 min
+              // (back at a place he left hours ago = a new visit).
+              const lastB = before.length ? before[before.length - 1] : null;
+              const cur = lastB && lastB.n === hereN && !lastB.anchor && endOf(lastB) >= askMs - 45 * 60000 ? lastB : null;
               const leaveMs = nowSlotMs + Math.max(stayMin, cur ? 0 : SLOT) * 60000;
               if (cur) { if (stayMin || endOf(cur) < leaveMs) cur.len = Math.max(1, Math.round((Math.max(leaveMs, stayMin ? 0 : endOf(cur)) - cur.startMs) / slotMsN)); }
               else before.push({ n: hereN, startMs: nowSlotMs, drive: 0, anchor: false, len: Math.max(1, Math.round((leaveMs - nowSlotMs) / slotMsN)) });
