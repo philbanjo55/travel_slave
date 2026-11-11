@@ -191,14 +191,14 @@ type State = {
 // Tell T (worksheet g4, Phil 10 Nov 2026): a note Phil types on a day becomes rules the planner follows.
 // One stored rule (run config notes for the bench, table t_notes for live runs with run config tell):
 // back_by {time} | leave_after {time} | busy {from, to, at?, label?} | skip {stops} | must {stops, from?, to?}
-// | max_visit {minutes} | max_leg {minutes} | stay {stops, minutes}; scope = dates [trip dates], else
+// | max_visit {minutes} | max_leg {minutes} | stay {stops, minutes} | day_off (no free stop that day, bookings stay); scope = dates [trip dates], else
 // from_date..to_date (to_date null = the rest of the trip). Times are HH:MM in the trip's time zone.
 type NoteRule = { type: string; dates?: string[]; from_date?: string | null; to_date?: string | null; time?: string; from?: string; to?: string;
   at?: string | null; label?: string; stops?: string[]; minutes?: number; priority?: boolean };
 // A day's rules on the plan's nodes: skip / must by subject group (a place = every stop of it).
 type DayNotes = { n: number; backBy: number | null; leaveAfter: number | null; busy: { from: number; to: number; id: string; label: string }[];
   skipG: Set<number>; must: { g: number; name: string; lo: number | null; hi: number | null }[]; mustG: Set<number>;
-  maxVisit: number | null; maxLeg: number | null; stay: Map<number, number> };
+  maxVisit: number | null; maxLeg: number | null; stay: Map<number, number>; off: boolean };
 type DayPlan = {
   date: string; tripDate: string | null; light: boolean; start: number; end: number; dayStart: number; nSlots: number;
   routes: State[]; anchors: number; ms: number; winLo: number; winHi: number; extends?: number; capped?: boolean;
@@ -731,7 +731,7 @@ Deno.serve(async (req) => {
           busy: [], skipG: new Set(), must: [], mustG: new Set(),
           maxVisit: mins(rs.filter(r => r.type === 'max_visit').map(r => (Number(r.minutes) > 0 ? Number(r.minutes) : null)), Math.min),
           maxLeg: mins(rs.filter(r => r.type === 'max_leg').map(r => (Number(r.minutes) > 0 ? Number(r.minutes) : null)), Math.min),
-          stay: new Map() };
+          stay: new Map(), off: rs.some(r => r.type === 'day_off') };
         for (const r of rs) {
           if (r.type === 'must') for (const g of groupsOf(r.stops)) {
             if (o.mustG.has(g)) continue;
@@ -788,7 +788,7 @@ Deno.serve(async (req) => {
       // (bookings and time-locked stops stay as they are); skipped places and too-long visits leave them.
       const R = day.notes;
       const durN = (n: number) => R?.stay.get(n) ?? nodes[n].dur;
-      const noteOut = (n: number) => !!R && !R.mustG.has(nodes[n].group) && (R.skipG.has(nodes[n].group) || (R.maxVisit != null && durN(n) > R.maxVisit));
+      const noteOut = (n: number) => !!R && !R.mustG.has(nodes[n].group) && (R.off || R.skipG.has(nodes[n].group) || (R.maxVisit != null && durN(n) > R.maxVisit));
       const cand0 = (exact ?? only ?? freeNodes).filter(n => !skip?.has(n));
       const cand = !R ? cand0 : [...new Set([...cand0.filter(n => !noteOut(n)),
         ...(search && !only ? nodes.map((x, i) => (R.mustG.has(x.group) && x.w > 0 && !lockedIds.has(x.id) ? i : -1)).filter(i => i >= 0) : [])])];
@@ -1236,6 +1236,7 @@ Deno.serve(async (req) => {
         const n = nOf(v), home = D[n][H], len = (Date.parse(v.end) - Date.parse(v.start)) / 60000;
         if (R.backBy != null && loc(v.end) + home > R.backBy + 0.5) broken.push(`${v.name} gets back at ${clock(loc(v.end) + home)}, after ${clock(R.backBy)}`);
         if (R.leaveAfter != null && loc(v.start) - D[H0][n] < R.leaveAfter - 0.5) broken.push(`${v.name} at ${clock(loc(v.start))} means leaving before ${clock(R.leaveAfter)}`);
+        if (R.off && !wanted(v)) broken.push(`${v.name} is planned on a day off`);
         if (R.skipG.has(nodes[n].group)) broken.push(`${v.name} is planned but the note skips it`);
         if (R.maxVisit != null && len > R.maxVisit + 0.5 && !wanted(v)) broken.push(`${v.name} is ${Math.round(len)} min, over ${R.maxVisit}`);
         if (R.maxLeg != null && !wanted(v) && (v.drive_min > R.maxLeg + 0.5 || home > R.maxLeg + 0.5)) broken.push(`${v.name} is a ${Math.round(Math.max(v.drive_min, home))} min drive, over ${R.maxLeg}`);
@@ -1786,8 +1787,13 @@ Deno.serve(async (req) => {
         const remaining: string[] = (run.trip_dates as string[]).slice(n);
         const gFrom = cfg.gear?.from?.date, gTo = cfg.gear?.to?.date;
         // Tell T: a place is not for a day whose notes skip it or allow no visit that long (a wanted place is).
+        // (max_leg too, 11 Nov 2026: a stay-close day was still counted as a day for the far ski outings, which then
+        // slid to the last gear day and were lost.)
+        const farOn = (x: number, td: string, leg: number) => { const h = hotelsFor(td), a = pos.get(h.start ?? ''), b = pos.get(h.end ?? '');
+          return a != null && b != null && (D[a][x] > leg || D[x][b] > leg); };
         const noteOk = (u: number[], td: string) => { const R = notesFor(td); return !R || u.some(x => R.mustG.has(nodes[x].group))
-          || !(u.some(x => R.skipG.has(nodes[x].group)) || (R.maxVisit != null && u.every(x => (R.stay.get(x) ?? nodes[x].dur) > R.maxVisit!))); };
+          || !(R.off || u.some(x => R.skipG.has(nodes[x].group)) || (R.maxVisit != null && u.every(x => (R.stay.get(x) ?? nodes[x].dur) > R.maxVisit!))
+               || (R.maxLeg != null && u.some(x => farOn(x, td, R.maxLeg!)))); };
         const okOn = (u: number[], td: string) => noteOk(u, td) && (!u.some(x => gear.has(nodes[x].id)) || ((!gFrom || td >= gFrom) && (!gTo || td <= gTo)));
         const lastDay = (u: number[]) => { for (let i = remaining.length - 1; i >= 0; i--) if (okOn(u, remaining[i])) return i; return -1; };
         const durOf = (u: number[]) => nodes[u[0]].together ? u.reduce((t, x) => t + nodes[x].dur, 0) : Math.min(...u.map(x => nodes[x].dur));
