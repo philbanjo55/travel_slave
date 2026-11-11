@@ -1,9 +1,9 @@
 # "Tell T about your day" (worksheet g4): design
 
 Status (11 Nov 2026): everything on Phil's list is built except "a place not on the trip" (one question for Phil
-first). Nothing is live: the note-aware planner (solver-replay v100) is NOT deployed, notes are switched on for no
-trip (planner_t_trips.config.tell), the app screens are on the test branch only (claude/planner-buttons-test), and
-the sky-report change to live t_truth was applied the same day (20261111192002). See "Built and tested (11 Nov)" at the end.
+first). Live since 11 Nov: the note-aware planner (solver-replay v101) is deployed, notes are switched on for Teton
+Live and the real Grand Teton trip (planner_t_trips.config.tell; Faroes trips off), the app screens are in the TEST
+app, and sky reports beat the cameras (t_truth, 20261111192002). See "Built and tested (11 Nov)" at the end.
 Phil's page: the "Tell T" design artifact (link in the Planner Tracker).
 
 ## What it is
