@@ -10,6 +10,7 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // v93 (9 Nov 2026): the whole-day calculation steps an hour at a time and copies repeated members (v92 timed out).
 // v98 (11 Nov 2026): a note is about its calendar day (no free stop before local midnight when that day or the day
 // before has a note).
+// v101 (11 Nov 2026): the Re-plan now step reads `here` from its own request row when the request does not carry it.
 // v100 (11 Nov 2026, Tell T "where I really am"): a Re-plan now request may carry here {stop_id?, late_min?,
 // stay_min?}: the rest of today is planned from where Phil really is and when he is really free. dry: true = the
 // answer only, nothing published or saved (tests).
@@ -2156,7 +2157,11 @@ Deno.serve(async (req) => {
           //    visit still under way then ends that much later (bookings keep their times).
           //  stop_id: he is at that place now (begun visits elsewhere that had not ended are let go); stay_min: he
           //    leaves it (or the place the plan has him at) that many minutes from now.
-          const here = (body.here && typeof body.here === 'object' ? body.here : null) as { stop_id?: string; hotel?: boolean; late_min?: number; stay_min?: number } | null;
+          // v101: when the request does not carry it, it is read from the request's own row (planner_t_now.here, set by
+          // planner_t_now_here), so the shared scheduler function does not have to pass it on.
+          let hereIn: any = body.here && typeof body.here === 'object' ? body.here : null;
+          if (!hereIn && !body.dry && body.req_id) hereIn = (await db.from('planner_t_now').select('here').eq('id', body.req_id).maybeSingle()).data?.here ?? null;
+          const here = (hereIn && typeof hereIn === 'object' ? hereIn : null) as { stop_id?: string; hotel?: boolean; late_min?: number; stay_min?: number } | null;
           const lateMs = Math.max(0, Math.min(360, Number(here?.late_min ?? 0) || 0)) * 60000;
           const stayMin = Math.max(0, Math.min(600, Number(here?.stay_min ?? 0) || 0));
           const hereN = here?.hotel ? pos.get(days[0].endId!) : here?.stop_id != null ? pos.get(here.stop_id) : undefined;
