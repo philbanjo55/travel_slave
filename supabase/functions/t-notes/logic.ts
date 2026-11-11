@@ -54,9 +54,20 @@ Places:
 - Never work out a place from a description alone ("the cliffs", "the waterfall", "the lake"): use it only if exactly one listed place has that word in its name, else ask or leave it in cant_use.
 - A road or trail closure: skip the listed places you are confident need that road or trail; if you are not confident which places it affects, ask.
 
+Right now (now): only when the trip is under way and the note is about today. These are not rules; T re-plans the rest of today from them once. Leave now null otherwise.
+- here_place: where he says he is ("I'm at Oxbow", "still at the barns", "back at the hotel" = "hotel"). A listed place or "hotel"; a place that is not listed goes in cant_use.
+- late_minutes: how far behind the plan he is ("running an hour late" = 60, "half an hour behind" = 30, "a bit behind" = 20).
+- stay_minutes: how much longer he will stay where he is ("staying another half hour" = 30, "give me 20 more minutes here" = 20).
+- sky: what he himself sees of the mountains right now: "out" (he can see the peaks: "peaks are out", "it's cleared", "totally clear here"), "hidden" (he cannot: "socked in", "clouded over", "can't see a thing", "fog in the valley", "snowing, no view"), "mixed" ("in and out", "half covered"). Only what he reports seeing now. A forecast, a hope or a guess ("looks like it might clear", "supposed to snow later") is not a report: cant_use. A remark about past light ("the light was amazing yesterday") is not a report either.
+- A note can hold both now and rules ("socked in here, skip Oxbow today").
+
+What happened (recap): when he reports how a place went, today or earlier on the trip, one item per place: result "nailed" (he got the shot he wanted: "nailed it", "got a great one", "got the shot"), "got" (he got something but wants better: "got it but flat light", "ok, would go back"), "missed" (no shot: "clouded out", "missed it", "didn't get it", "skipped it"). Only listed places, only results he reports (never a plan or a wish). A recap is not a rule: do not add a skip for a place he nailed (T stops planning it by itself). "Done with X for the rest of the trip" with no word on how it went is a skip, not a recap. Praise for the light or the day with no result ("the light was amazing at Oxbow") is not a recap: cant_use.
+
+Questions (question): when the note asks T something instead of telling it ("what if we skip Jenny Lake?", "why is Oxbow on Thursday?", "what's the best day for Mormon Row?", "when should I do the barns?"), fill question and leave now and recap empty. kind: "what_if" (what would happen if...: then rules holds the "if" as rules, exactly as if he had told T to do it, and nothing else), "why" (why a place is where it is on the plan), "best_day" (which day or time suits a place), "other" (anything else: T cannot answer it yet). places = the listed places the question is about. For why, best_day and other, rules stays empty.
+
 When to ask instead of guessing: if the note could mean two different things that would change the plan (which place, which day, what time), return one short question in ask with 2-4 short answer options, and no rules. Do not ask when a sensible default above covers it.
 
-Anything in the note T cannot use (a thought, a question, the weather, how a shot went, a wish no rule covers) goes in cant_use as a short plain sentence each. If the whole note is like that, return no rules.
+Anything in the note T cannot use (a thought, a forecast, a wish no rule covers) goes in cant_use as a short plain sentence each. If the whole note is like that, return no rules.
 
 Every rule needs why: a few plain words tying it to the note ("Dinner at 7, 20 min to get ready"). Times are 24-hour HH:MM in the trip's local time. Fields that do not apply are null or empty.`;
 
@@ -64,7 +75,7 @@ const NULLSTR = { type: ['string', 'null'] };
 export function buildSchema(ctx: TripCtx) {
   const places = ctx.places.map(p => p.name);
   return {
-    type: 'object', additionalProperties: false, required: ['ask', 'rules', 'cant_use'],
+    type: 'object', additionalProperties: false, required: ['ask', 'rules', 'now', 'recap', 'question', 'cant_use'],
     properties: {
       ask: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, required: ['question', 'options'],
         properties: { question: { type: 'string' }, options: { type: 'array', items: { type: 'string' } } } }] },
@@ -80,6 +91,16 @@ export function buildSchema(ctx: TripCtx) {
           factor: { type: ['number', 'null'] }, tier: { type: ['string', 'null'] },
           at_place: NULLSTR, minutes: { type: ['integer', 'null'] }, count: { type: ['integer', 'null'] }, label: NULLSTR, why: { type: 'string' },
         } } },
+      now: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, required: ['here_place', 'late_minutes', 'stay_minutes', 'sky', 'why'],
+        properties: {
+          here_place: { anyOf: [{ type: 'null' }, { type: 'string', enum: [...places, 'hotel'] }] },
+          late_minutes: { type: ['integer', 'null'] }, stay_minutes: { type: ['integer', 'null'] },
+          sky: { anyOf: [{ type: 'null' }, { type: 'string', enum: ['out', 'hidden', 'mixed'] }] }, why: { type: 'string' },
+        } }] },
+      recap: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['place', 'result'],
+        properties: { place: { type: 'string', enum: places }, result: { type: 'string', enum: ['nailed', 'got', 'missed'] } } } },
+      question: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, required: ['kind', 'places', 'text'],
+        properties: { kind: { type: 'string', enum: ['what_if', 'why', 'best_day', 'other'] }, places: { type: 'array', items: { type: 'string', enum: places } }, text: { type: 'string' } } }] },
       cant_use: { type: 'array', items: { type: 'string' } },
     },
   };
@@ -209,6 +230,56 @@ export function sayLines(ctx: TripCtx, rules: Rule[]): { text: string; when: str
     return { text, when: when(r), ...(r.why ? { why: r.why } : {}) };
   });
 }
+
+// What a note says about right now (where Phil is, how late, what he sees), checked. Only on the day itself.
+export type NowWord = { here?: { place: string; stop_id?: string; hotel?: boolean }; late_min?: number; stay_min?: number; sky?: 'out' | 'hidden' | 'mixed'; why?: string };
+// deno-lint-ignore no-explicit-any
+export function toNow(ctx: TripCtx, date: string, raw: any): { now: NowWord | null; cant: string[] } {
+  if (!raw || typeof raw !== 'object') return { now: null, cant: [] };
+  const int = (x: unknown, lo: number, hi: number) => { const v = Math.round(Number(x)); return x != null && Number.isFinite(v) && v >= lo && v <= hi ? v : null; };
+  const out: NowWord = {};
+  if (raw.here_place === 'hotel') out.here = { place: 'the hotel', hotel: true };
+  else { const p = ctx.places.find(p => p.name === raw.here_place); if (p) out.here = { place: p.name, stop_id: p.ids[Math.max(0, p.days.indexOf(date))] }; }
+  const late = int(raw.late_minutes, 5, 360), stay = int(raw.stay_minutes, 5, 600);
+  if (late) out.late_min = late;
+  if (stay) out.stay_min = stay;
+  if (['out', 'hidden', 'mixed'].includes(raw.sky)) out.sky = raw.sky;
+  if (!out.here && !out.late_min && !out.stay_min && !out.sky) return { now: null, cant: [] };
+  const under = ctx.today >= ctx.dates[0] && ctx.today <= ctx.dates[ctx.dates.length - 1];
+  if (!under || date !== ctx.today) return { now: null, cant: ['T can only use where you are, or what you see, on the day itself while the trip is on.'] };
+  if (typeof raw.why === 'string') out.why = raw.why.slice(0, 120);
+  return { now: out, cant: [] };
+}
+export function nowLines(now: NowWord | null): { text: string; when: string; why?: string }[] {
+  if (!now) return [];
+  const L: string[] = [];
+  if (now.here) L.push(`Re-plan the rest of today from ${now.here.place}${now.stay_min ? `, leaving in ${mins(now.stay_min)}` : ''}`);
+  else if (now.stay_min) L.push(`Stay where you are ${mins(now.stay_min)} longer, then re-plan the rest of today`);
+  if (now.late_min && !now.here) L.push(`Push the rest of today back: you are about ${mins(now.late_min)} behind`);
+  if (now.sky === 'out') L.push('Count the peaks as out right now (your word beats the cameras) and re-plan the rest of today');
+  if (now.sky === 'hidden') L.push('Count the peaks as hidden right now (your word beats the cameras) and re-plan the rest of today');
+  if (now.sky === 'mixed') L.push('Save your report (peaks in and out). T keeps going by the cameras');
+  return L.map(text => ({ text, when: 'right now', ...(now.why ? { why: now.why } : {}) }));
+}
+
+// How places went (the evening recap): proposed ticks, set only after Phil's OK. One per place, the last word wins.
+export type Recap = { place: string; ids: string[]; days: string[]; result: 'nailed' | 'got' | 'missed' };
+// deno-lint-ignore no-explicit-any
+export function toRecap(ctx: TripCtx, date: string, raw: any[]): { recap: Recap[]; cant: string[] } {
+  const m = new Map<string, Recap>();
+  for (const r of raw ?? []) {
+    const p = ctx.places.find(p => p.name === r?.place);
+    if (p && ['nailed', 'got', 'missed'].includes(r.result)) m.set(p.name, { place: p.name, ids: p.ids, days: p.days, result: r.result });
+  }
+  if (!m.size) return { recap: [], cant: [] };
+  if (ctx.today < ctx.dates[0]) return { recap: [], cant: ['The trip has not started, so there is nothing to mark yet.'] };
+  return { recap: [...m.values()], cant: [] };
+}
+export const recapLines = (recap: Recap[]) => recap.map(r => ({
+  text: r.result === 'nailed' ? `Mark ${r.place}: Nailed it (T stops planning it)`
+      : r.result === 'got' ? `Mark ${r.place}: Go back for better (T returns only for a clearly better shot)`
+      : `Mark ${r.place}: Missed it (T keeps it on the list)`,
+  when: 'your ticks' }));
 
 // Sun times for a day at a place (NOAA's short formulas; good to a couple of minutes), HH:MM in the time zone.
 export function sunTimes(date: string, lat: number, lng: number, tz: string) {

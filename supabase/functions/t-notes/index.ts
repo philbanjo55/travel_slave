@@ -1,6 +1,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk';
-import { MODEL, SYSTEM, buildSchema, userText, toRules, sayLines, sunTimes, type Place, type TripCtx } from './logic.ts';
+import { MODEL, SYSTEM, buildSchema, userText, toRules, sayLines, sunTimes, toNow, nowLines, toRecap, recapLines, type NowWord, type Recap, type Place, type TripCtx } from './logic.ts';
+import { askT } from './ask.ts';
 import { whatIf, costLines } from './whatif.ts';
 
 // T-NOTES ("Tell T about your day", worksheet g4, Phil 10 Nov 2026). Phil types a note on a trip day in the
@@ -14,14 +15,25 @@ import { whatIf, costLines } from './whatif.ts';
 //       -> the same rules without Claude, saved at once (a quick button).
 //   A draft that changes days after today also gets t_notes.cost a few seconds later: what the note would make T give
 //       up (the rest of the trip planned with and without it; whatif.ts). Only where notes are switched on for the trip.
-//   {action: 'save', id}  -> draft -> active, then the affected days are re-planned (planner_t_note_replan).
+//   A note can also say what is true right now (t_notes.now: where Phil is, how late he is, how much longer he is
+//       staying, what he sees of the peaks): on save T re-plans the rest of today from it once (planner_t_now_here)
+//       and a sky report is kept in t_reports. It can report how places went (t_notes.recap: proposed ticks, set on
+//       save with solver_mark_shot; never lowers a tick). And it can ask T a question (status 'answer', t_notes.answer:
+//       why a place is on a day, the best day for a place, what a change would cost); a question changes nothing.
+//   {action: 'save', id}  -> draft -> active (a note with no lasting rule: done), then the affected days are
+//       re-planned (planner_t_note_replan).
 //   {action: 'clear', id} -> active / draft -> cleared, re-planned.
-// Spend: claude_usage (fn t-notes), stops at CLAUDE_NOTES_CAP_USD (default 20 a month) or CLAUDE_MONTHLY_CAP_USD.
+// Spend: claude_usage (fn t-notes), stops at CLAUDE_NOTES_CAP_USD (default 30 a month) or CLAUDE_MONTHLY_CAP_USD.
 
-const NOTES_CAP_USD = Number(Deno.env.get('CLAUDE_NOTES_CAP_USD') ?? 20);  // 20: the reading tests alone used ~$15 in November 2026 (about 2 cents a note in use)
+const NOTES_CAP_USD = Number(Deno.env.get('CLAUDE_NOTES_CAP_USD') ?? 30);  // 30: the reading tests alone used ~$21 in November 2026 (2-4 cents a note in use)
 const MONTHLY_CAP_USD = Number(Deno.env.get('CLAUDE_MONTHLY_CAP_USD') ?? 40);
 const PRICE_IN = 4, PRICE_OUT = 20;  // $ per million tokens (Opus)
 
+// Local tests only (tools/tell_t/flow_test.py; never set on the deployed function): T_NOTES_TEST=1 lets a request carry
+// Claude's answer ready-made (body.parsed) and force a what-if on a trip without notes switched on; SOLVER_URL points
+// the what-if at a planner running on this machine.
+const TEST = Deno.env.get('T_NOTES_TEST') === '1';
+const SOLVER_URL = Deno.env.get('SOLVER_URL') ?? `${Deno.env.get('SUPABASE_URL')}/functions/v1/solver-replay`;
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
@@ -80,9 +92,41 @@ Deno.serve(async (req) => {
       const { data: row } = await db.from('t_notes').select('*').eq('id', body.id).maybeSingle();
       if (!row) return json({ ok: false, error: 'note not found' }, 404);
       if (body.action === 'save') {
-        if (row.status !== 'draft') return json({ ok: false, error: row.status === 'active' ? 'already saved' : 'this note is not ready to save' }, 400);
-        if (!(row.rules ?? []).length) return json({ ok: false, error: 'nothing in this note for T to follow' }, 400);
-        await db.from('t_notes').update({ status: 'active', saved_at: new Date().toISOString() }).eq('id', row.id);
+        if (row.status !== 'draft') return json({ ok: false, error: row.status === 'active' || row.status === 'done' ? 'already saved' : 'this note is not ready to save' }, 400);
+        const nRules = (row.rules ?? []).length, now = (row.now ?? null) as NowWord | null, recap = ((row.recap ?? []) as Recap[]);
+        if (!nRules && !now && !recap.length) return json({ ok: false, error: 'nothing in this note for T to follow' }, 400);
+        // 1. Ticks from the recap. The entry on the note's day (else the nearest day before it, else the first);
+        // a tick is never lowered (a nailed place stays nailed), and "missed" leaves the ticks as they are.
+        const marks: { place: string; result: string; set: boolean }[] = [];
+        for (const r of recap) {
+          const order = r.ids.map((id, i) => ({ id, d: r.days?.[i] ?? '' })).sort((a, b) => a.d.localeCompare(b.d));
+          const pick = order.find(o => o.d === row.typed_on) ?? [...order].reverse().find(o => o.d && o.d < row.typed_on) ?? order[0];
+          const { data: cur } = await db.from('solver_stop_settings').select('stop_id, shot_status').in('stop_id', r.ids);
+          // deno-lint-ignore no-explicit-any
+          const has = (st: string) => ((cur ?? []) as any[]).some(c => c.shot_status === st);
+          const set = r.result === 'nailed' ? !has('nailed') : r.result === 'got' ? !has('nailed') && !has('got') : false;
+          if (set) {
+            const { error } = await db.rpc('solver_mark_shot', { p_stop_id: pick.id, p_status: r.result, p_at: new Date().toISOString() });
+            if (error) return json({ ok: false, error: `could not mark ${r.place}: ${error.message}` }, 500);
+          }
+          marks.push({ place: r.place, result: r.result, set });
+        }
+        await db.from('t_notes').update({ status: nRules ? 'active' : 'done', saved_at: new Date().toISOString() }).eq('id', row.id);
+        const tz = (await db.from('trips').select('timezone').eq('id', row.trip_id).maybeSingle()).data?.timezone ?? 'UTC';
+        const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+        // 2. Rules (and new ticks) re-plan the days they touch; 3. word from the field re-plans the rest of today.
+        const re = nRules ? await replan(row.trip_id, row.from_date, row.to_date) : marks.some(m => m.set) ? await replan(row.trip_id, today, null) : null;
+        let nowRe: unknown = null;
+        if (now) {
+          if (now.sky) await db.from('t_reports').insert({ trip_id: row.trip_id, sky: now.sky, place: now.here?.place ?? null, text: row.text, note_id: row.id });
+          if (now.here || now.late_min || now.stay_min || now.sky === 'out' || now.sky === 'hidden') {
+            const here = { ...(now.here?.stop_id ? { stop_id: now.here.stop_id } : {}), ...(now.here?.hotel ? { hotel: true } : {}),
+                           ...(now.late_min ? { late_min: now.late_min } : {}), ...(now.stay_min ? { stay_min: now.stay_min } : {}), ...(now.sky ? { sky: now.sky } : {}) };
+            const { data, error } = await db.rpc('planner_t_now_here', { p_trip: row.trip_id, p_here: here });
+            nowRe = error ? { ok: false, error: error.message } : data;
+          }
+        }
+        return json({ ok: true, ...(re ? { replan: re } : {}), ...(now ? { now: nowRe } : {}), ...(marks.length ? { marks } : {}) });
       } else {
         if (row.status === 'cleared') return json({ ok: true, note: row });
         await db.from('t_notes').update({ status: 'cleared', cleared_at: new Date().toISOString() }).eq('id', row.id);
@@ -99,7 +143,7 @@ Deno.serve(async (req) => {
     // A past day's card takes no notes (the app shows no box there; never left to Claude to pick another day).
     if (date < ctx.today) return json({ ok: false, error: 'That day is over, so T can\'t change it. Put the note on today or a later day.' }, 400);
 
-    let out: { rules: any[]; cant: string[]; ask: any; raw: any[] }, cost: number | null = null, model: string | null = null;
+    let out: { rules: any[]; cant: string[]; ask: any; raw: any[]; now?: NowWord | null; recap?: Recap[]; question?: any; nowRaw?: any; recapRaw?: any }, cost: number | null = null, model: string | null = null;
     let text = String(body.text ?? '').trim().slice(0, 1000);
     if (body.action === 'quick') {
       const k = String(body.kind ?? ''), place = ctx.places.find(p => p.name === body.place)?.name;
@@ -116,47 +160,75 @@ Deno.serve(async (req) => {
       out = { ...toRules(ctx, date, raw), ask: null, raw };
     } else {
       if (text.length < 2) return json({ ok: false, error: 'the note is empty' }, 400);
-      const key = Deno.env.get('ANTHROPIC_API_KEY');
-      if (!key) return json({ ok: false, error: 'Claude is not set up for notes' }, 500);
-      const month = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1));
-      const { data: mine } = await db.from('claude_usage').select('cost_usd').eq('fn', 't-notes').gte('at', month.toISOString());
-      const spentMine = (mine ?? []).reduce((t: number, r: any) => t + Number(r.cost_usd ?? 0), 0);
-      const { data: all } = await db.rpc('claude_spend_month');
-      if (spentMine >= NOTES_CAP_USD || Number(all ?? 0) >= MONTHLY_CAP_USD) return json({ ok: false, error: 'the monthly Claude limit is reached: use the quick buttons' }, 429);
-      const client = new Anthropic({ apiKey: key });
-      const msg: any = await client.beta.messages.create({
-        model: MODEL, max_tokens: 4000,
-        betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
-        output_config: { effort: 'low', format: { type: 'json_schema', schema: buildSchema(ctx) } },
-        system: SYSTEM,
-        messages: [{ role: 'user', content: userText(ctx, date, text, body.answer ?? null) }],
-      } as any);
-      const inTok = msg.usage?.input_tokens ?? 0, outTok = msg.usage?.output_tokens ?? 0;
-      cost = Math.round((inTok * PRICE_IN + outTok * PRICE_OUT) / 1e6 * 1e5) / 1e5; model = msg.model ?? MODEL;
-      await db.from('claude_usage').insert({ fn: 't-notes', purpose: 'note_read', model, input_tokens: inTok, output_tokens: outTok, cost_usd: cost });
-      if (msg.stop_reason === 'refusal') return json({ ok: false, error: 'Claude could not read that note' }, 422);
-      const t = msg.content.find((b: any) => b.type === 'text')?.text;
-      if (!t) return json({ ok: false, error: `no answer from Claude (${msg.stop_reason})` }, 502);
-      const parsed = JSON.parse(t);
-      out = { ...toRules(ctx, date, parsed.rules ?? []), ask: parsed.ask ?? null, raw: parsed.rules ?? [] };
+      let parsed: any;
+      if (TEST && body.parsed) parsed = body.parsed;
+      else {
+        const key = Deno.env.get('ANTHROPIC_API_KEY');
+        if (!key) return json({ ok: false, error: 'Claude is not set up for notes' }, 500);
+        const month = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1));
+        const { data: mine } = await db.from('claude_usage').select('cost_usd').eq('fn', 't-notes').gte('at', month.toISOString());
+        const spentMine = (mine ?? []).reduce((t: number, r: any) => t + Number(r.cost_usd ?? 0), 0);
+        const { data: all } = await db.rpc('claude_spend_month');
+        if (spentMine >= NOTES_CAP_USD || Number(all ?? 0) >= MONTHLY_CAP_USD) return json({ ok: false, error: 'the monthly Claude limit is reached: use the quick buttons' }, 429);
+        const client = new Anthropic({ apiKey: key });
+        const msg: any = await client.beta.messages.create({
+          model: MODEL, max_tokens: 4000,
+          betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
+          output_config: { effort: 'low', format: { type: 'json_schema', schema: buildSchema(ctx) } },
+          system: SYSTEM,
+          messages: [{ role: 'user', content: userText(ctx, date, text, body.answer ?? null) }],
+        } as any);
+        const inTok = msg.usage?.input_tokens ?? 0, outTok = msg.usage?.output_tokens ?? 0;
+        cost = Math.round((inTok * PRICE_IN + outTok * PRICE_OUT) / 1e6 * 1e5) / 1e5; model = msg.model ?? MODEL;
+        await db.from('claude_usage').insert({ fn: 't-notes', purpose: 'note_read', model, input_tokens: inTok, output_tokens: outTok, cost_usd: cost });
+        if (msg.stop_reason === 'refusal') return json({ ok: false, error: 'Claude could not read that note' }, 422);
+        const t = msg.content.find((b: any) => b.type === 'text')?.text;
+        if (!t) return json({ ok: false, error: `no answer from Claude (${msg.stop_reason})` }, 502);
+        parsed = JSON.parse(t);
+      }
+      out = { ...toRules(ctx, date, parsed.rules ?? []), ask: parsed.ask ?? null, raw: parsed.rules ?? [], nowRaw: parsed.now ?? null, recapRaw: parsed.recap ?? [] };
+      const q = parsed.question && typeof parsed.question === 'object' ? parsed.question : null;
+      if (q) out.question = { kind: String(q.kind), places: ((q.places ?? []) as string[]).filter(n => ctx.places.some(p => p.name === n)), text: String(q.text ?? '').slice(0, 300) };
+      else {
+        const nw = toNow(ctx, date, parsed.now), rc = toRecap(ctx, date, parsed.recap ?? []);
+        out.now = nw.now; out.recap = rc.recap; out.cant.push(...nw.cant, ...rc.cant);
+      }
       out.cant.push(...((parsed.cant_use ?? []) as string[]));
-      if (out.ask && out.rules.length) out.ask = null;  // a question only when nothing could be read
+      if (out.ask && (out.rules.length || out.now || out.recap?.length || out.question)) out.ask = null;  // a question back only when nothing could be read
     }
-    const say = sayLines(ctx, out.rules);
+    // Ask T: a question is answered and nothing is kept as a rule. "What if ...": the rules are the "if".
+    let answer: any = null;
+    if (out.question) {
+      const ifRules = out.question.kind === 'what_if' ? out.rules : [];
+      out.rules = [];
+      const lines: string[] = [];
+      if (out.question.kind === 'what_if') {
+        if (!ifRules.length) lines.push('T could not tell what change you mean. Try "what if we skip Jenny Lake?" or "what if we are back by 4 on Friday?".');
+        else if (!body.dry) {
+          const c = await whatIf(db, ctx.tripId, ifRules, SOLVER_URL, { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` }, TEST && !!body.force);
+          lines.push(...(c.status === 'none' ? ['T can\'t work that out for this trip yet.'] : costLines(c)));
+          // The comparison covers the days after today; a change that also touches today is said, not hidden.
+          if (c.status !== 'none' && ifRules.some((r: any) => (r.dates ?? [r.from_date]).some((d: string) => d <= ctx.today))) lines.push('Today\'s own plan would change too: T re-plans today when you send it as a note.');
+        }
+      } else if (!body.dry) lines.push(...await askT(db, ctx, out.question));
+      answer = { ...out.question, lines, ...(ifRules.length ? { if_rules: ifRules, if_say: sayLines(ctx, ifRules) } : {}) };
+    }
+    const say = [...sayLines(ctx, out.rules), ...nowLines(out.now ?? null), ...recapLines(out.recap ?? [])];
     const ds = out.rules.flatMap(r => r.dates ?? []), open = out.rules.some(r => !r.dates);
     const from = out.rules.length ? [...ds, ...out.rules.filter(r => !r.dates).map(r => r.from_date)].sort()[0] : date;
     const to = open ? null : (ds.length ? [...ds].sort().pop()! : date);
     const row = { trip_id: ctx.tripId, typed_on: date, text, source: body.action === 'quick' ? 'quick' : 'typed',
-                  status: out.ask ? 'asking' : body.action === 'quick' ? 'active' : 'draft', rules: out.rules, say, info: out.cant, ask: out.ask,
+                  status: answer ? 'answer' : out.ask ? 'asking' : body.action === 'quick' ? 'active' : 'draft', rules: out.rules, say, info: out.cant, ask: out.ask,
+                  now: out.now ?? null, recap: out.recap?.length ? out.recap : null, answer,
                   from_date: from, to_date: to, cost_usd: cost, model, ...(body.action === 'quick' ? { saved_at: new Date().toISOString() } : {}) };
-    if (body.dry) return json({ ok: true, note: row, raw: out.raw });
+    if (body.dry) return json({ ok: true, note: row, raw: out.raw, raw_now: out.nowRaw ?? null, raw_recap: out.recapRaw ?? [] });
     const { data: ins, error } = await db.from('t_notes').insert(row).select('*').single();
     if (error) throw error;
     // What the note would cost, worked out after the answer has gone back (the app reads t_notes.cost when it lands).
     if (ins.status === 'draft' && out.rules.length && (to == null || to > ctx.today)) {
       const job = (async () => {
         try {
-          const c = await whatIf(db, ctx.tripId, out.rules, `${Deno.env.get('SUPABASE_URL')}/functions/v1/solver-replay`, { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` });
+          const c = await whatIf(db, ctx.tripId, out.rules, SOLVER_URL, { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` }, TEST && !!body.force);
           await db.from('t_notes').update({ cost: { ...c, lines: costLines(c), at: new Date().toISOString() } }).eq('id', ins.id);
         } catch (e) { await db.from('t_notes').update({ cost: { status: 'none', why: String((e as Error)?.message ?? e).slice(0, 200) } }).eq('id', ins.id); }
       })();

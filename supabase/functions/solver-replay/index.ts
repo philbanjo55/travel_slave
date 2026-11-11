@@ -10,6 +10,9 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // v93 (9 Nov 2026): the whole-day calculation steps an hour at a time and copies repeated members (v92 timed out).
 // v98 (11 Nov 2026): a note is about its calendar day (no free stop before local midnight when that day or the day
 // before has a note).
+// v100 (11 Nov 2026, Tell T "where I really am"): a Re-plan now request may carry here {stop_id?, late_min?,
+// stay_min?}: the rest of today is planned from where Phil really is and when he is really free. dry: true = the
+// answer only, nothing published or saved (tests).
 // v99 (11 Nov 2026): a place a note wants brings its keep-together partner in every search (the polish search added
 // one Moulton barn alone and the next step threw the day out: 'no route' on 1 of 98 random-note nights), and the
 // partner passes the day's other notes as the wanted place does (keepG), unless a note skips it by name.
@@ -193,7 +196,7 @@ const LIGHT_CACHE = new Map<string, { at: number; rows: any[] }>();
 const SCORE_CACHE = new Map<string, { at: number; rows: any[] }>();
 
 type PlanNode = { id: string; name: string; w: number; ws: number; dur: number; group: number; free: boolean; together: string | null; once: boolean };
-type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
+type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean; len?: number };
 type State = {
   t: number; loc: number; next: number; visited: Uint8Array; m0: number; m1: number; groupBest: Map<number, Uint8Array>;
   total: Float32Array; route: Visit[]; drive: number; over: number; j: number; mean: number; cvar: number; mc: number;
@@ -326,13 +329,14 @@ Deno.serve(async (req) => {
   // Timing (28 Oct 2026, Faroes nights ran out of CPU): stats.t = ms to data loaded / to done.
   const tReq = performance.now();
   let tLoaded = 0, tWait = 0, tLight = 0;
-  let nowReqId: number | null = null, nowOut: any = null;
+  let nowReqId: number | null = null, nowOut: any = null, dryReq = false;
   try {
     const body = await req.json().catch(() => ({}));
     dayId = body.day_id ?? null;
     runId = body.run_id ?? null;
     kindOf = body.kind ?? null;
-    nowReqId = body.now ? Number(body.req_id) : null;
+    nowReqId = body.now && !body.dry ? Number(body.req_id) : null;
+    dryReq = !!body.now && !!body.dry;  // a dry Re-plan now (tests) writes nothing, on success or on error
     // What to plan: one replay day, or the next nights of a whole-trip run.
     let run: any = null, tripId: string;
     const week = kindOf === 'blk' || kindOf === 'imp' || kindOf === 'mc1' || kindOf === 'mrmc';
@@ -819,7 +823,8 @@ Deno.serve(async (req) => {
     const slowD = (f: number) => { let m = slowCache.get(f); if (!m) { m = D0.map(row => row.map(x => x * f)); slowCache.set(f, m); } return m; };
     // must: stops the route has to include (fm1); skip: stops left out (once-only, done).
     // from (mr1): the visits already under way at atMs stay; the route goes on from there, no earlier than atMs.
-    type From = { visits: { n: number; startMs: number; drive: number; anchor: boolean }[]; atMs: number };
+    // len (v100): a visit's own length in slots, where Phil said how long he is really staying (Re-plan now).
+    type From = { visits: { n: number; startMs: number; drive: number; anchor: boolean; len?: number }[]; atMs: number };
     // exact (proof check, Phil's #8): plan only these stops with no beam cut, every
     // start slot, and every (stops, place) state kept unless another reached it no
     // later with a higher score: near-exhaustive (the score is not additive, so a
@@ -1012,10 +1017,10 @@ Deno.serve(async (req) => {
       };
 
       const noteLen = new Map<string, number>(day.anchors.filter(a => a.label).map(a => [`${pos.get(a.id)}|${Math.round((a.startMs - dayStart) / (SLOT * 60000))}`, Math.ceil(a.dur / SLOT)] as [string, number]));
-      const extend = (st: State, n: number, i: number, drive: number, anchor: boolean): State => {
+      const extend = (st: State, n: number, i: number, drive: number, anchor: boolean, lenOv?: number): State => {
         nExt++;
         // A busy block from a note lasts as long as the note says, not as long as the place's own visit.
-        const len = (anchor && noteLen.get(`${n}|${i}`)) || Math.ceil(durN(n) / SLOT);
+        const len = lenOv || (anchor && noteLen.get(`${n}|${i}`)) || Math.ceil(durN(n) / SLOT);
         const w = nodes[n].w > 0 ? W(n, i) : null;
         const total = Float32Array.from(st.total);
         const groupBest = new Map(st.groupBest);
@@ -1036,7 +1041,7 @@ Deno.serve(async (req) => {
         const nm = (st.nm ?? 0) + (R && R.mustG.has(nodes[n].group) && !st.route.some(v => nodes[v.n].group === nodes[n].group) ? 1 : 0);
         return {
           t: (i + len) * SLOT, loc: n, next: st.next + (anchor ? 1 : 0), visited, m0, m1, groupBest, total, drive: d, over: o, mc,
-          route: [...st.route, { n, arrive: st.t + drive, start: i * SLOT, end: (i + len) * SLOT, drive, anchor }], nopt, nm,
+          route: [...st.route, { n, arrive: st.t + drive, start: i * SLOT, end: (i + len) * SLOT, drive, anchor, ...(lenOv ? { len: lenOv } : {}) }], nopt, nm,
           mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * (d + D[n][H]) - LONG_LEG_PENALTY * (o + over(D[n][H])) + MUST_BONUS * mc - VISIT_PRICE * nopt + (nm ? NOTE_BONUS * nm : 0),
         };
       };
@@ -1046,7 +1051,7 @@ Deno.serve(async (req) => {
         j: -DRIVE_PENALTY * D[H0][H] - LONG_LEG_PENALTY * over(D[H0][H]), mean: 0, cvar: 0 };
       let start = root;
       if (from) {
-        for (const v of from.visits) start = extend(start, v.n, Math.round((v.startMs - dayStart) / (SLOT * 60000)), v.drive, v.anchor);
+        for (const v of from.visits) start = extend(start, v.n, Math.round((v.startMs - dayStart) / (SLOT * 60000)), v.drive, v.anchor, v.len);
         start = { ...start, t: Math.max(start.t, (from.atMs - dayStart) / 60000) };
       }
       if (brute && search) {
@@ -2067,7 +2072,7 @@ Deno.serve(async (req) => {
           if (!live || draft || !cfg.publish) return;
           const { error } = await db.from('replay_live_today').upsert({
             run_id: runId, kind, replay_date: days[0].date, step, mr: mr ?? null, updated_at: new Date().toISOString(),
-            visits: s.route.map(v => ({ id: nodes[v.n].id, startMs: p.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
+            visits: s.route.map(v => ({ id: nodes[v.n].id, startMs: p.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor, ...(v.len ? { len: v.len } : {}) })),
             units: l.map(u => mustOf(u).map(x => nodes[x].id)),
           }, { onConflict: 'run_id,kind,replay_date' });
           if (error) throw error;
@@ -2076,7 +2081,7 @@ Deno.serve(async (req) => {
         if (nowReq) {
           today = (await db.from('replay_live_today').select('visits, units, mr').eq('run_id', runId).eq('kind', kind).eq('replay_date', days[0].date).maybeSingle()).data;
           if (!today) throw new Error('T has not re-planned today yet (the morning re-plan comes first)');
-          const vis = (today.visits as any[]).filter(v => pos.has(v.id)).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
+          const vis = (today.visits as any[]).filter(v => pos.has(v.id)).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor, ...(v.len ? { len: Number(v.len) } : {}) }));
           list = (today.units as string[][]).map(ids => ids.filter(id => pos.has(id)).map(id => pos.get(id)!)).filter(u => u.length);
           p0 = planDay({ ...days[0], light: false }, nSc, false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
           st = p0.routes[0] ?? null;
@@ -2136,11 +2141,47 @@ Deno.serve(async (req) => {
           // rest of today is re-planned on the now build (the cameras' majority and the airport
           // re-condition the odds from now), same required places (dropped from the end only if
           // they no longer fit).
-          const atMs = Date.parse(body.at ?? new Date().toISOString());
+          const askMs = Date.parse(body.at ?? new Date().toISOString());
+          // Where Phil really is (v100, Tell T: "I'm at Oxbow", "running an hour late", "staying 30 more minutes"),
+          // sent with the request as here {stop_id? | hotel?, late_min?, stay_min?}. Without it the plan's own clock stands.
+          //  late_min: the plan is that far behind: what was begun or left for that long ago is where he is now; a
+          //    visit still under way then ends that much later (bookings keep their times).
+          //  stop_id: he is at that place now (begun visits elsewhere that had not ended are let go); stay_min: he
+          //    leaves it (or the place the plan has him at) that many minutes from now.
+          const here = (body.here && typeof body.here === 'object' ? body.here : null) as { stop_id?: string; hotel?: boolean; late_min?: number; stay_min?: number } | null;
+          const lateMs = Math.max(0, Math.min(360, Number(here?.late_min ?? 0) || 0)) * 60000;
+          const stayMin = Math.max(0, Math.min(600, Number(here?.stay_min ?? 0) || 0));
+          const hereN = here?.hotel ? pos.get(days[0].endId!) : here?.stop_id != null ? pos.get(here.stop_id) : undefined;
+          if (here?.stop_id != null && hereN == null) throw new Error('T does not know that place');
+          const seenMs = askMs - lateMs;  // the plan's clock, as Phil is living it
           const leftBy = (v: { start: number; arrive: number; drive: number }) =>
-            cfg.mr_commit === 'departure' ? p0.dayStart + (v.arrive - v.drive) * 60000 < atMs : false;
-          const before = st.route.filter(v => p0.dayStart + v.start * 60000 < atMs || leftBy(v))
-            .map(v => ({ n: v.n, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor }));
+            cfg.mr_commit === 'departure' ? p0.dayStart + (v.arrive - v.drive) * 60000 < seenMs : false;
+          const slotMsN = SLOT * 60000, nowSlotMs = Math.round(askMs / slotMsN) * slotMsN;
+          let before: From['visits'] = st.route.filter(v => p0.dayStart + v.start * 60000 < seenMs || leftBy(v))
+            .map(v => ({ n: v.n, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor, ...(v.len ? { len: v.len } : {}) }));
+          let atMs = askMs, hereInfo: any = null;
+          if (here && (lateMs || hereN != null || stayMin)) {
+            const endOf = (v: From['visits'][number]) => v.startMs + (v.len ?? Math.ceil(nodes[v.n].dur / SLOT)) * slotMsN;
+            if (hereN != null) {
+              // At a named place: visits that had ended by now stay; one under way or left for elsewhere is let go.
+              before = before.filter(v => v.anchor || v.n === hereN || endOf(v) <= askMs);
+              const cur = before.length && before[before.length - 1].n === hereN && !before[before.length - 1].anchor ? before[before.length - 1] : null;
+              const leaveMs = nowSlotMs + Math.max(stayMin, cur ? 0 : SLOT) * 60000;
+              if (cur) { if (stayMin || endOf(cur) < leaveMs) cur.len = Math.max(1, Math.round((Math.max(leaveMs, stayMin ? 0 : endOf(cur)) - cur.startMs) / slotMsN)); }
+              else before.push({ n: hereN, startMs: nowSlotMs, drive: 0, anchor: false, len: Math.max(1, Math.round((leaveMs - nowSlotMs) / slotMsN)) });
+              atMs = Math.max(askMs, endOf(before[before.length - 1]));
+            } else {
+              const last = before.length ? before[before.length - 1] : null;
+              if (last && !last.anchor && endOf(last) > seenMs) {
+                // Under way (or left for) on the plan's clock: it ends late by that much, or when he says he leaves.
+                const endMs = stayMin ? nowSlotMs + stayMin * 60000 : endOf(last) + lateMs;
+                const startMs = Math.max(last.startMs, Math.min(last.startMs + lateMs, endMs - slotMsN));
+                last.len = Math.max(1, Math.round((endMs - startMs) / slotMsN)); last.startMs = startMs;
+                atMs = Math.max(askMs, endMs);
+              } else if (stayMin) atMs = nowSlotMs + stayMin * 60000;  // between stops: free that many minutes from now
+            }
+            hereInfo = { ...(hereN != null ? { at: nodes[hereN].name } : {}), ...(lateMs ? { late_min: lateMs / 60000 } : {}), ...(stayMin ? { stay_min: stayMin } : {}), free_at: new Date(atMs).toISOString() };
+          }
           let l = list, pn: DayPlan | null = null, sn: State | null = null;
           for (;;) {
             pn = planDay({ ...days[0], light: false }, nSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
@@ -2159,8 +2200,10 @@ Deno.serve(async (req) => {
           const show = (p: DayPlan, s: State) => s.route.filter(v => nodes[v.n].w > 0)
             .map(v => nodes[v.n].name + ' ' + new Date(p.dayStart + v.start * 60000).toISOString().slice(11, 16));
           const was = show(p0, st);
-          const nd: any = { asked_at: new Date(atMs).toISOString(), hidden: (tt as any)?.a ?? (tt as any)?.old ?? null, majority: (tt as any)?.a ?? null,
+          // (tt.phil: Phil's own word on the peaks this hour, which t_truth puts above the cameras.)
+          const nd: any = { asked_at: new Date(askMs).toISOString(), hidden: (tt as any)?.a ?? (tt as any)?.old ?? null, majority: (tt as any)?.a ?? null,
                             cams: (tt as any)?.cams ?? null, cams_hidden: (tt as any)?.cams_hidden ?? null, airport: (tt as any)?.airport ?? null,
+                            ...((tt as any)?.phil != null ? { phil: (tt as any).phil } : {}), ...(hereInfo ? { here: hereInfo } : {}),
                             kept: before.length, was, ...(gain != null ? { polish: gain } : {}) };
           if (sn && pn) {
             const now = show(pn, sn);
@@ -2168,7 +2211,9 @@ Deno.serve(async (req) => {
             p0 = pn; st = sn; list = l;
           } else nd.error = 'no route from now: the plan stands';
           const mr = { ...(today?.mr ?? {}), now: nd };
-          await publish('now', p0, st, { mr }, atMs);
+          // dry (v100, tests): the answer only; nothing is published or saved.
+          if (body.dry) { nowOut = { ...nd, dry: true, visits: visitsOf(p0, st).map((v: any) => ({ name: v.name, stop_id: v.stop_id, booked: v.booked, start: v.start, end: v.end, drive_min: v.drive_min })) }; return null; }
+          await publish('now', p0, st, { mr }, askMs);
           await saveToday(p0, st, list, 'now', mr);
           nowOut = nd;
           return null;
@@ -2731,7 +2776,7 @@ Deno.serve(async (req) => {
       if (kind === 'fm1' || kind === 'mc1' || kind === 'mr1' || kind === 'mrmc') {
         const cs = await coverPlan();
         if (body.now) {
-          await db.from('planner_t_now').update({ status: nowOut?.error ? 'error' : 'done', done_at: new Date().toISOString(), result: nowOut ?? null,
+          if (!body.dry) await db.from('planner_t_now').update({ status: nowOut?.error ? 'error' : 'done', done_at: new Date().toISOString(), result: nowOut ?? null,
                                                   note: nowOut?.error ?? null }).eq('id', body.req_id);
           return json({ ok: true, now: nowOut, run_id: runId, kind, night: n });
         }
@@ -2812,6 +2857,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     const msg = String((e as any)?.message ?? e);
     // Re-plan now: an error marks the request only, never the run.
+    if (dryReq) return json({ ok: false, error: msg }, 500);
     if (nowReqId != null) { await db.from('planner_t_now').update({ status: 'error', note: msg.slice(0, 300), done_at: new Date().toISOString() }).eq('id', nowReqId); return json({ ok: false, error: msg }, 500); }
     if (runId != null) await db.from('replay_run_state').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('run_id', runId).eq('kind', kindOf);
     else if (dayId != null) await db.from('replay_days').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('id', dayId);

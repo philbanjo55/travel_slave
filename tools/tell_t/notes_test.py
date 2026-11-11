@@ -51,10 +51,10 @@ CASES = [
  ("New Year's Eve dinner at 8", [r('back_by', 'thu', time='19:40', tol=15)], 'thu', '2026-11-20T18:00:00Z'),
  ("sleep in", [r('leave_after', 'fri', time='09:00')], 'fri', '2026-11-20T18:00:00Z'),
  ("it's snowing hard", 'none'),
- ("what's the best day for Mormon Row?", 'none'),
+ ("what's the best day for Mormon Row?", 'none', None, None, None, dict(q=('best_day', [TA, JM]))),
  ("be back by 2, we're going to the hot springs", [r('back_by', 'wed', time='14:00')]),
  ("don't plan anything before 10 on the 1st", [r('leave_after', 'fri', time='10:00', tol=30)]),
- ("2 hours max per stop this week", [rest('max_visit', 'wed', minutes=120)]),
+ ("2 hours max per stop this week", {'any': [[rest('max_visit', 'wed', minutes=120)], [r('max_visit', 'wed thu fri sat sun', minutes=120)]]}),   # "this week" may end on Sunday
  ("Jenny Lake tomorrow no matter what", [r('must', 'thu', places=[JL])]),
  ("Holly wants to go shopping in town 1-3 on Saturday", [r('busy', 'sat', **{'from': '13:00', 'to': '15:00'})]),
  ("skip Oxbow today and tomorrow, want it Sunday morning instead", [r('skip', 'wed thu', places=[OX]), r('must', 'sun', places=[OX], to='11:00', from_any=True)]),
@@ -114,6 +114,44 @@ MORE = [
 ]
 
 # Faroes set (11 Nov 2026): the other trip, never used while writing the instructions. Sun 16 May 2027, 9:00 AM there.
+# Word from the field, the evening recap and questions for T (11 Nov 2026). The 6th item says what else the note
+# must hold: now = {here, late, stay, sky} (late / stay may be (value, tolerance)), recap = {place: result},
+# q = (kind or kinds, places or None). Without it a note must hold none of the three.
+NOWC = [
+ ("I'm at Oxbow", 'none', None, None, None, dict(now=dict(here=OX))),
+ ("still at T.A. Moulton, need another half hour", 'none', None, None, None, dict(now=dict(here=TA, stay=30))),
+ ("running an hour late", 'none', None, None, None, dict(now=dict(late=60))),
+ ("we're about 30 min behind", 'none', None, None, None, dict(now=dict(late=30))),
+ ("staying here 20 more minutes", 'none', None, None, None, dict(now=dict(stay=20))),
+ ("peaks are out!", 'none', None, None, None, dict(now=dict(sky='out'))),
+ ("totally socked in at Jenny Lake", 'none', None, None, None, dict(now=dict(sky='hidden', here_opt=JL))),
+ ("fog in the valley, can't see anything", 'none', None, None, None, dict(now=dict(sky='hidden'))),
+ ("clouds are in and out over the Grand", 'none', None, None, None, dict(now=dict(sky='mixed'))),
+ ("looks like it might clear up later", 'none'),
+ ("supposed to snow this afternoon", 'none'),
+ ("back at the hotel", 'none', None, None, None, dict(now=dict(here='hotel'))),
+ ("socked in here, skip Oxbow today", [r('skip', 'wed', places=[OX])], None, None, None, dict(now=dict(sky='hidden'))),
+ ("I'm at Dornans", 'none'),
+ ("peaks are out", 'none', 'thu', None),   # typed on tomorrow's card: not a report for that day
+ ("it cleared! Tetons are completely out", 'none', None, None, None, dict(now=dict(sky='out'))),
+ ("nailed the barns this morning", 'none', None, None, None, dict(recap={TA: 'nailed', JM: 'nailed'})),
+ ("Oxbow was clouded out", 'none', None, None, None, dict(recap={OX: 'missed'})),
+ ("got Snake River Overlook but the light was flat, want another go", 'none', None, None, None, dict(recap={SRO: 'got'})),
+ ("nailed T.A. Moulton, Oxbow was a bust, sleep in tomorrow", [r('leave_after', 'thu', time='09:00')], None, None, None, dict(recap={TA: 'nailed', OX: 'missed'})),
+ ("got the shot at Jenny Lake!", 'none', None, None, None, dict(recap={JL: 'nailed'})),
+ ("The light was amazing at Oxbow yesterday!", 'none'),
+ ("done with Elk Ranch Flats for the rest of the trip", [rest('skip', 'wed', places=['Elk Ranch Flats'])]),
+ ("why is Oxbow on Thursday?", 'none', None, None, None, dict(q=('why', [OX]))),
+ ("what if we skip Jenny Lake?", [dict(type='skip', places=[JL], any_scope=True)], None, None, None, dict(q=('what_if', None))),
+ ("what if we're back by 4 on Friday?", [r('back_by', 'fri', time='16:00')], None, None, None, dict(q=('what_if', None))),
+ ("when should I shoot the barns?", 'none', None, None, None, dict(q=('best_day', [TA, JM]))),
+ ("what's the weather tomorrow?", 'none', None, None, None, dict(q=(('other',), None), q_opt=True)),
+ ("why did you move Taggart?", 'none', None, None, None, dict(q=('why', ['Taggart & Bradley Lakes']))),
+ ("is today a good day for Oxbow?", 'none', None, None, None, dict(q=(('best_day', 'other', 'why'), [OX]))),
+ ("dinner at 7 and I'm running 20 minutes late", [r('back_by', 'wed', time='18:40', tol=15)], None, None, None, dict(now=dict(late=20))),
+ ("missed Schwabacher, way too cloudy", 'none', None, None, None, dict(recap_opt=True)),
+]
+
 FO_TRIP, FO_NOW, FO_CARD = 'e04fbc9d-86b1-42b2-bf08-fc65a18e665d', '2027-05-16T08:00:00Z', '2027-05-16'
 def f(type, days, **kw): return dict(type=type, dates=[f'2027-05-{d}' for d in days.split()], **kw)
 def frest(type, day, **kw): return dict(type=type, rest=f'2027-05-{day}', **kw)
@@ -157,7 +195,7 @@ def same_scope(e, a):
         return scope(a) == ('rest', e['rest']) or scope(a) == ('dates', tuple(d for d in REST if d >= e['rest'])) or (a.get('dates') and len(a['dates']) >= 6 and a['dates'][0] == e['rest'])
     return scope(a) == ('dates', tuple(sorted(e['dates'])))
 def match(e, a):
-    if e['type'] != a['type'] or not same_scope(e, a): return False
+    if e['type'] != a['type'] or not (e.get('any_scope') or same_scope(e, a)): return False
     if 'places' in e and sorted(e['places']) != sorted(a.get('places') or []): return False
     if 'minutes' in e and e['minutes'] != a.get('minutes'): return False
     if 'count' in e and e['count'] != a.get('count'): return False
@@ -173,6 +211,44 @@ def match(e, a):
     return True
 
 def grade(case, res):
+    ok, why, bad = grade_rules(case, res)
+    if not res.get('ok') or case[1] == 'over': return ok, why, bad
+    ex = (list(case) + [None] * 6)[5] or {}
+    n = res['note']; now, recap, ans = n.get('now'), n.get('recap') or [], n.get('answer')
+    errs = []
+    en = ex.get('now')
+    if en is None:
+        if now: errs.append(f'now not expected: {json.dumps(now)}')
+    elif not now: errs.append(f'no now, wanted {en}')
+    else:
+        here = (now.get('here') or {}); hname = 'hotel' if here.get('hotel') else here.get('place')
+        if 'here' in en and hname != en['here']: errs.append(f"here {hname}, wanted {en['here']}")
+        if 'here' not in en and hname and hname != en.get('here_opt'): errs.append(f'here {hname} not expected')
+        for k, f in (('late', 'late_min'), ('stay', 'stay_min')):
+            want = en.get(k); val = now.get(f)
+            if want is None:
+                if val: errs.append(f'{k} {val} not expected')
+            else:
+                w, tol = want if isinstance(want, tuple) else (want, 0)
+                if val is None or abs(val - w) > tol: errs.append(f'{k} {val}, wanted {w}')
+        if en.get('sky') != now.get('sky'): errs.append(f"sky {now.get('sky')}, wanted {en.get('sky')}")
+    er = ex.get('recap'); got_r = {x['place']: x['result'] for x in recap}
+    if er is None:
+        if got_r and not ex.get('recap_opt'): errs.append(f'recap not expected: {got_r}')
+    elif got_r != er: errs.append(f'recap {got_r}, wanted {er}')
+    eq = ex.get('q')
+    if eq is None:
+        if ans: errs.append(f"question not expected: {ans.get('kind')}")
+    elif not ans:
+        if not ex.get('q_opt'): errs.append(f'no question, wanted {eq[0]}')
+    else:
+        kinds = eq[0] if isinstance(eq[0], tuple) else (eq[0],)
+        if ans.get('kind') not in kinds: errs.append(f"question kind {ans.get('kind')}, wanted {kinds}")
+        if eq[1] is not None and sorted(ans.get('places') or []) != sorted(eq[1]): errs.append(f"question places {ans.get('places')}, wanted {eq[1]}")
+    if errs: return False, (why + '; ' if not ok else '') + '; '.join(errs), True
+    return ok, why, bad
+
+def grade_rules(case, res):
     exp, extra_ok = case[1], (list(case) + [None] * 5)[4] or []
     if exp == 'over': return (not res.get('ok') and 'is over' in str(res.get('error'))), str(res.get('error') or 'was read'), False
     if not res.get('ok'): return False, 'error: ' + str(res.get('error')), True
@@ -180,6 +256,7 @@ def grade(case, res):
         tries = [grade((case[0], alt) + tuple(case[2:]), res) for alt in exp['any']]
         return next((t for t in tries if t[0]), tries[-1])
     n = res['note']; rules, ask = n['rules'], n['ask']
+    if (n.get('answer') or {}).get('kind') == 'what_if': rules = n['answer'].get('if_rules') or []   # the "if" of a what-if
     kinds = (exp,) if isinstance(exp, str) else exp if isinstance(exp, tuple) else None
     if kinds:
         got = 'ask' if ask else 'none' if not rules else 'rules'
@@ -198,6 +275,7 @@ if __name__ == '__main__':
     if '--easy' in sys.argv: CASES = EASY; sys.argv.remove('--easy')
     if '--more' in sys.argv: CASES = MORE; sys.argv.remove('--more')
     if '--fo' in sys.argv: CASES = FO; sys.argv.remove('--fo')
+    if '--now' in sys.argv: CASES = NOWC; sys.argv.remove('--now')
     pick = [int(x) for x in sys.argv[1:]] or range(1, len(CASES) + 1)
     with cf.ThreadPoolExecutor(6) as ex: results = list(ex.map(lambda i: (i, call(CASES[i - 1])), pick))
     ok = 0; cost = 0.0; bad = []
