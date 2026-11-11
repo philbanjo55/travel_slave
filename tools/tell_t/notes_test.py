@@ -57,7 +57,7 @@ CASES = [
  ("2 hours max per stop this week", [rest('max_visit', 'wed', minutes=120)]),
  ("Jenny Lake tomorrow no matter what", [r('must', 'thu', places=[JL])]),
  ("Holly wants to go shopping in town 1-3 on Saturday", [r('busy', 'sat', **{'from': '13:00', 'to': '15:00'})]),
- ("skip Oxbow today and tomorrow, want it Sunday morning instead", [r('skip', 'wed thu', places=[OX]), r('must', 'sun', places=[OX], to='11:00')]),
+ ("skip Oxbow today and tomorrow, want it Sunday morning instead", [r('skip', 'wed thu', places=[OX]), r('must', 'sun', places=[OX], to='11:00', from_any=True)]),
 ]
 
 # Held-out set (11 Nov 2026): 20 messier notes written after the instructions were fixed, never tuned on.
@@ -135,7 +135,7 @@ FO = [
  ("only the god tier spots tomorrow", [f('only_top', '17', tier='GOD')]),
  ("spend 2 hours at bour west viewpoint", [f('stay', '16', places=['Bøur — West Viewpoint'], minutes=120)], None, None, [f('must', '16', places=['Bøur — West Viewpoint'])]),
  ("skip bour", {'any': ['ask', [f('skip', '16', places=BOUR)]]}),
- ("want tindholmur landing on the 26th in the morning", [f('must', '26', places=['⚓ Tindhólmur — Landing on the Islet'], to='11:00')]),
+ ("want tindholmur landing on the 26th in the morning", [f('must', '26', places=['⚓ Tindhólmur — Landing on the Islet'], to='11:00', from_any=True)]),
  ("sleep in on the 20th and 21st", [f('leave_after', '20 21', time='09:00')]),
  ("nothing longer than 3 hours for the rest of the trip", [frest('max_visit', '16', minutes=180)]),
  ("ravnagjogv only if its foggy", {'any': ['ask', 'none', [frest('optional', '16', places=['Ravnagjógv Gorge'])]]}),
@@ -168,6 +168,7 @@ def match(e, a):
     for k in ('time', 'from', 'to'):
         if k in e:
             if not a.get(k) or abs(mins(e[k]) - mins(a[k])) > tol: return False
+        elif k == 'from' and e.get('from_any'): pass   # "morning" = from first light: any start is fine
         elif k in ('from', 'to') and e['type'] == 'must' and a.get(k) and not e.get('anytime'): return False   # a time nobody asked for
     return True
 

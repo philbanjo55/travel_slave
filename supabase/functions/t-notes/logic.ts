@@ -25,7 +25,7 @@ Rule types (use only these):
 - leave_after {time}: do not leave the hotel before this time. "Sleep in" with no time = 09:00; "sleep in till 9" = 09:00; "breakfast at 8" = leaving about 45 minutes after it starts; "nothing before 10" = 10:00.
 - busy {from, to, at_place, label}: a block of time that is taken (lunch, a call, a booking). at_place is one of the trip's places if it happens there, else null (the hotel). label is 2-4 words, e.g. "Lunch at the inn".
 - skip {places}: leave these places out.
-- must {places, from, to}: he wants this place on that day. from / to bound when the visit STARTS, only if he says when: "at sunrise" = from 45 minutes before sunrise to sunrise; "at sunset" = from 90 to 30 minutes before sunset; "morning" = to 11:00; "afternoon" = from 12:00; "around 3" = 14:30 to 15:30. With no time said, from and to are null (T picks the best light).
+- must {places, from, to}: he wants this place on that day. from / to bound when the visit STARTS, only if he says when: "at sunrise" = from 45 minutes before sunrise to sunrise; "at sunset" = from 90 to 30 minutes before sunset; "morning" = from first light to 11:00; "afternoon" = from 12:00; "around 3" = 14:30 to 15:30. With no time said, from and to are null (T picks the best light).
 - max_visit {minutes}: no single stop longer than this ("tired", "nothing long", "easy on the legs" = 90 unless he gives a number).
 - max_leg {minutes}: no drive longer than this ("stay close to town" = 30 unless he gives a number).
 - stay {places, minutes}: how long to stay at a place ("spend 3 hours at ...").

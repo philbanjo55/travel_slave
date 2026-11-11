@@ -8,6 +8,8 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
 // v85 (6 Nov 2026): tool op audit {visits} (full rule check by exact search) and solve {polish: true} (grading).
 // v93 (9 Nov 2026): the whole-day calculation steps an hour at a time and copies repeated members (v92 timed out).
+// v98 (11 Nov 2026): a note is about its calendar day (no free stop before local midnight when that day or the day
+// before has a note).
 // v97 (11 Nov 2026): run config whatif = a week draft that publishes nothing (what a note would cost, driven by
 // edge function t-notes: planner_t_whatif_start / _step / _result); more note rules (max_stops, slow_roads, no_gear,
 // gear_to / gear_from, first / last / before, optional, only_top, arrive_by).
@@ -975,12 +977,18 @@ Deno.serve(async (req) => {
       // optional: only where at least half the weather versions give a good shot (light-only days: no forecast to ask).
       const optOk = (s: number, i: number) => !R || !R.optG.has(nodes[s].group) || R.mustG.has(nodes[s].group) || day.light || pGood(s, i) >= 0.5;
       const noteDawn = R ? Math.ceil((civilDawn(day.date, mid.lat, mid.lng, tz!) - dayStart) / (SLOT * 60000)) : 0;
+      // A note is about its calendar day. Where a plan's day reaches back before midnight (far north in early summer:
+      // no civil night, so "first light" falls on the evening before; found by the Faroes random-note run, 11 Nov 2026),
+      // free stops start no earlier than local midnight when that day or the day before has a note: "by 11:00" is not
+      // met the night before, and a day off or a back-by time is not undone by the next day's plan starting at 10:45 PM.
+      const Rprev = day.tripDate ? notesFor(dayBefore(day.tripDate)) : null;
+      const noteMid = R || Rprev ? Math.ceil((zonedToUtc(day.date, 0, tz!) - dayStart) / (SLOT * 60000)) : -Infinity;
       const noteSlots = (s: number, drive: number, home: number): [number, number] => {
-        if (!R) return [-Infinity, Infinity];
+        if (!R) return [noteMid, Infinity];
         const want = R.mustG.has(nodes[s].group);
         if (R.maxLeg != null && !want && (drive > R.maxLeg || home > R.maxLeg)) return [1, 0];
         const b = noteBand.get(nodes[s].group);
-        const lo = Math.max(noteLo != null && Number.isFinite(D[H0][s]) ? Math.ceil((noteLo + D[H0][s]) / SLOT) : -Infinity, b ? b[0] : -Infinity);
+        const lo = Math.max(noteMid, noteLo != null && Number.isFinite(D[H0][s]) ? Math.ceil((noteLo + D[H0][s]) / SLOT) : -Infinity, b ? b[0] : -Infinity);
         return [lo, b ? b[1] : Infinity];
       };
 
