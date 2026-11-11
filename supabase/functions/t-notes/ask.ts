@@ -38,6 +38,20 @@ export async function askT(db: any, ctx: TripCtx, q: { kind: string; places: str
       const b = best.get(g.trip_date);
       if (!b || g.mean > b.mean) best.set(g.trip_date, { mean: Number(g.mean), at: g.best_at, source: g.source });
     }
+    // The grid knows nothing of flights: on the first trip day a best moment before the landing, and on the last one
+    // after the flight out, cannot be used, so that day is left out of the ranking (11 Nov 2026: "best on Tue 29 Dec
+    // around 8:00 AM" with a noon landing).
+    const clockMin = (t: string) => { const m = /(\d{1,2}):(\d{2})\s*([AP]M)?/i.exec(t ?? ''); if (!m) return null;
+      let h = Number(m[1]) % 12; if (/pm/i.test(m[3] ?? '')) h += 12; else if (!m[3]) h = Number(m[1]); return h * 60 + Number(m[2]); };
+    const localMin = (iso: string) => { const p = new Intl.DateTimeFormat('en-GB', { timeZone: ctx.tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso)).split(':').map(Number); return p[0] * 60 + p[1]; };
+    const first = ctx.dates[0], last = ctx.dates[ctx.dates.length - 1];
+    const landing = Math.min(...ctx.bookings.filter(b => b.date === first).map(b => clockMin(b.time) ?? Infinity), Infinity);
+    const flight = Math.max(...ctx.bookings.filter(b => b.date === last).map(b => clockMin(b.time) ?? -Infinity), -Infinity);
+    for (const [d, b] of [...best.entries()]) {
+      if (!b.at) continue;
+      if (d === first && Number.isFinite(landing) && localMin(b.at) < landing) best.delete(d);
+      if (d === last && Number.isFinite(flight) && localMin(b.at) > flight) best.delete(d);
+    }
     const ranked = [...best.entries()].sort((a, b) => b[1].mean - a[1].mean || a[0].localeCompare(b[0]));
     if (q.kind === 'why') {
       if (!on.length) L.push(`${p.name} is not on T's plan for any day left.`);

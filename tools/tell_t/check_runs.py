@@ -26,6 +26,7 @@ tz = ZoneInfo(q(f"select coalesce(timezone,'UTC') tz from trips where id='{trip}
 stops = {r['id']: r for r in q(f"select s.id, s.name, s.time_locked, s.duration_minutes dur, d.date, ss.tier from stops s left join days d on d.id=s.day_id left join solver_stop_settings ss on ss.stop_id=s.id where d.trip_id='{trip}'")}
 dm = {(r['f'], r['t']): r['m'] for r in q(f"select from_stop_id f, to_stop_id t, minutes m from solver_drive_matrix where trip_id='{trip}'")}
 accs = q(f"select name, check_in, check_out from accommodations where trip_id='{trip}'")
+once_db = {r['stop_id'] for r in q(f"select ss.stop_id from solver_stop_settings ss join stops s on s.id=ss.stop_id join days d on d.id=s.day_id where d.trip_id='{trip}' and ss.once")}
 # Keep together (the trip's own setting plus a run's guessed pairs): key -> the places' names.
 tog_db = {r['stop_id']: r['together'] for r in q(f"select ss.stop_id, ss.together from solver_stop_settings ss join stops s on s.id=ss.stop_id join days d on d.id=s.day_id where d.trip_id='{trip}' and ss.together is not null and ss.tier is not null")}
 days = sorted({s['date'] for s in stops.values() if s['date']})
@@ -67,7 +68,7 @@ base = {(r['s'], r['td']): r for r in load(base_cfg)}
 # proof that this check can catch a plan that ignores a note).
 fake = os.environ.get('NOTES_FROM')
 fake_notes = (q(f"select config->'notes' n from replay_runs where config->>'name'='{fake}' limit 1")[0]['n'] or []) if fake else None
-total = defaultdict(int); problems = []; unmet = []
+total = defaultdict(int); problems = []; unmet = []; done_before = {}
 for cfg in cfgs:
     rows = load(cfg)
     for r in rows:
@@ -85,9 +86,15 @@ for cfg in cfgs:
             if sid in stops and stops[sid]['tier']: pr0[k].add(name_of(sid))
         seen = {v['name'] for v in vs if not v.get('booked')}
         sk0 = set().union(*[names(n.get('stops')) for n in rules if n['type'] == 'skip']) if rules else set()
+        # (A once-only half already visited earlier in the same trip does not come again: the planner's own rule, and
+        # the no-notes Faroes runs show it 50 times. A repeatable pair, like the Moulton barns, must be whole every time.)
+        once_ids = set() if r['c'].get('no_once') else once_db | set(r['c'].get('once_add') or [])
+        once_names = {name_of(i) for i in once_ids if i in stops}
+        earlier = done_before.setdefault((cfg, r['run']), set())
         for k, ns in pr0.items():
-            if len(ns) > 1 and (ns & seen) and not ns <= seen and not ((ns - seen) <= sk0):
+            if len(ns) > 1 and (ns & seen) and not ns <= seen and not ((ns - seen) <= (sk0 | (earlier & once_names))):
                 problems.append(f"{tag}: keep together '{k}' is split: planned {sorted(ns & seen)}, missing {sorted(ns - seen)}")
+        earlier |= seen
         if not rules and not any(n['type'] in ('gear_to', 'gear_from') for n in notes): total['plain'] += 1; continue
         total['noted'] += 1
         slow = max([float(n.get('factor') or 1) for n in rules if n['type'] == 'slow_roads'] + [1.0])
