@@ -158,7 +158,10 @@ for cfg in cfgs:
                 for v in free:
                     if v['name'] in P and lm(v['start']) > hm(n['time']) + 0.5: bad(f"arrive_by {n['time']}: {v['name']} starts {clock(lm(v['start']))}")
             elif t == 'optional':
-                for v in free:
+                # The chance stored is the morning re-plan's. Visits the morning re-plan kept because Phil had already
+                # left for them (stats.mr.kept, the day's first visits) were chosen on the evening forecast: not judged.
+                kept = int(((r['st'] or {}).get('mr') or {}).get('kept') or 0)
+                for v in sorted(free, key=lambda v: v['start'])[kept:]:
                     if v['name'] in P and v.get('p_good') is not None and v['p_good'] < 0.5 and not wanted(v): bad(f"optional: {v['name']} planned on a {v['p_good']:.0%} chance")
             elif t in ('slow_roads',): pass
         # A gear return moved by a note: the gear places stay inside the new window.
