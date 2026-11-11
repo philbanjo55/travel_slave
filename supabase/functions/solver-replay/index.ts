@@ -8,6 +8,21 @@ import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf,
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
 // v85 (6 Nov 2026): tool op audit {visits} (full rule check by exact search) and solve {polish: true} (grading).
 // v93 (9 Nov 2026): the whole-day calculation steps an hour at a time and copies repeated members (v92 timed out).
+// v98 (11 Nov 2026): a note is about its calendar day (no free stop before local midnight when that day or the day
+// before has a note).
+// v100 (11 Nov 2026, Tell T "where I really am"): a Re-plan now request may carry here {stop_id?, late_min?,
+// stay_min?}: the rest of today is planned from where Phil really is and when he is really free. dry: true = the
+// answer only, nothing published or saved (tests).
+// v99 (11 Nov 2026): a place a note wants brings its keep-together partner in every search (the polish search added
+// one Moulton barn alone and the next step threw the day out: 'no route' on 1 of 98 random-note nights), and the
+// partner passes the day's other notes as the wanted place does (keepG), unless a note skips it by name.
+// v97 (11 Nov 2026): run config whatif = a week draft that publishes nothing (what a note would cost, driven by
+// edge function t-notes: planner_t_whatif_start / _step / _result); more note rules (max_stops, slow_roads, no_gear,
+// gear_to / gear_from, first / last / before, optional, only_top, arrive_by).
+// v96 (11 Nov 2026, worksheet g4 "Tell T about your day"): note rules. Run config notes (bench fixtures) or, on
+// published runs with run config tell, the trip's active t_notes rows: back_by, leave_after, busy, skip, must (with a
+// time band), max_visit, max_leg, stay, day_off, per trip day. Every plan made under a note carries stats.notes =
+// { rules, broken, lost } from noteCheck. With no note in force nothing changes (56 of 56 bench nights identical).
 // v95 (9 Nov 2026, version BF): run config svis = builds at lead + 327680, every model's hidden-peak odds
 // also read the UK model's day-ahead visibility (replay_svis_fit).
 // v94 (9 Nov 2026, version BE): run config slay = builds at lead + 163840, every model's hidden-peak odds
@@ -151,6 +166,7 @@ const GOOD = 150;            // V >= 0.6 counts as a good shot (p_good)
 const COVER_PENALTY = 0.5;
 // fm1: required stops rank first in the day search (ranking only, not value).
 const MUST_BONUS = 1000;
+const NOTE_BONUS = 3000;      // Tell T: a place a note wants outranks the every-place bonus
 // mc1: a ski outing the played-out week never fits costs 5 x its tier weight.
 const MISS_PENALTY = 5;
 // Day window, local time: leave the hotel no earlier, be back no later
@@ -180,12 +196,32 @@ const LIGHT_CACHE = new Map<string, { at: number; rows: any[] }>();
 const SCORE_CACHE = new Map<string, { at: number; rows: any[] }>();
 
 type PlanNode = { id: string; name: string; w: number; ws: number; dur: number; group: number; free: boolean; together: string | null; once: boolean };
-type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean };
+type Visit = { n: number; arrive: number; start: number; end: number; drive: number; anchor: boolean; len?: number };
 type State = {
   t: number; loc: number; next: number; visited: Uint8Array; m0: number; m1: number; groupBest: Map<number, Uint8Array>;
   total: Float32Array; route: Visit[]; drive: number; over: number; j: number; mean: number; cvar: number; mc: number;
   nopt?: number;  // optional rated visits so far (run config visit_price, v80)
+  nm?: number;    // places wanted by a note (Tell T) visited so far
 };
+// Tell T (worksheet g4, Phil 10 Nov 2026): a note Phil types on a day becomes rules the planner follows.
+// One stored rule (run config notes for the bench, table t_notes for live runs with run config tell):
+// back_by {time} | leave_after {time} | busy {from, to, at?, label?} | skip {stops} | must {stops, from?, to?}
+// | max_visit {minutes} | max_leg {minutes} | stay {stops, minutes} | day_off (no free stop that day, bookings stay)
+// | max_stops {count} (at most that many stops that day; wanted places count first, bookings do not count)
+// | slow_roads {factor} (every drive that day x factor) | no_gear (no rental-gear stops that day)
+// | gear_to / gear_from {time, dates: [day]} (the gear return / pickup moves: the shop stop and the gear window)
+// | first / last {stops} (the day starts / ends at that place; it is wanted) | before {stops, then} (stops come before then)
+// | optional {stops} (never forced; planned only on a good chance) | only_top {tier} (only places of that tier or better)
+// | arrive_by {stops, time} (a visit there starts no later than that); scope = dates [trip dates], else
+// from_date..to_date (to_date null = the rest of the trip). Times are HH:MM in the trip's time zone.
+type NoteRule = { type: string; dates?: string[]; from_date?: string | null; to_date?: string | null; time?: string; from?: string; to?: string;
+  at?: string | null; label?: string; stops?: string[]; then?: string[]; minutes?: number; count?: number; factor?: number; tier?: string; priority?: boolean };
+// A day's rules on the plan's nodes: skip / must by subject group (a place = every stop of it).
+type DayNotes = { n: number; backBy: number | null; leaveAfter: number | null; busy: { from: number; to: number; id: string; label: string }[];
+  skipG: Set<number>; must: { g: number; name: string; lo: number | null; hi: number | null }[]; mustG: Set<number>; keepG: Set<number>;
+  maxVisit: number | null; maxLeg: number | null; stay: Map<number, number>; off: boolean; maxStops: number | null;
+  slow: number | null; noGear: boolean; first: number | null; last: number | null; before: [number, number][]; optG: Set<number>;
+  minW: number | null; byG: Map<number, number> };
 type DayPlan = {
   date: string; tripDate: string | null; light: boolean; start: number; end: number; dayStart: number; nSlots: number;
   routes: State[]; anchors: number; ms: number; winLo: number; winHi: number; extends?: number; capped?: boolean;
@@ -293,13 +329,14 @@ Deno.serve(async (req) => {
   // Timing (28 Oct 2026, Faroes nights ran out of CPU): stats.t = ms to data loaded / to done.
   const tReq = performance.now();
   let tLoaded = 0, tWait = 0, tLight = 0;
-  let nowReqId: number | null = null, nowOut: any = null;
+  let nowReqId: number | null = null, nowOut: any = null, dryReq = false;
   try {
     const body = await req.json().catch(() => ({}));
     dayId = body.day_id ?? null;
     runId = body.run_id ?? null;
     kindOf = body.kind ?? null;
-    nowReqId = body.now ? Number(body.req_id) : null;
+    nowReqId = body.now && !body.dry ? Number(body.req_id) : null;
+    dryReq = !!body.now && !!body.dry;  // a dry Re-plan now (tests) writes nothing, on success or on error
     // What to plan: one replay day, or the next nights of a whole-trip run.
     let run: any = null, tripId: string;
     const week = kindOf === 'blk' || kindOf === 'imp' || kindOf === 'mc1' || kindOf === 'mrmc';
@@ -635,6 +672,26 @@ Deno.serve(async (req) => {
       return { start: accStop(before ?? tonight), end: accStop(tonight) };
     };
 
+    // Tell T: the rules in force (bench: run config notes; live: the trip's active notes, run config tell).
+    const noteRules: NoteRule[] = [...(((cfg.notes ?? []) as NoteRule[]))];
+    if (cfg.tell && cfg.publish) {
+      const { data: tn, error: tnErr } = await db.from('t_notes').select('rules, from_date, to_date').eq('trip_id', tripId).eq('status', 'active');
+      if (!tnErr) for (const r of tn ?? []) for (const x of ((r.rules ?? []) as NoteRule[]))
+        noteRules.push(x.dates || x.from_date !== undefined || x.to_date !== undefined ? x : { ...x, from_date: r.from_date, to_date: r.to_date });
+    }
+    const noteOn = (td: string | null) => td == null ? [] : noteRules.filter(r => Array.isArray(r.dates) ? r.dates.includes(td)
+      : (!r.from_date || td >= r.from_date) && (!r.to_date || td <= r.to_date));
+    const noteMin = (t?: string) => (t && /^\d{1,2}:\d{2}$/.test(t) ? hhmm(t) : null);
+    // gear_to / gear_from: the rental return / pickup moves to that day and time. The shop stop (the booking on the
+    // old day, run config anchors_on) moves with it; the gear is usable from 30 min after pickup to 20 min before return.
+    const clockOf = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    for (const r of noteRules) {
+      if ((r.type !== 'gear_to' && r.type !== 'gear_from') || !cfg.gear || !r.dates?.[0] || noteMin(r.time) == null) continue;
+      const side = r.type === 'gear_to' ? 'to' : 'from', old = cfg.gear[side]?.date, t = noteMin(r.time)!;
+      cfg.gear = { ...cfg.gear, [side]: { date: r.dates[0], time: clockOf(Math.max(0, Math.min(1439, side === 'to' ? t - 20 : t + 30))) } };
+      if (old) cfg.anchors_on = ((cfg.anchors_on ?? []) as any[]).map(a => (a.date === old && !a.moved ? { ...a, date: r.dates![0], time: r.time, moved: true } : a));
+    }
+
     // Per-day setup: hotels, bookings, own stops.
     const lockedInputs = inputs.filter(r => r.time_locked);
     const days = specs.map(sp => {
@@ -646,10 +703,13 @@ Deno.serve(async (req) => {
         .map(r => ({ r, s: stopById.get(r.stop_id), min: labelMinutes(stopById.get(r.stop_id)?.time_label) }))
         .filter(a => a.s && dayIds.has(a.s.day_id) && a.min != null && a.s.lat != null)
         .map(a => ({ id: a.r.stop_id, startMs: zonedToUtc(sp.date, a.min!, tz), dur: a.s.duration_minutes ?? 15 }))
-        .concat(((cfg.anchors_on ?? []) as any[]).filter(a => a.date === tripDate).map(a => stopById.get(a.stop_id))
-          .filter((s: any) => s && s.lat != null && labelMinutes(s.time_label) != null)
-          .map((s: any) => ({ id: s.id, startMs: zonedToUtc(sp.date, labelMinutes(s.time_label)!, tz), dur: s.duration_minutes ?? 15 })))
-        .sort((a, b) => a.startMs - b.startMs);
+        .concat(((cfg.anchors_on ?? []) as any[]).filter(a => a.date === tripDate).map(a => ({ s: stopById.get(a.stop_id) as any, at: noteMin(a.time) }))
+          .filter(({ s, at }) => s && s.lat != null && (at ?? labelMinutes(s.time_label)) != null)
+          .map(({ s, at }) => ({ id: s.id, startMs: zonedToUtc(sp.date, (at ?? labelMinutes(s.time_label))!, tz), dur: s.duration_minutes ?? 15 })))
+        .concat(noteOn(tripDate).filter(r => r.type === 'busy' && noteMin(r.from) != null && noteMin(r.to) != null && noteMin(r.to)! > noteMin(r.from)!)
+          .map(r => ({ id: (r.at && stopById.get(r.at)?.lat != null ? r.at : h.end) as string, startMs: zonedToUtc(sp.date, noteMin(r.from)!, tz), dur: noteMin(r.to)! - noteMin(r.from)!, label: r.label ?? 'Busy (your note)' }))
+          .filter(a => !!a.id) as any[])
+        .sort((a, b) => a.startMs - b.startMs) as { id: string; startMs: number; dur: number; label?: string }[];
       const own = stopsAll.filter(s => dayIds.has(s.day_id)).sort((a, b) => a.position - b.position);
       // Travel days: a booked arrival opens the day, a booked departure at the
       // end closes it (the live planner only knows rated bookings).
@@ -660,7 +720,8 @@ Deno.serve(async (req) => {
       // flight day had no route, every plan had to drive 85 min back to the hotel after it) ends there.
       const lastOwn = own[own.length - 1];
       const endAt = anchors.length && lastOwn && anchors[anchors.length - 1].id === lastOwn.id ? lastOwn.id : undefined;
-      return { date: sp.date, light: sp.light, tripDate, startId: override ?? h.start, endId: override ?? endAt ?? h.end, anchors, own, earliestMin, latestMin };
+      return { date: sp.date, light: sp.light, tripDate, startId: override ?? h.start, endId: override ?? endAt ?? h.end, anchors, own, earliestMin, latestMin,
+               notes: null as DayNotes | null };
     });
     if (days.some(d => !d.startId || !d.endId)) return json({ ok: false, error: 'no hotel: pass hotel_stop_id' }, 400);
     // Drive minutes between every stop any day can use.
@@ -686,6 +747,61 @@ Deno.serve(async (req) => {
       };
     });
     const freeNodes = nodes.map((n, i) => (n.free ? i : -1)).filter(i => i >= 0);
+    // Tell T: a trip day's rules on the plan's nodes (null = no note that day: nothing changes).
+    const lockedIds = new Set<string>(lockedInputs.map(r => r.stop_id));
+    const notesCache = new Map<string, DayNotes | null>();
+    const notesFor = (td: string | null): DayNotes | null => {
+      if (td == null || !noteRules.length) return null;
+      if (notesCache.has(td)) return notesCache.get(td)!;
+      const rs = noteOn(td);
+      let out: DayNotes | null = null;
+      if (rs.length) {
+        const groupsOf = (stops?: string[]) => [...new Set((stops ?? []).map(id => pos.get(id)).filter((x): x is number => x != null && nodes[x].w > 0).map(x => nodes[x].group))];
+        const mins = (a: (number | null)[], f: (...x: number[]) => number) => { const v = a.filter((x): x is number => x != null); return v.length ? f(...v) : null; };
+        const o: DayNotes = { n: rs.length,
+          backBy: mins(rs.filter(r => r.type === 'back_by').map(r => noteMin(r.time)), Math.min),
+          leaveAfter: mins(rs.filter(r => r.type === 'leave_after').map(r => noteMin(r.time)), Math.max),
+          busy: [], skipG: new Set(), must: [], mustG: new Set(), keepG: new Set(),
+          maxVisit: mins(rs.filter(r => r.type === 'max_visit').map(r => (Number(r.minutes) > 0 ? Number(r.minutes) : null)), Math.min),
+          maxLeg: mins(rs.filter(r => r.type === 'max_leg').map(r => (Number(r.minutes) > 0 ? Number(r.minutes) : null)), Math.min),
+          stay: new Map(), off: rs.some(r => r.type === 'day_off'),
+          maxStops: mins(rs.filter(r => r.type === 'max_stops').map(r => (Number(r.count) >= 1 ? Math.floor(Number(r.count)) : null)), Math.min),
+          slow: mins(rs.filter(r => r.type === 'slow_roads').map(r => (Number(r.factor) > 1 ? Math.min(2, Number(r.factor)) : null)), Math.max),
+          noGear: rs.some(r => r.type === 'no_gear'), first: null, last: null, before: [], optG: new Set(),
+          minW: mins(rs.filter(r => r.type === 'only_top').map(r => DEFAULTS.TIER_W[String(r.tier)] ?? null), Math.max), byG: new Map() };
+        // first / last: the place is wanted that day, and the day starts / ends there.
+        const wantG = (r: NoteRule, lo: number | null, hi: number | null) => { for (const g of groupsOf(r.stops)) {
+          if (o.mustG.has(g)) continue;
+          o.mustG.add(g);
+          o.must.push({ g, name: nodes.find(x => x.group === g && r.stops!.includes(x.id))?.name ?? nodes.find(x => x.group === g)!.name, lo, hi });
+        } };
+        for (const r of rs) {
+          if (r.type === 'must') wantG(r, noteMin(r.from), noteMin(r.to));
+          if (r.type === 'first' && o.first == null && groupsOf(r.stops).length) { wantG(r, null, null); o.first = groupsOf(r.stops)[0]; }
+          if (r.type === 'last' && o.last == null && groupsOf(r.stops).length) { wantG(r, null, null); o.last = groupsOf(r.stops)[0]; }
+          if (r.type === 'before') for (const a of groupsOf(r.stops)) for (const b of groupsOf(r.then)) if (a !== b) o.before.push([a, b]);
+          if (r.type === 'optional') for (const g of groupsOf(r.stops)) o.optG.add(g);
+          if (r.type === 'arrive_by' && noteMin(r.time) != null) for (const g of groupsOf(r.stops)) o.byG.set(g, Math.min(o.byG.get(g) ?? Infinity, noteMin(r.time)!));
+          if (r.type === 'stay' && Number(r.minutes) >= SLOT) for (const g of groupsOf(r.stops)) nodes.forEach((x, i) => { if (x.group === g) o.stay.set(i, Number(r.minutes)); });
+        }
+        // A place both wanted and skipped that day: the want wins (the newer, more specific ask).
+        for (const r of rs) if (r.type === 'skip') for (const g of groupsOf(r.stops)) if (!o.mustG.has(g)) o.skipG.add(g);
+        // v99: a wanted place brings its keep-together partner (both Moulton barns): the partner is let through the
+        // day's other notes as the wanted place is (day off, easy day, nothing long, top spots only), unless a note
+        // skips the partner by name; then the wanted place goes alone.
+        const wantKeys = new Set(nodes.filter(x => o.mustG.has(x.group) && x.together).map(x => x.together));
+        for (const g of o.mustG) o.keepG.add(g);
+        for (const x of nodes) if (x.together && wantKeys.has(x.together) && x.w > 0 && !o.skipG.has(x.group)) o.keepG.add(x.group);
+        out = o;
+      }
+      notesCache.set(td, out);
+      return out;
+    };
+    for (const d of days) {
+      d.notes = notesFor(d.tripDate);
+      if (d.notes) d.notes.busy = d.anchors.filter(a => a.label).map(a => ({ from: 0, to: 0, id: a.id, label: a.label! }));
+    }
+    const busyLabel = new Map<string, string>(days.flatMap(d => d.anchors.filter(a => a.label).map(a => [`${d.date}|${a.id}|${a.startMs}`, a.label!] as [string, string])));
     // Why a day has no route (30 Oct 2026, the Faroes bench's last two days): its ends, bookings and window.
     const whyNot = (d: typeof days[number]) => {
       const nm = (id?: string) => stopById.get(id ?? '')?.name ?? id;
@@ -703,9 +819,12 @@ Deno.serve(async (req) => {
     // search = false: only the day's values (W), no routes (scoring against the truth).
     // only: plan just these stops (the week plans), visiting all that fit.
     const gear = new Set<string>(cfg.gear?.stops ?? []);
+    const D0 = D, slowCache = new Map<number, Float64Array[]>();
+    const slowD = (f: number) => { let m = slowCache.get(f); if (!m) { m = D0.map(row => row.map(x => x * f)); slowCache.set(f, m); } return m; };
     // must: stops the route has to include (fm1); skip: stops left out (once-only, done).
     // from (mr1): the visits already under way at atMs stay; the route goes on from there, no earlier than atMs.
-    type From = { visits: { n: number; startMs: number; drive: number; anchor: boolean }[]; atMs: number };
+    // len (v100): a visit's own length in slots, where Phil said how long he is really staying (Re-plan now).
+    type From = { visits: { n: number; startMs: number; drive: number; anchor: boolean; len?: number }[]; atMs: number };
     // exact (proof check, Phil's #8): plan only these stops with no beam cut, every
     // start slot, and every (stops, place) state kept unless another reached it no
     // later with a higher score: near-exhaustive (the score is not additive, so a
@@ -718,9 +837,29 @@ Deno.serve(async (req) => {
     type Brute = { inc?: State | null; budgetMs?: number; cap?: number };
     const planDay = (day: typeof days[number], scores: any[], search = true, only?: number[], must?: number[], skip?: Set<number>, from?: From, exact?: number[], brute?: Brute): DayPlan => {
       const td0 = performance.now();
-      const cand = (exact ?? only ?? freeNodes).filter(n => !skip?.has(n));
+      // Tell T: the day's note rules. A place the note wants is a candidate whatever the caller's lists say
+      // (bookings and time-locked stops stay as they are); skipped places and too-long visits leave them.
+      const R = day.notes;
+      // slow_roads: the day's own drive table (every leg x the factor); everything below reads it as D.
+      const D = R?.slow ? slowD(R.slow) : D0;
+      const durN = (n: number) => R?.stay.get(n) ?? nodes[n].dur;
+      const noteOut1 = (n: number) => !!R && !R.keepG.has(nodes[n].group) && (R.off || R.skipG.has(nodes[n].group) || (R.maxVisit != null && durN(n) > R.maxVisit)
+        || (R.noGear && gear.has(nodes[n].id)) || (R.minW != null && nodes[n].w < R.minW));
+      // v99: keep together holds under notes: when a general note (nothing long, no skis, top spots only) takes one
+      // of a pair out, the other goes with it (the 56-week random-note run planned the 40-min John Moulton barn alone
+      // on 3 "nothing over 60 min" days). A partner skipped by name still leaves the other one free to go alone.
+      const outKeys = new Set<string>(R ? freeNodes.filter(n => nodes[n].together && nodes[n].w > 0 && !R.skipG.has(nodes[n].group) && noteOut1(n)).map(n => nodes[n].together!) : []);
+      const noteOut = (n: number) => noteOut1(n) || (!!nodes[n].together && outKeys.has(nodes[n].together!) && !R!.keepG.has(nodes[n].group));
+      const cand0 = (exact ?? only ?? freeNodes).filter(n => !skip?.has(n));
+      // v99: a wanted place brings its keep-together partner (unless a note takes the partner out), in every mode:
+      // the polish search once added one Moulton barn alone and the next step, which rebuilds the plan with both
+      // barns as candidates, threw the day out as a split pair ('no route', random-note rerun 11 Nov 2026).
+      const wantN = R && !only ? nodes.map((x, i) => (R.mustG.has(x.group) && x.w > 0 && !lockedIds.has(x.id) ? i : -1)).filter(i => i >= 0) : [];
+      const wantKeys = new Set(wantN.map(n => nodes[n].together).filter(k => !!k));
+      const wantPair = wantKeys.size ? freeNodes.filter(n => wantKeys.has(nodes[n].together) && !noteOut(n) && !lockedIds.has(nodes[n].id)) : [];
+      const cand = !R ? cand0 : [...new Set([...cand0.filter(n => !noteOut(n)), ...wantN, ...wantPair])];
       let nExt = 0, capped = false;
-      const mustSet = new Set(must ?? []);
+      const mustSet = new Set((must ?? []).filter(n => !noteOut(n) && !R?.optG.has(nodes[n].group)));
       const H0 = pos.get(day.startId!)!, H = pos.get(day.endId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
       const slotMs = scores.map(r => r.ms);
@@ -730,7 +869,8 @@ Deno.serve(async (req) => {
       // stops start no earlier than civil dawn less that many minutes, in place of the 05:00 window and the
       // 03:45 sunrise exception; a booked arrival later than that still opens the day.
       const dawnLo = cfg.dawn_before_min != null ? civilDawn(day.date, mid.lat, mid.lng, tz!) - Number(cfg.dawn_before_min) * 60000 : null;
-      const winStart0 = zonedToUtc(day.date, day.earliestMin ?? hhmm(EARLIEST), tz!), winEnd = zonedToUtc(day.date, day.latestMin ?? hhmm(LATEST), tz!);
+      const winStart0 = zonedToUtc(day.date, day.earliestMin ?? hhmm(EARLIEST), tz!);
+      const winEnd = zonedToUtc(day.date, Math.min(day.latestMin ?? hhmm(LATEST), R?.backBy ?? Infinity), tz!);
       const winStart = dawnLo == null ? winStart0 : day.earliestMin != null ? Math.max(winStart0, dawnLo) : dawnLo;
       const earlyStart = dawnLo != null || day.light || day.earliestMin != null ? winStart : zonedToUtc(day.date, hhmm(SUNRISE_EARLIEST), tz!);
       const first = Math.min(Math.max(Math.min(...slotMs) - 90 * 60000, earlyStart), ...anchors.map(a => a.startMs - 90 * 60000));
@@ -807,7 +947,7 @@ Deno.serve(async (req) => {
         if (start < 0 || start >= nSlots) return null;
         const key = ni * 10000 + start;
         if (wCache.has(key)) return wCache.get(key)!;
-        const len = Math.ceil(nodes[ni].dur / SLOT);
+        const len = Math.ceil(durN(ni) / SLOT);
         if (RUNS) { const rb = runBest(ni, start, len); if (rb) { wCache.set(key, rb); return rb; } }
         let best: Uint8Array | null = null;
         for (let t = start; t < Math.min(start + len, nSlots); t++) {
@@ -829,7 +969,7 @@ Deno.serve(async (req) => {
       // The slot in a visit window with the best mean V: when to shoot.
       const peak = (ni: number, start: number) => {
         let bt = start, bs = -1;
-        for (let t = Math.max(start, 0); t < Math.min(start + Math.ceil(nodes[ni].dur / SLOT), nSlots); t++) {
+        for (let t = Math.max(start, 0); t < Math.min(start + Math.ceil(durN(ni) / SLOT), nSlots); t++) {
           const v = V[ni][t]; if (!v) continue;
           let s = 0; for (const x of v) s += x;
           if (s > bs) { bs = s; bt = t; }
@@ -837,10 +977,50 @@ Deno.serve(async (req) => {
         return bt;
       };
       const anchorSlot = anchors.map(a => Math.round((a.startMs - dayStart) / (SLOT * 60000)));
+      // Tell T: a free stop's start slots under the day's notes: [lo, hi] (hi < lo = not today).
+      // leave_after: no free stop before that time plus the drive from the morning's place; max_leg: no drive
+      // to it or home from it longer than that (a wanted place is exempt); must {from, to}: the wanted place's band.
+      const noteLo = R?.leaveAfter != null ? (zonedToUtc(day.date, R.leaveAfter, tz!) - dayStart) / 60000 : null;
+      const noteBand = new Map<number, [number, number]>((R?.must ?? []).filter(m => m.lo != null || m.hi != null).map(m => [m.g, [
+        m.lo != null ? Math.ceil((zonedToUtc(day.date, m.lo, tz!) - dayStart) / (SLOT * 60000)) : -Infinity,
+        m.hi != null ? Math.floor((zonedToUtc(day.date, m.hi, tz!) - dayStart) / (SLOT * 60000)) : Infinity] as [number, number]]));
+      // arrive_by: a visit there starts no later than that (whether or not the place is wanted).
+      for (const [g, by] of R?.byG ?? []) { const b = noteBand.get(g) ?? [-Infinity, Infinity], hi = Math.floor((zonedToUtc(day.date, by, tz!) - dayStart) / (SLOT * 60000));
+        noteBand.set(g, [b[0], Math.min(b[1], hi)]); }
+      // max_stops: the stops that are not wanted places fill what the wanted ones leave (a wanted place always fits).
+      const noteRoom = R?.maxStops != null ? Math.max(0, R.maxStops - R.must.length) : null;
+      // Order: nothing after the day's last place, nothing before its first, and "a before b" never the other way round.
+      const noteFull = (st: State, s: number) => {
+        if (!R) return false;
+        const g = nodes[s].group, fr = st.route.filter(v => !v.anchor);
+        if (R.last != null && fr.some(v => nodes[v.n].group === R.last)) return true;
+        if (R.first != null && g !== R.first && !fr.length) return true;
+        if (R.before.some(([a, b]) => g === a && fr.some(v => nodes[v.n].group === b))) return true;
+        return noteRoom != null && !R.keepG.has(g) && fr.filter(v => !R.keepG.has(nodes[v.n].group)).length >= noteRoom;
+      };
+      // optional: only where at least half the weather versions give a good shot (light-only days: no forecast to ask).
+      const optOk = (s: number, i: number) => !R || !R.optG.has(nodes[s].group) || R.keepG.has(nodes[s].group) || day.light || pGood(s, i) >= 0.5;
+      const noteDawn = R ? Math.ceil((civilDawn(day.date, mid.lat, mid.lng, tz!) - dayStart) / (SLOT * 60000)) : 0;
+      // A note is about its calendar day. Where a plan's day reaches back before midnight (far north in early summer:
+      // no civil night, so "first light" falls on the evening before; found by the Faroes random-note run, 11 Nov 2026),
+      // free stops start no earlier than local midnight when that day or the day before has a note: "by 11:00" is not
+      // met the night before, and a day off or a back-by time is not undone by the next day's plan starting at 10:45 PM.
+      const Rprev = day.tripDate ? notesFor(dayBefore(day.tripDate)) : null;
+      const noteMid = R || Rprev ? Math.ceil((zonedToUtc(day.date, 0, tz!) - dayStart) / (SLOT * 60000)) : -Infinity;
+      const noteSlots = (s: number, drive: number, home: number): [number, number] => {
+        if (!R) return [noteMid, Infinity];
+        const want = R.keepG.has(nodes[s].group);
+        if (R.maxLeg != null && !want && (drive > R.maxLeg || home > R.maxLeg)) return [1, 0];
+        const b = noteBand.get(nodes[s].group);
+        const lo = Math.max(noteMid, noteLo != null && Number.isFinite(D[H0][s]) ? Math.ceil((noteLo + D[H0][s]) / SLOT) : -Infinity, b ? b[0] : -Infinity);
+        return [lo, b ? b[1] : Infinity];
+      };
 
-      const extend = (st: State, n: number, i: number, drive: number, anchor: boolean): State => {
+      const noteLen = new Map<string, number>(day.anchors.filter(a => a.label).map(a => [`${pos.get(a.id)}|${Math.round((a.startMs - dayStart) / (SLOT * 60000))}`, Math.ceil(a.dur / SLOT)] as [string, number]));
+      const extend = (st: State, n: number, i: number, drive: number, anchor: boolean, lenOv?: number): State => {
         nExt++;
-        const len = Math.ceil(nodes[n].dur / SLOT);
+        // A busy block from a note lasts as long as the note says, not as long as the place's own visit.
+        const len = lenOv || (anchor && noteLen.get(`${n}|${i}`)) || Math.ceil(durN(n) / SLOT);
         const w = nodes[n].w > 0 ? W(n, i) : null;
         const total = Float32Array.from(st.total);
         const groupBest = new Map(st.groupBest);
@@ -857,10 +1037,12 @@ Deno.serve(async (req) => {
         const d = st.drive + drive, o = st.over + over(drive), mc = st.mc + (mustSet.has(n) ? 1 : 0);
         // Pace test B (v80, run config visit_price): each optional rated visit costs that many tier points.
         const nopt = (st.nopt ?? 0) + (nodes[n].w > 0 && !mustSet.has(n) && !anchor ? 1 : 0);
+        // Tell T: a place a note wants counts once, whichever of its stops is visited.
+        const nm = (st.nm ?? 0) + (R && R.mustG.has(nodes[n].group) && !st.route.some(v => nodes[v.n].group === nodes[n].group) ? 1 : 0);
         return {
           t: (i + len) * SLOT, loc: n, next: st.next + (anchor ? 1 : 0), visited, m0, m1, groupBest, total, drive: d, over: o, mc,
-          route: [...st.route, { n, arrive: st.t + drive, start: i * SLOT, end: (i + len) * SLOT, drive, anchor }], nopt,
-          mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * (d + D[n][H]) - LONG_LEG_PENALTY * (o + over(D[n][H])) + MUST_BONUS * mc - VISIT_PRICE * nopt,
+          route: [...st.route, { n, arrive: st.t + drive, start: i * SLOT, end: (i + len) * SLOT, drive, anchor, ...(lenOv ? { len: lenOv } : {}) }], nopt, nm,
+          mean: m.mean, cvar: m.cvar, j: m.j - DRIVE_PENALTY * (d + D[n][H]) - LONG_LEG_PENALTY * (o + over(D[n][H])) + MUST_BONUS * mc - VISIT_PRICE * nopt + (nm ? NOTE_BONUS * nm : 0),
         };
       };
 
@@ -869,7 +1051,7 @@ Deno.serve(async (req) => {
         j: -DRIVE_PENALTY * D[H0][H] - LONG_LEG_PENALTY * over(D[H0][H]), mean: 0, cvar: 0 };
       let start = root;
       if (from) {
-        for (const v of from.visits) start = extend(start, v.n, Math.round((v.startMs - dayStart) / (SLOT * 60000)), v.drive, v.anchor);
+        for (const v of from.visits) start = extend(start, v.n, Math.round((v.startMs - dayStart) / (SLOT * 60000)), v.drive, v.anchor, v.len);
         start = { ...start, t: Math.max(start.t, (from.atMs - dayStart) / 60000) };
       }
       if (brute && search) {
@@ -902,7 +1084,7 @@ Deno.serve(async (req) => {
           }
           return g;
         });
-        const minDur = Math.max(SLOT, Math.min(...cand.map(n => nodes[n].dur)));
+        const minDur = Math.max(SLOT, Math.min(...cand.map(n => durN(n))));
         // Start slots of a visit from i0 on that no earlier allowed start beats in every version.
         const slotCache = new Map<number, number[]>();
         const slotsFrom = (s: number, i0: number) => {
@@ -953,10 +1135,12 @@ Deno.serve(async (req) => {
             if (st.visited[s]) continue;
             const drive = D[st.loc][s], home = D[s][H];
             if (!Number.isFinite(drive) || !Number.isFinite(home)) continue;
-            const len = Math.ceil(nodes[s].dur / SLOT);
+            const len = Math.ceil(durN(s) / SLOT);
             const isGear = gear.has(nodes[s].id);
-            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), nodes[s].w >= 5 ? earlyLo : winLo, isGear ? gearLo : 0);
-            let iMax = Math.min(Math.floor((winMin - home) / SLOT), Math.floor(darkMin / SLOT)) - len;
+            const nS = noteSlots(s, drive, home);
+            if (noteFull(st, s)) continue;
+            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), nodes[s].w >= 5 ? earlyLo : winLo, isGear ? gearLo : 0, nS[0]);
+            let iMax = Math.min(Math.min(Math.floor((winMin - home) / SLOT), Math.floor(darkMin / SLOT)) - len, nS[1]);
             if (isGear) iMax = Math.min(iMax, Math.floor(gearHiMin / SLOT) - len);
             if (nextA) {
               const toA = D[s][nextA.n]; if (!Number.isFinite(toA)) continue;
@@ -979,8 +1163,8 @@ Deno.serve(async (req) => {
       while (beam.length) {
         const children = new Map<string, State>();
         const front = new Map<string, State[]>();  // exact: per key, states no other beats on both time and score
-        const keep = (c: State) => {
-          const key = nodes.length <= 64 ? `${c.m0},${c.m1},${c.loc}` : `${c.visited.join('')}|${c.loc}`;
+        const keep = (c: State, tag = '') => {
+          const key = (nodes.length <= 64 ? `${c.m0},${c.m1},${c.loc}` : `${c.visited.join('')}|${c.loc}`) + tag;
           if (exact) {
             const f = front.get(key) ?? [];
             if (f.some(s => s.t <= c.t && s.j >= c.j)) return;
@@ -1007,10 +1191,12 @@ Deno.serve(async (req) => {
             if (st.visited[s]) continue;
             const drive = D[st.loc][s], home = D[s][H];
             if (!Number.isFinite(drive) || !Number.isFinite(home)) continue;
-            const len = Math.ceil(nodes[s].dur / SLOT);
+            const len = Math.ceil(durN(s) / SLOT);
             const isGear = gear.has(nodes[s].id);
-            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), nodes[s].w >= 5 ? earlyLo : winLo, isGear ? gearLo : 0);
-            let iMax = Math.min(Math.floor((winMin - home) / SLOT), Math.floor(darkMin / SLOT)) - len;
+            const nS = noteSlots(s, drive, home);
+            if (noteFull(st, s)) continue;
+            const i0 = Math.max(Math.ceil((st.t + drive) / SLOT), nodes[s].w >= 5 ? earlyLo : winLo, isGear ? gearLo : 0, nS[0]);
+            let iMax = Math.min(Math.min(Math.floor((winMin - home) / SLOT), Math.floor(darkMin / SLOT)) - len, nS[1]);
             if (isGear) iMax = Math.min(iMax, Math.floor(gearHiMin / SLOT) - len);
             if (nextA) {
               const toA = D[s][nextA.n]; if (!Number.isFinite(toA)) continue;
@@ -1028,7 +1214,15 @@ Deno.serve(async (req) => {
             }
             if (bWaitI >= 0) opts.add(bWaitI);
             if (bDayI >= 0) opts.add(bDayI);
-            for (const i of opts) if (W(s, i) && startOk(s, i)) keep(extend(st, s, i, drive, false));
+            // Tell T: a place a note wants is planned even where the day has no score for it (worth nothing then).
+            const wantS = !!R && R.keepG.has(nodes[s].group);
+            // Its earliest start is kept beside its best one (one state per stops + place otherwise): a wanted pair
+            // whose best moments clash still fits with one of them early.
+            let firstS = true;
+            for (const i of [...opts].sort((a, b) => a - b)) if ((W(s, i) ? startOk(s, i) : (wantS && i >= Math.max(winLo, noteDawn))) && optOk(s, i)) {
+              keep(extend(st, s, i, drive, false), wantS && firstS ? '|e' : '');
+              firstS = false;
+            }
           }
         }
         beam = exact ? [...front.values()].flat() : [...children.values()].sort((a, b) => b.j - a.j).slice(0, BEAM);
@@ -1040,6 +1234,23 @@ Deno.serve(async (req) => {
       const groups = new Map<string, number[]>();
       for (const n of cand) { const k = nodes[n].together; if (k) groups.set(k, [...(groups.get(k) ?? []), n]); }
       const split = [...groups.values()].filter(g => g.length > 1);
+      // Tell T: when the beam did not fit every wanted place, the exact search over just them (with their
+      // keep-together partners and the caller's required places) is tried; a day with more of them joins the pool.
+      if (R?.must.length && search && !exact && !only) {
+        const whole = (st: State) => split.every(g => g.every(n => st.visited[n]) || g.every(n => !st.visited[n]));
+        const top = Math.max(-1, ...pool.filter(whole).map(st => st.nm ?? 0));
+        if (top < R.must.length) {
+          const wantN = cand.filter(n => R.mustG.has(nodes[n].group));
+          const keys = new Set(wantN.map(n => nodes[n].together).filter(k => !!k));
+          const E = [...new Set([...wantN, ...cand.filter(n => keys.has(nodes[n].together)), ...cand.filter(n => mustSet.has(n))])];
+          if (E.length && E.length <= 10) {
+            const cap0 = exactCap; exactCap = Math.min(exactCap, 60_000);
+            const pe = planDay(day, scores, true, undefined, must, skip, from, E);
+            exactCap = cap0;
+            if (pe.routes.length && (pe.routes[0].nm ?? 0) > top) pool.push(...pe.routes.slice(0, 20));
+          }
+        }
+      }
       if (split.length) pool = pool.filter(st => split.every(g => g.every(n => st.visited[n]) || g.every(n => !st.visited[n])));
       // Week plans: the routes that visit the most of the day's stops.
       if (only) {
@@ -1047,6 +1258,12 @@ Deno.serve(async (req) => {
         const most = Math.max(0, ...pool.map(seen));
         pool = pool.filter(st => seen(st) === most);
       }
+      // first: when no day starts at that place, the day is planned without that rule (the check says so).
+      if (R?.first != null && search && !exact && !only && !(from?.visits ?? []).some(v => !v.anchor)
+          && !pool.some(st => { const f = st.route.find(v => !v.anchor); return !!f && nodes[f.n].group === R.first; }))
+        return planDay({ ...day, notes: { ...R, first: null } }, scores, search, only, must, skip, from, exact, brute);
+      // Tell T: the routes with the most places the notes want (all of them when they fit).
+      if (R?.must.length && pool.length) { const top = Math.max(...pool.map(st => st.nm ?? 0)); pool = pool.filter(st => (st.nm ?? 0) === top); }
       // fm1: only routes with every required stop count.
       if (mustSet.size) pool = pool.filter(st => st.mc === mustSet.size);
       pool.sort((a, b) => b.j - a.j);
@@ -1085,6 +1302,7 @@ Deno.serve(async (req) => {
       const c = chance(p, v.n, Math.round(v.start / SLOT));
       return {
         date: p.date, trip_date: p.tripDate, stop_id: nodes[v.n].id, name: nodes[v.n].name, booked: v.anchor,
+        ...(v.anchor && busyLabel.has(`${p.date}|${nodes[v.n].id}|${p.dayStart + v.start * 60000}`) ? { name: busyLabel.get(`${p.date}|${nodes[v.n].id}|${p.dayStart + v.start * 60000}`), note: true } : {}),
         arrive: iso(p, v.arrive), start: iso(p, v.start), end: iso(p, v.end),
         wait_min: Math.round(v.start - v.arrive), drive_min: Math.round(v.drive),
         ...c, why: reasonOf(p, v, c),
@@ -1096,6 +1314,51 @@ Deno.serve(async (req) => {
       const n0 = pos.get(x.stop_id), t = tierOf.get(x.stop_id);
       return { chance: x.chance, key: n0 == null ? null : String(nodes[n0].group), top: t === 'S' || t === 'GOD' };
     }));
+
+    // Tell T: did a day's plan follow its notes? Read from the plan's visits as stored (what the app shows), so the
+    // same check proves the bench runs and reports on live plans: stats.notes = { rules, broken: [plain words] }.
+    let lastChance: { name: string; ids: string[] }[] = [];  // set by the every-place planner: places whose last day is tomorrow
+    const noteCheck = (d: typeof days[number], vs: any[]) => {
+      const R = d.notes; if (!R) return null;
+      const broken: string[] = [];
+      const loc = (iso: string) => localMin(Date.parse(iso), d.date);
+      const clock = (m: number) => `${Math.floor(m / 60)}:${String(Math.round(m % 60)).padStart(2, '0')}`;
+      const H0 = pos.get(d.startId!)!, H = pos.get(d.endId!)!;
+      const D = R.slow ? slowD(R.slow) : D0;
+      const free = vs.filter(v => !v.booked), nOf = (v: any) => pos.get(v.stop_id)!;
+      const gOf = (v: any) => nodes[nOf(v)].group, at = (g: number) => free.findIndex(v => gOf(v) === g);
+      if (R.first != null && free.length && gOf(free[0]) !== R.first) broken.push(`the day does not start at ${R.must.find(m => m.g === R.first)?.name ?? 'the place asked'}`);
+      if (R.last != null && at(R.last) >= 0 && gOf(free[free.length - 1]) !== R.last) broken.push(`the day does not end at ${R.must.find(m => m.g === R.last)?.name ?? 'the place asked'}`);
+      for (const [a, b] of R.before) if (at(a) >= 0 && at(b) >= 0 && at(a) > at(b)) broken.push(`${free[at(b)].name} comes before ${free[at(a)].name}`);
+      const wanted = (v: any) => R.keepG.has(nodes[nOf(v)].group);
+      for (const v of free) {
+        const n = nOf(v), home = D[n][H], len = (Date.parse(v.end) - Date.parse(v.start)) / 60000;
+        if (R.backBy != null && loc(v.end) + home > R.backBy + 0.5) broken.push(`${v.name} gets back at ${clock(loc(v.end) + home)}, after ${clock(R.backBy)}`);
+        if (R.leaveAfter != null && loc(v.start) - D[H0][n] < R.leaveAfter - 0.5) broken.push(`${v.name} at ${clock(loc(v.start))} means leaving before ${clock(R.leaveAfter)}`);
+        if (R.off && !wanted(v)) broken.push(`${v.name} is planned on a day off`);
+        if (R.noGear && gear.has(v.stop_id) && !wanted(v)) broken.push(`${v.name} needs the rental gear`);
+        if (R.minW != null && nodes[n].w < R.minW && !wanted(v)) broken.push(`${v.name} is not one of the top spots`);
+        if (R.byG.has(nodes[n].group) && loc(v.start) > R.byG.get(nodes[n].group)! + 0.5) broken.push(`${v.name} starts at ${clock(loc(v.start))}, after ${clock(R.byG.get(nodes[n].group)!)}`);
+        if (R.skipG.has(nodes[n].group)) broken.push(`${v.name} is planned but the note skips it`);
+        if (R.maxVisit != null && len > R.maxVisit + 0.5 && !wanted(v)) broken.push(`${v.name} is ${Math.round(len)} min, over ${R.maxVisit}`);
+        if (R.maxLeg != null && !wanted(v) && (v.drive_min > R.maxLeg + 0.5 || home > R.maxLeg + 0.5)) broken.push(`${v.name} is a ${Math.round(Math.max(v.drive_min, home))} min drive, over ${R.maxLeg}`);
+        if (R.stay.has(n) && Math.abs(len - Math.ceil(R.stay.get(n)! / SLOT) * SLOT) > 0.5) broken.push(`${v.name} is ${Math.round(len)} min, not ${R.stay.get(n)}`);
+      }
+      if (R.maxStops != null && free.filter(v => !wanted(v)).length > Math.max(0, R.maxStops - R.must.length)) broken.push(`${free.length} stops, over ${R.maxStops}`);
+      for (const m of R.must) {
+        const hit = vs.filter(v => nodes[nOf(v)].group === m.g);
+        if (!hit.length) broken.push(`${m.name} did not fit`);
+        else if (!hit.some(v => v.booked || ((m.lo == null || loc(v.start) >= m.lo - 0.5) && (m.hi == null || loc(v.start) <= m.hi + 0.5)))) broken.push(`${m.name} is not at the time asked`);
+      }
+      for (const a of d.anchors.filter(a => a.label)) {
+        const hit = vs.find(v => v.booked && v.stop_id === a.id && Math.abs(Date.parse(v.start) - a.startMs) < 60000);
+        if (!hit) broken.push(`${a.label} is not on the plan`);
+        else if (Math.abs((Date.parse(hit.end) - Date.parse(hit.start)) / 60000 - Math.ceil(a.dur / SLOT) * SLOT) > 0.5) broken.push(`${a.label} is not the length asked`);
+      }
+      // Places with no day left after this one that the plan leaves out (the cost of the day's notes, or of the day).
+      const lost = lastChance.filter(u => !vs.some(v => u.ids.includes(v.stop_id))).map(u => u.name);
+      return { rules: R.n, broken, ...(lost.length ? { lost } : {}) };
+    };
 
     // Value of a route against the truth (plan `tp`, one member): tier x truth
     // V at the visit, a subject counted once (only its improvement over what
@@ -1402,6 +1665,7 @@ Deno.serve(async (req) => {
         row = { run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: realized == null ? null : r3(realized), ...extra };
         if (Array.isArray(row.visits) && row.stats) row.stats = { ...row.stats, ...goodShots(row.visits) };
         if (row.stats && missedNode != null) row.stats = { ...row.stats, missed: nodes[missedNode].name };
+        if (row.stats && days[0].notes && Array.isArray(row.visits)) row.stats = { ...row.stats, notes: noteCheck(days[0], row.visits) };
         if (row.stats && walkStats) row.stats = { ...row.stats, walk: walkStats };
         if (row.stats && cfg.slow_drive && truthN && visits.length) {
           const sl = slowOf(visits);
@@ -1513,7 +1777,8 @@ Deno.serve(async (req) => {
         // version it ran as = the winner in planner_versions (what the live planner runs); the app shows it.
         const { data: pvw } = await db.from('planner_versions').select('letter').eq('status', 'winner').maybeSingle();
         const version: string | null = pvw?.letter ?? null;
-        if (!cfg.publish || !live) return;
+        // whatif (v97, Tell T): a what-if run plans like a week draft but never publishes anything.
+        if (!cfg.publish || !live || cfg.whatif) return;
         const d0 = days[0];
         const visits = visitsOf(p, s);
         const slotOf = (ms: number) => Math.round((ms - p.dayStart) / (SLOT * 60000));
@@ -1587,7 +1852,7 @@ Deno.serve(async (req) => {
         for (const [g, w] of placeW) ceiling += w * gainB(g, 250, undefined) / 250;
         const { data: sr, error: e1 } = await db.from('solver_runs').insert({
           trip_id: tripId, plan_date: d0.date, params: { planner: 'T', version, replay_run: runId, night: n, step, tz },
-          stats: { kind: 'day', planner: 'T', variant: 'T', version, step, ceiling: r3(ceiling), ...extra,
+          stats: { kind: 'day', planner: 'T', variant: 'T', version, step, ceiling: r3(ceiling), ...extra, ...(d0.notes ? { notes: noteCheck(d0, visits) } : {}),
                    n_fc: draft ? null : M, exp_big: goodShots(visits).exp_big, exp_big_mine: goodShots(mine).exp_big,
                    exp_all: goodShots(visits).exp_all, exp_all_mine: goodShots(mine).exp_all,
                    days: [{ date: d0.date, trip_date: d0.tripDate, light_only: draft,
@@ -1625,7 +1890,17 @@ Deno.serve(async (req) => {
         const skip = new Set(freeNodes.filter(x => (nodes[x].once && done(x) && !openTog.has(unitKey(x))) || nailedGroups.has(nodes[x].group)));
         const remaining: string[] = (run.trip_dates as string[]).slice(n);
         const gFrom = cfg.gear?.from?.date, gTo = cfg.gear?.to?.date;
-        const okOn = (u: number[], td: string) => !u.some(x => gear.has(nodes[x].id)) || ((!gFrom || td >= gFrom) && (!gTo || td <= gTo));
+        // Tell T: a place is not for a day whose notes skip it or allow no visit that long (a wanted place is).
+        // (max_leg too, 11 Nov 2026: a stay-close day was still counted as a day for the far ski outings, which then
+        // slid to the last gear day and were lost.)
+        const farOn = (x: number, td: string, leg: number) => { const h = hotelsFor(td), a = pos.get(h.start ?? ''), b = pos.get(h.end ?? '');
+          return a != null && b != null && (D[a][x] > leg || D[x][b] > leg); };
+        // A keep-together unit needs every one of its stops that day; another place needs any one of its stops.
+        const allOf = (u: number[]) => (f: (x: number) => boolean) => (nodes[u[0]].together ? u.some(f) : u.every(f));
+        const noteOk = (u: number[], td: string) => { const R = notesFor(td); return !R || u.some(x => R.mustG.has(nodes[x].group))
+          || !(R.off || u.some(x => R.skipG.has(nodes[x].group)) || (R.noGear && u.some(x => gear.has(nodes[x].id))) || (R.minW != null && allOf(u)(x => nodes[x].w < R.minW!)) || (R.maxVisit != null && allOf(u)(x => (R.stay.get(x) ?? nodes[x].dur) > R.maxVisit!))
+               || (R.maxLeg != null && u.some(x => farOn(x, td, R.maxLeg!)))); };
+        const okOn = (u: number[], td: string) => noteOk(u, td) && (!u.some(x => gear.has(nodes[x].id)) || ((!gFrom || td >= gFrom) && (!gTo || td <= gTo)));
         const lastDay = (u: number[]) => { for (let i = remaining.length - 1; i >= 0; i--) if (okOn(u, remaining[i])) return i; return -1; };
         const durOf = (u: number[]) => nodes[u[0]].together ? u.reduce((t, x) => t + nodes[x].dur, 0) : Math.min(...u.map(x => nodes[x].dur));
         // Daylight minutes on a remaining trip day, after landing / before the flight; 70% of it for stops (drives).
@@ -1646,7 +1921,16 @@ Deno.serve(async (req) => {
             if (cfg.gear?.from && td === gFrom) lo = Math.max(lo, zonedToUtc(rd, hhmm(cfg.gear.from.time), tz));
             if (cfg.gear?.to && td === gTo) hi = Math.min(hi, zonedToUtc(rd, hhmm(cfg.gear.to.time), tz));
           }
-          return Math.max(0, Number(cfg.cap_frac ?? 0.8) * (hi - lo) / 60000 - Number(cfg.cap_minus ?? 45));
+          // Tell T: the day's notes shorten it (leave after, back by, busy blocks).
+          const R = notesFor(td);
+          let busyMin = 0;
+          if (R) {
+            if (R.leaveAfter != null) lo = Math.max(lo, zonedToUtc(rd, R.leaveAfter, tz));
+            if (R.backBy != null) hi = Math.min(hi, zonedToUtc(rd, R.backBy, tz));
+            for (const r of noteOn(td)) if (r.type === 'busy' && noteMin(r.from) != null && noteMin(r.to) != null)
+              busyMin += Math.max(0, Math.min(hi, zonedToUtc(rd, noteMin(r.to)!, tz)) - Math.max(lo, zonedToUtc(rd, noteMin(r.from)!, tz))) / 60000;
+          }
+          return Math.max(0, Number(cfg.cap_frac ?? 0.8) * ((hi - lo) / 60000 - busyMin) - Number(cfg.cap_minus ?? 45));
         };
         // How good each place looks on each of the next 3 days (best moment, forecast mean).
         const atH = (h: number) => (h < nFc ? fcSc[h] : ltSc[h]);
@@ -1727,6 +2011,7 @@ Deno.serve(async (req) => {
             .sort((a, b) => (val(b, 0) - Math.max(val(b, 1), val(b, 2))) - (val(a, 0) - Math.max(val(a, 1), val(a, 2))));
         }
         const mustOf = (u: number[]) => nodes[u[0]].together ? u : [u.reduce((a, b) => (best(b, 0) > best(a, 0) ? b : a))];
+        lastChance = days[0].notes ? open.filter(u => lastDay(u) === 0 && !u.some(x => days[0].notes!.optG.has(nodes[x].group))).map(u => ({ name: u.map(x => nodes[x].name).filter((x, i, a) => a.indexOf(x) === i).join(' + '), ids: u.map(x => nodes[x].id) })) : [];
         // mustfix (v87, worksheet b6, 7 Nov 2026): when the beam finds no day with every required place,
         // try the exact search over just those places (as the audit tool does) before dropping one. On 2 of
         // 20 test nights Claude found such a day where the beam found none.
@@ -1787,7 +2072,7 @@ Deno.serve(async (req) => {
           if (!live || draft || !cfg.publish) return;
           const { error } = await db.from('replay_live_today').upsert({
             run_id: runId, kind, replay_date: days[0].date, step, mr: mr ?? null, updated_at: new Date().toISOString(),
-            visits: s.route.map(v => ({ id: nodes[v.n].id, startMs: p.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
+            visits: s.route.map(v => ({ id: nodes[v.n].id, startMs: p.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor, ...(v.len ? { len: v.len } : {}) })),
             units: l.map(u => mustOf(u).map(x => nodes[x].id)),
           }, { onConflict: 'run_id,kind,replay_date' });
           if (error) throw error;
@@ -1796,7 +2081,7 @@ Deno.serve(async (req) => {
         if (nowReq) {
           today = (await db.from('replay_live_today').select('visits, units, mr').eq('run_id', runId).eq('kind', kind).eq('replay_date', days[0].date).maybeSingle()).data;
           if (!today) throw new Error('T has not re-planned today yet (the morning re-plan comes first)');
-          const vis = (today.visits as any[]).filter(v => pos.has(v.id)).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor }));
+          const vis = (today.visits as any[]).filter(v => pos.has(v.id)).map(v => ({ n: pos.get(v.id)!, startMs: v.startMs, drive: v.drive, anchor: v.anchor, ...(v.len ? { len: Number(v.len) } : {}) }));
           list = (today.units as string[][]).map(ids => ids.filter(id => pos.has(id)).map(id => pos.get(id)!)).filter(u => u.length);
           p0 = planDay({ ...days[0], light: false }, nSc, false, undefined, list.flatMap(u => u), skip, { visits: vis, atMs: 0 });
           st = p0.routes[0] ?? null;
@@ -1856,11 +2141,47 @@ Deno.serve(async (req) => {
           // rest of today is re-planned on the now build (the cameras' majority and the airport
           // re-condition the odds from now), same required places (dropped from the end only if
           // they no longer fit).
-          const atMs = Date.parse(body.at ?? new Date().toISOString());
+          const askMs = Date.parse(body.at ?? new Date().toISOString());
+          // Where Phil really is (v100, Tell T: "I'm at Oxbow", "running an hour late", "staying 30 more minutes"),
+          // sent with the request as here {stop_id? | hotel?, late_min?, stay_min?}. Without it the plan's own clock stands.
+          //  late_min: the plan is that far behind: what was begun or left for that long ago is where he is now; a
+          //    visit still under way then ends that much later (bookings keep their times).
+          //  stop_id: he is at that place now (begun visits elsewhere that had not ended are let go); stay_min: he
+          //    leaves it (or the place the plan has him at) that many minutes from now.
+          const here = (body.here && typeof body.here === 'object' ? body.here : null) as { stop_id?: string; hotel?: boolean; late_min?: number; stay_min?: number } | null;
+          const lateMs = Math.max(0, Math.min(360, Number(here?.late_min ?? 0) || 0)) * 60000;
+          const stayMin = Math.max(0, Math.min(600, Number(here?.stay_min ?? 0) || 0));
+          const hereN = here?.hotel ? pos.get(days[0].endId!) : here?.stop_id != null ? pos.get(here.stop_id) : undefined;
+          if (here?.stop_id != null && hereN == null) throw new Error('T does not know that place');
+          const seenMs = askMs - lateMs;  // the plan's clock, as Phil is living it
           const leftBy = (v: { start: number; arrive: number; drive: number }) =>
-            cfg.mr_commit === 'departure' ? p0.dayStart + (v.arrive - v.drive) * 60000 < atMs : false;
-          const before = st.route.filter(v => p0.dayStart + v.start * 60000 < atMs || leftBy(v))
-            .map(v => ({ n: v.n, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor }));
+            cfg.mr_commit === 'departure' ? p0.dayStart + (v.arrive - v.drive) * 60000 < seenMs : false;
+          const slotMsN = SLOT * 60000, nowSlotMs = Math.round(askMs / slotMsN) * slotMsN;
+          let before: From['visits'] = st.route.filter(v => p0.dayStart + v.start * 60000 < seenMs || leftBy(v))
+            .map(v => ({ n: v.n, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor, ...(v.len ? { len: v.len } : {}) }));
+          let atMs = askMs, hereInfo: any = null;
+          if (here && (lateMs || hereN != null || stayMin)) {
+            const endOf = (v: From['visits'][number]) => v.startMs + (v.len ?? Math.ceil(nodes[v.n].dur / SLOT)) * slotMsN;
+            if (hereN != null) {
+              // At a named place: visits that had ended by now stay; one under way or left for elsewhere is let go.
+              before = before.filter(v => v.anchor || v.n === hereN || endOf(v) <= askMs);
+              const cur = before.length && before[before.length - 1].n === hereN && !before[before.length - 1].anchor ? before[before.length - 1] : null;
+              const leaveMs = nowSlotMs + Math.max(stayMin, cur ? 0 : SLOT) * 60000;
+              if (cur) { if (stayMin || endOf(cur) < leaveMs) cur.len = Math.max(1, Math.round((Math.max(leaveMs, stayMin ? 0 : endOf(cur)) - cur.startMs) / slotMsN)); }
+              else before.push({ n: hereN, startMs: nowSlotMs, drive: 0, anchor: false, len: Math.max(1, Math.round((leaveMs - nowSlotMs) / slotMsN)) });
+              atMs = Math.max(askMs, endOf(before[before.length - 1]));
+            } else {
+              const last = before.length ? before[before.length - 1] : null;
+              if (last && !last.anchor && endOf(last) > seenMs) {
+                // Under way (or left for) on the plan's clock: it ends late by that much, or when he says he leaves.
+                const endMs = stayMin ? nowSlotMs + stayMin * 60000 : endOf(last) + lateMs;
+                const startMs = Math.max(last.startMs, Math.min(last.startMs + lateMs, endMs - slotMsN));
+                last.len = Math.max(1, Math.round((endMs - startMs) / slotMsN)); last.startMs = startMs;
+                atMs = Math.max(askMs, endMs);
+              } else if (stayMin) atMs = nowSlotMs + stayMin * 60000;  // between stops: free that many minutes from now
+            }
+            hereInfo = { ...(hereN != null ? { at: nodes[hereN].name } : {}), ...(lateMs ? { late_min: lateMs / 60000 } : {}), ...(stayMin ? { stay_min: stayMin } : {}), free_at: new Date(atMs).toISOString() };
+          }
           let l = list, pn: DayPlan | null = null, sn: State | null = null;
           for (;;) {
             pn = planDay({ ...days[0], light: false }, nSc, true, undefined, l.flatMap(mustOf), skip, { visits: before, atMs });
@@ -1879,8 +2200,10 @@ Deno.serve(async (req) => {
           const show = (p: DayPlan, s: State) => s.route.filter(v => nodes[v.n].w > 0)
             .map(v => nodes[v.n].name + ' ' + new Date(p.dayStart + v.start * 60000).toISOString().slice(11, 16));
           const was = show(p0, st);
-          const nd: any = { asked_at: new Date(atMs).toISOString(), hidden: (tt as any)?.a ?? (tt as any)?.old ?? null, majority: (tt as any)?.a ?? null,
+          // (tt.phil: Phil's own word on the peaks this hour, which t_truth puts above the cameras.)
+          const nd: any = { asked_at: new Date(askMs).toISOString(), hidden: (tt as any)?.a ?? (tt as any)?.old ?? null, majority: (tt as any)?.a ?? null,
                             cams: (tt as any)?.cams ?? null, cams_hidden: (tt as any)?.cams_hidden ?? null, airport: (tt as any)?.airport ?? null,
+                            ...((tt as any)?.phil != null ? { phil: (tt as any).phil } : {}), ...(hereInfo ? { here: hereInfo } : {}),
                             kept: before.length, was, ...(gain != null ? { polish: gain } : {}) };
           if (sn && pn) {
             const now = show(pn, sn);
@@ -1888,7 +2211,9 @@ Deno.serve(async (req) => {
             p0 = pn; st = sn; list = l;
           } else nd.error = 'no route from now: the plan stands';
           const mr = { ...(today?.mr ?? {}), now: nd };
-          await publish('now', p0, st, { mr }, atMs);
+          // dry (v100, tests): the answer only; nothing is published or saved.
+          if (body.dry) { nowOut = { ...nd, dry: true, visits: visitsOf(p0, st).map((v: any) => ({ name: v.name, stop_id: v.stop_id, booked: v.booked, start: v.start, end: v.end, drive_min: v.drive_min })) }; return null; }
+          await publish('now', p0, st, { mr }, askMs);
           await saveToday(p0, st, list, 'now', mr);
           nowOut = nd;
           return null;
@@ -2451,7 +2776,7 @@ Deno.serve(async (req) => {
       if (kind === 'fm1' || kind === 'mc1' || kind === 'mr1' || kind === 'mrmc') {
         const cs = await coverPlan();
         if (body.now) {
-          await db.from('planner_t_now').update({ status: nowOut?.error ? 'error' : 'done', done_at: new Date().toISOString(), result: nowOut ?? null,
+          if (!body.dry) await db.from('planner_t_now').update({ status: nowOut?.error ? 'error' : 'done', done_at: new Date().toISOString(), result: nowOut ?? null,
                                                   note: nowOut?.error ?? null }).eq('id', body.req_id);
           return json({ ok: true, now: nowOut, run_id: runId, kind, night: n });
         }
@@ -2532,6 +2857,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     const msg = String((e as any)?.message ?? e);
     // Re-plan now: an error marks the request only, never the run.
+    if (dryReq) return json({ ok: false, error: msg }, 500);
     if (nowReqId != null) { await db.from('planner_t_now').update({ status: 'error', note: msg.slice(0, 300), done_at: new Date().toISOString() }).eq('id', nowReqId); return json({ ok: false, error: msg }, 500); }
     if (runId != null) await db.from('replay_run_state').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('run_id', runId).eq('kind', kindOf);
     else if (dayId != null) await db.from('replay_days').update({ status: 'error', note: msg.slice(0, 300), updated_at: new Date().toISOString() }).eq('id', dayId);

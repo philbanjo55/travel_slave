@@ -11,6 +11,10 @@
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? 'placeholder';
 const PORT = 8000; // Deno.serve's default port (index.ts calls Deno.serve itself)
+// TARGET_URL (11 Nov 2026, Tell T test gap 3): send the steps to a deployed copy of the function instead of the
+// local server, so the edge 2 s CPU limit applies to code that is not live yet. Such a worker takes only runs with
+// run config edge: true; the plain local worker leaves those alone.
+const TARGET = Deno.env.get('TARGET_URL') ?? '';
 const SLOTS = Number(Deno.env.get('LOCAL_SLOTS') ?? 6);
 const H = { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' };
 
@@ -29,22 +33,22 @@ async function poll() {
     await rest('replay_run_state?status=eq.planning&select=run_id,kind,started_at');
   if (!rows.length) return;
   const ids = [...new Set(rows.map(r => r.run_id))];
-  const runs: { id: number; local: string | null }[] = await rest(`replay_runs?id=in.(${ids.join(',')})&select=id,local:config->>local`);
-  const local = new Set(runs.filter(r => r.local === 'true').map(r => r.id));
+  const runs: { id: number; local: string | null; edge: string | null }[] = await rest(`replay_runs?id=in.(${ids.join(',')})&select=id,local:config->>local,edge:config->>edge`);
+  const local = new Set(runs.filter(r => r.local === 'true' && (r.edge === 'true') === !!TARGET).map(r => r.id));
   for (const r of rows) {
     if (!local.has(r.run_id)) continue;
     const key = `${r.run_id}/${r.kind}/${r.started_at}`;
     if (inflight.has(key) || inflight.size >= SLOTS) continue;
     inflight.set(key, Date.now());
     const t0 = performance.now();
-    fetch(`http://127.0.0.1:${PORT}/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run_id: r.run_id, kind: r.kind }) })
+    fetch(TARGET || `http://127.0.0.1:${PORT}/`, { method: 'POST', headers: TARGET ? H : { 'Content-Type': 'application/json' }, body: JSON.stringify({ run_id: r.run_id, kind: r.kind }) })
       .then(async res => { const b = await res.text(); if (!res.ok) { failed++; log('fail', key, res.status, b.slice(0, 200)); } else done++; })
       .catch(e => { failed++; log('fail', key, String(e).slice(0, 200)); })
       .finally(() => { inflight.delete(key); if ((done + failed) % 25 === 0) log(`done ${done} failed ${failed} last ${Math.round(performance.now() - t0)} ms`); });
   }
 }
 
-const server = new Deno.Command(Deno.execPath(), {
+const server = TARGET ? { pid: 0 } : new Deno.Command(Deno.execPath(), {
   args: ['run', '-A', '--no-lock', '--node-modules-dir=none', new URL('../../supabase/functions/solver-replay/index.ts', import.meta.url).pathname],
   env: { SUPABASE_URL: URL_, SUPABASE_SERVICE_ROLE_KEY: KEY }, stdout: 'inherit', stderr: 'inherit',
 }).spawn();
