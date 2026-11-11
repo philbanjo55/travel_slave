@@ -15,6 +15,7 @@ places = {}
 for r in rows: places.setdefault(r['name'], []).append(r['id'])
 names = sorted(places)
 runs = q(f"select id, start_date s, trip_dates td, config->'gear' gear from replay_runs where config->>'name'='{base}' and trip_id='{trip}' order by start_date")
+if os.environ.get('EVERY'): runs = runs[::int(os.environ['EVERY'])]   # EVERY=4: every 4th base run
 hhmm = lambda m: f'{m // 60:02d}:{m % 60:02d}'
 
 def rule(rnd, days, gear, used):
@@ -55,5 +56,6 @@ for r in runs:
     while len(notes) < 5:
         x = rule(rnd, r['td'], r['gear'], used)
         if x: notes.append(x)
-    cfg = json.dumps({'name': new, 'local': True, 'notes': notes}).replace("'", "''")
+    if os.environ.get('NO_NOTES'): notes = []   # NO_NOTES=1: the same runs without notes (a control)
+    cfg = json.dumps({'name': new, 'local': True, 'notes': notes, **json.loads(os.environ.get('EXTRA', '{}'))}).replace("'", "''")
     print(f"insert into public.replay_runs (trip_id, start_date, trip_dates, nights, config, status) select trip_id, start_date, trip_dates, nights, config || '{cfg}'::jsonb, 'queued' from public.replay_runs r where r.id = {r['id']} and not exists (select 1 from public.replay_runs x where x.config->>'name' = '{new}' and x.start_date = r.start_date and x.trip_id = r.trip_id);")
