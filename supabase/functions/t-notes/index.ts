@@ -91,6 +91,10 @@ Deno.serve(async (req) => {
     if (body.action === 'save' || body.action === 'clear') {
       const { data: row } = await db.from('t_notes').select('*').eq('id', body.id).maybeSingle();
       if (!row) return json({ ok: false, error: 'note not found' }, 404);
+      if (!TEST && body.action === 'save') {
+        const { data: tell } = await db.rpc('planner_t_tell', { p_trip: row.trip_id });
+        if (tell !== true) return json({ ok: false, error: 'Notes for T are not switched on for this trip yet.' }, 403);
+      }
       if (body.action === 'save') {
         if (row.status !== 'draft') return json({ ok: false, error: row.status === 'active' || row.status === 'done' ? 'already saved' : 'this note is not ready to save' }, 400);
         const nRules = (row.rules ?? []).length, now = (row.now ?? null) as NowWord | null, recap = ((row.recap ?? []) as Recap[]);
@@ -135,6 +139,11 @@ Deno.serve(async (req) => {
       return json({ ok: true, replan: await replan(row.trip_id, row.from_date, row.to_date) });
     }
     if (body.action !== 'read' && body.action !== 'quick') return json({ ok: false, error: 'unknown action' }, 400);
+    // Nothing is stored for a trip where notes are not switched on (planner_t_tell). A dry read (tests) stores nothing.
+    if (!TEST && !(body.action === 'read' && body.dry)) {
+      const { data: tell } = await db.rpc('planner_t_tell', { p_trip: String(body.trip_id ?? '') });
+      if (tell !== true) return json({ ok: false, error: 'Notes for T are not switched on for this trip yet.' }, 403);
+    }
     const asOf = body.as_of ? new Date(body.as_of) : new Date();
     const ctx = await tripCtx(db, String(body.trip_id ?? ''), asOf);
     if (!ctx) return json({ ok: false, error: 'trip not found' }, 404);
@@ -210,7 +219,7 @@ Deno.serve(async (req) => {
           // The comparison covers the days after today; a change that also touches today is said, not hidden.
           if (c.status !== 'none' && ifRules.some((r: any) => (r.dates ?? [r.from_date]).some((d: string) => d <= ctx.today))) lines.push('Today\'s own plan would change too: T re-plans today when you send it as a note.');
         }
-      } else if (!body.dry) lines.push(...await askT(db, ctx, out.question));
+      } else lines.push(...await askT(db, ctx, out.question));   // read-only, so a dry read answers too
       answer = { ...out.question, lines, ...(ifRules.length ? { if_rules: ifRules, if_say: sayLines(ctx, ifRules) } : {}) };
     }
     const say = [...sayLines(ctx, out.rules), ...nowLines(out.now ?? null), ...recapLines(out.recap ?? [])];
