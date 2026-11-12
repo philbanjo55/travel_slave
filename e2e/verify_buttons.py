@@ -99,7 +99,7 @@ def cut_off(label, s=None, strict=True):
     meant to run off."""
     s = s or C.capture(1)
     top, nav, w, h = bars(s)
-    bad, side, seen = [], [], set()
+    bad, side, seen, edge = [], [], set(), []
     count = [0]
 
     def walk(n, sideways):
@@ -121,13 +121,19 @@ def cut_off(label, s=None, strict=True):
                 at_left, at_right = x1 <= 0, x2 >= w
                 if not sideways and (at_left != at_right) and (x2 - x1) < 0.9 * w and ('side', key) not in seen:
                     seen.add(('side', key))
-                    side.append(f"{name!r} x {x1}-{x2} (runs off the {'left' if at_left else 'right'} side)")
+                    edge.append((name, x1, y1, x2, y2, at_left))
         for c in list(n):
             walk(c, sideways)
 
     if s.root is not None:
         for c in list(s.root):
             walk(c, False)
+    # A control at one edge whose row has a twin of the same size at the other edge is a row of equal boxes filling the
+    # width (a tab bar, two chips side by side): flush by design, with its text inside. Anything else is reported.
+    for name, x1, y1, x2, y2, at_left in edge:
+        twin = any(abs(o[2] - y1) <= 6 and abs(o[4] - y2) <= 6 and o[5] != at_left and abs((o[3] - o[1]) - (x2 - x1)) <= 12 for o in edge)
+        if not twin:
+            side.append(f"{name!r} x {x1}-{x2} (runs off the {'left' if at_left else 'right'} side)")
     detail = f'bars: status to {top}, buttons from {nav} of {h}; {count[0]} controls read'
     if nav >= h:
         V.check(f'cut-{label}', None, 'could not find where the navigation buttons start')
@@ -321,7 +327,12 @@ def plan_check_card():
     V.check('plan-check-checks-link', w is not None)
     if w is not None:
         w = mid_screen(w, 'What was checked')
-        V.tap_text(w, 'What was checked')
+        # The link itself: the card around it is also a button whose label holds the same words, and it comes first.
+        link = next((c for c in w.clickables if c['label'].startswith('What was checked')), None)
+        if link is not None:
+            C.tap(link['xy'])
+        else:
+            V.tap_text(w, 'What was checked')
         time.sleep(1.5)
         seen2, _ = V.texts_all(3)
         ok = seen_has(seen2, 'Weather warnings') or seen_has(seen2, 'Avalanche') or seen_has(seen2, 'Hide what was checked')
