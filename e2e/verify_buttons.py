@@ -102,6 +102,10 @@ def replan_now_card():
     if open_live() is None or open_today() is None:
         return
     s = scroll_find('Re-plan now with the cameras')
+    if s is None:
+        scroll_top()
+        if scroll_find("Today's stops are done") is not None:
+            V.check('btn-replan-now-on-card', None, "today's stops are over: the card rightly has no Re-plan now"); return
     V.check('btn-replan-now-on-card', s is not None, "today's card on the trip page")
     if s is None:
         seen, _ = V.texts_all(6)
@@ -189,6 +193,10 @@ def today_auto_open():
     V.show('today-open', s)
     V.check('today-badge', V.has(s, 'TODAY'), "today's tab marked")
     r = scroll_find('Re-plan now with the cameras')
+    if r is None:
+        scroll_top()
+        # In the evening (after today's last stop) the card says the day is done and has no Re-plan now.
+        r = scroll_find("Today's stops are done")
     V.check('today-auto-open', r is not None, "opened on today's card without tapping a tab")
     V.check('today-alive', C.app_alive())
 
