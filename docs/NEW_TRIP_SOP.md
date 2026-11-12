@@ -72,6 +72,17 @@ For each photo stop:
 
 Triggers build each terrain profile (~180 KB each) and the skyline cache. Phil can move pins and add or link shots in the app's sun editor.
 
+## 4b. 3D terrain for the trip (TEST app's 3D sun view): after the shots exist
+
+One script does it: `tools/sun3d/build_trip_terrain.py` (details in `tools/sun3d/README.md`).
+
+1. Run it: `TRIP_Q=<read-only SQL helper> python3 tools/sun3d/build_trip_terrain.py build <work dir> --region <short_name> --prefix <2-3 letters> --trip <trip id> --ground snow|green`.
+   It reads the trip's stops and shots, picks the source (ArcticDEM north of 60 N, terrarium tiles elsewhere), builds or fetches the wide file, groups the stand spots into fine boxes and builds those. `plan` instead of `build` only lists the boxes. Subjects are peaks far away (Tetons)? add `--close-km 3`.
+2. Read the DATA CHECK it prints before trusting anything: the file against the stops' stored heights, against Copernicus (land level, and sea along a coast must read about 0), and against the airports. PASS is fine. On FAIL it stops: try `--source` the other way, and do not `--force` unless you know why the numbers are off (the old Faroes file: land +57 m, 38% of coastal sea at 0).
+3. Upload the files listed in `<work dir>/upload.txt` to Storage bucket `terrain` (same names).
+4. Apply `<work dir>/terrain_<region>.sql` as a migration (upload first: the app fetches a file as soon as its row exists).
+5. Look at two stops in the TEST app (Sun & Moon -> 3D): one close subject, one wide view. The line under the view says how many of the trip's areas are saved on the phone. Opening the trip once with signal saves them all.
+
 ## 5. Solver (Claude suggests, Phil confirms)
 
 - **`solver_stop_settings`** for every photo stop: `tier` (GOD / S / A / B / C), `light_wanted` (front / side / back / soft), `fog_wanted`, `time_locked`, `source = 'suggested'`. When Phil confirms or changes a stop, set `source = 'phil'`.

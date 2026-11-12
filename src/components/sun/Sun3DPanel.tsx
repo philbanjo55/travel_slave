@@ -4,7 +4,7 @@ import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
-import { nearFor, regionFor, terrainData, TerrainNear, TerrainRegion } from '../../services/terrain';
+import { nearFor, regionFor, terrainData, TerrainNear, TerrainRegion, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import type { Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
@@ -14,11 +14,12 @@ import { compassPoint } from './sunStyle';
 // terrain file is saved on the phone, so it works with no signal. The page
 // inside the web view is tools/sun3d/app_view.js (built into sun3dHtml.ts); it
 // does the drawing, this component feeds it the place, the sun and the lens.
-// Close shots (Faroes) also get a small fine grid around the stand spot and the
-// subject, when one is listed; the page draws it inside the wide one.
+// Where a fine grid is listed around the stand spot (Faroes close-ups, Teton
+// foregrounds) the shot gets that too; the page draws it inside the wide one.
 
 type Props = {
   pair: Pair;
+  tripId?: string | null;      // for the "terrain saved for this trip" line
   sun: SkyPos;                 // from the section's own sun engine, at the slider's time
   day0: number;                // start of the stop's local day, ms
   height?: number;             // inline height; ignored when full
@@ -35,7 +36,7 @@ type Moments = { firstSubject: number | null; lastSubject: number | null; firstH
 const LENSES = [24, 50, 100];
 const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
 
-export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump, onFull }: Props) {
+export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full, onJump, onFull }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -51,11 +52,12 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
   const sent = useRef(false);
   const loaded = useRef<string | null>(null);   // the files the page holds: "<region>|<fine box or nothing>"
   const ready = phase === 'ready';
+  const savedLine = tripTerrainLine(useTripTerrain(tripId));
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
 
-  // Which terrain files this shot needs (the wide one for the stand spot, plus a fine box that holds
-  // both the stand spot and the subject), then the files themselves (from the phone when saved).
+  // Which terrain files this shot needs (the wide one for the stand spot, plus a fine box around the
+  // stand spot when there is one), then the files themselves (from the phone when saved).
   const vLat = pair.v.lat, vLng = pair.v.lng, sLat = pair.s.lat, sLng = pair.s.lng;
   useEffect(() => {
     let alive = true;
@@ -69,7 +71,9 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
       setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setLit(null); setMoments(null);
       if (!r) { setPhase('none'); return; }
       setPhase('loading');
-      const [d, nd] = await Promise.all([terrainData(r), nr ? terrainData(nr) : Promise.resolve(null)]);
+      // The fine file is an extra: with a weak signal it gets 10 s, then the wide grid draws alone (the download carries on).
+      const fine = nr ? Promise.race([terrainData(nr), new Promise<null>(res => setTimeout(() => res(null), 10000))]) : Promise.resolve(null);
+      const [d, nd] = await Promise.all([terrainData(r), fine]);
       if (!alive) return;
       if (!d) { setPhase('failed'); return; }
       // No fine file (no signal the first time): the wide grid alone still draws, and the next shot tries again.
@@ -217,6 +221,7 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
         </View>
       )}
       {ready ? <Text style={styles.note}>Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes. Elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.</Text> : null}
+      {savedLine ? <Text style={styles.note} accessibilityLabel={savedLine}>{savedLine}</Text> : null}
     </View>
   );
 }

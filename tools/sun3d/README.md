@@ -48,7 +48,8 @@ trees and water stay). It works; see CLAUDE.md for what was found.
   - a close subject on the fine grid is looked at directly (up or down), not at a fixed slight upward tilt.
   With no `near` the page draws exactly what it did before (Teton check: 0 of 540,000 pixels differ).
 - Tables: `terrain_regions` (wide, one per area) and `terrain_near_regions` (fine boxes, `parent` = region).
-  `src/services/terrain.ts` `nearFor` picks the smallest box that holds both the stand spot and the subject.
+  `src/services/terrain.ts` `nearFor` picks the smallest box that holds the stand spot, first those that also
+  hold the subject; with the subject outside the box the view is aimed and the subject's sun read as on the wide grid.
 - `build_dem_arctic.py <work dir> <out.png> <north> <south> <west> <east> [n] [res]`: elevation from the
   ArcticDEM v4.1 mosaics (Polar Geospatial Center, CC-BY-4.0, north of 60 N), read in blocks straight from the
   public bucket. Use it instead of `build_dem.py` in the Faroes: the terrarium tiles there carry heights above
@@ -60,6 +61,40 @@ trees and water stay). It works; see CLAUDE.md for what was found.
   and buildings are not in it, lakes draw as grass, and the source is a smooth surface model: Stóri Drangur is
   a 50 m cone (really 70 m with an arch), Lítli Drangur a shoulder of the headland. A pin 100 m off now
   matters: the Kallur stand pin sits on the west cliff face in this data.
+
+## Terrain for any trip: `build_trip_terrain.py` (12 Nov 2026)
+
+`TRIP_Q=<read-only SQL helper> python3 tools/sun3d/build_trip_terrain.py build <work dir> --region <id> --prefix <xx> --trip <uuid>`
+(or `--pins pins.json`; `--trip` saves that file in the work dir, so a rerun needs no database). In order: pins,
+source (ArcticDEM when the whole area is north of 60 N, else terrarium), the wide file (the listed region's own file,
+or a new 2048 grid over all pins), the DATA CHECK (a FAIL stops the run), fine boxes around the stand spots, a check
+of every box (also against the wide file: the page blends the two), then `terrain_<region>.sql` and `upload.txt`.
+`plan` lists the boxes without building; `check <file> <north> <south> <west> <east> [--base m] --pins ...` checks any file.
+
+Fine boxes: every stand spot gets `--pad` metres of ground (2000) where it fits, a subject within `--close-km` (6)
+stays in the same box, boxes merge while under `--near-max-km` (8) a side. The app picks, per shot, the smallest box
+that holds the stand spot (first those that also hold the subject), `terrain.ts` `nearFor`. The Faroes boxes were
+picked by hand before this script existed (`build_faroes.sh`); `plan` on the Faroes trip gives 15 similar ones.
+
+The data check, on the three files we have (12 Nov 2026):
+
+| File | Stops' stored heights | Land vs Copernicus | Sea along the coast | Airport | Verdict |
+|---|---|---|---|---|---|
+| Teton wide (terrarium z12) | +1.0 m, 100% within 25 m | -0.9 m | no coast | KJAC -4 m | PASS |
+| Faroes wide, old terrarium z12 | +51.3 m, 24% within 25 m | +57.1 m | 38% within 2 m of 0 | EKVG +51 m | FAIL |
+| Faroes wide, ArcticDEM | +0.0 m, 98% within 25 m | +0.3 m | 100% within 2 m of 0 | EKVG -6 m | PASS |
+
+Grand Teton fine boxes (8, terrarium zoom 14, about 6 m a point, 1.45 MB, migration `20261112090000`): the foreground
+gain is small. Looked at 24 and 50 mm, before / after: Snake River Overlook and Oxbow Bend show the bench edge and
+the drop to the river as crisper shapes; the Moulton barn flats look the same. The river itself does not show: in
+winter colours water, snow and flats are all white, and the file has no water mask (flat-ground detection on
+half-metre heights marks the sloping flats in stripes: tried, not usable). A water mask in the file is the next
+step if the foreground matters.
+
+Saved ahead (TEST app): when a trip's sun plan loads (every trip open or sync), `terrain.ts` `saveTripTerrain`
+fetches every wide file and fine box the trip's stand spots need, one at a time in the background, and the 3D panel
+shows "3D terrain saved for this trip: 9 of 9 areas". With no signal the saved lists still choose the files; a
+missing fine box means the wide grid draws alone. Grand Teton: 3.7 MB (9 areas), Faroes: 6.3 MB (12 areas).
 
 ## How accurate the sun times are (measured 12 Nov 2026)
 

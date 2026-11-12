@@ -8,6 +8,8 @@
 // Two levels (Faroes close-ups): the wide grid (far) draws everything; where a near grid is given, the far mesh is cut
 // out inside it and a second, finer mesh is drawn there (denser around the shot), lit from its own heights, with
 // shadows that carry on into the far grid beyond its edge. The point checks use the finer grid where it holds the pin.
+// The subject may sit outside the near box (Tetons: a sharp foreground around the stand spot, the peak 10-25 km off on
+// the far grid): the view is aimed as on the far grid alone and the subject's sun is read from the far grid.
 // Built into src/components/sun/sun3dHtml.ts by tools/sun3d/build_app_html.js. Do not edit the generated file.
 (function () {
   const post = m => { try { window.ReactNativeWebView.postMessage(JSON.stringify(m)); } catch (e) { /* not in the app */ } };
@@ -84,7 +86,7 @@
     precision highp float;
     uniform sampler2D hmap; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec2 size; uniform float texel; uniform float snowMode; uniform float maxH; uniform float baseH;
     #ifdef NEAR
-    uniform sampler2D fmap; uniform vec4 rect; uniform vec2 fsize; uniform float step0;
+    uniform sampler2D fmap; uniform vec4 rect; uniform vec2 fsize; uniform float step0; uniform float fcells;
     #endif
     varying vec2 vUv;
     float H(vec2 uv) { vec2 t = texture2D(hmap, uv).rg; return t.r + t.g; }
@@ -97,7 +99,12 @@
       vec3 n = normalize(vec3(-hx, 1., -hz));
       float slope = degrees(acos(n.y));
       vec2 g = vUv / texel;
-      float fine = hash(floor(g)), pch = vnoise(g / 9.) * .6 + vnoise(g / 2.5) * .4;
+    #ifdef NEAR
+      vec2 gp = (rect.xy + vUv * rect.zw) / fsize * fcells;   // patches follow the far grid's cells, so tints and tree patches run on across the box edge
+    #else
+      vec2 gp = g;
+    #endif
+      float fine = hash(floor(g)), pch = vnoise(gp / 9.) * .6 + vnoise(gp / 2.5) * .4;
       vec3 alb;
       if (snowMode > .5) {
         float rock = smoothstep(37., 53., slope + fine * 7.);
@@ -260,7 +267,7 @@
     let near = null;
     if (NR) {
       const nmap = heightTex(NR), rect = new THREE.Vector4(NR.x0, NR.z0, NR.w, NR.d);
-      const nLight = new THREE.ShaderMaterial({ defines: { NEAR: 1 }, uniforms: { hmap: { value: nmap }, fmap: { value: hmap }, rect: { value: rect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(NR.dx, NR.dz) }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(NR.w, NR.d) }, texel: { value: 1 / NR.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
+      const nLight = new THREE.ShaderMaterial({ defines: { NEAR: 1 }, uniforms: { hmap: { value: nmap }, fmap: { value: hmap }, rect: { value: rect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(NR.dx, NR.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(NR.w, NR.d) }, texel: { value: 1 / NR.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
       // the same triangles as the far mesh; the outer ring of points is the skirt (y = 1), the next ring is the box edge
       const np = new Float32Array(G * G * 3), sk = i => (i === 0 || i === G - 1 ? 1 : 0), at = i => Math.max(0, Math.min(1, (i - 1) / (G - 3)));
       for (let j = 0, k = 0; j < G; j++) for (let i = 0; i < G; i++) { np[k++] = at(i); np[k++] = sk(i) || sk(j); np[k++] = at(j); }
@@ -326,8 +333,8 @@
       const top = dist > 3000 ? Math.atan2(snap(t, t.g === NR ? 6 : 4).h - up, dist) : 0.04;
       pitch = Math.max(0.01, top * 0.45);
     } else pitch = Math.max(-0.6, Math.min(0.6, Math.atan2(gh(t.g, t.c, t.r) + 6 - up, Math.max(dist, 20))));   // a close subject on the fine grid: look straight at it, up or down
-    if (R && R.near) {   // the near mesh is densest a little past the middle of the shot
-      const p = crg(NR, eye), q = crg(NR, target), k = 0.6;
+    if (R && R.near) {   // the near mesh is densest a little past the middle of the shot; with the subject outside the box (a far peak), around the feet and a little ahead
+      const p = crg(NR, eye), q = crg(NR, target), k = t.g === NR ? 0.6 : Math.min(0.6, 250 / Math.max(dist, 1));
       R.near.mat.uniforms.focus.value.set(Math.max(0, Math.min(1, (p.c + (q.c - p.c) * k + 0.5) / NR.n)), Math.max(0, Math.min(1, (p.r + (q.r - p.r) * k + 0.5) / NR.n)));
     }
   }

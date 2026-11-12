@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from './supabase';
+import { IS_TEST_APP } from '../utils/variant';
 
 // Elevation files for the 3D sun view (TEST app). One file per area, listed in
 // public.terrain_regions and kept in the public Storage bucket `terrain`. The
@@ -8,8 +10,12 @@ import { supabase } from './supabase';
 //
 // Two levels: a region is the wide grid (about 30 m a point). Where shots are
 // close to their subject (the Faroes), public.terrain_near_regions lists small
-// fine boxes (about 4 m a point) inside a region; a shot whose stand spot and
-// subject both sit in one gets that file too, and the page draws both.
+// fine boxes (4-7 m a point) inside a region; a shot whose stand spot sits in
+// one gets that file too, and the page draws both.
+//
+// Saved ahead (TEST app): whenever a trip's sun plan loads, saveTripTerrain
+// fetches every file that trip's stand spots need, one at a time in the
+// background, so a stop never opened at home still has its 3D view in the field.
 
 export type TerrainRegion = {
   id: string;
@@ -97,36 +103,67 @@ export async function regionFor(p: { lat: number; lng: number }): Promise<Terrai
   return all.find(r => inRegion(r, p)) ?? null;
 }
 
-// The smallest fine box inside this region that holds both the stand spot and the subject, or null.
+// The fine box for a shot: the smallest one inside this region that holds the stand spot, taking first the ones
+// that hold the subject too (Faroes close-ups: both on the fine grid; Tetons: a sharp foreground, the peak far off).
+// A box whose edge is right by the stand spot is no use (the page draws the wide grid along the edge), so it is skipped.
 export async function nearFor(region: TerrainRegion, stand: Point, subject: Point): Promise<TerrainNear | null> {
-  const all = await loadNear();
-  let best: TerrainNear | null = null, bestArea = Infinity;
+  return pickNear(await loadNear(), region, stand, subject);
+}
+function pickNear(all: TerrainNear[], region: TerrainRegion, stand: Point, subject: Point): TerrainNear | null {
+  const edge = 4.2 * Math.max(region.width_m, region.depth_m) / 767 + 30;   // metres; the page's blend strip (tools/sun3d/app_view.js)
+  const kx = 111320 * Math.cos(stand.lat * Math.PI / 180), kz = 111132;
+  let best: TerrainNear | null = null, bestBoth = false, bestArea = Infinity;
   for (const r of all) {
-    if (r.parent !== region.id || !inRegion(r, stand) || !inRegion(r, subject)) continue;
-    const area = (r.north - r.south) * (r.east - r.west);
-    if (area < bestArea) { best = r; bestArea = area; }
+    if (r.parent !== region.id || !inRegion(r, stand)) continue;
+    const inside = Math.min((r.north - stand.lat) * kz, (stand.lat - r.south) * kz, (stand.lng - r.west) * kx, (r.east - stand.lng) * kx);
+    if (inside < edge) continue;
+    const both = inRegion(r, subject), area = (r.north - r.south) * (r.east - r.west);
+    if ((both && !bestBoth) || (both === bestBoth && area < bestArea)) { best = r; bestBoth = both; bestArea = area; }
   }
   return best;
 }
 
-// The elevation file of a region or a fine box as base64, from the phone when it is already saved.
-export function terrainData(r: { id: string; path: string; bytes: number | null }): Promise<string | null> {
-  if (data[r.id]) return Promise.resolve(data[r.id]);
-  const running = inflight[r.id];
+type TerrainFile = { id: string; path: string; bytes: number | null };
+const fileFor = (r: TerrainFile) => `${DIR}terrain_${r.id}_${r.bytes ?? 0}.png`;
+const fetching: Record<string, Promise<boolean> | undefined> = {};
+
+async function onPhone(r: TerrainFile): Promise<boolean> {
+  try { const info = await FileSystem.getInfoAsync(fileFor(r)); return info.exists && !!(info as any).size; } catch { return false; }
+}
+
+// Makes sure the file is on the phone (downloads it when it is not). Never throws; false = not there and no signal.
+function saveFile(r: TerrainFile): Promise<boolean> {
+  const file = fileFor(r), running = fetching[file];
   if (running) return running;
-  const file = `${DIR}terrain_${r.id}_${r.bytes ?? 0}.png`;
   const job = (async () => {
     try {
       await ensureDir();
-      const info = await FileSystem.getInfoAsync(file);
-      if (!info.exists || !(info as any).size) {
-        const tmp = `${file}.tmp`;
-        const res = await FileSystem.downloadAsync(FILES_URL + r.path, tmp);
-        if (res.status !== 200) { await FileSystem.deleteAsync(tmp, { idempotent: true }); return null; }
-        await FileSystem.deleteAsync(file, { idempotent: true });
-        await FileSystem.moveAsync({ from: tmp, to: file });
-      }
-      const b64 = await FileSystem.readAsStringAsync(file, { encoding: 'base64' as any });
+      if (await onPhone(r)) return true;
+      const tmp = `${file}.tmp`;
+      const res = await FileSystem.downloadAsync(FILES_URL + r.path, tmp);
+      if (res.status !== 200) { await FileSystem.deleteAsync(tmp, { idempotent: true }); return false; }
+      await FileSystem.deleteAsync(file, { idempotent: true });
+      await FileSystem.moveAsync({ from: tmp, to: file });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      fetching[file] = undefined;
+    }
+  })();
+  fetching[file] = job;
+  return job;
+}
+
+// The elevation file of a region or a fine box as base64, from the phone when it is already saved.
+export function terrainData(r: TerrainFile): Promise<string | null> {
+  if (data[r.id]) return Promise.resolve(data[r.id]);
+  const running = inflight[r.id];
+  if (running) return running;
+  const job = (async () => {
+    try {
+      if (!(await saveFile(r))) return null;
+      const b64 = await FileSystem.readAsStringAsync(fileFor(r), { encoding: 'base64' as any });
       if (!b64) return null;
       data[r.id] = b64;
       return b64;
@@ -138,4 +175,83 @@ export function terrainData(r: { id: string; path: string; bytes: number | null 
   })();
   inflight[r.id] = job;
   return job;
+}
+
+// ---- Saved ahead for a whole trip ----
+
+// areas = the files the trip's stand spots need (wide regions + fine boxes); saved = how many are on the phone.
+export type TripTerrain = { areas: number; saved: number; bytes: number; busy: boolean };
+const tripState: Record<string, TripTerrain | undefined> = {};
+const tripRun: Record<string, { again: Shot[] | null } | undefined> = {};
+const tripListeners = new Set<(tripId: string) => void>();
+type Shot = { v: Point; s: Point };
+
+function setTrip(tripId: string, t: TripTerrain): void {
+  tripState[tripId] = t;
+  tripListeners.forEach(fn => fn(tripId));
+}
+
+// Every terrain file this trip's shots use, by the same choice the 3D panel makes. Works with no signal from the saved lists.
+async function tripFiles(shots: Shot[]): Promise<TerrainFile[]> {
+  const out = new Map<string, TerrainFile>();
+  const [all, allNear] = [await loadRegions(), await loadNear()];   // asked once, not per shot
+  for (const sh of shots) {
+    const r = all.find(x => inRegion(x, sh.v));
+    if (!r) continue;
+    out.set(`r:${r.id}`, r);
+    const nr = pickNear(allNear, r, sh.v, sh.s);
+    if (nr) out.set(`n:${nr.id}`, nr);
+  }
+  return [...out.values()];
+}
+
+// Called whenever a trip's sun plan is loaded or refreshed. TEST app only. Fetches what is missing, one file at a
+// time, in the background; returns at once, never throws, and never holds anything else up. A file that fails (no
+// signal) is simply tried again the next time the plan loads.
+export function saveTripTerrain(tripId: string, shots: Shot[]): void {
+  if (!IS_TEST_APP || !tripId) return;
+  const run = tripRun[tripId];
+  if (run) { run.again = shots; return; }   // one run per trip; the newest pins go next
+  const mine: { again: Shot[] | null } = { again: null };
+  tripRun[tripId] = mine;
+  (async () => {
+    try {
+      const files = await tripFiles(shots);
+      const bytes = files.reduce((n, f) => n + (f.bytes ?? 0), 0);
+      const have = await Promise.all(files.map(onPhone));
+      let saved = have.filter(Boolean).length;
+      setTrip(tripId, { areas: files.length, saved, bytes, busy: saved < files.length });
+      for (let i = 0; i < files.length; i++) {
+        if (have[i]) continue;
+        if (await saveFile(files[i])) { saved++; setTrip(tripId, { areas: files.length, saved, bytes, busy: true }); }
+      }
+      setTrip(tripId, { areas: files.length, saved, bytes, busy: false });
+    } catch {
+      const t = tripState[tripId];
+      if (t) setTrip(tripId, { ...t, busy: false });
+    } finally {
+      tripRun[tripId] = undefined;
+      if (mine.again) saveTripTerrain(tripId, mine.again);
+    }
+  })();
+}
+
+// For the 3D panel's status line: null until the trip's files have been counted.
+export function useTripTerrain(tripId: string | null | undefined): TripTerrain | null {
+  const [t, setT] = useState<TripTerrain | null>(tripId ? tripState[tripId] ?? null : null);
+  useEffect(() => {
+    if (!tripId) { setT(null); return; }
+    setT(tripState[tripId] ?? null);
+    const on = (id: string) => { if (id === tripId) setT(tripState[id] ?? null); };
+    tripListeners.add(on);
+    return () => { tripListeners.delete(on); };
+  }, [tripId]);
+  return t;
+}
+
+export function tripTerrainLine(t: TripTerrain | null): string | null {
+  if (!t || t.areas === 0) return null;
+  if (t.saved >= t.areas) return `3D terrain saved for this trip: ${t.saved} of ${t.areas} areas. Works with no signal.`;
+  const left = t.areas - t.saved;
+  return t.busy ? `Saving 3D terrain for this trip: ${t.saved} of ${t.areas} areas…` : `3D terrain: ${left} of ${t.areas} areas still to download (needs signal).`;
 }
