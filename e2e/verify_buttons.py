@@ -417,16 +417,30 @@ def sun_3d():
     """3D sun view on a stop page (12 Nov 2026): Sun & Moon -> 3D draws the terrain, shows first / last light, opens full screen."""
     if open_live() is None or open_today() is None:
         return
+    # Open a stop from the TIMELINE under the day card (its rows read "6:30 AM Taggart & Bradley Lakes"); the same
+    # names inside the card's two columns are not links (the first run tapped one of those and opened nothing).
+    names = ('Oxbow Bend', 'Taggart & Bradley Lakes', 'Snake River Overlook', 'Cunningham Cabin', 'Teton Point Turnout', 'Glacier View Turnout')
+    row = re.compile(r'^\d{1,2}:\d{2} [AP]M .*(' + '|'.join(re.escape(n) for n in names) + ')')
     stop = None
-    for name in ('Oxbow Bend', 'Taggart & Bradley Lakes', 'Snake River Overlook', 'Cunningham Cabin', 'Teton Point Turnout'):
-        s = scroll_find(name, 6)
-        if s is not None:
-            s = mid_screen(s, name)
-            if V.tap_text(s, name):
-                stop = name; break
-        scroll_top()
-    V.check('sun3d-stop-open', stop is not None, stop or "no stop with shots on today's list")
+    s = C.capture(1.0)
+    for _ in range(14):
+        hit = next((c for c in s.clickables if row.match(c['label'])), None)
+        if hit is not None:
+            h = 1920
+            if not (0.25 * h <= hit['xy'][1] <= 0.80 * h):
+                nudge_up(); s = C.capture(1.2)
+                hit = next((c for c in s.clickables if row.match(c['label'])), hit)
+            C.tap(hit['xy']); stop = hit['label']; break
+        C.swipe_up(); s = C.capture(1.0)
+    V.check('sun3d-stop-tap', stop is not None, stop or "no timeline row with a shot stop on today's list")
     if stop is None:
+        seen, _ = V.texts_all(6)
+        print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
+    t = C.capture(4)
+    V.show('sun3d-stop-page', t)
+    opened = not V.has(t, 'Open the Planner')   # the trip page's header icon is gone on a stop page
+    V.check('sun3d-stop-open', opened, 'stop page on screen' if opened else 'still on the trip page')
+    if not opened:
         return
     time.sleep(3)
     s = scroll_find('SUN & MOON', 14)
