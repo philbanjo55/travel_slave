@@ -12,12 +12,14 @@
 // shadows that carry on into the far grid beyond its edge. The point checks use the finer grid where it holds the pin.
 // The subject may sit outside the near box (Tetons: a sharp foreground around the stand spot, the peak 10-25 km off on
 // the far grid): the view is aimed as on the far grid alone and the subject's sun is read from the far grid.
-// Third level (real foreground, Grand Teton): a detail grid (0.5-1 m cells, the highest laser return per cell, so trees
-// and buildings are shapes) is drawn as one more mesh inside the near grid, or inside the far grid when the shot has no
-// near box. Its class mask (0 ground, 1 tree, 2 building, 3 water) colours it; its heights feed its own light pass
-// (shadows start in the detail grid and carry on into the coarser ones) and the point checks, so trees and barns cast
-// shadows and "you are in the sun" is right under trees. The coarser meshes are cut out under it. With no `detail` the
-// page draws exactly what it did before.
+// Third level (real foreground, Grand Teton): a detail grid (0.5-1 m cells from a laser survey: the bare ground with
+// the buildings on it) is drawn as one more mesh inside the near grid, or inside the far grid when the shot has no near
+// box; the coarser meshes are cut out under it. Its class mask (0 ground, 2 building, 3 water, 8+ = tree with its canopy
+// height) colours it and says where the trees are. Buildings are blocks with upright walls. Trees are NOT part of the
+// surface: they are drawn as a cloud of points you can see between, and they throw only a soft shadow. The sun checks
+// (in the sun / first and last light) use ground and buildings only, because the survey was flown in summer and cannot
+// tell a bare winter cottonwood from a spruce; `trees: true` in the state / moments messages says when the surveyed
+// trees would block the sun at the stand spot. With no `detail` the page draws exactly what it did before.
 // Built into src/components/sun/sun3dHtml.ts by tools/sun3d/build_app_html.js. Do not edit the generated file.
 (function () {
   const post = m => { try { window.ReactNativeWebView.postMessage(JSON.stringify(m)); } catch (e) { /* not in the app */ } };
@@ -47,7 +49,8 @@
   };
   // From a point toward the sun. On the detail grid the steps are short (trees, roofs) and the point sits `lift` m above
   // the survey's surface; past a grid's edge the walk carries on in the next coarser grid (g.up).
-  function vis(p, ux, uz, tanA) {
+  const treeH = (cc, rr) => { const n = DT.n, v = DT.kind ? DT.kind[Math.max(0, Math.min(n - 1, Math.round(rr))) * n + Math.max(0, Math.min(n - 1, Math.round(cc)))] : 0; return v >= 8 ? (v - 8) * 0.2 : 0; };
+  function vis(p, ux, uz, tanA, trees) {
     const fine = p.g === DT, lift = fine ? DT.lift : 3, K = fine ? 440 : 260;
     let g = p.g, c = p.c, r = p.r, L = fine ? 0.7 : g === NR ? 5 : 30, d = 0, v = 1;
     for (let k = 0; k < K; k++) {
@@ -58,7 +61,8 @@
         cc = c + ux * d / g.dx; rr = r + uz * d / g.dz;
       }
       if (cc < 0 || rr < 0 || cc > g.n - 1 || rr > g.n - 1 || hh > maxH) break;
-      const cl = hh - gh(g, cc, rr);
+      let cl = hh - gh(g, cc, rr);
+      if (trees && g === DT) cl -= treeH(cc, rr);   // only for the "trees may block the sun" note, never for the times
       if (cl <= 0) return 0;
       const s = cl / (d * 0.02); if (s < v) v = s;
       L = g === DT ? Math.min(L * 1.02, 2.5) : L * 1.03;
@@ -81,7 +85,9 @@
   // area's low ground). Scored on the picture events: high-point sunrise / sunset 9 of 12 inside the picture window
   // (was 2), ridge-blocked 4 of 4 at +2 min. The sun's top edge scored 10 of 12 but put ridge events +3.3 min late.
   const dipOf = h => 0.95 * Math.sqrt(Math.max(0, h - baseH) / 1000);
-  const lit = (p, az, alt) => { if (alt <= -dipOf(p.h)) return false; const v = sunVec(az, alt); return vis(p, v.hx, v.hz, v.tan) > 0; };
+  const lit = (p, az, alt, trees) => { if (alt <= -dipOf(p.h)) return false; const v = sunVec(az, alt); return vis(p, v.hx, v.hz, v.tan, trees) > 0; };
+  // the surveyed trees would hide a sun that ground and buildings let through (stand spot on the detail grid only)
+  const treesBlock = (p, az, alt) => !!(DT && p.g === DT && DT.kind && !lit(p, az, alt, true));
 
   const KEY = [
     [-18, [1, .5, .3], 0, [.030, .036, .060], [.010, .014, .035], [.030, .040, .080]], [-8, [1, .5, .3], 0, [.085, .105, .180], [.050, .075, .190], [.200, .190, .300]],
@@ -139,30 +145,35 @@
         if (h < .6) alb = vec3(.07, .16, .24);
       }
     #ifdef DETAIL
-      {   // the survey says what each cell is (r tree, g building, b water): no guessed forest here, rock only on open ground
-        vec4 kind = texture2D(kmap, vUv); float open = 1. - clamp((kind.r + kind.g + kind.b) * 3., 0., 1.);
-        vec3 tree, wood = vec3(.41, .31, .23) * (.82 + fine * .36), water;
+      float va = 0.;
+      {   // the survey says what each cell is (g building and the cells beside it, b water, a tree canopy height): no guessed forest, rock only on open ground
+        vec4 kind = texture2D(kmap, vUv); float open = 1. - clamp((kind.g + kind.b) * 3., 0., 1.);
+        vec3 wood = vec3(.41, .31, .23) * (.72 + fine * .26 + .34 * vnoise(g * vec2(.8, .22))), water;   // weathered boards, no two alike
+        float roof = 1. - smoothstep(48., 62., slope);
         if (snowMode > .5) {
           alb = mix(vec3(.93, .95, .98), vec3(.38, .36, .37) + fine * .06, smoothstep(37., 53., slope + fine * 7.) * open);
-          tree = (vec3(.085, .135, .105) + fine * .055) * (.7 + .6 * vnoise(g / 3.)); water = vec3(.11, .17, .22);
-          tree = mix(tree, vec3(.80, .84, .88), .4 * smoothstep(.5, .85, vnoise(g / 2.2 + 7.)) * smoothstep(.45, .9, n.y));   // snow caught on the boughs
-          wood = mix(wood, vec3(.90, .92, .95), .55 * (1. - smoothstep(20., 36., slope)));   // snow lies on the flatter roofs
+          water = vec3(.11, .17, .22);
+          wood = mix(wood, vec3(.90, .92, .95), roof * (.3 + .35 * (1. - smoothstep(20., 36., slope))));   // a roof is a touch lighter under snow, more so where it is flat
         } else {
           vec3 grass = mix(vec3(.25, .36, .16), vec3(.37, .38, .22), smoothstep(120., 620., h + pch * 160.));
           alb = mix(grass + fine * .05, vec3(.34, .32, .31) + fine * .06, smoothstep(33., 50., slope + fine * 7.) * open);
-          tree = vec3(.10, .19, .09) + fine * .06; water = vec3(.07, .16, .24);
+          water = vec3(.07, .16, .24); wood = mix(wood, wood * 1.18, roof);
         }
-        alb = mix(alb, water, kind.b); alb = mix(alb, tree, kind.r); alb = mix(alb, wood, kind.g);
+        alb = mix(alb, water, kind.b); alb = mix(alb, wood, kind.g);
       }
     #endif
       float d = 0.;
       if (sunDir.y > -sin(radians(.95) * sqrt(max(0., h - baseH) / 1000.))) {   // a high point still sees a sun just under the flat horizon
         float lam = dot(n, sunDir);
+    #ifdef DETAIL
+        {   // worked out for every cell, facing the sun or not: the tree points above it read the result (alpha)
+    #else
         if (lam > 0.) {
+    #endif
           vec2 dir = normalize(sunDir.xz) / size; float tanA = sunDir.y / length(sunDir.xz);
     #ifdef DETAIL
-          float L = step0, dist = 0., v = 1.;
-          for (int k = 0; k < 300; k++) {   // short steps among the trees and roofs, longer ones once past the box
+          float L = step0, dist = 0., v = 1., ts = 0.;
+          for (int k = 0; k < 300; k++) {   // short steps among the roofs, longer ones once past the box
             dist += L; vec2 p = vUv + dir * dist; float hh = h + lift + tanA * dist;
             if (hh > maxH) break;
             float gr;
@@ -175,7 +186,7 @@
               if (u.x > 0. && u.y > 0. && u.x < 1. && u.y < 1.) { vec2 m = texture2D(mmap, u).rg; gr = m.r + m.g; }
     #endif
               L *= 1.06;
-            } else { gr = H(p); L = min(L * 1.025, 3.); }
+            } else { gr = H(p); if (hh - gr < texture2D(kmap, p).a * 51.) ts += L * .2; L = min(L * 1.025, 3.); }   // under a tree's canopy: a soft shadow that grows with the way through it
             float cl = hh - gr;
             if (cl <= 0.) { v = 0.; break; }
             v = min(v, cl / (dist * .02));
@@ -207,11 +218,19 @@
           }
     #endif
     #endif
+    #ifdef DETAIL
+          d = max(lam, 0.) * v * (1. - .5 * min(ts, 1.)); va = v;   // tree shade is lighter than a hill's or a barn's
+    #else
           d = lam * v;
+    #endif
         }
       }
       vec3 c = alb * (amb * (.72 + .28 * n.y) + sunCol * d);
+    #ifdef DETAIL
+      gl_FragColor = vec4(pow(min(c * .9, vec3(1.)), vec3(.62)), va);
+    #else
       gl_FragColor = vec4(pow(min(c * .9, vec3(1.)), vec3(.62)), 1.);
+    #endif
     }`;
   // The far mesh. With a near grid (HOLE) it is cut out inside the near box: untouched for the first `keep` metres inside the
   // edge (the near mesh matches it there), then pushed down under the near mesh, and not drawn at all past `band` metres.
@@ -264,6 +283,22 @@
     uniform vec4 dhole; uniform float dkeep; uniform float dband; varying vec2 vW;
     #endif
     varying vec2 vUv; varying vec2 vF; varying float vT; varying float vDist;
+    #ifdef BLD
+    // The detail mesh: a wall stays a wall. Heights are blended only between cells of the same kind (building or not),
+    // so a roof keeps its ridge and its edge drops straight to the ground instead of melting into it.
+    uniform sampler2D kmap; uniform float cells;
+    float Hc(ivec2 p) { vec2 t = texelFetch(hmap, p, 0).rg; return t.r + t.g; }
+    float Hd(vec2 uv) {
+      vec2 st = uv * cells - .5, f = st - floor(st); ivec2 lim = ivec2(int(cells) - 1), b0 = ivec2(floor(st));
+      ivec2 nn = clamp(ivec2(floor(uv * cells)), ivec2(0), lim); bool mine = texelFetch(kmap, nn, 0).r > .5;
+      float hs = 0., ws = 0.;
+      for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
+        ivec2 p = clamp(b0 + ivec2(i, j), ivec2(0), lim); float w = (i == 0 ? 1. - f.x : f.x) * (j == 0 ? 1. - f.y : f.y);
+        if ((texelFetch(kmap, p, 0).r > .5) == mine) { hs += w * Hc(p); ws += w; }
+      }
+      return ws > 1e-4 ? hs / ws : Hc(nn);
+    }
+    #endif
     float wp(float s, float f) { float d = s - f; float m = d < 0. ? f : 1. - f; if (m < .0005) return f; float x = abs(d) / m; return f + sign(d) * m * x * (.35 + .65 * x * x); }
     void main() {
       vec2 uv = vec2(wp(position.x, focus.x), wp(position.z, focus.y));
@@ -271,6 +306,9 @@
       float din = min(min(uv.x, 1. - uv.x) * rect.z, min(uv.y, 1. - uv.y) * rect.w);
       vT = smoothstep(keep, band, din);
       vec2 a = texture2D(hmap, uv).rg; vec2 b = texture2D(fmap, vF).rg;
+    #ifdef BLD
+      a = vec2(Hd(uv), 0.);
+    #endif
     #ifdef MID
       vM = (w - mrect.xy) / mrect.zw; vMT = smoothstep(mkeep, mband, min(min(vM.x, 1. - vM.x) * mrect.z, min(vM.y, 1. - vM.y) * mrect.w));
       vec2 m = texture2D(mmap, vM).rg;
@@ -302,6 +340,65 @@
       vec3 c = mix(under, texture2D(lmap, vUv).rgb, vT); float f = 1. - exp(-pow(fogD * vDist, 2.)); gl_FragColor = vec4(mix(c, fogCol, f), 1.);
     }`;
 
+  // The trees: points between a canopy's top and a few metres under it (more of them near the top), seen between and
+  // through. Each takes the sun the ground under it gets from hills and buildings (the detail light map's alpha), less
+  // what the crowns toward the sun take; none are drawn within `clearR` m of the eye.
+  const TREE_VS = `
+    uniform sampler2D kmap; uniform sampler2D lmap; uniform vec4 rect; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec3 fogCol; uniform float fogD;
+    uniform float pscale; uniform float snowMode; uniform float clearR;
+    attribute vec4 seed;   // x: how far under the canopy top (0 top .. 1), y: random, z: size in metres, w: metres above the ground
+    varying vec3 vCol;
+    void main() {
+      vec2 uv = (position.xz - rect.xy) / rect.zw; float top = 1. - seed.x, sh = 0., hl = length(sunDir.xz);
+      if (hl > 1e-4) {
+        vec2 dir = sunDir.xz / hl / rect.zw; float tanA = sunDir.y / hl;
+        for (int k = 1; k <= 8; k++) { float d = 1.3 * float(k); if (seed.w + tanA * d < texture2D(kmap, uv + dir * d).a * 51.) sh += .2; }
+      }
+      vec3 base = (snowMode > .5 ? vec3(.085, .135, .105) : vec3(.10, .19, .09)) * (.6 + .8 * seed.y);
+      if (snowMode > .5 && fract(seed.y * 7.31) > .88 && seed.x < .5) base = mix(base, vec3(.80, .84, .88), .6);   // snow caught on the boughs
+      vec3 c = base * (amb * (.5 + .5 * top) + sunCol * texture2D(lmap, uv).a * (1. - .8 * min(sh, 1.)) * (.2 + .5 * top));
+      c = pow(min(c * .9, vec3(1.)), vec3(.62));
+      vec4 mv = modelViewMatrix * vec4(position, 1.); float dist = length(mv.xyz);
+      vCol = mix(c, fogCol, 1. - exp(-pow(fogD * dist, 2.)));
+      gl_Position = projectionMatrix * mv; gl_PointSize = clamp(seed.z * pscale / max(dist, 1.), 1.5, 28.);
+      if (distance(position.xz, cameraPosition.xz) < clearR) gl_Position = vec4(2., 2., 2., 1.);
+    }`;
+  const TREE_FS = `
+    precision highp float; varying vec3 vCol;
+    void main() {
+      vec2 q = gl_PointCoord - .5; if (dot(q, q) > .25) discard;
+      if (fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453) > .9) discard;   // slightly see-through, in any order
+      gl_FragColor = vec4(vCol, 1.);
+    }`;
+  const TREE_MAX = 520000;
+  // Up to TREE_MAX points for the box: many small ones close to the stand spot (up to 15 a cell, 0.2 m), fewer and larger
+  // ones farther off (2 a cell and 0.5 m at 150 m), so a tree covers about the same whatever its distance. A box that is
+  // mostly forest gets fewer, larger points everywhere to stay under the cap.
+  function treePoints() {
+    const n = DT.n, k = DT.kind, e = crg(DT, eye), dx = DT.dx, dz = DT.dz;
+    if (!k) return null;
+    const thin = (r, c) => Math.min(3, 60 / Math.max(1, Math.hypot((c - e.c) * dx, (r - e.r) * dz)));
+    const edge = (r, c) => Math.min((c + 0.5) * dx, (n - c - 0.5) * dx, (r + 0.5) * dz, (n - r - 0.5) * dz) >= DT.band;   // not in the strip that blends into the coarser grid
+    let sum = 0;
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (k[r * n + c] >= 8 && edge(r, c)) sum += thin(r, c);
+    if (!sum) return null;
+    const per = Math.min(5, TREE_MAX / sum), big = Math.max(0.75, Math.min(1.6, Math.sqrt(3.2 / per))), cap = Math.ceil(sum * per) + 4096, pos = new Float32Array(cap * 3), seed = new Float32Array(cap * 4);
+    let s = 20221112, m = 0; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+    for (let r = 0; r < n && m < cap; r++) for (let c = 0; c < n; c++) {
+      const i = r * n + c, v = k[i];
+      if (v < 8 || !edge(r, c)) continue;
+      const w = thin(r, c), want = per * w, h = (v - 8) * 0.2, depth = Math.max(0.5, Math.min(h - 0.4, 1.5 + 0.3 * h)), size = 0.42 / Math.sqrt(w) * big;
+      let cnt = Math.floor(want); if (rnd() < want - cnt) cnt++;
+      for (let j = 0; j < cnt && m < cap; j++, m++) {
+        const df = Math.pow(rnd(), 1.5), hg = h - depth * df;
+        pos[m * 3] = DT.x0 + (c + rnd()) * dx; pos[m * 3 + 1] = DT.HF[i] + hg; pos[m * 3 + 2] = DT.z0 + (r + rnd()) * dz;
+        seed[m * 4] = df; seed[m * 4 + 1] = rnd(); seed[m * 4 + 2] = size * (0.75 + 0.5 * rnd()); seed[m * 4 + 3] = hg;
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos.subarray(0, m * 3), 3)); geo.setAttribute('seed', new THREE.BufferAttribute(seed.subarray(0, m * 4), 4));
+    return { geo, count: m };
+  }
   async function inflate(list) {
     let len = 0; const bins = list.map(s => { const b = atob(s); len += b.length; return b; });
     const buf = new Uint8Array(len); let o = 0;
@@ -324,7 +421,7 @@
     }
     return { HF, hi };
   }
-  // the detail grid's class mask: an 8-bit PNG, one byte a cell (0 ground, 1 tree, 2 building, 3 water)
+  // the detail grid's class mask: an 8-bit PNG, one byte a cell (0 ground, 2 building, 3 water, 8+ = tree, canopy (value - 8) x 0.2 m up)
   async function decodeMask(list, n) {
     const raw = await inflate(list);
     if (raw.length !== n * (n + 1)) throw new Error('mask file has the wrong size');
@@ -368,14 +465,14 @@
     hmap.internalFormat = 'RG16F'; hmap.magFilter = hmap.minFilter = THREE.LinearFilter; hmap.wrapS = hmap.wrapT = THREE.ClampToEdgeWrapping; hmap.needsUpdate = true;
     return hmap;
   }
-  // the class mask as blend weights (r tree, g building, b water); a tree's or a wall's side is drawn on the cell
-  // beside it, so those cells take the colour too
+  // the class mask for the graphics card: r = building (exact, for the walls), g = building or beside one (a wall's
+  // side is drawn on the cell beside it, so that takes the wood colour too), b = water, a = tree canopy height / 0.2 m
   function kindTex(g) {
     const n = g.n, k = g.kind, px = new Uint8Array(n * n * 4);
     if (k) for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
-      const i = r * n + c; let tr = k[i] === 1, bl = k[i] === 2;
-      if (!bl) for (let b = Math.max(0, r - 1); b <= Math.min(n - 1, r + 1); b++) for (let a = Math.max(0, c - 1); a <= Math.min(n - 1, c + 1); a++) { const v = k[b * n + a]; if (v === 2) bl = true; else if (v === 1) tr = true; }
-      px[i * 4] = tr && !bl ? 255 : 0; px[i * 4 + 1] = bl ? 255 : 0; px[i * 4 + 2] = k[i] === 3 && !tr && !bl ? 255 : 0; px[i * 4 + 3] = 255;
+      const i = r * n + c, v = k[i], bl = v === 2; let by = bl;
+      if (!by) for (let b = Math.max(0, r - 1); b <= Math.min(n - 1, r + 1) && !by; b++) for (let a = Math.max(0, c - 1); a <= Math.min(n - 1, c + 1); a++) if (k[b * n + a] === 2) { by = true; break; }
+      px[i * 4] = bl ? 255 : 0; px[i * 4 + 1] = by ? 255 : 0; px[i * 4 + 2] = v === 3 && !by ? 255 : 0; px[i * 4 + 3] = v >= 8 ? v - 8 : 0;
     }
     const t = new THREE.DataTexture(px, n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
     t.magFilter = t.minFilter = THREE.LinearFilter; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
@@ -422,15 +519,21 @@
       terrU.hole = { value: new THREE.Vector4(NR.x0, NR.z0, NR.x0 + NR.w, NR.z0 + NR.d) }; terrU.keep = { value: NR.keep }; terrU.band = { value: NR.band };
     }
     if (DT) {
-      const dmap = heightTex(DT, 4), kmap = kindTex(DT), drect = new THREE.Vector4(DT.x0, DT.z0, DT.w, DT.d); DT.kind = null;
+      const dmap = heightTex(DT, 4), kmap = kindTex(DT), drect = new THREE.Vector4(DT.x0, DT.z0, DT.w, DT.d);
       const lu = { hmap: { value: dmap }, fmap: { value: hmap }, kmap: { value: kmap }, lift: { value: 0.3 }, rect: { value: drect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(DT.dx, DT.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(DT.w, DT.d) }, texel: { value: 1 / DT.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH };
-      const mu = { hmap: { value: dmap }, fmap: { value: hmap }, lmap: { value: null }, flmap: { value: lo.texture }, rect: { value: drect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: DT.keep }, band: { value: DT.band }, fogCol: fog.fogCol, fogD: fog.fogD };
+      const mu = { hmap: { value: dmap }, kmap: { value: kmap }, cells: { value: DT.n }, fmap: { value: hmap }, lmap: { value: null }, flmap: { value: lo.texture }, rect: { value: drect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: DT.keep }, band: { value: DT.band }, fogCol: fog.fogCol, fogD: fog.fogD };
       if (NR) { lu.mmap = { value: nmap }; lu.mrect = { value: nrect }; Object.assign(mu, { mmap: { value: nmap }, mrect: { value: nrect }, mkeep: { value: NR.keep }, mband: { value: NR.band }, skirt: { value: 14 }, mlmap: { value: near.lo.texture } }); }
       const dLight = new THREE.ShaderMaterial({ defines: NR ? { NEAR: 1, DETAIL: 1, MID: 1 } : { NEAR: 1, DETAIL: 1 }, uniforms: lu, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
       const dlo = rt(Math.min(512, DT.n)), dhi = rt(DT.n); mu.lmap.value = dlo.texture;
-      const mat = new THREE.ShaderMaterial({ defines: NR ? { MID: 1 } : {}, uniforms: mu, vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
+      const mat = new THREE.ShaderMaterial({ defines: NR ? { MID: 1, BLD: 1 } : { BLD: 1 }, uniforms: mu, vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
       const mesh = new THREE.Mesh(ngeo, mat); mesh.frustumCulled = false;
-      det = { lightMat: dLight, lo: dlo, hi: dhi, mat, mesh, dmap, kmap };
+      det = { lightMat: dLight, lo: dlo, hi: dhi, mat, mesh, dmap, kmap, points: null, count: 0 };
+      const tp = treePoints();
+      if (tp) {
+        const pmat = new THREE.ShaderMaterial({ uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, clearR: { value: 12 } }, vertexShader: TREE_VS, fragmentShader: TREE_FS });
+        det.points = new THREE.Points(tp.geo, pmat); det.points.frustumCulled = false; det.count = tp.count;
+        const drop = function () { this.array = null; }; tp.geo.attributes.position.onUpload(drop); tp.geo.attributes.seed.onUpload(drop);
+      }
       Object.assign(terrU, dholeU); terrU.dsize = { value: size };
     }
     const tdef = {}; if (near) tdef.HOLE = 1; if (det) tdef.DHOLE = 1;
@@ -441,7 +544,7 @@
     }
     const scene = new THREE.Scene(), terrain = new THREE.Mesh(geo, terrMat); terrain.frustumCulled = false; scene.add(terrain);
     if (near) scene.add(near.mesh);
-    if (det) scene.add(det.mesh);
+    if (det) { scene.add(det.mesh); if (det.points) scene.add(det.points); }
     const cam = new THREE.PerspectiveCamera(27, 1.5, det ? 1 : near ? 2 : 4, 260000); cam.rotation.order = 'YXZ';
     const skyGeo = new THREE.SphereGeometry(200000, 48, 24), skyPos = skyGeo.attributes.position, skyCol = new THREE.BufferAttribute(new Float32Array(skyPos.count * 3), 3); skyGeo.setAttribute('color', skyCol);
     const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })); sky.frustumCulled = false; scene.add(sky);
@@ -464,6 +567,7 @@
       const dt = full ? R.det.hi : R.det.lo, u = R.det.mat.uniforms;
       R.quad.material = R.det.lightMat; r.setRenderTarget(dt); r.render(R.lightScene, R.lightCam);
       u.lmap.value = dt.texture; u.flmap.value = t.texture; if (R.near) u.mlmap.value = (full ? R.near.hi : R.near.lo).texture;
+      if (R.det.points) R.det.points.material.uniforms.lmap.value = dt.texture;
     }
     r.setRenderTarget(null);
   }
@@ -485,7 +589,8 @@
     R.disc.visible = R.halo.visible = sun.alt > -1;
     R.disc.material.color.setRGB(1, Math.min(1, .75 + A.sun[1] * .25), Math.min(1, .5 + A.sun[2] * .5));
     R.halo.material.color.setRGB(A.sun[0], A.sun[1], A.sun[2]);
-    post({ type: 'state', subjectLit: lit(subjPoint(), sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
+    const hp = herePoint(), hl = lit(hp, sun.az, sun.alt);
+    post({ type: 'state', subjectLit: lit(subjPoint(), sun.az, sun.alt), hereLit: hl, up: sun.alt > 0, trees: hl && treesBlock(hp, sun.az, sun.alt) });
   }
   function aim() {
     const a = cr(eye), b = cr(target), dx = (b.c - a.c) * FAR.dx, dz = (b.r - a.r) * FAR.dz, dist = Math.hypot(dx, dz);
@@ -518,6 +623,7 @@
     const q = cr(eye), e = pick(eye), cam = R.cam;
     cam.position.set((q.c + 0.5) * FAR.dx, eyeH(e), (q.r + 0.5) * FAR.dz); cam.rotation.set(pitch, -yaw, 0);
     cam.fov = lensFov() * 180 / Math.PI; cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
+    if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360));   // a point's metres -> pixels at 1 m
   }
   function resize() { const w = window.innerWidth, h = window.innerHeight; if (!R || !w || !h) return; R.renderer.setSize(w, h, false); R.cam.aspect = w / h; dirty = true; }
   function tick() {
@@ -551,7 +657,7 @@
         if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");
         if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.');
         await load(); build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
-        post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: DT ? DT.n : 0 }); heading();
+        post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: DT ? DT.n : 0, trees: R.det ? R.det.count : 0 }); heading();
       } catch (e) { fail("The 3D view couldn't start on this phone."); post({ type: 'error', msg: String(e && e.message || e) }); }
     },
     sun(az, alt) { sun = { az, alt }; relight = dirty = true; },
@@ -566,8 +672,9 @@
     path(arr) {
       if (!R) return;
       const s = subjPoint(), h = herePoint(); let fs = null, ls = null, fh = null, lh = null;
-      for (const [m, az, alt] of arr) { if (lit(s, az, alt)) { if (fs == null) fs = m; ls = m; } if (lit(h, az, alt)) { if (fh == null) fh = m; lh = m; } }
-      post({ type: 'moments', firstSubject: fs, lastSubject: ls, firstHere: fh, lastHere: lh });
+      let trees = false;   // some time in the day the surveyed trees would hide the sun from the stand spot
+      for (const [m, az, alt] of arr) { if (lit(s, az, alt)) { if (fs == null) fs = m; ls = m; } if (lit(h, az, alt)) { if (fh == null) fh = m; lh = m; if (!trees && treesBlock(h, az, alt)) trees = true; } }
+      post({ type: 'moments', firstSubject: fs, lastSubject: ls, firstHere: fh, lastHere: lh, trees });
     },
   };
   post({ type: 'boot' });

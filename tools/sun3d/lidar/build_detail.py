@@ -27,12 +27,14 @@ What `build` does:
        - buildings = the survey's building class plus raised solid patches (1.5 m up, 3.5 m both ways, laser pulses
          coming back once, not several times as from a tree top): many cabins are left unsorted in the survey;
          footprints are tidied (a wall edge that wobbles by a cell draws as a row of teeth);
-       - within --stand-clear m (12) of every stand spot the ground is used (no tree top or car under the camera),
-         a building only within 4 m;
-  4. files in <work>/files: <id>_lidar.png = surface heights in the page's format (16-bit prediction residuals,
+       - a patch found that way is kept only when it is 25 m2 and 2.2 m high (else it is a van or a bus);
+       - within 4 m of a stand spot a building is put on the ground (no wall or roof under the camera). Trees are
+         left where they are: the page itself draws none within 12 m of the eye;
+  4. files in <work>/files: <id>_lidar.png = the BARE surface (ground, water, buildings; no trees) in the page's format (16-bit prediction residuals,
      height = base_m + value * step_m; step_m is 0.02 here, NOT the 0.5 of the other two levels, and base_m is the
-     box's lowest height less 5 m) and <id>_mask.png (8-bit greyscale, filter 0: 0 ground / snow, 1 tree, 2 building,
-     3 water); a look-at picture per box in <work>/look;
+     box's lowest height less 5 m) and <id>_mask.png (8-bit greyscale, filter 0: 0 ground / snow, 2 building, 3 water,
+     8 and up = tree, canopy top (value - 8) x 0.2 m above the ground); a look-at picture per box in <work>/look;
+     <work>/pins_report.json = every stand spot's distance to the nearest tree and building;
   5. <work>/terrain_detail.sql (table terrain_detail_regions + the rows; NOT applied) and <work>/upload.txt.
 A stand spot the survey does not cover is listed and left out; no other data is put in its place.
 """
@@ -46,6 +48,7 @@ from build_trip_terrain import load_pins, read_png, at, slug   # noqa: E402
 
 EPT = 'https://usgs-lidar-public.s3.us-west-2.amazonaws.com/'
 R = 6378137.0
+TREE0, TREE_STEP = 8, 0.2   # mask byte of a tree cell = TREE0 + its canopy height above the ground / TREE_STEP
 STEP = 0.02         # metres per height value in the detail files (0.5 m cells lit by a low sun show every centimetre)
 G_MESH = 768        # the page's mesh points per side
 
@@ -180,7 +183,7 @@ def grid_box(sv, box, n, log):
     return dict(top=top, cls=cls, gsum=gsum, gcnt=gcnt, wmin=wmin, cnt=cnt, multi=multi, total=total)
 
 
-def clean(g, box, n, cell, stands, clear_m):
+def clean(g, box, n, cell, stands):
     """Surface heights and the class mask from the gridded points."""
     north, south, west, east = box
     top, cls, cnt = g['top'].astype(np.float64), g['cls'], g['cnt']; has = cnt > 0
@@ -205,34 +208,58 @@ def clean(g, box, n, cell, stands, clear_m):
     roof = spread(shrink(cand, kb), kb) & (share < 0.35)                 # part of a raised block 3.5 m both ways (no car, no bush)
     roof = spread(shrink(roof, kr), kr)                                  # and solid over 2 m both ways
     for _ in range(4): roof = grow1(roof) & cand & (share < 0.6)
-    found = roof & (cls != 6)
-    bld0 = (has & (cls == 6) & ~water) | roof
+    surveyed = has & (cls == 6) & ~water
+    bld0 = surveyed | roof
+    # a patch found this way with none of the survey's own building cells in it is a building only when it is at least
+    # 25 m2 and 2.2 m high: smaller or lower ones are vans, buses and trailers. They go to the ground.
+    parked = np.zeros_like(bld0); todo = bld0 & ~surveyed; seen = np.zeros_like(bld0)
+    for r0, c0 in zip(*np.nonzero(todo)):
+        if seen[r0, c0]: continue
+        seen[r0, c0] = True; stack = [(r0, c0)]; cells = []; own = False
+        while stack:
+            r, c = stack.pop(); cells.append((r, c)); own |= bool(surveyed[r, c])
+            for a in (-1, 0, 1):
+                for b in (-1, 0, 1):
+                    rr_, cc_ = r + a, c + b
+                    if 0 <= rr_ < n and 0 <= cc_ < n and bld0[rr_, cc_] and not seen[rr_, cc_]: seen[rr_, cc_] = True; stack.append((rr_, cc_))
+        if not own:
+            rs, cs = zip(*cells)
+            if len(cells) * cell * cell < 25.0 or np.percentile(hag[rs, cs], 90) < 2.2: parked[rs, cs] = True
+    bld0 &= ~parked; found = bld0 & ~surveyed
     # straight walls: a footprint's edge wobbles by a cell from row to row, and a height grid draws that as a row of
     # teeth. Close and open the footprint (3 x 3); cells it gains take the roof height beside them, cells it loses go to the ground
     bld = ~grow8(~grow8(bld0)); bld = grow8(~grow8(~bld)) & bld
     q = np.pad(np.where(bld0, top, -1e9), 1, mode='constant', constant_values=-1e9)
     beside = np.max([q[i:i + n, j:j + n] for i in range(3) for j in range(3)], axis=0)
-    top = np.where(bld & ~bld0, beside, top); shaved = bld0 & ~bld
+    top = np.where(bld & ~bld0, beside, top); shaved = (bld0 & ~bld) | parked
     high = has & (cls != 2) & (cls != 6) & (cls != 9) & (hag >= 2.0) & ~bld & ~shaved & ~water
     core = spread(shrink(high, k), k); tree = core.copy()
     for _ in range(2): tree = grow1(tree) & high                         # a patch gets its own rim back, a wire that touches it does not
     thin = int(high.sum() - tree.sum())
-    # where the camera stands: the ground
+    # the pins: how far each stand spot is from the nearest tree and building (as surveyed, before anything is cleared)
     rr = (north - (np.arange(n) + 0.5) * (north - south) / n)[:, None]; cc = (west + (np.arange(n) + 0.5) * (east - west) / n)[None, :]
-    kx = 111320 * math.cos(math.radians((north + south) / 2)); kz = 111132
+    kx = 111320 * math.cos(math.radians((north + south) / 2)); kz = 111132; pins = []
     for la, lo in stands:
         d = np.hypot((cc - lo) * kx, (rr - la) * kz)
-        tree &= d > clear_m; bld &= d > 4.0
-    surf = np.where(tree | bld, top, base)
-    mask = np.zeros((n, n), np.uint8); mask[water] = 3; mask[tree] = 1; mask[bld] = 2
-    return surf, mask, base, dict(thin=thin, tallest=float(np.max(np.where(tree | bld, hag, 0.0))), filled=int((~base_ok).sum()), found=int((found & bld).sum()))
+        over = tree & (d <= 1.0)
+        pins.append(dict(lat=la, lng=lo, tree_m=float(d[tree].min()) if tree.any() else None, building_m=float(d[bld].min()) if bld.any() else None,
+                         canopy_m=float(hag[over].max()) if over.any() else 0.0))
+        bld &= d > 4.0                                                    # never a wall or a roof under the camera
+    # the surface is the bare ground with the buildings on it. Trees are NOT in it: the mask carries each tree cell's
+    # canopy height, the page draws them as points you can see between and keeps them out of the sun-time checks
+    surf = np.where(bld, top, base)
+    mask = np.zeros((n, n), np.uint8); mask[water] = 3
+    mask[tree] = (TREE0 + np.clip(np.round(hag / TREE_STEP), 1, 255 - TREE0)).astype(np.uint8)[tree]; mask[bld] = 2
+    return surf, mask, base, dict(thin=thin, tallest=float(np.max(np.where(tree | bld, hag, 0.0))), filled=int((~base_ok).sum()), found=int((found & bld).sum()),
+                                  parked=int(parked.sum()), pins=pins)
 
 
 def look(path, surf, mask, cell):
     from PIL import Image
     gy, gx = np.gradient(surf, cell); sh = np.clip(0.75 + 0.6 * (-gx - gy) / np.sqrt(1 + gx * gx + gy * gy), 0.25, 1.15)
     pal = np.array([(235, 238, 242), (40, 80, 50), (150, 105, 70), (50, 90, 130)], np.float64)
-    Image.fromarray(np.clip(pal[mask] * sh[:, :, None], 0, 255).astype(np.uint8)).save(path)
+    kind = np.where(mask >= TREE0, 1, mask)
+    Image.fromarray(np.clip(pal[kind] * np.where(kind == 1, 0.6 + (mask.astype(np.float64) - TREE0) * TREE_STEP / 40, sh)[:, :, None], 0, 255).astype(np.uint8)).save(path)
 
 
 # ---------- the boxes ----------
@@ -297,7 +324,7 @@ def main():
     ap.add_argument('--trip'); ap.add_argument('--pins'); ap.add_argument('--q')
     ap.add_argument('--project', default='WY_GrandTetonNP_1_D22'); ap.add_argument('--prefix', default='gtd')
     ap.add_argument('--pad', type=float, default=250.0); ap.add_argument('--merge', type=float, default=150.0); ap.add_argument('--close', type=float, default=600.0)
-    ap.add_argument('--stand-clear', type=float, default=12.0); ap.add_argument('--only', help='comma list of box ids')
+    ap.add_argument('--only', help='comma list of box ids')
     ap.add_argument('--wide-file', help="the region's wide file, to print how the survey's ground sits against it"); ap.add_argument('--migration', default='terrain_detail.sql')
     a = ap.parse_args(); os.makedirs(a.work, exist_ok=True)
     if not a.pins and not a.trip and os.path.exists(f"{a.work}/pins.json"): a.pins = f"{a.work}/pins.json"
@@ -317,7 +344,7 @@ def main():
     os.makedirs(f"{a.work}/files", exist_ok=True); os.makedirs(f"{a.work}/look", exist_ok=True)
     sv = Survey(a.project, f"{a.work}/cache"); cb = sv.conf
     regions = {r['id']: r for r in pins.get('regions', [])}; wide = {}
-    rows, uploads, missing, table = [], [], [], []
+    rows, uploads, missing, table, pinrep = [], [], [], [], []
     for b in boxes:
         t0 = time.time(); bid, box, n, cell = b['id'], b['box'], b['n'], b['cell']
         print(f"\n{bid} ({', '.join(b['stops'])})", flush=True)
@@ -329,13 +356,13 @@ def main():
         got = float((g['cnt'] > 0).mean())
         if got < 0.5:
             print(f"  the survey has points in only {got:.0%} of the box: left out"); missing.append((bid, b['stops'], f"survey covers {got:.0%} of the box")); continue
-        surf, mask, base, st = clean(g, box, n, cell, b['stands'], a.stand_clear)
+        surf, mask, base, st = clean(g, box, n, cell, b['stands'])
         base_m = math.floor(float(surf.min())) - 5
         hp, mp = f"{a.work}/files/{bid}_lidar.png", f"{a.work}/files/{bid}_mask.png"
         write_heights(hp, surf, base_m, STEP); write_mask(mp, mask); look(f"{a.work}/look/{bid}.png", surf, mask, cell)
         assert np.abs(read_png(hp, base_m, STEP) - surf).max() <= STEP / 2 + 1e-6
-        nt, nb, nw = int((mask == 1).sum()), int((mask == 2).sum()), int((mask == 3).sum()); a2 = cell * cell
-        print(f"  cells {n} x {n} at {cell} m; buildings {nb:,} cells ({nb * a2:,.0f} m2, {st['found']:,} cells found as solid raised patches), trees {nt:,} ({nt * a2 / 1e4:.2f} ha), water {nw:,} ({nw * a2 / 1e4:.2f} ha); thin high cells removed {st['thin']:,}; "
+        nt, nb, nw = int((mask >= TREE0).sum()), int((mask == 2).sum()), int((mask == 3).sum()); a2 = cell * cell
+        print(f"  cells {n} x {n} at {cell} m; buildings {nb:,} cells ({nb * a2:,.0f} m2, {st['found']:,} cells found as solid raised patches, {st['parked']:,} cells of vans and the like put on the ground), trees {nt:,} ({nt * a2 / 1e4:.2f} ha), water {nw:,} ({nw * a2 / 1e4:.2f} ha); thin high cells removed {st['thin']:,}; "
               f"ground filled in {st['filled']:,} cells; tallest thing {st['tallest']:.1f} m; heights {surf.min():.1f}..{surf.max():.1f} m")
         note = ''
         r = regions.get(b['region'])
@@ -350,15 +377,18 @@ def main():
         kxl = 111320 * math.cos(math.radians((box[0] + box[1]) / 2))
         rows.append((bid, b['region'], box, n, (box[3] - box[2]) * kxl, (box[0] - box[1]) * 111132, base_m, cell, os.path.basename(hp), hs, os.path.basename(mp), ms))
         uploads += [hp, mp]; table.append((bid, n, cell, hs, ms, nb, nt, nw, g['total']))
+        for pin in st['pins']:
+            who = sorted({f"{sh['stop']} / {sh['subject']}" for sh in pins.get('shots', []) if abs(sh['vlat'] - pin['lat']) < 1.5e-5 and abs(sh['vlng'] - pin['lng']) < 1.5e-5})
+            pinrep.append(dict(box=bid, shots=who, **pin))
 
     sql = f"""-- 3D sun view, third terrain level (detail): real foreground around the stand spots from a public laser survey
 -- (USGS 3DEP lidar, {a.project}, public domain). Written by tools/sun3d/lidar/build_detail.py.
 -- terrain_regions = the wide grid per area, terrain_near_regions = fine boxes (about 6 m), terrain_detail_regions =
--- small boxes (about 500 m across, 0.5 or 1 m cells) around a stand spot, holding the highest laser return per cell:
--- trees and buildings are real shapes. Each row has two files in bucket `terrain`: the heights (the page's 16-bit
--- format, height = base_m + value * step_m, step_m 0.02 here) and a class mask (8-bit: 0 ground / snow, 1 tree,
--- 2 building, 3 water). The page (tools/sun3d/app_view.js, cfg.detail) draws the box inside the shot's fine box
--- (or the wide grid) and uses its heights for shadows and the in-the-sun checks.
+-- small boxes (about 500 m across, 0.5 or 1 m cells) around a stand spot. Each row has two files in bucket `terrain`:
+-- the heights = the bare ground with the buildings on it (the page's 16-bit format, height = base_m + value * step_m,
+-- step_m 0.02 here) and a class mask (8-bit: 0 ground / snow, 2 building, 3 water, 8 and up = tree, its canopy top
+-- (value - 8) x 0.2 m above the ground). The page (tools/sun3d/app_view.js, cfg.detail) draws the box inside the
+-- shot's fine box (or the wide grid), buildings as blocks and trees as points; sun times use ground and buildings only.
 -- A table of its own for the same reason as terrain_near_regions: older app builds read the other two tables whole.
 --
 -- Before applying: upload the files listed in upload.txt to bucket `terrain`.
@@ -388,7 +418,7 @@ end $$;
 """
     if rows:
         sql += "\ninsert into public.terrain_detail_regions (id, parent, north, south, west, east, n, width_m, depth_m, base_m, step_m, cell_m, path, bytes, mask_path, mask_bytes, note) values\n" + ",\n".join(
-            f"  ('{bid}', '{reg}', {box[0]}, {box[1]}, {box[2]}, {box[3]}, {n}, {w:.1f}, {d:.1f}, {base_m}, {STEP}, {cell}, '{hp}', {hs}, '{mp}', {ms}, 'USGS 3DEP lidar {a.project}, highest return per {cell} m cell, cleaned.')"
+            f"  ('{bid}', '{reg}', {box[0]}, {box[1]}, {box[2]}, {box[3]}, {n}, {w:.1f}, {d:.1f}, {base_m}, {STEP}, {cell}, '{hp}', {hs}, '{mp}', {ms}, 'USGS 3DEP lidar {a.project}, ground + buildings per {cell} m cell, tree canopy heights in the mask.')"
             for bid, reg, box, n, w, d, base_m, cell, hp, hs, mp, ms in rows) + "\non conflict (id) do nothing;\n"
     if missing: sql += "\n-- Not covered by the survey, no detail there: " + "; ".join(f"{', '.join(stops)} ({why})" for _, stops, why in missing) + "\n"
     open(f"{a.work}/{a.migration}", 'w').write(sql); open(f"{a.work}/upload.txt", 'w').write("\n".join(uploads) + "\n")
@@ -397,6 +427,12 @@ end $$;
     print("\nbox | grid | cell | heights KB | mask KB | building cells | tree cells | water cells | points")
     for bid, n, cell, hs, ms, nb, nt, nw, tot in table: print(f"{bid} | {n} x {n} | {cell} m | {hs / 1e3:.0f} | {ms / 1e3:.1f} | {nb:,} | {nt:,} | {nw:,} | {tot:,}")
     print(f"\nwrote {a.work}/{a.migration} ({len(rows)} boxes) and {a.work}/upload.txt ({len(uploads)} files, {sum(os.path.getsize(p) for p in uploads) / 1e6:.1f} MB)")
+    json.dump(pinrep, open(f"{a.work}/pins_report.json", 'w'), indent=1)
+    f1 = lambda v: 'none in the box' if v is None else f"{v:.0f} m"
+    print("\nstand spots (stop / shot): nearest tree, nearest building; * = canopy over the pin or a building within 5 m (the pin wants moving)")
+    for q in pinrep:
+        bad = q['canopy_m'] > 0 or (q['building_m'] is not None and q['building_m'] <= 5)
+        print(f"  {'*' if bad else ' '} {'; '.join(q['shots'])} ({q['lat']}, {q['lng']}): tree {f1(q['tree_m'])}, building {f1(q['building_m'])}" + (f", canopy {q['canopy_m']:.0f} m over the pin" if q['canopy_m'] > 0 else ''))
     if missing: print("LEFT OUT: " + "; ".join(f"{bid}: {', '.join(stops)} ({why})" for bid, stops, why in missing))
     print("Nothing was uploaded or applied.")
 
