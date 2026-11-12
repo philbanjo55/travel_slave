@@ -12,8 +12,10 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //
 // Environment values (all but the first are optional):
 //   GOOGLE_TILES_KEY    a Google Cloud key limited to the Map Tiles API. Without it: 503.
-//   TILES_ENABLED       "true" = on. Anything else = OFF (the default): health says enabled false,
-//                       so the app shows no HD button, and tile requests get 403.
+//   TILES_ENABLED       "true" = on, "false" = off, whatever the database says. Unset (the normal case):
+//                       the switch is the one row of table tiles_proxy_switch (off until set on there),
+//                       read at most once a minute. Off = health says enabled false, so the app shows
+//                       no HD button, and tile requests get 403.
 //   TILES_TEST_TOKEN    while off, a request with header x-tiles-test: <this value> is still served,
 //                       so the whole path can be tried before it is switched on. Unset = no way in.
 //   TILES_MONTHLY_CAP   root requests per calendar month, US Pacific time (Google's billing month).
@@ -42,6 +44,19 @@ const PASS_UP = ['if-none-match', 'if-modified-since'];
 
 const whole = (v: string | undefined, d: number) => { const n = Math.floor(Number(v ?? d)); return Number.isFinite(n) && n >= 0 ? n : d; };
 
+// The on / off switch kept in the database, remembered for a minute so a view's hundreds of tile requests ask once.
+let switchSeen: { at: number; on: boolean } | null = null;
+async function switchOn(db: () => ReturnType<typeof createClient>): Promise<boolean> {
+  if (switchSeen && Date.now() - switchSeen.at < 60_000) return switchSeen.on;
+  let on = false;
+  try {
+    const { data, error } = await db().rpc('tiles_proxy_enabled');
+    on = !error && data === true;
+  } catch { /* not readable = off */ }
+  switchSeen = { at: Date.now(), on };
+  return on;
+}
+
 Deno.serve(async (req) => {
   const json = (b: unknown, status = 200) =>
     new Response(JSON.stringify(b), { status, headers: { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -50,7 +65,7 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url);
   const key = Deno.env.get('GOOGLE_TILES_KEY');
-  const enabled = Deno.env.get('TILES_ENABLED') === 'true';
+  const forced = Deno.env.get('TILES_ENABLED');
   const token = Deno.env.get('TILES_TEST_TOKEN') ?? '';
   const test = token.length > 0 && req.headers.get('x-tiles-test') === token;
   const draco = Deno.env.get('TILES_DRACO_URL') || DRACO_DEFAULT;
@@ -59,6 +74,7 @@ Deno.serve(async (req) => {
   const db = () => createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
   try {
+    const enabled = forced === 'true' ? true : forced === 'false' ? false : await switchOn(db);
     if (url.pathname.endsWith('/health')) {
       const { data, error } = await db().rpc('tiles_proxy_usage');
       if (error || !data) return json({ ok: false, enabled, test, set_up: !!key, error: 'the count is not readable' });
@@ -76,7 +92,7 @@ Deno.serve(async (req) => {
     const at = url.pathname.indexOf(MARK);
     const path = at < 0 ? '' : url.pathname.slice(at);
     if (!path || path.includes('..') || !/^\/v1\/3dtiles\/[A-Za-z0-9_\-./]+$/.test(path)) return json({ ok: false, error: 'not a tile address' }, 404);
-    if (!enabled && !test) return json({ ok: false, error: 'HD is switched off (TILES_ENABLED is not "true")' }, 403);
+    if (!enabled && !test) return json({ ok: false, error: 'HD is switched off' }, 403);
     if (!key) return json({ ok: false, error: 'not set up: no Google key' }, 503);
 
     // Google's renderers add the session to addresses that already carry one: keep the last. Never pass a key on.
