@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, PanResponder, LayoutChangeEvent,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, PanResponder, LayoutChangeEvent, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../../theme';
@@ -15,6 +15,8 @@ import VantagePhoto from './VantagePhoto';
 import FullScreenPhotoViewer from '../FullScreenPhotoViewer';
 import type { Pair } from '../../utils/sunEngine';
 import { LABELS, PHASE_COLORS, compassPoint, shotName, shotTitle } from './sunStyle';
+import Sun3DPanel from './Sun3DPanel';
+import { IS_TEST_APP } from '../../utils/variant';
 
 // Sun & Moon for one stop, under Weather. A stop with no vantage -> subject
 // pairs shows only a small "add" button. Hidden entirely when the planner is
@@ -76,8 +78,10 @@ function SunPlannerInner({ tripId, stopId, timeLabel, stopName, stopPhotos, stop
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-type Tab = 'map' | 'horizon' | 'photo';
-const TAB_NAMES: Record<Tab, string> = { map: 'Map', horizon: 'Horizon', photo: 'Photo' };
+type Tab = 'map' | 'horizon' | 'photo' | '3d';
+const TAB_NAMES: Record<Tab, string> = { map: 'Map', horizon: 'Horizon', photo: 'Photo', '3d': '3D' };
+// The 3D view is in the TEST app only until Phil has tried it.
+const TABS: Tab[] = IS_TEST_APP ? ['map', 'horizon', 'photo', '3d'] : ['map', 'horizon', 'photo'];
 
 function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: string | null; onEdit: (vantageId?: string | null) => void }) {
   const stopMinute = parseTimeLabel(timeLabel);
@@ -85,6 +89,7 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
   const [pairIdx, setPairIdx] = useState(0);
   const [tab, setTab] = useState<Tab>('map');
   const [viewing, setViewing] = useState<Pair | null>(null);
+  const [full3d, setFull3d] = useState(false);
   const pair = stop.pairs[Math.min(pairIdx, stop.pairs.length - 1)];
   const openPhoto = (p: Pair) => { if (p.photo_id) setViewing(p); };
 
@@ -107,7 +112,7 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
         <Text style={styles.date}>{MONTHS[mo - 1]} {d}</Text>
         <Text style={styles.moonPct}>· moon {Math.round(moon.illum * 100)}%</Text>
         <View style={styles.tabs} accessibilityRole="tablist">
-          {(['map', 'horizon', 'photo'] as const).map(t => (
+          {TABS.map(t => (
             <TouchableOpacity
               key={t}
               onPress={() => setTab(t)}
@@ -137,6 +142,12 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
         <SunMapPanel pair={pair} light={light} moon={moon} riseAz={events.riseAz} setAz={events.setAz} height={208} />
       ) : tab === 'horizon' ? (
         <SunHorizonPanel pair={pair} day0={day0} light={light} moon={moon} />
+      ) : tab === '3d' ? (
+        full3d ? (
+          <View style={styles.fullNote}><Text style={styles.fullNoteText}>Showing full screen</Text></View>
+        ) : (
+          <Sun3DPanel pair={pair} sun={light.sun} day0={day0} height={208} onJump={setMinute} onFull={() => setFull3d(true)} />
+        )
       ) : (
         <PhotoPanel pair={pair} onOpen={() => openPhoto(pair)} onAdd={() => onEdit(pair.vantage_id)} />
       )}
@@ -204,6 +215,23 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
       <TouchableOpacity onPress={() => onEdit()} style={styles.editLink} accessibilityRole="button" hitSlop={8}>
         <Text style={styles.editLinkText}>Edit vantages</Text>
       </TouchableOpacity>
+      <Modal visible={full3d} animationType="fade" onRequestClose={() => setFull3d(false)}>
+        <View style={styles.fullScreen}>
+          {full3d ? (
+            <Sun3DPanel full pair={pair} sun={light.sun} day0={day0} onJump={setMinute} onFull={() => setFull3d(false)} />
+          ) : null}
+          <View style={styles.fullBar}>
+            <View style={styles.timeRow}>
+              <Text style={styles.timeText}>{fmtMinute(minute)}</Text>
+              <Text style={styles.fullShot} numberOfLines={1}>{shotName(pair)}</Text>
+              <TouchableOpacity onPress={() => setFull3d(false)} style={styles.fullClose} accessibilityRole="button" accessibilityLabel="Close the 3D view">
+                <Text style={styles.fullCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+            <TimeScrubber minute={minute} onChange={setMinute} phases={events.phases} />
+          </View>
+        </View>
+      </Modal>
       <FullScreenPhotoViewer
         photo={viewing ? { id: viewing.photo_id, storage_url: viewing.photo_url } : null}
         visible={!!viewing}
@@ -334,6 +362,13 @@ const styles = StyleSheet.create({
   tab: { minHeight: 32, paddingHorizontal: 10, justifyContent: 'center', backgroundColor: '#000000' },
   tabOn: { backgroundColor: '#ffffff' },
   tabText: { fontSize: 11, fontWeight: '600', color: '#ffffff' },
+  fullNote: { height: 208, borderRadius: 10, borderWidth: 1, borderColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' },
+  fullNoteText: { color: '#888888', fontSize: 13 },
+  fullScreen: { flex: 1, backgroundColor: '#000000' },
+  fullBar: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 18, gap: 8, backgroundColor: '#000000' },
+  fullShot: { flex: 1, color: '#888888', fontSize: 13 },
+  fullClose: { minHeight: 40, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' },
+  fullCloseText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
   tabTextOn: { color: '#000000' },
   readout: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 26 },
   chip: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4 },
