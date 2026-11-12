@@ -48,15 +48,23 @@ const Web = WebView as unknown as React.ComponentType<any>;
 
 type Phase = 'finding' | 'none' | 'loading' | 'failed' | 'starting' | 'ready' | 'error';
 type Moments = { firstSubject: number | null; lastSubject: number | null; firstHere: number | null; lastHere: number | null };
-// Phil's lenses, in 4x5 terms (12 Nov 2026). The film is 120 x 96 mm as the page counts it (the open area of a
-// 4x5 holder); the page works the view out from that, so 135 mm here is what a 135 mm lens sees on 4x5.
-const LENSES = [75, 90, 135, 300];
-const FILM = { long: 120, short: 96 };
+// Phil's cameras (12 Nov 2026): his 4x5 lenses, and the Fuji GW690III (a fixed 90 mm lens on 6x9 roll film).
+// `long` x `short` is the film's open area in mm; the page works the view out from that, so 135 here is what a
+// 135 mm lens sees on 4x5. Checked against Phil's own Snake River Overlook frame from the Fuji: the model's skyline
+// sits on the photo's within about 0.1% of the frame width once the picture's crop is allowed for.
+type Lens = { id: string; f: number; long: number; short: number; label: string; format: string };
+const LENSES: Lens[] = [
+  { id: '75', f: 75, long: 120, short: 96, label: '75', format: '4×5' },
+  { id: '90', f: 90, long: 120, short: 96, label: '90', format: '4×5' },
+  { id: '135', f: 135, long: 120, short: 96, label: '135', format: '4×5' },
+  { id: '300', f: 300, long: 120, short: 96, label: '300', format: '4×5' },
+  { id: 'gw690', f: 90, long: 82.6, short: 56, label: '6×9', format: '6×9 (GW690)' },
+];
 type FrameMode = 'land' | 'port' | 'off';
 const FRAME_NEXT: Record<FrameMode, FrameMode> = { land: 'port', port: 'off', off: 'land' };
 const FRAME_SAY: Record<FrameMode, string> = { land: 'landscape', port: 'portrait', off: 'off' };
 // The last lens and frame chosen, kept while the app is open so full screen and the next stop start the same way.
-let lastFocal = 135;
+let lastLens = '135';
 let lastFrame: FrameMode = 'land';
 const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
 
@@ -67,17 +75,19 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const [near, setNear] = useState<TerrainNear | null>(null);
   const [b64, setB64] = useState<string | null>(null);
   const [nearB64, setNearB64] = useState<string | null>(null);
-  const [focal, setFocalState] = useState(lastFocal);
+  const [lensId, setLensState] = useState(lastLens);
+  const pickLens = LENSES.find(l => l.id === lensId) ?? LENSES[2];
+  const focal = pickLens.f;
   const [frame, setFrameState] = useState<FrameMode>(lastFrame);
-  const setFocal = useCallback((f: number) => { lastFocal = f; setFocalState(f); }, []);
+  const setLens = useCallback((id: string) => { lastLens = id; setLensState(id); }, []);
   const setFrame = useCallback((m: FrameMode) => { lastFrame = m; setFrameState(m); }, []);
   // What the page needs for the lens: focal length, the film's width and height as the camera is turned, box on / off.
   const lens = useMemo(() => ({
-    f: focal,
-    fw: frame === 'port' ? FILM.short : FILM.long,
-    fh: frame === 'port' ? FILM.long : FILM.short,
+    f: pickLens.f,
+    fw: frame === 'port' ? pickLens.short : pickLens.long,
+    fh: frame === 'port' ? pickLens.long : pickLens.short,
     box: frame !== 'off',
-  }), [focal, frame]);
+  }), [pickLens, frame]);
   const [lit, setLit] = useState<{ subjectLit: boolean; hereLit: boolean; up: boolean } | null>(null);
   const [moments, setMoments] = useState<Moments | null>(null);
   const [look, setLook] = useState<number | null>(null);
@@ -257,16 +267,16 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
         ) : null}
         <View style={styles.topRow} pointerEvents="box-none">
           <View style={styles.lens} accessibilityRole="tablist">
-            {LENSES.map(f => (
+            {LENSES.map(l => (
               <TouchableOpacity
-                key={f}
-                onPress={() => setFocal(f)}
-                style={[styles.lensBtn, focal === f && styles.lensOn]}
+                key={l.id}
+                onPress={() => setLens(l.id)}
+                style={[styles.lensBtn, lensId === l.id && styles.lensOn]}
                 accessibilityRole="tab"
-                accessibilityState={{ selected: focal === f }}
-                accessibilityLabel={`${f} millimetre lens`}
+                accessibilityState={{ selected: lensId === l.id }}
+                accessibilityLabel={l.id === 'gw690' ? 'Fuji 6 by 9, 90 millimetre lens' : `${l.f} millimetre lens`}
               >
-                <Text style={[styles.lensText, focal === f && styles.lensTextOn]}>{f}</Text>
+                <Text style={[styles.lensText, lensId === l.id && styles.lensTextOn]}>{l.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -298,7 +308,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
           </View>
         </View>
         {ready && look != null ? (
-          <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on 4×5 · {hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}</Text>
+          <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format} · {hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}</Text>
         ) : null}
       </View>
 
@@ -361,7 +371,7 @@ const styles = StyleSheet.create({
   coverText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
   topRow: { position: 'absolute', top: 8, left: 8, right: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   lens: { flexDirection: 'row', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
-  lensBtn: { minWidth: 40, minHeight: 32, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  lensBtn: { minWidth: 36, minHeight: 32, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   lensOn: { backgroundColor: '#ffffff' },
   lensText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   lensTextOn: { color: '#000000' },
