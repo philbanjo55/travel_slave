@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   FlatList, ActivityIndicator, Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTripStore, useTripData } from '../store/tripStore';
@@ -36,6 +36,7 @@ function tripToday(tz?: string): string {
 
 export default function TripScreen() {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();   // room for the phone's own buttons under the Accept bar
   const route = useRoute<any>();
   const { tripId } = route.params;
   const { loadTrip, isSyncing, setCurrentDay } = useTripStore();
@@ -472,7 +473,7 @@ export default function TripScreen() {
             ) : null}
           </View>
         ) : undefined}
-        contentContainerStyle={[styles.stopList, ghostRows ? { paddingBottom: ghostDetails ? 260 : 130 } : null]}
+        contentContainerStyle={[styles.stopList, ghostRows ? { paddingBottom: (ghostDetails ? 260 : 130) + insets.bottom } : null]}
         renderItem={({ item, index }: { item: any; index: number }) => IS_TEST_APP ? (
           <TimelineRow item={item} index={index} isLast={index === (ghostRows ?? stops).length - 1} weather={dayWeather[item.id]} dayDate={day?.date}
             planner={planner} ghost={ghostRows ? ghostRows[index]?.tag : null}
@@ -597,7 +598,7 @@ export default function TripScreen() {
       />
 
       {IS_TEST_APP && ghostRows ? (
-        <View style={styles.ghostBar}>
+        <View style={[styles.ghostBar, { paddingBottom: spacing.lg + insets.bottom }]}>
           {/* One line of what accepting does; the lists behind Details (the timeline stays visible). */}
           <TouchableOpacity onPress={() => setGhostDetails(v => !v)} style={styles.ghostSummary} accessibilityRole="button"
             accessibilityState={{ expanded: ghostDetails }}>

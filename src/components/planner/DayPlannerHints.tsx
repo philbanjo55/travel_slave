@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, AppState } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, AppState, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { colors, spacing, radius, typography } from '../../theme';
@@ -255,6 +255,7 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
   const ends = [...mineRows, ...tRows].map(v => Date.parse(v.end ?? v.start ?? '')).filter(Number.isFinite);
   const tToday = tripToday(run, date);
   const dayDone = !past && date === tToday && ends.length > 0 && Date.now() > Math.max(...ends);
+  const canReplan = !past && !dayDone && date === format(new Date(), 'yyyy-MM-dd');
   const week = planner.week ?? null;
   const tagOf = (v: PlanVisit): string | null => {
     if (v.booked || (v.rated === false && v.p_good == null)) return null;
@@ -290,13 +291,17 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
       </View>
       <Text style={styles.cardSub}>{caption}</Text>
       {!past ? <PlanCheckRow tripId={tripId} date={date} tz={tz} onTellT={setTell} /> : null}
-      {!past && !dayDone && date === format(new Date(), 'yyyy-MM-dd') ? <ReplanNowRow tripId={tripId} /> : null}
-      {!past ? <TellTRow tripId={tripId} date={date} dayLabel={dayWords} places={places} open={tell} onOpened={() => setTell(null)} /> : null}
-      {past ? <Text style={styles.cardSub}>This day is over: nothing to change.</Text> : score.reasons.length ? (
-        <TouchableOpacity onPress={onShowChanges} style={styles.useBtn} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Show T's changes on the timeline">
-          <Text style={styles.useText}>{real.length ? "Use T's day" : "See what T leaves out"} ›</Text>
-        </TouchableOpacity>
-      ) : score.bigOnDay ? <Text style={styles.cardSub}>Your day is T's plan: nothing to change.</Text> : null}
+      {canReplan ? <ReplanNowStatus tripId={tripId} /> : null}
+      {past ? <Text style={styles.cardSub}>This day is over: nothing to change.</Text> : (
+        // The card's actions as real buttons (Phil, 12 Nov 2026): Use T's day first, Tell T and Re-plan now under it.
+        <TellTRow tripId={tripId} date={date} dayLabel={dayWords} places={places} open={tell} onOpened={() => setTell(null)}
+          above={score.reasons.length ? (
+            <TouchableOpacity onPress={onShowChanges} style={styles.useBtn} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Show T's changes on the timeline">
+              <Text style={styles.useText}>{real.length ? "Use T's day" : "See what T leaves out"} ›</Text>
+            </TouchableOpacity>
+          ) : score.bigOnDay ? <Text style={styles.cardSub}>Your day is T's plan: nothing to change.</Text> : null}
+          side={canReplan ? <ReplanNowButton tripId={tripId} /> : null} />
+      )}
       {details ? (
         <View style={styles.details}>
           <TouchableOpacity onPress={open} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={`T, this day, ${planned}. Open the plan`}>
@@ -365,27 +370,35 @@ export function ChanceLine({ hint, label, onChip }: { hint: StopHint; label?: bo
 
 // Re-plan now on today's card (Phil, 5 Nov 2026): fresh camera pictures, then the rest of today
 // re-planned from where the plan says you are; the result shows here.
-export function ReplanNowRow({ tripId }: { tripId: string }) {
+// Since 12 Nov 2026 in two parts: what the last request did (a line on the card) and the button itself.
+export function ReplanNowStatus({ tripId }: { tripId: string }) {
   const v = useReplanNow(tripId);
   const { currentTripData } = useTripStore();
-  const go = () => startReplanNow(tripId, currentTripData?.trip?.title).catch((e: any) => failReplanNow(tripId, errText(e)));
   if (v.phase === 'running') {
     return <Text style={styles.cardSub}>Re-planning the rest of today with fresh camera pictures (about 1 minute). The new plan shows here.</Text>;
   }
+  if (v.phase === 'done') return <Text style={styles.warn}>{v.status.done_at ? `${clock12(v.status.done_at, currentTripData?.trip?.timezone ?? undefined)}: ` : ''}{v.message}</Text>;
+  if (v.phase === 'error') return <Text style={[styles.cardSub, { color: '#e74c3c' }]}>{v.message}</Text>;
+  return null;
+}
+
+export function ReplanNowButton({ tripId }: { tripId: string }) {
+  const v = useReplanNow(tripId);
+  const { currentTripData } = useTripStore();
+  const busy = v.phase === 'running';
+  const go = () => startReplanNow(tripId, currentTripData?.trip?.title).catch((e: any) => failReplanNow(tripId, errText(e)));
   return (
-    <View style={{ gap: 4 }}>
-      {v.phase === 'done' ? <Text style={styles.warn}>{v.status.done_at ? `${clock12(v.status.done_at, currentTripData?.trip?.timezone ?? undefined)}: ` : ''}{v.message}</Text> : null}
-      {v.phase === 'error' ? <Text style={[styles.cardSub, { color: '#e74c3c' }]}>{v.message}</Text> : null}
-      <TouchableOpacity onPress={go} style={styles.nowBtn} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Re-plan the rest of today now with the cameras">
-        <Text style={styles.nowText}>Re-plan now with the cameras ›</Text>
-      </TouchableOpacity>
-    </View>
+    <TouchableOpacity onPress={go} disabled={busy} style={[styles.nowBtn, busy && { opacity: 0.6 }]} activeOpacity={0.8} accessibilityRole="button"
+      accessibilityState={{ disabled: busy, busy }} accessibilityLabel="Re-plan now with the cameras: the rest of today">
+      {busy ? <ActivityIndicator size="small" color={colors.textPrimary} /> : null}
+      <Text style={styles.nowText} numberOfLines={1}>{busy ? 'Re-planning…' : 'Re-plan now'}</Text>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  nowBtn: { alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: 12, borderRadius: radius.sm, backgroundColor: colors.surface },
-  nowText: { fontSize: 13, fontWeight: '700', color: colors.signalOk },
+  nowBtn: { flex: 1, minHeight: 44, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: '#555555' },
+  nowText: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   card: {
     marginHorizontal: spacing.xl, marginTop: spacing.sm, marginBottom: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 6,
     borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
