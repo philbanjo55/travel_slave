@@ -196,6 +196,27 @@ export async function fetchFullTrip(tripId: string) {
 
   const stopsData = await fetchAllStopsForTrip(tripId);
 
+  // A practice (training) trip has no photos of its own: it shows the main trip's, read only.
+  // Each borrowed photo keeps the main stop's id as its stop_id and is marked `borrowed`, and
+  // usePhotoUpload refuses to delete or reorder a photo that is not this trip's own.
+  if ((trip as any)?.training_of) {
+    try {
+      const { data: lent, error: lentErr } = await supabase.rpc('training_stop_photos', { p_trip: tripId });
+      if (lentErr) throw lentErr;
+      const byStop: Record<string, any[]> = {};
+      for (const row of (Array.isArray(lent) ? lent : [])) {
+        const { copy_stop_id, ...photo } = row as any;
+        (byStop[copy_stop_id] = byStop[copy_stop_id] || []).push({ ...photo, borrowed: true });
+      }
+      for (const stop of stopsData as any[]) {
+        const more = byStop[stop.id];
+        if (more?.length) stop.stop_photos = [...(stop.stop_photos || []), ...more];
+      }
+    } catch (e) {
+      console.warn('[photos] the main trip\'s photos could not be read for this practice trip:', e);
+    }
+  }
+
   // Group stops by day
   const stopsByDay: Record<string, any[]> = {};
   for (const stop of stopsData) {

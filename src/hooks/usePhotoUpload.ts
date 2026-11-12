@@ -10,6 +10,8 @@ const SUPABASE_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
 
 export type PhotoType = 'reference' | 'field';
 
+export const BORROWED_MESSAGE = 'This photo is from your real trip. Open the real trip to change or remove it.';
+
 async function uploadToStorage(stopId: string, uri: string): Promise<{ id: string; storage_url: string }> {
   const photoId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const filename = `${stopId}/${photoId}.jpg`;
@@ -46,6 +48,7 @@ export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
   const [uploadProgress, setUploadProgress] = useState('');
   const [error, setError] = useState<string | null>(null);
   const { refreshCurrentTrip } = useTripStore();
+  const ownStopIds = groupStopIds?.length ? groupStopIds : [stopId];
 
   const uploadSinglePhoto = async (uri: string, photoType: PhotoType): Promise<{ id: string; storage_url: string }> => {
     const { id: photoId, storage_url } = await uploadToStorage(stopId, uri);
@@ -154,10 +157,16 @@ export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
     try {
       const { data: photo, error: readErr } = await supabase
         .from('stop_photos')
-        .select('storage_url')
+        .select('storage_url, stop_id')
         .eq('id', photoId)
         .single();
       if (readErr) throw readErr;
+      // A practice trip shows the main trip's photos. Those are never removed from here:
+      // only a photo that belongs to this stop (or its linked repeat visits) can go.
+      if (!ownStopIds.includes((photo as any)?.stop_id)) {
+        setError(BORROWED_MESSAGE);
+        return;
+      }
 
       // The row goes first: if that fails nothing has changed. Removing the
       // file afterwards can only leave an unused file behind, never a photo
@@ -181,8 +190,14 @@ export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
   // Puts `photoId` first in `orderedIds` (the stop's photos of one type, in
   // their current order) and renumbers positions 0..n-1. Needs a connection.
   const makeFirst = async (photoId: string, orderedIds: string[]): Promise<boolean> => {
-    const ids = [photoId, ...orderedIds.filter(id => id !== photoId)];
+    const wanted = [photoId, ...orderedIds.filter(id => id !== photoId)];
     try {
+      // Only this trip's own photos are renumbered; the main trip's photos shown on a practice trip keep their order.
+      const { data: rows, error: rowsErr } = await supabase.from('stop_photos').select('id, stop_id').in('id', wanted);
+      if (rowsErr) throw rowsErr;
+      const own = new Set((rows ?? []).filter((r: any) => ownStopIds.includes(r.stop_id)).map((r: any) => r.id));
+      if (!own.has(photoId)) { setError(BORROWED_MESSAGE); return false; }
+      const ids = wanted.filter(id => own.has(id));
       // All positions saved at once; the trip reload that re-sorts the list
       // runs in the background, so the caller can confirm straight away.
       const results = await Promise.all(ids.map((id, i) =>
