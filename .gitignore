@@ -16,3 +16,6 @@ ios/
 
 # Supabase CLI local cache (deploys from this environment)
 supabase/.temp/
+
+# Python byte-code left by the tools scripts
+__pycache__/
