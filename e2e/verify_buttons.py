@@ -164,8 +164,15 @@ def stop_page_cut_offs():
     popup('camera-view', 'Tap for the full picture')
     popup('vantage-editor', 'Edit vantages')
     scroll_top(6)
-    for _ in range(14):
+    # To the very end: swipe until the screen stops changing (14 swipes fell short on a long page, and a note that
+    # simply carried on below the screen was reported as cut off).
+    last = None
+    for _ in range(40):
         C.swipe_up()
+        now = tuple(C.capture(0.8).all_texts)
+        if now == last:
+            break
+        last = now
     cut_off('stop-page-end', C.capture(1.5), strict=False)
 
 
@@ -612,7 +619,23 @@ def sun_3d():
     if s is None:
         seen, _ = V.texts_all(8)
         print('INFO stop page: ' + ' | '.join(seen)[:1500], flush=True); return
-    s = mid_screen(s, 'SUN & MOON')
+    # Bring the section's heading up to about a third of the screen: the search above stops as soon as the heading
+    # peeks in at the very bottom (offline it sat under the Home / Back buttons at y 2371, with its tabs off screen,
+    # so the 3D tab was never tapped; the heading is plain text, so mid_screen, which looks at buttons, did nothing).
+    def text_y(st, needle):
+        for nd in (st.root.iter('node') if st.root is not None else []):
+            t = (nd.get('text') or nd.get('content-desc') or '')
+            if nd.get('package') == V.PKG and needle.lower() in t.lower():
+                x1, y1, x2, y2 = C.bounds(nd); return (y1 + y2) // 2
+        return None
+    H = 2400
+    for _ in range(5):
+        y = text_y(s, 'SUN & MOON')
+        if y is None or 0.22 * H <= y <= 0.45 * H:
+            break
+        d = max(-600, min(600, int(y - 0.33 * H)))
+        C.adb('shell', 'input', 'swipe', '540', str(int(0.6 * H)), '540', str(int(0.6 * H) - d), '600')
+        s = C.capture(1.2)
     V.check('sun3d-tab', V.tap_text(s, '3D', exact=True), 'tap the 3D tab')
     # The caption under the picture ("Looking W 259 ...") is what says it has drawn; bring it onto the screen first
     # (run 6 drew fine, but the caption sat below the fold while this loop waited).
