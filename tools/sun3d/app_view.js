@@ -46,11 +46,37 @@
   const free = a => { try { const b = a && (a.buffer || a); if (b && typeof b.transfer === 'function' && b.byteLength) b.transfer(0); } catch (e) { /* left to the collector */ } };
   window.onerror = msg => { post({ type: 'error', msg: String(msg) }); };
 
-  let cfg = null, parts = [], nparts = [], dparts = [], mparts = [], tparts = [], wparts = [], FAR = null, NR = null, DT = null, ice = true, maxH = 4250, baseH = 0;
+  let cfg = null, parts = [], nparts = [], dparts = [], mparts = [], tparts = [], wparts = [], FAR = null, NR = null, DT = null, ice = true, maxH = 4250, minH = 0, baseH = 0;
   let foreState = 0, frames = 0, lastPath = null, touched = false;   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
   let R = null;   // everything three.js, once built
-  let eye = null, eye0 = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
+  let eye = null, eye0 = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true;
   const G = 768;  // mesh points per side
+
+  // ---- Smooth by construction (12 Nov 2026; measured in tools/sun3d/README.md, "Smoothness") ----
+  // 1. Nothing is drawn that cannot be seen. Each mesh's triangles are kept in NB x NB blocks and a frame draws only
+  //    the blocks whose box touches the view: the same picture from a fraction of the triangles.
+  // 2. Never more than one frame on the graphics card. A new frame is not sent until the last one is done (a fence),
+  //    so a slow phone shows the newest heading / sun / spot, not a queue of old ones. The time from a frame's start
+  //    to its fence is the frame time the page reports ('perf') and steers by.
+  // 3. Sharp when still, lighter while moving. While a drag, a run of sun positions (the time slider) or a run of
+  //    walk steps is going on, frames are drawn at the level the phone has shown it keeps up with (QL: canvas
+  //    resolution, share of the tree points, size of the light pass, and at the two lowest levels every other point
+  //    of the meshes: first the near and detail ones, whose triangles are smaller than a pixel anyway, last the far
+  //    one, which is the skyline). When it stops, one frame is drawn at full quality, with the full light pass if
+  //    the sun moved. A single change (a tap) is drawn at full quality at once.
+  // 4. The governor. Average frame time while moving over SLOW_MS: one level down; under FAST_MS: one level up (a
+  //    level that proved too slow right after a step up is not tried again). Two levels are kept, one for looking
+  //    around / walking and one for the sun (which also pays for a light pass); the app hands them back at the next
+  //    start (cfg.level), so the next stop begins where this one ended.
+  const NB = 16, BS = Math.ceil((G - 1) / NB), bedge = k => Math.min(G - 1, k * BS), BSTART = new Uint32Array(NB * NB + 1), BSTART2 = new Uint32Array(NB * NB + 1);
+  const QL = [{ res: 1, trees: 1, lt: 0, geo: 0 }, { res: 0.75, trees: 1, lt: 1, geo: 0 }, { res: 0.6, trees: 0.5, lt: 1, geo: 1 }, { res: 0.5, trees: 0.3, lt: 2, geo: 2 }];
+  const QN = ['full', 'high', 'medium', 'low'];
+  const SLOW_MS = 24, FAST_MS = 12, REST = { look: 150, sun: 260, walk: 280 };   // ms after the last change before the sharp frame (walk steps come 130 ms apart; the full light pass is heavy, so the sun waits as long as it always did)
+  const PX_MAX = 1400000;   // canvas pixels at most: 2 device pixels a point on a phone screen (412 x 800 at 2 = 1.32 M), less on a bigger one
+  const lv = { look: 0, sun: 0 }, noUp = { look: [], sun: [] }, tried = { look: false, sun: false };
+  let act = null, owe = false, quick = false, sharp = false, restTimer = null, lastPerf = -1e9, lensKey = '';
+  const pend = { look: false, sun: false, walk: false };   // a change of this kind is waiting for its sharp frame: the next one makes it a run
+  const gate = { sync: null, t0: 0, act: null, gov: false, off: false, wait: false, poll: null };
 
   // A grid: n x n heights (HF, row 0 = north) over a lat/lng box; x0, z0, w, d place it in the far grid's metres.
   const gh = (g, c, r) => {
@@ -519,6 +545,12 @@
         }
       }
     });
+    // in no order, so a share of the points (drawn while the view moves on a slow phone) is a thinner copy of every tree, not a part of the box
+    for (let i = m - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1)); if (j === i) continue;
+      for (let q = 0; q < 3; q++) { const t = pos[i * 3 + q]; pos[i * 3 + q] = pos[j * 3 + q]; pos[j * 3 + q] = t; }
+      for (let q = 0; q < 4; q++) { const t = seed[i * 4 + q]; seed[i * 4 + q] = seed[j * 4 + q]; seed[j * 4 + q] = t; }
+    }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos.slice(0, m * 3), 3)); geo.setAttribute('seed', new THREE.BufferAttribute(seed.slice(0, m * 4), 4));
     free(pos); free(seed);
@@ -552,19 +584,19 @@
   }
   // skip = 2 keeps every other cell each way (the light foreground of a small phone): a quarter of the memory
   async function decode(list, n, base, step, skip) {
-    const two = skip === 2, m = two ? n >> 1 : n, HF = new Float32Array(m * m); let up = new Uint16Array(n), cur = new Uint16Array(n), hi = -1e9;   // only two lines of the 16-bit values are kept
+    const two = skip === 2, m = two ? n >> 1 : n, HF = new Float32Array(m * m); let up = new Uint16Array(n), cur = new Uint16Array(n), hi = -1e9, lo = 1e9;   // only two lines of the 16-bit values are kept
     const rows = await lines(pack(list), 2 * n + 1, (raw, r) => {
       if (r >= n) return;
       for (let c = 0, p = 1; c < n; c++, p += 2) {
         const res = (raw[p] << 8) | raw[p + 1], v = (res + (c ? cur[c - 1] : 0) + (r ? up[c] : 0) - (r && c ? up[c - 1] : 0)) & 65535;
         cur[c] = v;
-        if (!two) { const h = base + v * step; HF[r * n + c] = h; if (h > hi) hi = h; }
-        else if (!(r & 1) && !(c & 1) && (r >> 1) < m && (c >> 1) < m) { const h = base + v * step; HF[(r >> 1) * m + (c >> 1)] = h; if (h > hi) hi = h; }
+        if (!two) { const h = base + v * step; HF[r * n + c] = h; if (h > hi) hi = h; if (h < lo) lo = h; }
+        else if (!(r & 1) && !(c & 1) && (r >> 1) < m && (c >> 1) < m) { const h = base + v * step; HF[(r >> 1) * m + (c >> 1)] = h; if (h > hi) hi = h; if (h < lo) lo = h; }
       }
       const t = up; up = cur; cur = t;
     });
     if (rows !== n) throw new Error('terrain file has the wrong size');
-    return { HF, hi };
+    return { HF, hi, lo };
   }
   // any 8-bit file of ours: h lines of w bytes
   async function decodeBytes(list, w, h) {
@@ -577,7 +609,7 @@
   async function load() {
     const f = await decode(parts, cfg.n, cfg.base, cfg.step); parts = [];
     FAR = { n: cfg.n, HF: f.HF, north: cfg.north, south: cfg.south, west: cfg.west, east: cfg.east, x0: 0, z0: 0, w: cfg.W, d: cfg.D, dx: cfg.W / cfg.n, dz: cfg.D / cfg.n };
-    maxH = f.hi + 60; NR = null; DT = null;
+    maxH = f.hi + 60; minH = f.lo; NR = null; DT = null;
     { const s = []; for (let i = 0; i < f.HF.length; i += 37) s.push(f.HF[i]); s.sort((a, b) => a - b); baseH = s[Math.floor(s.length * 0.1)] || 0; }   // the area's low ground: valley floor, or the sea
     const nc = cfg.near, list = nparts; nparts = [];
     if (nc && list.length) try {   // the fine grid is an extra: if its file is bad the wide one still draws
@@ -585,7 +617,7 @@
       const w = (nc.east - nc.west) * kx, d = (nc.north - nc.south) * kz, cell = Math.max(cfg.W, cfg.D) / (G - 1);
       if (!(nc.west >= cfg.west && nc.east <= cfg.east && nc.south >= cfg.south && nc.north <= cfg.north) || Math.min(w, d) < 12 * cell) throw new Error('near grid does not fit');
       NR = { n: nc.n, HF: m.HF, north: nc.north, south: nc.south, west: nc.west, east: nc.east, x0: (nc.west - cfg.west) * kx, z0: (cfg.north - nc.north) * kz, w, d, dx: w / nc.n, dz: d / nc.n, keep: 1.6 * cell, band: 4.2 * cell, up: FAR };
-      maxH = Math.max(maxH, m.hi + 60);
+      maxH = Math.max(maxH, m.hi + 60); minH = Math.min(minH, m.lo);
     } catch (e) { NR = null; post({ type: 'near', ok: false, msg: String(e && e.message || e) }); }
   }
 
@@ -625,7 +657,7 @@
     const canvas = document.getElementById('view');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     if (!renderer.capabilities.isWebGL2) throw new Error('no WebGL2');
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.setPixelRatio(1);   // the canvas is sized in device pixels by draw(): sharp when still, the level's share while moving
     const N = FAR.n, hmap = heightTex(FAR);
     const size = new THREE.Vector2(FAR.w, FAR.d);
     const rt = n => { const t = new THREE.WebGLRenderTarget(n, n, { minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true, depthBuffer: false }); t.texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); return t; };
@@ -638,8 +670,22 @@
 
     const pos = new Float32Array(G * G * 3);
     for (let j = 0, k = 0; j < G; j++) for (let i = 0; i < G; i++) { pos[k++] = i / (G - 1); pos[k++] = 0; pos[k++] = j / (G - 1); }
-    const idx = new Uint32Array((G - 1) * (G - 1) * 6); let m = 0;
-    for (let j = 0; j < G - 1; j++) for (let i = 0; i < G - 1; i++) { const a = j * G + i, b = a + 1, d = a + G, e = d + 1; idx[m++] = a; idx[m++] = d; idx[m++] = b; idx[m++] = b; idx[m++] = d; idx[m++] = e; }
+    // A second, coarser set of triangles after the first, in the same blocks: every other point each way (the two rings
+    // at a mesh's edge, its rim and its skirt, are all kept). Drawn in place of the full set while the view moves on a slow phone.
+    const LS = []; let nc = 0;
+    for (let k = 0; k < NB; k++) { const a = bedge(k), b = bedge(k + 1), v = [a]; for (let i = a + 1; i < b; i++) if (!(i & 1) || i === 1) v.push(i); v.push(b); LS.push(v); nc += v.length - 1; }
+    const idx = new Uint32Array((G - 1) * (G - 1) * 6 + nc * nc * 6); let m = 0;
+    // the triangles block by block (NB x NB blocks, BSTART = where each begins), so a frame can draw only the blocks in view
+    for (let bj = 0; bj < NB; bj++) for (let bi = 0; bi < NB; bi++) {
+      BSTART[bj * NB + bi] = m;
+      for (let j = bedge(bj); j < bedge(bj + 1); j++) for (let i = bedge(bi); i < bedge(bi + 1); i++) { const a = j * G + i, b = a + 1, d = a + G, e = d + 1; idx[m++] = a; idx[m++] = d; idx[m++] = b; idx[m++] = b; idx[m++] = d; idx[m++] = e; }
+    }
+    BSTART[NB * NB] = m;
+    for (let bj = 0; bj < NB; bj++) for (let bi = 0; bi < NB; bi++) {
+      BSTART2[bj * NB + bi] = m; const rj = LS[bj], ri = LS[bi];
+      for (let j = 0; j < rj.length - 1; j++) for (let i = 0; i < ri.length - 1; i++) { const a = rj[j] * G + ri[i], b = rj[j] * G + ri[i + 1], d = rj[j + 1] * G + ri[i], e = rj[j + 1] * G + ri[i + 1]; idx[m++] = a; idx[m++] = d; idx[m++] = b; idx[m++] = b; idx[m++] = d; idx[m++] = e; }
+    }
+    BSTART2[NB * NB] = m;
     const index = new THREE.BufferAttribute(idx, 1);
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(index);
     const fog = { fogCol: { value: new THREE.Vector3() }, fogD: { value: 0.000011 } };
@@ -658,8 +704,8 @@
       const nLight = new THREE.ShaderMaterial({ defines: { NEAR: 1 }, uniforms: { hmap: { value: nmap }, fmap: { value: hmap }, rect: { value: rect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(NR.dx, NR.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(NR.w, NR.d) }, texel: { value: 1 / NR.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
       const nlo = rt(Math.min(1024, NR.n)), nhi = rt(NR.n);
       const mat = new THREE.ShaderMaterial({ defines: DT ? { DHOLE: 1 } : {}, uniforms: Object.assign({ hmap: { value: nmap }, fmap: { value: hmap }, lmap: { value: nlo.texture }, flmap: { value: lo.texture }, rect: { value: rect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: NR.keep }, band: { value: NR.band }, fogCol: fog.fogCol, fogD: fog.fogD }, dholeU), vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
-      const mesh = new THREE.Mesh(ngeo, mat); mesh.frustumCulled = false;
-      near = { lightMat: nLight, lo: nlo, hi: nhi, mat, mesh };
+      const mesh = new THREE.Mesh(ngeo, [mat]); mesh.frustumCulled = false;   // a list of one material: the mesh is drawn by its geometry's groups (the blocks in view)
+      near = { lightMat: nLight, lo: nlo, hi: nhi, lite: [], mat, mesh };
       terrU.hole = { value: new THREE.Vector4(NR.x0, NR.z0, NR.x0 + NR.w, NR.z0 + NR.d) }; terrU.keep = { value: NR.keep }; terrU.band = { value: NR.band };
     }
     const tdef = {}; if (near) tdef.HOLE = 1; if (det) tdef.DHOLE = 1;
@@ -668,7 +714,7 @@
       const drop = function () { free(this.array); this.array = null; }; index.onUpload(drop); geo.attributes.position.onUpload(drop); if (ngeo) ngeo.attributes.position.onUpload(drop);
       for (const t of [hmap, nmap]) if (t) t.onUpdate = () => { free(t.image.data); t.image = { data: null, width: t.image.width, height: t.image.height }; t.onUpdate = null; };
     }
-    const scene = new THREE.Scene(), terrain = new THREE.Mesh(geo, terrMat); terrain.frustumCulled = false; scene.add(terrain);
+    const scene = new THREE.Scene(), terrain = new THREE.Mesh(geo, [terrMat]); terrain.frustumCulled = false; scene.add(terrain);
     if (near) scene.add(near.mesh);
     const cam = new THREE.PerspectiveCamera(27, 1.5, det ? 1 : near ? 2 : 4, 260000); cam.rotation.order = 'YXZ';
     const skyGeo = new THREE.SphereGeometry(200000, 48, 24), skyPos = skyGeo.attributes.position, skyCol = new THREE.BufferAttribute(new Float32Array(skyPos.count * 3), 3); skyGeo.setAttribute('color', skyCol);
@@ -676,7 +722,8 @@
     const disc = new THREE.Mesh(new THREE.CircleGeometry(2100, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }));
     const halo = new THREE.Mesh(new THREE.CircleGeometry(9000, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, transparent: true, opacity: 0.22, depthWrite: false }));
     scene.add(halo); scene.add(disc);
-    R = { renderer, canvas, lo, hi, lightMat, quad, lightScene, lightCam, terrMat, near, det, skyU, iceU, lost: false,
+    const fx = new Float64Array(NB + 1), fz = new Float64Array(NB + 1); for (let k = 0; k <= NB; k++) { fx[k] = bedge(k) / (G - 1) * FAR.w; fz[k] = bedge(k) / (G - 1) * FAR.d; }
+    R = { renderer, canvas, gl: renderer.getContext(), cw: 0, ch: 0, thin: 1, fx, fz, lite: [], lo, hi, lightMat, quad, lightScene, lightCam, terrMat, near, det, skyU, iceU, lost: false,
       ctx: { hmap, nmap, nrect, size, rt, sunU, lightVS, fog, terrU, index, ngeo, terrain }, scene, cam, sky, skyPos, skyCol, disc, halo, sv: sunVec(180, 20) };
   }
 
@@ -768,7 +815,7 @@
       if (!ngeo) {   // no near mesh to share the points of: the same grid with a skirt ring
         const np = new Float32Array(G * G * 3), sk = i => (i === 0 || i === G - 1 ? 1 : 0), at = i => Math.max(0, Math.min(1, (i - 1) / (G - 3)));
         for (let j = 0, k = 0; j < G; j++) for (let i = 0; i < G; i++) { np[k++] = at(i); np[k++] = sk(i) || sk(j); np[k++] = at(j); }
-        ngeo = new THREE.BufferGeometry(); ngeo.setAttribute('position', new THREE.BufferAttribute(np, 3)); ngeo.setIndex(C.index); made.push(ngeo);
+        ngeo = new THREE.BufferGeometry(); ngeo.setAttribute('position', new THREE.BufferAttribute(np, 3)); ngeo.setIndex(C.index);   // not in `made`: letting it go would take the shared triangle list with it
         ngeo.attributes.position.onUpload(function () { free(this.array); this.array = null; });
       }
       const lu = { hmap: { value: dmap }, fmap: { value: hmap }, kmap: { value: kmap }, lift: { value: 0.3 }, ice: R.iceU, rect: { value: drect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(D.dx, D.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(D.w, D.d) }, texel: { value: 1 / D.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH };
@@ -778,8 +825,10 @@
       const dlo = C.rt(Math.min(512, D.n)), dhi = C.rt(D.n); mu.lmap.value = dlo.texture;
       const ddef = { BLD: 1 }; if (NR) ddef.MID = 1; if (wmap) ddef.WATER = 1;
       const mat = new THREE.ShaderMaterial({ defines: ddef, uniforms: mu, vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
-      const mesh = new THREE.Mesh(ngeo, mat); mesh.frustumCulled = false; made.push(dLight, dlo, dhi, mat);
-      const det = { lightMat: dLight, lo: dlo, hi: dhi, mat, mesh, dmap, kmap, points: null, count: 0 };
+      // its own geometry over the same points and triangles: each mesh keeps its own list of blocks in view
+      const dgeo = new THREE.BufferGeometry(); dgeo.setAttribute('position', ngeo.attributes.position); dgeo.setIndex(ngeo.index);
+      const mesh = new THREE.Mesh(dgeo, [mat]); mesh.frustumCulled = false; made.push(dLight, dlo, dhi, mat);
+      const det = { lightMat: dLight, lo: dlo, hi: dhi, lite: [], mat, mesh, dmap, kmap, points: null, count: 0 };
       if (tp) {
         const pmat = new THREE.ShaderMaterial({ uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, clearR: { value: 12 } }, vertexShader: TREE_VS, fragmentShader: TREE_FS });
         det.points = new THREE.Points(tp.geo, pmat); det.points.frustumCulled = false; det.count = tp.count; made.push(tp.geo, pmat);
@@ -797,9 +846,9 @@
       await step('light');
       // 6. in, all at once
       const oldT = R.terrMat, oldN = near && near.mat;
-      DT = D; maxH = Math.max(maxH, m.hi + 60); sunU.maxH.value = maxH;
-      C.terrain.material = terrMat; R.terrMat = terrMat;
-      if (near) { near.mesh.material = nearMat; near.mat = nearMat; }
+      DT = D; maxH = Math.max(maxH, m.hi + 60); minH = Math.min(minH, m.lo); sunU.maxH.value = maxH;
+      C.terrain.material = [terrMat]; R.terrMat = terrMat;
+      if (near) { near.mesh.material = [nearMat]; near.mat = nearMat; }
       R.det = det; R.scene.add(det.mesh); if (det.points) R.scene.add(det.points);
       R.cam.near = 1; oldT.dispose(); if (oldN) oldN.dispose();
       if (touched) focus(); else { aim(); heading(); }
@@ -814,31 +863,33 @@
     }
   }
 
-  function lightPass(full) {
-    const r = R.renderer, t = full ? R.hi : R.lo;
+  // the light pass's size: k = -1 full (when the sun rests), 0 quick (as the time moves), 1 and 2 smaller still (a half
+  // and a quarter of the quick one each way, made when a slow phone first needs them)
+  const tgt = (o, k) => k < 0 ? o.hi : k === 0 ? o.lo : (o.lite[k] || (o.lite[k] = R.ctx.rt(Math.max(64, o.lo.width >> k))));
+  function lightPass(k) {
+    const r = R.renderer, t = tgt(R, k);
     R.quad.material = R.lightMat; r.setRenderTarget(t); r.render(R.lightScene, R.lightCam);
     R.terrMat.uniforms.lmap.value = t.texture;
     if (R.near) {
-      const nt = full ? R.near.hi : R.near.lo;
+      const nt = tgt(R.near, k);
       R.quad.material = R.near.lightMat; r.setRenderTarget(nt); r.render(R.lightScene, R.lightCam);
       R.near.mat.uniforms.lmap.value = nt.texture; R.near.mat.uniforms.flmap.value = t.texture;
     }
     if (R.det) {
-      const dt = full ? R.det.hi : R.det.lo, u = R.det.mat.uniforms;
+      const dt = tgt(R.det, k), u = R.det.mat.uniforms;
       R.quad.material = R.det.lightMat; r.setRenderTarget(dt); r.render(R.lightScene, R.lightCam);
-      u.lmap.value = dt.texture; u.flmap.value = t.texture; if (R.near) u.mlmap.value = (full ? R.near.hi : R.near.lo).texture;
+      u.lmap.value = dt.texture; u.flmap.value = t.texture; if (R.near) u.mlmap.value = tgt(R.near, k).texture;
       if (R.det.points) R.det.points.material.uniforms.lmap.value = dt.texture;
     }
     r.setRenderTarget(null);
   }
-  function light() {
+  function light(k) {
     const v = sunVec(sun.az, sun.alt), A = atmo(sun.alt); R.sv = v;
     R.lightMat.uniforms.sunDir.value.set(v.x, v.y, v.z);
     R.lightMat.uniforms.sunCol.value.set(A.sun[0] * A.sunI, A.sun[1] * A.sunI, A.sun[2] * A.sunI);
     R.lightMat.uniforms.amb.value.set(A.amb[0], A.amb[1], A.amb[2]);
     R.skyU.zen.value.set(A.zen[0], A.zen[1], A.zen[2]); R.skyU.hor.value.set(A.hor[0], A.hor[1], A.hor[2]);
-    lightPass(false);   // quick pass while the time is moving, the full one once it rests
-    clearTimeout(hiTimer); hiTimer = setTimeout(() => { if (R) { lightPass(true); dirty = true; } }, 260);
+    lightPass(k);   // a quick pass while the time is moving; draw() runs the full one once it rests
     const glow = sun.alt > -10 ? Math.max(0, 1 - Math.abs(sun.alt - 2) / 16) : 0, sp = R.skyPos;
     for (let j = 0; j < sp.count; j++) {
       const x = sp.getX(j) / 200000, y = sp.getY(j) / 200000, z = sp.getZ(j) / 200000;
@@ -881,24 +932,117 @@
     const a = (R && R.cam.aspect) || ((window.innerWidth || 1) / (window.innerHeight || 1));
     const th = lens.fw / (2 * lens.f), tv = lens.fh / (2 * lens.f), k = Math.max(th / (a * 0.9), tv / 0.9);
     const el = document.getElementById('frame');
-    if (el) { el.style.display = lens.box ? 'block' : 'none'; el.style.width = (th / (k * a) * 100) + '%'; el.style.height = (tv / k * 100) + '%'; }
+    if (el) {   // written only when it changes: this runs every frame, and a style write makes the web view lay the page out again
+      const disp = lens.box ? 'block' : 'none', wd = (th / (k * a) * 100) + '%', ht = (tv / k * 100) + '%', key = disp + wd + ht;
+      if (key !== lensKey) { lensKey = key; el.style.display = disp; el.style.width = wd; el.style.height = ht; }
+    }
     return 2 * Math.atan(k);
   }
   function place() {
     const q = cr(eye), e = pick(eye), cam = R.cam;
     cam.position.set((q.c + 0.5) * FAR.dx, eyeH(e), (q.r + 0.5) * FAR.dz); cam.rotation.set(pitch, -yaw, 0);
     cam.fov = lensFov() * 180 / Math.PI; cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
-    if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360));   // a point's metres -> pixels at 1 m
+    if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360)) / Math.sqrt(R.thin);   // a point's metres -> pixels at 1 m
   }
-  function resize() { const w = window.innerWidth, h = window.innerHeight; if (!R || !w || !h) return; R.renderer.setSize(w, h, false); R.cam.aspect = w / h; dirty = true; }
-  function tick() {
-    if (R && dirty) {
-      if (relight) { light(); relight = false; }
-      place();
-      const cam = R.cam, v = R.sv;
-      for (const o of [R.disc, R.halo]) { o.position.set(cam.position.x + v.x * 190000, cam.position.y + v.y * 190000, cam.position.z + v.z * 190000); o.lookAt(cam.position); }
-      R.renderer.render(R.scene, cam); dirty = false; frames++;
+  function resize() { const w = window.innerWidth, h = window.innerHeight; if (!R || !w || !h) return; R.cam.aspect = w / h; dirty = true; }   // draw() sizes the canvas
+
+  // A change from outside. A run of changes (a drag; a second sun position or walk step before the first one's sharp
+  // frame, i.e. the slider being dragged or an arrow held) is a movement: drawn at the phone's level. A single change
+  // is drawn at full quality. Either way the sharp frame (full light pass, full resolution, every tree point, every
+  // triangle) comes REST ms after the last change.
+  function touch(kind) {
+    const run = kind === 'look' || pend[kind]; pend[kind] = true;
+    if (run && !act) act = { kind: kind === 'sun' ? 'sun' : 'look', ms: [], sum: 0, n: 0, slow: 0, px: 0, pts: 0 };
+    clearTimeout(restTimer); restTimer = setTimeout(rest, REST[kind]); dirty = true;
+  }
+  function rest() {
+    clearTimeout(restTimer); restTimer = null; pend.look = pend.sun = pend.walk = false;
+    const a = act, t = performance.now(); act = null;
+    if (a && a.ms.length >= 3 && t - lastPerf >= 1000) {   // a number for the phone test: how the movement that just ended went
+      const m = a.ms.slice().sort((x, y) => x - y); lastPerf = t;
+      post({ type: 'perf', kind: a.kind, ms: Math.round(m[m.length >> 1] * 10) / 10, worst: Math.round(m[m.length - 1]), frames: m.length, level: lv[a.kind], quality: QN[lv[a.kind]], levels: { look: lv.look, sun: lv.sun }, px: a.px, pts: a.pts, timed: gate.off ? 'frame' : 'fence' });
     }
+    if (owe) sharp = dirty = true;
+  }
+  // The last frame's time, once the graphics card is done with it. Only frames of the movement still going on count,
+  // and not one that paid for a new canvas size or was drawn while the foreground was being built.
+  function frameDone(ms) {
+    const a = gate.act, gov = gate.gov; gate.act = null;
+    if (!a || a !== act) return;
+    a.ms.push(ms); if (!gov) return;
+    a.sum += ms; a.n++; a.slow = ms > 2.5 * SLOW_MS ? a.slow + 1 : 0;
+    if (a.n < 6 && a.slow < 2) return;   // six frames' average, or at once after two very slow ones in a row
+    const k = a.kind, L = lv[k], avg = a.slow >= 2 ? ms : a.sum / a.n;
+    if (avg > SLOW_MS && L < QL.length - 1) { if (tried[k]) noUp[k][L] = true; lv[k] = L + 1; tried[k] = false; }
+    else if (avg < FAST_MS && L > 0 && !noUp[k][L - 1]) { lv[k] = L - 1; tried[k] = true; }
+    else tried[k] = false;
+    a.sum = a.n = a.slow = 0;
+  }
+  // Is the graphics card done with the last frame? Until it is, no new frame is sent.
+  function gpuFree(now) {
+    if (gate.sync) {
+      const gl = R.gl; let done = true;
+      try { done = R.lost || gl.isContextLost() || gl.getSyncParameter(gate.sync, gl.SYNC_STATUS) === gl.SIGNALED; } catch (e) { gate.off = true; }
+      if (!done && now - gate.t0 > 12000) { done = true; gate.off = true; }   // a driver that never says: stop asking, time frames by the next frame callback
+      if (!done) return false;
+      try { gl.deleteSync(gate.sync); } catch (e) { /* gone with the context */ }
+      gate.sync = null; clearTimeout(gate.poll); gate.poll = null; frameDone(now - gate.t0);
+    } else if (gate.wait) { gate.wait = false; frameDone(now - gate.t0); }
+    return true;
+  }
+  function poll() { gate.poll = null; if (R && gate.sync && !gpuFree(performance.now())) gate.poll = setTimeout(poll, 3); }
+  // The blocks of a mesh that can be in view, as the geometry's groups (runs of blocks side by side are one draw call).
+  // A block's box: its span on the ground (ex, ez: NB + 1 edges) plus a metre, from under the lowest ground (the cut
+  // under a finer mesh and the skirts hang below it) to above the highest. Never too small, so the picture is the same.
+  const _fr = new THREE.Frustum(), _pm = new THREE.Matrix4(), _iv = new THREE.Matrix4(), _box = new THREE.Box3(), EX = new Float64Array(NB + 1), EZ = new Float64Array(NB + 1);
+  function cull(mesh, ex, ez, S) {
+    const g = mesh.geometry.groups, y0 = minH - 1000, y1 = maxH + 10; let n = 0, open = false;
+    for (let bj = 0; bj < NB; bj++) for (let bi = 0; bi < NB; bi++) {
+      _box.min.set(ex[bi] - 1, y0, ez[bj] - 1); _box.max.set(ex[bi + 1] + 1, y1, ez[bj + 1] + 1);
+      if (!_fr.intersectsBox(_box)) { open = false; continue; }
+      const b = bj * NB + bi;
+      if (open) g[n - 1].count = S[b + 1] - g[n - 1].start;
+      else { const o = g[n] || (g[n] = { start: 0, count: 0, materialIndex: 0 }); o.start = S[b]; o.count = S[b + 1] - S[b]; n++; open = true; }
+    }
+    g.length = n;
+  }
+  // the near and detail meshes bunch their points around `focus` (wp in NEAR_VS): the same sum here gives their blocks' edges
+  const wpj = (s, f) => { const d = s - f, m = d < 0 ? f : 1 - f; if (m < 0.0005) return f; const x = Math.abs(d) / m; return f + Math.sign(d) * m * x * (0.35 + 0.65 * x * x); };
+  function cullWarped(o, g, S) {
+    const f = o.mat.uniforms.focus.value;
+    for (let k = 0; k <= NB; k++) { const t = Math.max(0, Math.min(1, (bedge(k) - 1) / (G - 3))); EX[k] = g.x0 + wpj(t, f.x) * g.w; EZ[k] = g.z0 + wpj(t, f.y) * g.d; }
+    cull(o.mesh, EX, EZ, S);
+  }
+  function draw(t0) {
+    const a = act, q = QL[a ? lv[a.kind] : 0], w = window.innerWidth || 1, h = window.innerHeight || 1;
+    // the canvas: when still 2 device pixels a point at most (as before) and PX_MAX pixels in all; while moving the level's share
+    const ratio = Math.min(2, window.devicePixelRatio || 1, Math.sqrt(PX_MAX / (w * h))) * q.res, cw = Math.max(1, Math.floor(w * ratio)), ch = Math.max(1, Math.floor(h * ratio));
+    let fresh = false;
+    if (cw !== R.cw || ch !== R.ch) { R.renderer.setSize(cw, ch, false); R.cw = cw; R.ch = ch; fresh = true; }
+    if (relight) { light(q.lt); relight = false; quick = true; }
+    else if (!a && sharp && quick) { lightPass(-1); quick = false; }   // the sun has rested: the full light pass, in the same frame as the sharp picture
+    const P = R.det && R.det.points; let pts = 0;
+    if (P) { pts = Math.max(1, Math.floor(R.det.count * q.trees)); if (P.geometry.drawRange.count !== pts) P.geometry.setDrawRange(0, pts); R.thin = q.trees; }   // fewer points are drawn larger (place)
+    place();
+    const cam = R.cam, v = R.sv;
+    cam.updateMatrixWorld(); _fr.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, _iv.copy(cam.matrixWorld).invert()));
+    cull(R.ctx.terrain, R.fx, R.fz, q.geo > 1 ? BSTART2 : BSTART); if (R.near) cullWarped(R.near, NR, q.geo ? BSTART2 : BSTART); if (R.det) cullWarped(R.det, DT, q.geo ? BSTART2 : BSTART);
+    R.disc.position.set(cam.position.x + v.x * 190000, cam.position.y + v.y * 190000, cam.position.z + v.z * 190000); R.disc.lookAt(cam.position);
+    R.halo.position.copy(R.disc.position); R.halo.lookAt(cam.position);
+    R.renderer.render(R.scene, cam); dirty = false; frames++;
+    owe = quick || q !== QL[0]; sharp = false;
+    if (owe && restTimer == null) restTimer = setTimeout(rest, REST.sun);   // a light change nobody touched for (the foreground coming in, ice on / off)
+    if (a) { a.px = cw * ch; a.pts = pts; }
+    gate.t0 = t0; gate.act = a; gate.gov = !fresh && foreState !== 1;
+    if (!gate.off && !R.lost) {
+      const gl = R.gl; let sy = null;
+      try { sy = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); } catch (e) { sy = null; }
+      if (sy) { gate.sync = sy; if (a) gate.poll = setTimeout(poll, 3); } else gate.off = true;   // while moving the fence is asked every few ms, so the time is finer than a screen refresh
+    }
+    if (gate.off) gate.wait = true;
+  }
+  function tick() {
+    if (R) { const t = performance.now(), free = gpuFree(t); if (dirty && free) draw(t); }
     requestAnimationFrame(tick);
   }
   function inside(p) { return p && p.lat <= cfg.north && p.lat >= cfg.south && p.lng >= cfg.west && p.lng <= cfg.east; }
@@ -915,14 +1059,14 @@
     const c = R.canvas;
     c.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
     c.addEventListener('webglcontextlost', e => { e.preventDefault(); if (R) R.lost = true; post({ type: 'lost', fore: foreState > 0 }); });
-    c.addEventListener('pointermove', e => { if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; dirty = true; });
-    const drop = () => { if (drag) { drag = null; heading(); } };
+    c.addEventListener('pointermove', e => { if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; touch('look'); });
+    const drop = () => { if (drag) { drag = null; heading(); if (act && act.kind === 'look') rest(); } };   // finger up: the sharp frame now
     c.addEventListener('pointerup', drop); c.addEventListener('pointercancel', drop);
     window.addEventListener('resize', resize);
   }
 
   window.S3D = {
-    init(c) { cfg = c; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    init(c) { cfg = c; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
     chunk(s, which) { (which === 'near' ? nparts : which === 'detail' ? dparts : which === 'mask' ? mparts : which === 'trees' ? tparts : which === 'water' ? wparts : parts).push(s); },
     async done() {
       try {
@@ -937,7 +1081,7 @@
     // fore({ detail, water, ice }): the foreground for the view that is up; its chunks follow, then foreDone()
     fore(c) { if (!cfg || foreState === 1) return; cfg.detail = c && c.detail; cfg.water = c && c.water; if (c && c.ice != null) ice = !!c.ice; if (R) R.iceU.value = ice ? 1 : 0; dparts = []; mparts = []; tparts = []; wparts = []; if (foreState < 0) foreState = 0; },
     foreDone() { if (R) queueFore(); },
-    sun(az, alt) { sun = { az, alt }; relight = dirty = true; },
+    sun(az, alt) { sun = { az, alt }; relight = true; touch('sun'); },
     // ice(true): still water (lakes, ponds, backwaters) is drawn frozen under snow, only moving water stays open
     ice(v) { ice = !!v; if (R) { R.iceU.value = ice ? 1 : 0; relight = dirty = true; } },
     focal(f) { lens = Object.assign({}, lens, { f }); dirty = true; },
@@ -959,7 +1103,7 @@
       const next = { lat: eye.lat + dn / kz, lng: eye.lng + de / kx };
       const off = Math.hypot((next.lat - eye0.lat) * kz, (next.lng - eye0.lng) * kx);
       if (!inside(next) || off > WALK_MAX) { post({ type: 'walk', stopped: inside(next) ? 'far' : 'edge', max: WALK_MAX }); return; }
-      eye = next; dirty = true; told();
+      eye = next; touch('walk'); told();
     },
     home() { if (!R || !eye0) return; eye = eye0; aim(); dirty = true; heading(); told(); },
     path(arr) {
