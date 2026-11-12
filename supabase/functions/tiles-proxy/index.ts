@@ -19,11 +19,15 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //   TILES_TEST_TOKEN    while off, a request with header x-tiles-test: <this value> is still served,
 //                       so the whole path can be tried before it is switched on. Unset = no way in.
 //   TILES_MONTHLY_CAP   root requests per calendar month, US Pacific time (Google's billing month).
-//                       Default 900: Google's free allowance is 1,000 a month, so this keeps it free.
-//   TILES_DAILY_CAP     root requests per day (US Pacific). Default 30.
+//                       Default: the switch row's month_cap (900). Google's free allowance is 1,000 a
+//                       month, so this keeps it free. The count starts again on the 1st.
+//   TILES_DAILY_CAP     the most root requests in any one day (US Pacific). Default: the switch row's
+//                       day_ceiling (32 = the quota set on the Google key, so Google is never asked for
+//                       more than it will give). Today's allowance is what is left of the month shared
+//                       over the days left in it (unused days roll over), never above this ceiling.
 //   TILES_DRACO_URL     folder with three.js's DRACO decoder files (the page unpacks Google's tiles
 //                       with them). Default: the public terrain bucket's draco/ folder.
-// Table tiles_proxy_days + tiles_proxy_take_root / tiles_proxy_usage: 20261112070000_tiles_proxy.sql.
+// Tables tiles_proxy_days / tiles_proxy_switch and their functions: 20261112070000, 20261112110000, 20261112130000.
 // If the count can't be taken (table missing, database down) nothing is asked of Google.
 // Deploy with --no-verify-jwt: the page sends no headers, so the browser makes no extra
 // preflight call per tile; the caps are what limit use (the repo and its app key are public).
@@ -44,17 +48,19 @@ const PASS_UP = ['if-none-match', 'if-modified-since'];
 
 const whole = (v: string | undefined, d: number) => { const n = Math.floor(Number(v ?? d)); return Number.isFinite(n) && n >= 0 ? n : d; };
 
-// The on / off switch kept in the database, remembered for a minute so a view's hundreds of tile requests ask once.
-let switchSeen: { at: number; on: boolean } | null = null;
-async function switchOn(db: () => ReturnType<typeof createClient>): Promise<boolean> {
-  if (switchSeen && Date.now() - switchSeen.at < 60_000) return switchSeen.on;
-  let on = false;
+// The switch and the two limits kept in the database (table tiles_proxy_switch), remembered for a minute so a
+// view's hundreds of tile requests ask once.
+type Settings = { enabled: boolean; day_ceiling: number; month_cap: number };
+let settingsSeen: { at: number; value: Settings } | null = null;
+async function settings(db: () => ReturnType<typeof createClient>): Promise<Settings> {
+  if (settingsSeen && Date.now() - settingsSeen.at < 60_000) return settingsSeen.value;
+  let value: Settings = { enabled: false, day_ceiling: 32, month_cap: 900 };   // not readable = off
   try {
-    const { data, error } = await db().rpc('tiles_proxy_enabled');
-    on = !error && data === true;
-  } catch { /* not readable = off */ }
-  switchSeen = { at: Date.now(), on };
-  return on;
+    const { data, error } = await db().rpc('tiles_proxy_settings');
+    if (!error && data) value = { enabled: data.enabled === true, day_ceiling: whole(String(data.day_ceiling), 32), month_cap: whole(String(data.month_cap), 900) };
+  } catch { /* off */ }
+  settingsSeen = { at: Date.now(), value };
+  return value;
 }
 
 Deno.serve(async (req) => {
@@ -69,22 +75,25 @@ Deno.serve(async (req) => {
   const token = Deno.env.get('TILES_TEST_TOKEN') ?? '';
   const test = token.length > 0 && req.headers.get('x-tiles-test') === token;
   const draco = Deno.env.get('TILES_DRACO_URL') || DRACO_DEFAULT;
-  const dayCap = whole(Deno.env.get('TILES_DAILY_CAP'), 30);
-  const monthCap = whole(Deno.env.get('TILES_MONTHLY_CAP'), 900);
   const db = () => createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
   try {
-    const enabled = forced === 'true' ? true : forced === 'false' ? false : await switchOn(db);
+    const set = await settings(db);
+    const enabled = forced === 'true' ? true : forced === 'false' ? false : set.enabled;
+    const dayCap = whole(Deno.env.get('TILES_DAILY_CAP'), set.day_ceiling);     // the most in any one day
+    const monthCap = whole(Deno.env.get('TILES_MONTHLY_CAP'), set.month_cap);
     if (url.pathname.endsWith('/health')) {
-      const { data, error } = await db().rpc('tiles_proxy_usage');
+      const { data, error } = await db().rpc('tiles_proxy_allowance', { p_day_cap: dayCap, p_month_cap: monthCap });
       if (error || !data) return json({ ok: false, enabled, test, set_up: !!key, error: 'the count is not readable' });
-      const dayUsed = Number(data.day_used) || 0, monthUsed = Number(data.month_used) || 0;
-      const dayLeft = Math.max(0, dayCap - dayUsed), monthLeft = Math.max(0, monthCap - monthUsed);
+      const dayUsed = Number(data.day_used) || 0, monthUsed = Number(data.month_used) || 0, today = Number(data.day_cap) || 0;
+      const dayLeft = Math.max(0, today - dayUsed), monthLeft = Math.max(0, monthCap - monthUsed);
       return json({
         ok: (enabled || test) && !!key && dayLeft > 0 && monthLeft > 0,
         enabled, test, set_up: !!key, draco,
-        day: data.day, day_cap: dayCap, day_used: dayUsed, day_left: dayLeft,
+        // day_cap = today's allowance: what is left of the month shared over the days left, at most day_ceiling
+        day: data.day, day_cap: today, day_ceiling: dayCap, day_used: dayUsed, day_left: dayLeft,
         month: data.month, month_cap: monthCap, month_used: monthUsed, month_left: monthLeft,
+        days_left: data.days_left, resets_on: data.resets_on,
         counted_in: 'US Pacific time',
       });
     }
@@ -111,7 +120,7 @@ Deno.serve(async (req) => {
         const month = data.reason === 'month';
         return json({
           ok: false, reason: month ? 'month' : 'day',
-          error: month ? `monthly limit reached: ${monthCap} HD views a month (this keeps Google's tiles free)` : `daily limit reached: ${dayCap} HD views a day`,
+          error: month ? `monthly limit reached: ${monthCap} HD views a month (this keeps Google's tiles free). It starts again on ${data.resets_on}.` : `today's limit reached: ${data.day_cap} HD views. More tomorrow (unused days roll over).`,
           day_used: data.day_used, month_used: data.month_used,
         }, 429);
       }

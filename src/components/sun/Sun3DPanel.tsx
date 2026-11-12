@@ -6,7 +6,7 @@ import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
 import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
 import { nearFor, regionFor, terrainData, TerrainNear, TerrainRegion, tripTerrainLine, useTripTerrain } from '../../services/terrain';
-import { hdForget, hdLeftThisMonth, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
+import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import type { Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
@@ -206,6 +206,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
     : phase === 'failed' ? "Couldn't get the terrain. It needs a signal the first time."
     : null;
   const left = hd ? hdLeftThisMonth() : null;
+  const leftToday = hd ? hdLeftToday() : null;
   const subject = pair.subject_name || 'The subject';
   const chips: { label: string; minute: number | null }[] = moments ? [
     { label: `First sun on ${subject}`, minute: moments.firstSubject },
@@ -304,7 +305,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
       {ready ? (
         <Text style={[styles.note, pad]}>
           {hd
-            ? `Picture: Google Maps. ${region?.ground === 'green' ? 'Light and shadows' : 'Light, shadows and snow'} are calculated from elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles. No clouds. Needs a signal; times are within a few minutes.${left != null ? ` HD views left this month: ${left}.` : ''}`
+            ? `Picture: Google Maps. ${region?.ground === 'green' ? 'Light and shadows' : 'Light, shadows and snow'} are calculated from elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles. No clouds. Needs a signal; times are within a few minutes.${left != null ? ` HD views left: ${leftToday != null ? `${leftToday} today, ` : ''}${left} this month.` : ''}`
             : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes. Elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'}
         </Text>
       ) : null}

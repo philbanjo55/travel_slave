@@ -27,6 +27,7 @@ let asking: Promise<HdSetup | null> | null = null;
 let root: { until: number; text: string } | null = null;
 let rooting: Promise<string | null> | null = null;
 let monthLeft: number | null = null;
+let dayLeft: number | null = null;
 
 // How long Google's own Cache-Control lets a private holder keep this answer, in ms.
 function keepMs(cacheControl: string | null): number {
@@ -53,6 +54,7 @@ export function hdSetup(): Promise<HdSetup | null> {
       const res = await get(`${HD_TILES_BASE}/health`, HEALTH_TIMEOUT_MS);
       const j: any = res.ok ? await res.json() : null;
       monthLeft = j && typeof j.month_left === 'number' ? j.month_left : null;
+      dayLeft = j && typeof j.day_left === 'number' ? j.day_left : null;
       if (j && j.enabled === true && j.ok === true && typeof j.draco === 'string' && j.draco) {
         value = { base: HD_TILES_BASE, origin: HD_TILES_BASE.replace(/^(https?:\/\/[^/]+).*$/, '$1/'), draco: j.draco };
       }
@@ -79,6 +81,7 @@ export function hdRoot(): Promise<string | null> {
         const keep = keepMs(res.headers.get('cache-control'));
         root = keep > 0 ? { until: Date.now() + keep, text: body } : null;
         if (monthLeft != null) monthLeft = Math.max(0, monthLeft - 1);
+        if (dayLeft != null) dayLeft = Math.max(0, dayLeft - 1);
       }
     } catch { /* no HD this time */ }
     rooting = null;
@@ -91,6 +94,12 @@ export function hdRoot(): Promise<string | null> {
 // HD views left this calendar month (US Pacific time, the door's monthly cap); null = not known.
 export function hdLeftThisMonth(): number | null {
   return monthLeft;
+}
+
+// HD views left today: the month's allowance shared over the days left in it (unused days roll over), never above
+// the daily ceiling. null = not known.
+export function hdLeftToday(): number | null {
+  return dayLeft;
 }
 
 export function hdForget(): void {
