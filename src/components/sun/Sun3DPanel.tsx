@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Linking, Alert, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
@@ -8,6 +8,7 @@ import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
 import { nearFor, regionFor, terrainData, TerrainNear, TerrainRegion, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
+import { moveVantage } from '../../services/sunPlan';
 import type { Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
 
@@ -33,6 +34,7 @@ import { compassPoint } from './sunStyle';
 type Props = {
   pair: Pair;
   tripId?: string | null;      // for the "terrain saved for this trip" line
+  stopId?: string | null;      // with tripId: lets walk mode save a new stand spot for this shot
   sun: SkyPos;                 // from the section's own sun engine, at the slider's time
   day0: number;                // start of the stop's local day, ms
   height?: number;             // inline height; ignored when full
@@ -68,7 +70,7 @@ let lastLens = '135';
 let lastFrame: FrameMode = 'land';
 const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
 
-export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd }: Props) {
+export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -96,6 +98,12 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const sent = useRef(false);
   const loaded = useRef<string | null>(null);   // the files the page holds: "<region>|<fine box or nothing>"
   const ready = phase === 'ready';
+  // Walk mode (full screen, offline view): the arrows step the viewpoint; `at` is where it now stands.
+  const [walking, setWalking] = useState(false);
+  const [at, setAt] = useState<{ lat: number; lng: number; moved: number } | null>(null);
+  const [walkNote, setWalkNote] = useState<string | null>(null);
+  const [savingSpot, setSavingSpot] = useState(false);
+  const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   // Full screen runs edge to edge: the lines under the picture keep a margin from the sides of the phone.
   const pad = full ? styles.fullPad : null;
   // HD: undefined = still asking whether it is there, null = not available
@@ -206,6 +214,8 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
     else if (m.type === 'state') setLit({ subjectLit: !!m.subjectLit, hereLit: !!m.hereLit, up: !!m.up });
     else if (m.type === 'moments') setMoments({ firstSubject: m.firstSubject ?? null, lastSubject: m.lastSubject ?? null, firstHere: m.firstHere ?? null, lastHere: m.lastHere ?? null });
     else if (m.type === 'look') setLook(typeof m.deg === 'number' ? m.deg : null);
+    else if (m.type === 'eye') { setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); }
+    else if (m.type === 'walk') setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : 'That is the edge of the saved terrain.');
     else if (m.type === 'hd') setHdLoading(!!m.loading);
     else if (m.type === 'error') {
       if (hdRef.current) {
@@ -227,6 +237,45 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
     run(`window.S3D.path(${JSON.stringify(dayPath)})`);
   }, [ready, vLat, vLng, sLat, sLng, dayPath, run]);
   useEffect(() => { if (ready) run(`window.S3D.lens(${JSON.stringify(lens)})`); }, [ready, lens, run]);
+
+  // ---- Walk mode ----
+  // A new shot (or a saved move) puts the viewpoint back on the stand pin.
+  useEffect(() => { setAt(null); setWalkNote(null); }, [vLat, vLng, sLat, sLng]);
+  // When the walking stops, the day's first / last light is worked out again for where the viewpoint now stands.
+  const atLat = at?.lat, atLng = at?.lng;
+  useEffect(() => {
+    if (!ready || atLat == null) return;
+    const t = setTimeout(() => run(`window.S3D.path(${JSON.stringify(dayPath)})`), 500);
+    return () => clearTimeout(t);
+  }, [ready, atLat, atLng, dayPath, run]);
+  const stopStepping = useCallback(() => { if (stepTimer.current) { clearInterval(stepTimer.current); stepTimer.current = null; } }, []);
+  useEffect(() => stopStepping, [stopStepping]);
+  // One press = 2 m; holding keeps walking, about 15 m a second.
+  const startStepping = useCallback((f: number, r: number) => {
+    stopStepping();
+    run(`window.S3D.walk(${f},${r})`);
+    stepTimer.current = setInterval(() => run(`window.S3D.walk(${f},${r})`), 130);
+  }, [run, stopStepping]);
+  const leaveWalk = useCallback(() => { stopStepping(); setWalking(false); setWalkNote(null); run('window.S3D.home()'); }, [run, stopStepping]);
+  const canSaveSpot = !!(tripId && stopId && at && at.moved >= 2);
+  const saveSpot = useCallback(() => {
+    if (!tripId || !stopId || !at) return;
+    Alert.alert(
+      'Move your stand spot here?',
+      `This shot's stand spot moves ${at.moved} m to where you are standing in the view. The sun times and the planner follow. It changes the shot on every trip that uses it, practice copies included.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Move it', onPress: async () => {
+            setSavingSpot(true);
+            try { await moveVantage(tripId, stopId, pair.vantage_id, at.lat, at.lng); setWalkNote('Saved: this is now your stand spot for the shot.'); }
+            catch (e: any) { setWalkNote(`Couldn't save the spot: ${e?.message || 'check your connection'}`); }
+            finally { setSavingSpot(false); }
+          },
+        },
+      ],
+    );
+  }, [tripId, stopId, at, pair.vantage_id]);
 
   const waiting = phase === 'finding' ? 'Finding the terrain for this spot…'
     : phase === 'loading' ? 'Getting the terrain (once, a few MB)…'
@@ -293,6 +342,18 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
                 <Text style={[styles.lensText, want && styles.lensTextOn]}>HD</Text>
               </TouchableOpacity>
             ) : null}
+            {full && !hd && ready ? (
+              <TouchableOpacity
+                onPress={() => (walking ? leaveWalk() : setWalking(true))}
+                style={[styles.fullBtn, walking && styles.lensOn]}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: walking }}
+                accessibilityLabel="Walk mode: move your viewpoint"
+                hitSlop={6}
+              >
+                <Ionicons name="walk-outline" size={18} color={walking ? '#000000' : '#ffffff'} />
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               onPress={() => setFrame(FRAME_NEXT[frame])}
               style={[styles.fullBtn, frame !== 'off' && styles.lensOn]}
@@ -307,6 +368,23 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
             </TouchableOpacity>
           </View>
         </View>
+        {walking && full && !hd && ready ? (
+          <View style={styles.pad} pointerEvents="box-none">
+            {([['Walk forward', 'chevron-up', 2, 0, styles.padUp], ['Step left', 'chevron-back', 0, -2, styles.padLeft], ['Step right', 'chevron-forward', 0, 2, styles.padRight], ['Walk back', 'chevron-down', -2, 0, styles.padDown]] as const).map(([label, icon, f, r, where]) => (
+              <TouchableOpacity
+                key={label}
+                style={[styles.padBtn, where]}
+                onPressIn={() => startStepping(f, r)}
+                onPressOut={stopStepping}
+                accessibilityRole="button"
+                accessibilityLabel={label}
+                activeOpacity={0.6}
+              >
+                <Ionicons name={icon as any} size={24} color="#ffffff" />
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
         {ready && look != null ? (
           <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format} · {hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}</Text>
         ) : null}
@@ -322,6 +400,21 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
         <Text style={[styles.status, pad]}>{problem}</Text>
       ) : null}
       {hdNote && !hd ? <Text style={[styles.status, pad]}>{hdNote}</Text> : null}
+      {walking && full && !hd ? (
+        <View style={[styles.walkRow, pad]}>
+          <Text style={styles.walkText}>
+            {walkNote ?? (at && at.moved > 0 ? `You've walked ${at.moved} m from your saved spot. The times below are for here.` : 'Hold an arrow to walk. Drag the picture to turn.')}
+          </Text>
+          <View style={styles.walkBtns}>
+            <TouchableOpacity onPress={() => { stopStepping(); run('window.S3D.home()'); }} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Back to my saved spot" disabled={!at || at.moved === 0}>
+              <Text style={[styles.walkBtnText, (!at || at.moved === 0) && { opacity: 0.4 }]}>Back to my spot</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={saveSpot} style={[styles.walkBtn, styles.walkBtnMain, !canSaveSpot && { opacity: 0.4 }]} accessibilityRole="button" accessibilityLabel="Save this as my stand spot for the shot" disabled={!canSaveSpot || savingSpot}>
+              {savingSpot ? <ActivityIndicator size="small" color="#000000" /> : <Text style={styles.walkBtnMainText}>Save as my spot</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
 
       {chips.length > 0 && (
         <View style={[styles.moments, pad]}>
@@ -383,6 +476,19 @@ const styles = StyleSheet.create({
   status: { color: colors.textSecondary, fontSize: 13, marginTop: 8, paddingHorizontal: 2 },
   sunOn: { color: '#F0B04A', fontWeight: '700' },
   fullPad: { paddingHorizontal: 14 },
+  pad: { position: 'absolute', left: 14, bottom: 44, width: 148, height: 148 },
+  padBtn: { position: 'absolute', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)', borderWidth: 1, borderColor: '#555555' },
+  padUp: { left: 50, top: 0 },
+  padLeft: { left: 0, top: 50 },
+  padRight: { left: 100, top: 50 },
+  padDown: { left: 50, top: 100 },
+  walkRow: { marginTop: 8, gap: 8 },
+  walkText: { color: colors.textSecondary, fontSize: 13 },
+  walkBtns: { flexDirection: 'row', gap: 8 },
+  walkBtn: { flex: 1, minHeight: 40, borderRadius: 8, borderWidth: 1, borderColor: '#444444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  walkBtnText: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
+  walkBtnMain: { backgroundColor: '#ffffff', borderColor: '#ffffff' },
+  walkBtnMainText: { color: '#000000', fontSize: 13, fontWeight: '700' },
   streetLink: { color: colors.textSecondary, fontSize: 13, marginTop: 10, paddingHorizontal: 2, textDecorationLine: 'underline' },
   moments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   moment: { flexGrow: 1, flexBasis: '47%', minHeight: 48, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: colors.border, justifyContent: 'center' },
