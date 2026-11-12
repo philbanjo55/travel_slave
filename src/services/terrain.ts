@@ -49,48 +49,63 @@ async function ensureDir(): Promise<void> {
   if (!info.exists) await FileSystem.makeDirectoryAsync(DIR, { intermediates: true });
 }
 
-async function loadRegions(): Promise<TerrainRegion[]> {
-  if (regions) return regions;
+// The lists of areas (12 Nov 2026: saved copy first). With no signal the 3D view used to wait for the server to
+// time out, once for each list (up to 24 s), before it looked at what the phone already had. Now a saved list is
+// used at once and the server is asked behind it; its answer replaces the list in memory and on the phone for the
+// next use. Only a phone with nothing saved waits for the server.
+async function readList<T>(file: string): Promise<T[] | null> {
   try {
-    const call = supabase.from('terrain_regions')
-      .select('id, north, south, west, east, n, width_m, depth_m, base_m, step_m, path, bytes, ground');
+    const saved = JSON.parse(await FileSystem.readAsStringAsync(file));
+    return Array.isArray(saved) && saved.length ? (saved as T[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function askList<T>(table: string, columns: string, file: string): Promise<T[] | null> {
+  try {
+    const call = supabase.from(table).select(columns);
     const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('terrain list timed out')), CALL_TIMEOUT_MS));
     const { data: rows, error } = (await Promise.race([call, timeout])) as any;
-    if (error || !Array.isArray(rows)) throw error ?? new Error('no terrain list');
-    regions = rows as TerrainRegion[];
-    try { await ensureDir(); await FileSystem.writeAsStringAsync(LIST_FILE, JSON.stringify(rows)); } catch { /* the list is still usable */ }
-    return regions;
+    if (error || !Array.isArray(rows)) return null;
+    try { await ensureDir(); await FileSystem.writeAsStringAsync(file, JSON.stringify(rows)); } catch { /* the list is still usable */ }
+    return rows as T[];
   } catch {
-    // No signal: the last saved list. Not kept in memory, so the next try asks again.
-    try {
-      const saved = JSON.parse(await FileSystem.readAsStringAsync(LIST_FILE));
-      return Array.isArray(saved) ? (saved as TerrainRegion[]) : [];
-    } catch {
-      return [];
-    }
+    return null;
   }
+}
+
+const REGION_COLS = 'id, north, south, west, east, n, width_m, depth_m, base_m, step_m, path, bytes, ground';
+const NEAR_COLS = 'id, parent, north, south, west, east, n, base_m, step_m, path, bytes';
+let regionsAsk: Promise<TerrainRegion[] | null> | null = null;
+let nearsAsk: Promise<TerrainNear[] | null> | null = null;
+
+// The server's own list: one call at a time, kept in memory once it has answered.
+function freshRegions(): Promise<TerrainRegion[] | null> {
+  if (regions) return Promise.resolve(regions);
+  if (!regionsAsk) regionsAsk = askList<TerrainRegion>('terrain_regions', REGION_COLS, LIST_FILE)
+    .then(rows => { if (rows) regions = rows; regionsAsk = null; return rows; });
+  return regionsAsk;
+}
+
+async function loadRegions(): Promise<TerrainRegion[]> {
+  if (regions) return regions;
+  const saved = await readList<TerrainRegion>(LIST_FILE);
+  if (saved) { freshRegions().catch(() => undefined); return saved; }
+  return (await freshRegions()) ?? [];
 }
 
 // The fine boxes. None (no table yet, no signal and nothing saved) just means every shot draws from the wide grid.
 async function loadNear(): Promise<TerrainNear[]> {
   if (nears) return nears;
-  try {
-    const call = supabase.from('terrain_near_regions')
-      .select('id, parent, north, south, west, east, n, base_m, step_m, path, bytes');
-    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('terrain list timed out')), CALL_TIMEOUT_MS));
-    const { data: rows, error } = (await Promise.race([call, timeout])) as any;
-    if (error || !Array.isArray(rows)) throw error ?? new Error('no near list');
-    nears = rows as TerrainNear[];
-    try { await ensureDir(); await FileSystem.writeAsStringAsync(NEAR_FILE, JSON.stringify(rows)); } catch { /* the list is still usable */ }
-    return nears;
-  } catch {
-    try {
-      const saved = JSON.parse(await FileSystem.readAsStringAsync(NEAR_FILE));
-      return Array.isArray(saved) ? (saved as TerrainNear[]) : [];
-    } catch {
-      return [];
-    }
-  }
+  const ask = () => {
+    if (!nearsAsk) nearsAsk = askList<TerrainNear>('terrain_near_regions', NEAR_COLS, NEAR_FILE)
+      .then(rows => { if (rows) nears = rows; nearsAsk = null; return rows; });
+    return nearsAsk;
+  };
+  const saved = await readList<TerrainNear>(NEAR_FILE);
+  if (saved) { ask().catch(() => undefined); return saved; }
+  return (await ask()) ?? [];
 }
 
 export function inRegion(r: Box, p: Point): boolean {
@@ -100,7 +115,10 @@ export function inRegion(r: Box, p: Point): boolean {
 // The area that holds this spot, or null when no elevation file covers it.
 export async function regionFor(p: { lat: number; lng: number }): Promise<TerrainRegion | null> {
   const all = await loadRegions();
-  return all.find(r => inRegion(r, p)) ?? null;
+  const hit = all.find(r => inRegion(r, p));
+  if (hit || regions) return hit ?? null;
+  // Not in the saved list: a new area may have been added since it was saved, so this once wait for the server.
+  return ((await freshRegions()) ?? []).find(r => inRegion(r, p)) ?? null;
 }
 
 // The fine box for a shot: the smallest one inside this region that holds the stand spot, taking first the ones
