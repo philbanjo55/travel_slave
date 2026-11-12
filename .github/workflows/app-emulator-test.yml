@@ -49,6 +49,9 @@ jobs:
         env:
           APP_VARIANT: test
           CI: 1
+          # Not a real key (this repo is public). Without any key in the manifest the Google map on the stop page
+          # throws "API key not found" and React Native shuts down; with a made-up one the map is blank and the page opens.
+          GOOGLE_MAPS_API_KEY: emulator-test-no-real-key
         run: npx expo prebuild --platform android --no-install
       - name: Gradle release APK (x86_64 only)
         if: steps.apkcache.outputs.cache-hit != 'true'
