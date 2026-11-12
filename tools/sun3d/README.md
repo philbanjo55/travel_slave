@@ -69,8 +69,17 @@ panoramas every 10 min, Tetonia every 15 min, so each real event is known to abo
   worst +4: within about 5 minutes, no lean either way;
 - sunrise / sunset on high points with the old rule (10 events): typical 8.5 min, worst 13 (first sun too late,
   last sun too early); sun setting behind a peak on the horizon (2 events): 7-8 min early.
-The rule now used for first / last light follows from that: the sun's top edge (+0.27 deg) against a hard skyline,
-and a high point sees below the flat horizon by 0.95 deg x sqrt(its km above the area's low ground, the 10th
-percentile of the grid). On the test cases that put 10 of 12 sunrise / sunset rows inside what the pictures show
-(the base level in the check was a fixed 2,000 m; the percentile gives 2,012 m for the Teton file).
+The rule now used for first / last light follows from that: the sun's centre against a hard skyline, and a high
+point sees below the flat horizon by 0.95 deg x sqrt(its km above the area's low ground, the 10th percentile of the
+grid: 2,012 m for the Teton file). Scored on the 16 point events (window = between which two pictures it happened):
+
+| Rule | High-point sunrise / sunset (12) | Ridge blocks the sun (4) |
+|---|---|---|
+| first rule: whole sun, soft edge, no dip | 2 inside the window, typical 8.3 min, worst 13 | 4 inside, typical 0.5 min |
+| sun's top edge + dip | 10 inside, typical 3.3, worst 9 | 4 inside, +3.3 min late on average |
+| **sun's centre + dip (used)** | 9 inside, typical 3.9, worst 10 | 4 inside, +2.0 min late on average |
+| half-way (+0.135 deg) + dip | 10 inside, typical 3.6, worst 10 | 4 inside, +2.5 min |
+
+The differences between the three new rules are inside the pictures' own 5-minute uncertainty; the centre keeps the
+ridge-blocked times closest. Script: scratchpad `suncheck/score_rules.js`.
 Not checked: trees and buildings, terrain beyond the grid, morning valley-floor events, summer, the Faroes.

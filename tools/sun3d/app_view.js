@@ -59,11 +59,13 @@
   // where the camera stands: on the fine grid the highest ground within a step, so a pin on a steep slope does not put the eye inside the hill
   const eyeH = e => { let h = gh(e.g, e.c, e.r); if (e.g === NR) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + 3; };
   // First / last direct light. Measured 12 Nov 2026 against 102 webcam pictures (27 events, tools/sun3d/README.md): with
-  // the old rule (whole disc clear of a soft skyline, never below the flat horizon) ridge-blocked events were right to a
-  // few minutes but sunrise / sunset on high points were 5-13 min off. So: the sun's top edge (+0.27 deg) against a hard
-  // skyline, and a high point sees a little below the flat horizon (0.95 deg x sqrt of its km above the area's low ground).
+  // the first rule (whole disc clear of a soft skyline, never below the flat horizon) ridge-blocked events were right to
+  // a few minutes but sunrise / sunset on high points were 5-13 min off. Now: the sun's CENTRE against a hard skyline
+  // ("half the sun showing"), and a high point sees a little below the flat horizon (0.95 deg x sqrt of its km above the
+  // area's low ground). Scored on the picture events: high-point sunrise / sunset 9 of 12 inside the picture window
+  // (was 2), ridge-blocked 4 of 4 at +2 min. The sun's top edge scored 10 of 12 but put ridge events +3.3 min late.
   const dipOf = h => 0.95 * Math.sqrt(Math.max(0, h - baseH) / 1000);
-  const lit = (p, az, alt) => { const limb = alt + 0.27; if (limb <= -dipOf(p.h)) return false; const v = sunVec(az, limb); return vis(p, v.hx, v.hz, v.tan) > 0; };
+  const lit = (p, az, alt) => { if (alt <= -dipOf(p.h)) return false; const v = sunVec(az, alt); return vis(p, v.hx, v.hz, v.tan) > 0; };
 
   const KEY = [
     [-18, [1, .5, .3], 0, [.030, .036, .060], [.010, .014, .035], [.030, .040, .080]], [-8, [1, .5, .3], 0, [.085, .105, .180], [.050, .075, .190], [.200, .190, .300]],
