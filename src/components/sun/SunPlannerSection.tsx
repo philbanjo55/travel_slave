@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, PanResponder, LayoutChangeEvent, Modal,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../../theme';
 import { SunStop, SUN_PLANNER_ENABLED, useSunStopState } from '../../services/sunPlan';
@@ -87,6 +88,8 @@ function Planner({ stop, tripId, timeLabel, onEdit }: { stop: SunStop; tripId?: 
   const stopMinute = parseTimeLabel(timeLabel);
   const day0 = dayStartMs(stop.date, stop.utc_offset_min);
   const [pairIdx, setPairIdx] = useState(0);
+  // Full screen draws edge to edge: keep the picture below the status bar and the controls above Android's own buttons.
+  const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('map');
   const [viewing, setViewing] = useState<Pair | null>(null);
   const [full3d, setFull3d] = useState(false);
@@ -217,11 +220,11 @@ function Planner({ stop, tripId, timeLabel, onEdit }: { stop: SunStop; tripId?: 
         <Text style={styles.editLinkText}>Edit vantages</Text>
       </TouchableOpacity>
       <Modal visible={full3d} animationType="fade" onRequestClose={() => setFull3d(false)}>
-        <View style={styles.fullScreen}>
+        <View style={[styles.fullScreen, { paddingTop: insets.top }]}>
           {full3d ? (
             <Sun3DPanel full pair={pair} tripId={tripId} sun={light.sun} day0={day0} onJump={setMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} />
           ) : null}
-          <View style={styles.fullBar}>
+          <View style={[styles.fullBar, { paddingBottom: 18 + insets.bottom }]}>
             <View style={styles.timeRow}>
               <Text style={styles.timeText}>{fmtMinute(minute)}</Text>
               <Text style={styles.fullShot} numberOfLines={1}>{shotName(pair)}</Text>
