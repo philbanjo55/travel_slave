@@ -329,18 +329,27 @@ def plan_check_card():
         # The link itself: the card around it is also a button whose label holds the same words and comes first, so
         # centring on "What was checked" centred the card and, with a long list of flags, left the link off screen
         # (the tap then closed the card). Step down until the link itself is in the middle of the screen.
+        # The link is not listed as a button of its own (it sits inside the card, which is one), so find its text and
+        # tap that spot, once it is in the middle of the screen.
+        def link_xy(st):
+            for nd in (st.root.iter('node') if st.root is not None else []):
+                if nd.get('package') == V.PKG and (nd.get('text') or nd.get('content-desc') or '').strip().startswith('What was checked'):
+                    x1, y1, x2, y2 = C.bounds(nd)
+                    if x2 - x1 > 8 and y2 - y1 > 8:
+                        return ((x1 + x2) // 2, (y1 + y2) // 2)
+            return None
         link = None
         for _ in range(12):
-            link = next((c for c in w.clickables if c['label'].startswith('What was checked')), None)
-            if link is not None and 0.30 * 2400 <= link['xy'][1] <= 0.72 * 2400:
+            link = link_xy(w)
+            if link is not None and 0.30 * 2400 <= link[1] <= 0.72 * 2400:
                 break
-            if link is not None and link['xy'][1] < 0.30 * 2400:
+            if link is not None and link[1] < 0.30 * 2400:
                 C.adb('shell', 'input', 'swipe', '540', '1000', '540', '1300', '500')
             else:
                 C.adb('shell', 'input', 'swipe', '540', '1400', '540', '1050', '500')
             w = C.capture(1.2); link = None
         if link is not None:
-            C.tap(link['xy'])
+            C.tap(link)
         else:
             print('INFO plan check: the What-was-checked link never came on screen', flush=True)
         time.sleep(1.5)
