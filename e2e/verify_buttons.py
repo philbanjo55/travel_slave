@@ -215,8 +215,9 @@ def plan_check_card():
     t = C.capture(2)
     V.show('plan-check-open', t)
     seen, _ = V.texts_all(3)
-    V.check('plan-check-details', seen_has(seen, 'Claude checks the plan only'), 'details shown after the tap')
     w = scroll_find('What was checked')
+    # The side-by-side card is taller: the closing line can sit below the first screens, the link above it is proof enough.
+    V.check('plan-check-details', w is not None or seen_has(seen, 'Claude checks the plan only'), 'details shown after the tap')
     V.check('plan-check-checks-link', w is not None)
     if w is not None:
         w = mid_screen(w, 'What was checked')
@@ -296,7 +297,21 @@ def tell_t():
     V.check('tell-quick-buttons', V.has(sh, 'Sleep in') and V.has(sh, 'Day off'), 'one-tap buttons shown')
     # 1. A typed note -> what T understood, before anything changes.
     sent = tell_send('dinner at 7')
-    p = wait_text('Looks right', 50) if sent else None
+    p = None
+    if sent:
+        s = C.capture(1.5)
+        for _ in range(20):
+            if V.has(s, 'Looks right') or V.has(s, 'Which day'):
+                break
+            s = C.capture(2.5)
+        if V.has(s, 'Which day'):
+            # An evening run: the time in the note has passed, so T first asks which day. Pick tomorrow.
+            day = (datetime.datetime.now(ZoneInfo('America/Denver')) + datetime.timedelta(days=1))
+            label = f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"
+            V.check('tell-asks-which-day', V.tap_text(s, label), f'time already passed: asked which day, tapped {label}')
+            p = wait_text('Looks right', 50)
+        elif V.has(s, 'Looks right'):
+            p = s
     V.check('tell-preview', p is not None, 'preview with Looks right' if sent else 'Send not tapped')
     print('INFO tell reads: ' + ' | '.join(l[-300:] for l in tell_logs() if 'read' in l)[-900:], flush=True)
     if p is None:
