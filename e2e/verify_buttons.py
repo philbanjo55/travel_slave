@@ -326,13 +326,23 @@ def plan_check_card():
     V.check('plan-check-details', w is not None or seen_has(seen, 'Claude checks the plan only'), 'details shown after the tap')
     V.check('plan-check-checks-link', w is not None)
     if w is not None:
-        w = mid_screen(w, 'What was checked')
-        # The link itself: the card around it is also a button whose label holds the same words, and it comes first.
-        link = next((c for c in w.clickables if c['label'].startswith('What was checked')), None)
+        # The link itself: the card around it is also a button whose label holds the same words and comes first, so
+        # centring on "What was checked" centred the card and, with a long list of flags, left the link off screen
+        # (the tap then closed the card). Step down until the link itself is in the middle of the screen.
+        link = None
+        for _ in range(12):
+            link = next((c for c in w.clickables if c['label'].startswith('What was checked')), None)
+            if link is not None and 0.30 * 2400 <= link['xy'][1] <= 0.72 * 2400:
+                break
+            if link is not None and link['xy'][1] < 0.30 * 2400:
+                C.adb('shell', 'input', 'swipe', '540', '1000', '540', '1300', '500')
+            else:
+                C.adb('shell', 'input', 'swipe', '540', '1400', '540', '1050', '500')
+            w = C.capture(1.2); link = None
         if link is not None:
             C.tap(link['xy'])
         else:
-            V.tap_text(w, 'What was checked')
+            print('INFO plan check: the What-was-checked link never came on screen', flush=True)
         time.sleep(1.5)
         seen2, _ = V.texts_all(3)
         ok = seen_has(seen2, 'Weather warnings') or seen_has(seen2, 'Avalanche') or seen_has(seen2, 'Hide what was checked')
