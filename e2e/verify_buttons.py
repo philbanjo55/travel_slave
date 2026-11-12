@@ -660,6 +660,57 @@ def sun_3d():
     else:
         V.check('sun3d-ready', ok, why or 'drawn: caption with the looking direction shown')
     if ok:
+        # Real foreground, round 3 (laser survey, 12 Nov 2026): the plain view is up first (checked above), then the
+        # foreground arrives behind it. Either it comes in (the note under the view then names the laser survey) or the
+        # view says it was too heavy and stays plain: both are fine for the app, only a dead view is not.
+        fg_label = 'Foreground (trees and buildings near you)'
+        def look2():
+            out = list(C.capture(1.2).all_texts)
+            C.adb('shell', 'input', 'swipe', '540', '1500', '540', '800', '500')
+            out += C.capture(1.2).all_texts
+            C.adb('shell', 'input', 'swipe', '540', '800', '540', '1500', '500')
+            time.sleep(1)
+            return out
+        f = C.capture(1)
+        lab0 = next((x['label'] for x in f.clickables if fg_label in x['label']), None)
+        if lab0 is not None:
+            V.check('fg-button', ': on' in lab0, lab0[:90])
+            t3 = time.time(); came = None; seen_fg = []
+            for _ in range(30):
+                seen_fg = look2()
+                if seen_has(seen_fg, 'laser survey'):
+                    came = 'in'; break
+                if seen_has(seen_fg, 'foreground was too heavy'):
+                    came = 'heavy'; break
+                time.sleep(3)
+            took = time.time() - t3
+            if came == 'in':
+                V.check('fg-in', True, f'foreground drawn {took:.0f} s after the plain view')
+            elif came == 'heavy':
+                V.check('fg-in', None, f'too heavy for the emulator after {took:.0f} s: the view fell back to the plain one and said so')
+            else:
+                V.check('fg-in', False, f'no foreground and no fallback line after {took:.0f} s' + (' (still "Foreground loading")' if seen_has(seen_fg, 'Foreground loading') else ''))
+            V.check('fg-view-alive', seen_has(seen_fg, 'Looking '), 'the picture is still up')
+            if came == 'in':
+                f = C.capture(1)
+                V.tap_text(f, fg_label); time.sleep(4)
+                off = look2(); c1 = C.capture(1)
+                lab1 = next((x['label'] for x in c1.clickables if fg_label in x['label']), None)
+                V.check('fg-off', lab1 is not None and ': off' in lab1 and seen_has(off, 'Looking ') and not seen_has(off, 'laser survey'), (lab1 or 'button gone')[:80])
+                V.tap_text(c1, fg_label)
+                back = []
+                for _ in range(30):
+                    back = look2()
+                    if seen_has(back, 'laser survey') or seen_has(back, 'foreground was too heavy'):
+                        break
+                    time.sleep(3)
+                V.check('fg-on-again', seen_has(back, 'laser survey') and seen_has(back, 'Looking '), 'foreground back after switching it on again')
+            V.check('fg-alive', C.app_alive())
+            web = [l for l in C.adb('logcat', '-d', '-t', '4000', timeout=90).splitlines() if 'chromium' in l and ('ERROR' in l or 'CONSOLE' in l or 'Renderer' in l)]
+            for line in web[-8:]:
+                print('INFO sun3d foreground web ' + line[:260], flush=True)
+        else:
+            print('INFO foreground: no Foreground button on screen (no detail box for this spot, or this build has none)', flush=True)
         # HD (Google's picture, 12 Nov 2026): the button shows only while the door says it is switched on. One tap on
         # = one counted view. No screenshots are taken while Google's picture is up (it must not be stored).
         def peek():
