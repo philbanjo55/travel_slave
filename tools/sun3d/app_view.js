@@ -461,113 +461,110 @@
   // everywhere. With the trees' own returns (`raw`: the tree file as unpacked, n lines of 1 + n x 8 bytes, 64 height
   // slices a cell, one bit each) the points sit only where a return came from, so each tree keeps its shape; without
   // it (round 2 data) they are made up between each canopy top and a few metres under it.
-  function treePoints(D, raw, bins, bh, cap, fine) {
-    const n = D.n, k = D.kind, e = crg(D, eye), dx = D.dx, dz = D.dz, line = n * fine * 8 + 1;
+  async function treePoints(D, blob, bins, bh, cap, fine) {
+    const n = D.n, k = D.kind, e = crg(D, eye), dx = D.dx, dz = D.dz, len = n * fine * 8 + 1;
     if (!k) return null;
     const thin = (r, c) => Math.min(3, 60 / Math.max(1, Math.hypot((c - e.c) * dx, (r - e.r) * dz)));
     const edge = (r, c) => Math.min((c + 0.5) * dx, (n - c - 0.5) * dx, (r + 0.5) * dz, (n - r - 0.5) * dz) >= D.band;   // not in the strip that blends into the coarser grid
-    // a cell's 8 bytes of slices; on the light grid (fine = 2) a cell is four of the file's cells, their slices joined
-    const V = raw, B = new Uint8Array(8);
-    const slices = (r, c) => {
-      const o = r * fine * line + 1 + c * fine * 8;
-      if (fine === 1) { for (let i = 0; i < 8; i++) B[i] = V[o + i]; return; }
-      for (let i = 0; i < 8; i++) B[i] = V[o + i] | V[o + 8 + i] | V[o + line + i] | V[o + line + 8 + i];
+    // The tree file is read twice, a line at a time (first to count, then to place the points): never whole in memory.
+    // each(fn): fn(r, a, b) for every row of the box; a (and b on the light grid, where a cell is four of the file's) = the file's line(s)
+    const keep = fine === 2 ? new Uint8Array(len) : null, B = new Uint8Array(8);
+    const each = async fn => {
+      if (!blob) { for (let r = 0; r < n; r++) fn(r, null, null); return; }
+      const got = await lines(blob, len, (ln, i) => { if (i >= n * fine) return; if (fine === 1) fn(i, ln, null); else if (i & 1) fn(i >> 1, keep, ln); else keep.set(ln); });
+      if (got !== n * fine) throw new Error('tree file has the wrong size');
     };
+    const slices = (a, b, c) => { const o = 1 + c * fine * 8; if (!b) { for (let i = 0; i < 8; i++) B[i] = a[o + i]; } else for (let i = 0; i < 8; i++) B[i] = a[o + i] | a[o + 8 + i] | b[o + i] | b[o + 8 + i]; };
     let sum = 0;
-    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
-      if (k[r * n + c] < 8 || !edge(r, c)) continue;
-      if (V) { slices(r, c); sum += (POP[B[0]] + POP[B[1]] + POP[B[2]] + POP[B[3]] + POP[B[4]] + POP[B[5]] + POP[B[6]] + POP[B[7]]) * thin(r, c); }
-      else sum += thin(r, c);
-    }
+    await each((r, a, b) => {
+      for (let c = 0; c < n; c++) {
+        if (k[r * n + c] < 8 || !edge(r, c)) continue;
+        if (a) { slices(a, b, c); sum += (POP[B[0]] + POP[B[1]] + POP[B[2]] + POP[B[3]] + POP[B[4]] + POP[B[5]] + POP[B[6]] + POP[B[7]]) * thin(r, c); }
+        else sum += thin(r, c);
+      }
+    });
     if (!sum) return null;
-    const per = Math.min(V ? 2.4 : 5, cap / sum), big = V ? Math.max(0.8, Math.min(1.9, Math.sqrt(1.5 / per))) : Math.max(0.75, Math.min(1.6, Math.sqrt(3.2 / per)));
+    const V = !!blob, per = Math.min(V ? 2.4 : 5, cap / sum), big = V ? Math.max(0.8, Math.min(1.9, Math.sqrt(1.5 / per))) : Math.max(0.75, Math.min(1.6, Math.sqrt(3.2 / per)));
     const room = Math.ceil(sum * per) + 2048, pos = new Float32Array(room * 3), seed = new Float32Array(room * 4);
     let s = 20221112, m = 0; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
     const put = (r, c, i, hg, df, size) => {
       pos[m * 3] = D.x0 + (c + rnd()) * dx; pos[m * 3 + 1] = D.HF[i] + hg; pos[m * 3 + 2] = D.z0 + (r + rnd()) * dz;
       seed[m * 4] = df; seed[m * 4 + 1] = rnd(); seed[m * 4 + 2] = size * (0.75 + 0.5 * rnd()); seed[m * 4 + 3] = hg; m++;
     };
-    for (let r = 0; r < n && m < room; r++) for (let c = 0; c < n; c++) {
-      const i = r * n + c, v = k[i];
-      if (v < 8 || !edge(r, c)) continue;
-      const w = thin(r, c), want = per * w, top = (v - 8) * 0.2;
-      if (V) {
-        const size = 0.38 / Math.sqrt(w) * big * (fine === 2 ? 1.5 : 1); slices(r, c);
-        for (let b = 0; b < bins; b++) {
-          if (!(B[b >> 3] & (1 << (b & 7)))) continue;
+    await each((r, a, b) => {
+      for (let c = 0; c < n && m < room; c++) {
+        const i = r * n + c, v = k[i];
+        if (v < 8 || !edge(r, c)) continue;
+        const w = thin(r, c), want = per * w, top = (v - 8) * 0.2;
+        if (a) {
+          const size = 0.38 / Math.sqrt(w) * big * (fine === 2 ? 1.5 : 1); slices(a, b, c);
+          for (let q = 0; q < bins; q++) {
+            if (!(B[q >> 3] & (1 << (q & 7)))) continue;
+            let cnt = Math.floor(want); if (rnd() < want - cnt) cnt++;
+            for (let j = 0; j < cnt && m < room; j++) { const hg = Math.min(top + 0.2, (q + rnd()) * bh); put(r, c, i, hg, Math.max(0, Math.min(1, (top - hg) / 7)), size); }
+          }
+        } else {
+          const depth = Math.max(0.5, Math.min(top - 0.4, 1.5 + 0.3 * top)), size = 0.42 / Math.sqrt(w) * big;
           let cnt = Math.floor(want); if (rnd() < want - cnt) cnt++;
-          for (let j = 0; j < cnt && m < room; j++) { const hg = Math.min(top + 0.2, (b + rnd()) * bh); put(r, c, i, hg, Math.max(0, Math.min(1, (top - hg) / 7)), size); }
+          for (let j = 0; j < cnt && m < room; j++) { const df = Math.pow(rnd(), 1.5); put(r, c, i, top - depth * df, df, size); }
         }
-      } else {
-        const depth = Math.max(0.5, Math.min(top - 0.4, 1.5 + 0.3 * top)), size = 0.42 / Math.sqrt(w) * big;
-        let cnt = Math.floor(want); if (rnd() < want - cnt) cnt++;
-        for (let j = 0; j < cnt && m < room; j++) { const df = Math.pow(rnd(), 1.5); put(r, c, i, top - depth * df, df, size); }
       }
-    }
+    });
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos.slice(0, m * 3), 3)); geo.setAttribute('seed', new THREE.BufferAttribute(seed.slice(0, m * 4), 4));
     free(pos); free(seed);
-    return { geo, count: m, real: !!V };
+    return { geo, count: m, real: V };
   }
-  // base64 pieces -> the PNG's unpacked bytes. Each piece is let go as it is used, so the text, the packed file and the
-  // unpacked one are never all held together.
-  async function inflate(list) {
+  // base64 pieces -> the PNG's packed pixel data, as a blob. Each piece is let go as it is used.
+  function pack(list) {
     let len = 0; for (const t of list) len += Math.floor(t.length * 3 / 4) - (t.endsWith('==') ? 2 : t.endsWith('=') ? 1 : 0);
     let buf = new Uint8Array(len), o = 0;
     for (let k = 0; k < list.length; k++) { const b = atob(list[k]); list[k] = null; for (let i = 0; i < b.length; i++) buf[o + i] = b.charCodeAt(i); o += b.length; }
     const dv = new DataView(buf.buffer), idat = []; let q = 8;
     while (q < o) { const l = dv.getUint32(q), type = String.fromCharCode(buf[q + 4], buf[q + 5], buf[q + 6], buf[q + 7]); if (type === 'IDAT') idat.push(buf.subarray(q + 8, q + 8 + l)); q += 12 + l; }
     const blob = new Blob(idat); free(buf); buf = null;   // the blob has its own copy
-    return new Uint8Array(await new Response(blob.stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
+    return blob;
+  }
+  // Unpacks a file a line at a time (`len` bytes each, the PNG filter byte first) and hands each line to fn(line, row):
+  // the whole unpacked file (8 MB for a wide grid or a tree file) is never in memory. Returns the number of lines.
+  async function lines(blob, len, fn) {
+    const rd = blob.stream().pipeThrough(new DecompressionStream('deflate')).getReader(), line = new Uint8Array(len); let have = 0, row = 0;
+    for (;;) {
+      const { done, value } = await rd.read(); if (done) break;
+      for (let o = 0; o < value.length;) {
+        const k = Math.min(len - have, value.length - o);
+        if (!have && k === len) fn(value.subarray(o, o + len), row++);
+        else { line.set(value.subarray(o, o + k), have); have += k; if (have === len) { fn(line, row++); have = 0; } }
+        o += k;
+      }
+    }
+    if (have) throw new Error('file has the wrong size');
+    return row;
   }
   // skip = 2 keeps every other cell each way (the light foreground of a small phone): a quarter of the memory
   async function decode(list, n, base, step, skip) {
-    const raw = await inflate(list);
-    if (raw.length !== n * (2 * n + 1)) throw new Error('terrain file has the wrong size');
-    if (skip === 2) {
-      const m = n >> 1, HF = new Float32Array(m * m); let up = new Uint16Array(n), cur = new Uint16Array(n), hi = -1e9;
-      for (let r = 0, p = 0; r < n; r++) {
-        p++;
-        for (let c = 0; c < n; c++, p += 2) {
-          const v = (((raw[p] << 8) | raw[p + 1]) + (c ? cur[c - 1] : 0) + (r ? up[c] : 0) - (r && c ? up[c - 1] : 0)) & 65535; cur[c] = v;
-          if (!(r & 1) && !(c & 1) && (r >> 1) < m && (c >> 1) < m) { const h = base + v * step; HF[(r >> 1) * m + (c >> 1)] = h; if (h > hi) hi = h; }
-        }
-        const t = up; up = cur; cur = t;
-      }
-      free(raw);
-      return { HF, hi };
-    }
-    const HF = new Float32Array(n * n); let up = new Uint16Array(n), cur = new Uint16Array(n), hi = -1e9;   // only two lines of the 16-bit values are kept
-    for (let r = 0, p = 0; r < n; r++) {
-      p++;
-      for (let c = 0; c < n; c++, p += 2) {
+    const two = skip === 2, m = two ? n >> 1 : n, HF = new Float32Array(m * m); let up = new Uint16Array(n), cur = new Uint16Array(n), hi = -1e9;   // only two lines of the 16-bit values are kept
+    const rows = await lines(pack(list), 2 * n + 1, (raw, r) => {
+      if (r >= n) return;
+      for (let c = 0, p = 1; c < n; c++, p += 2) {
         const res = (raw[p] << 8) | raw[p + 1], v = (res + (c ? cur[c - 1] : 0) + (r ? up[c] : 0) - (r && c ? up[c - 1] : 0)) & 65535;
         cur[c] = v;
-        const h = base + v * step; HF[r * n + c] = h; if (h > hi) hi = h;
+        if (!two) { const h = base + v * step; HF[r * n + c] = h; if (h > hi) hi = h; }
+        else if (!(r & 1) && !(c & 1) && (r >> 1) < m && (c >> 1) < m) { const h = base + v * step; HF[(r >> 1) * m + (c >> 1)] = h; if (h > hi) hi = h; }
       }
       const t = up; up = cur; cur = t;
-    }
-    free(raw);
+    });
+    if (rows !== n) throw new Error('terrain file has the wrong size');
     return { HF, hi };
   }
   // any 8-bit file of ours: h lines of w bytes
   async function decodeBytes(list, w, h) {
-    const raw = await inflate(list);
-    if (raw.length !== h * (w + 1)) throw new Error('file has the wrong size');
     const m = new Uint8Array(w * h);
-    for (let r = 0; r < h; r++) m.set(raw.subarray(r * (w + 1) + 1, (r + 1) * (w + 1)), r * w);
-    free(raw);
+    if (await lines(pack(list), w + 1, (raw, r) => { if (r < h) m.set(raw.subarray(1, w + 1), r * w); }) !== h) throw new Error('file has the wrong size');
     return m;
   }
   // the detail grid's class mask: an 8-bit PNG, one byte a cell (0 ground, 2 building, 3 water, 8+ = tree, canopy (value - 8) x 0.2 m up)
-  async function decodeMask(list, n) {
-    const raw = await inflate(list);
-    if (raw.length !== n * (n + 1)) throw new Error('mask file has the wrong size');
-    const m = new Uint8Array(n * n);
-    for (let r = 0; r < n; r++) m.set(raw.subarray(r * (n + 1) + 1, (r + 1) * (n + 1)), r * n);
-    free(raw);
-    return m;
-  }
+  const decodeMask = (list, n) => decodeBytes(list, n, n);
   async function load() {
     const f = await decode(parts, cfg.n, cfg.base, cfg.step); parts = [];
     FAR = { n: cfg.n, HF: f.HF, north: cfg.north, south: cfg.south, west: cfg.west, east: cfg.east, x0: 0, z0: 0, w: cfg.W, d: cfg.D, dx: cfg.W / cfg.n, dz: cfg.D / cfg.n };
@@ -739,12 +736,13 @@
         wmap.magFilter = wmap.minFilter = THREE.LinearFilter; wmap.wrapS = wmap.wrapT = THREE.ClampToEdgeWrapping; wmap.needsUpdate = true; send(wmap);
         await step('water texture');
       }
-      // 4. the trees: their own returns when the file came, unpacked only for as long as the points take to make
+      // 4. the trees: their own returns when the file came, read a line at a time
       let tp = null;
       if (D.kind) {
-        let raw = null; const tc = dc.trees || {};
-        if (dc.trees && tparts.length) { list = tparts; tparts = []; try { raw = await inflate(list); if (raw.length !== dc.n * (dc.n * 8 + 1)) raw = null; } catch (e) { raw = null; } list = null; await step('tree file'); }
-        tp = treePoints(D, raw, Math.min(64, tc.bins || 64), tc.bin || 0.6, Math.max(1000, Math.min(520000, dc.maxTrees || (light ? TREE_LIGHT : TREE_MAX))), fine); free(raw); raw = null;
+        const tc = dc.trees || {}, cap = Math.max(1000, Math.min(520000, dc.maxTrees || (light ? TREE_LIGHT : TREE_MAX))); let blob = null;
+        if (dc.trees && tparts.length) { list = tparts; tparts = []; blob = pack(list); list = null; }
+        try { tp = await treePoints(D, blob, Math.min(64, tc.bins || 64), tc.bin || 0.6, cap, fine); }
+        catch (e) { if (!blob) throw e; tp = await treePoints(D, null, 64, 0.6, cap, fine); }   // a bad tree file: made-up points under the canopy tops instead
       }
       tparts = [];
       await step('trees');
