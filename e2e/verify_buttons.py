@@ -690,6 +690,28 @@ def sun_3d():
                 g = C.capture(3)
             V.check('sun3d-full-drawn', drawn, f'full-screen view drawn within {time.time() - t1:.0f} s' if drawn else 'no caption in full screen')
             cut_off('3d-full-screen', g)
+            # Walk mode (12 Nov 2026, branch claude/sun3d-walk): the arrows move the viewpoint. Save is never tapped here.
+            g2 = C.capture(1)
+            if V.tap_text(g2, 'Walk mode: move your viewpoint'):
+                time.sleep(1.5); w0 = C.capture(1)
+                arrows = ('Walk forward', 'Step left', 'Step right', 'Walk back')
+                V.check('walk-arrows', all(V.has(w0, a) for a in arrows), 'four arrows in full screen')
+                fwd = next((c for c in w0.clickables if 'Walk forward' in c['label']), None)
+                if fwd is not None:
+                    x, y = fwd['xy']
+                    C.adb('shell', 'input', 'swipe', str(x), str(y), str(x), str(y), '1500')   # hold the arrow for 1.5 s
+                    time.sleep(2.5)
+                    w1 = C.capture(1)
+                    line = next((t for t in w1.all_texts if "You've walked" in t), None)
+                    V.check('walk-moved', line is not None, (line or 'no "You have walked" line after holding the forward arrow')[:110])
+                    V.check('walk-save-offered', V.has(w1, 'Save this as my stand spot for the shot'), 'Save as my spot button (not tapped)')
+                    cut_off('walk-mode', w1)
+                    V.tap_text(w1, 'Back to my saved spot'); time.sleep(2)
+                    w2 = C.capture(1)
+                    V.check('walk-back', V.has(w2, 'Hold an arrow to walk'), 'back on the saved spot')
+                V.check('walk-alive', C.app_alive())
+            else:
+                print('INFO walk: no walk button in full screen (this build has no walk mode)', flush=True)
             V.show('sun3d-full-drawn', g)
             V.back(); time.sleep(2)
         else:
