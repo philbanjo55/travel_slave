@@ -67,6 +67,8 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const sent = useRef(false);
   const loaded = useRef<string | null>(null);   // the files the page holds: "<region>|<fine box or nothing>"
   const ready = phase === 'ready';
+  // Full screen runs edge to edge: the lines under the picture keep a margin from the sides of the phone.
+  const pad = full ? styles.fullPad : null;
   // HD: undefined = still asking whether it is there, null = not available
   const [hdCfg, setHdCfg] = useState<HdSetup | null | undefined>(undefined);
   const [hd, setHd] = useState<string | null>(null);      // Google's root tile set while the HD page is showing
@@ -272,18 +274,18 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
       </View>
 
       {ready && lit ? (
-        <Text style={styles.status}>
+        <Text style={[styles.status, pad]}>
           <Text style={lit.subjectLit ? styles.sunOn : undefined}>{subject}: {lit.subjectLit ? 'in the sun' : lit.up ? 'in shadow' : 'no sun'}</Text>
           <Text>  ·  </Text>
           <Text style={lit.hereLit ? styles.sunOn : undefined}>You: {lit.hereLit ? 'in the sun' : lit.up ? 'in shade' : 'no sun'}</Text>
         </Text>
       ) : phase === 'error' && problem ? (
-        <Text style={styles.status}>{problem}</Text>
+        <Text style={[styles.status, pad]}>{problem}</Text>
       ) : null}
-      {hdNote && !hd ? <Text style={styles.status}>{hdNote}</Text> : null}
+      {hdNote && !hd ? <Text style={[styles.status, pad]}>{hdNote}</Text> : null}
 
       {chips.length > 0 && (
-        <View style={styles.moments}>
+        <View style={[styles.moments, pad]}>
           {chips.map(c => (
             <TouchableOpacity
               key={c.label}
@@ -300,13 +302,13 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
         </View>
       )}
       {ready ? (
-        <Text style={styles.note}>
+        <Text style={[styles.note, pad]}>
           {hd
             ? `Picture: Google Maps. ${region?.ground === 'green' ? 'Light and shadows' : 'Light, shadows and snow'} are calculated from elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles. No clouds. Needs a signal; times are within a few minutes.${left != null ? ` HD views left this month: ${left}.` : ''}`
             : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes. Elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'}
         </Text>
       ) : null}
-      {savedLine ? <Text style={styles.note} accessibilityLabel={savedLine}>{savedLine}</Text> : null}
+      {savedLine ? <Text style={[styles.note, pad]} accessibilityLabel={savedLine}>{savedLine}</Text> : null}
     </View>
   );
 }
@@ -331,6 +333,7 @@ const styles = StyleSheet.create({
   captionHd: { top: 46, bottom: undefined },   // Google's attribution has the bottom of the picture
   status: { color: colors.textSecondary, fontSize: 13, marginTop: 8, paddingHorizontal: 2 },
   sunOn: { color: '#F0B04A', fontWeight: '700' },
+  fullPad: { paddingHorizontal: 14 },
   moments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   moment: { flexGrow: 1, flexBasis: '47%', minHeight: 48, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: colors.border, justifyContent: 'center' },
   momentLabel: { color: colors.textSecondary, fontSize: 11 },

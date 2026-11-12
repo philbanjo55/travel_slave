@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Modal, View, Text, TextInput, StyleSheet, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
@@ -18,6 +19,8 @@ type Props = { visible: boolean; onClose: () => void; stop: any; dayStops: any[]
 const STEPS = [-30, -15, 15, 30];
 
 export default function StopDurationEditor({ visible, onClose, stop, dayStops }: Props) {
+  // The sheet sits at the bottom of the screen: Save stays above Android's Home / Back buttons.
+  const insets = useSafeAreaInsets();
   const { refreshCurrentTrip } = useTripStore();
   const [minutes, setMinutes] = useState<number>(stop.duration_minutes || 30);
   const [text, setText] = useState('');
@@ -52,7 +55,7 @@ export default function StopDurationEditor({ visible, onClose, stop, dayStops }:
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <TouchableOpacity style={{ flex: 1 }} onPress={onClose} activeOpacity={1} />
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: 36 + insets.bottom }]}>
           <View style={styles.header}>
             <View style={{ flex: 1 }}>
               <Text style={styles.title}>Time at this stop</Text>
