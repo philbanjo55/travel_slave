@@ -4,7 +4,9 @@ import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
+import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
 import { inRegion, regionFor, terrainData, TerrainRegion } from '../../services/terrain';
+import { hdForget, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import type { Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
@@ -14,6 +16,13 @@ import { compassPoint } from './sunStyle';
 // terrain file is saved on the phone, so it works with no signal. The page
 // inside the web view is tools/sun3d/app_view.js (built into sun3dHtml.ts); it
 // does the drawing, this component feeds it the place, the sun and the lens.
+//
+// HD (optional, off until tapped): the same view drawn on Google's 3D picture
+// (tools/sun3d/app_view_google.js -> sun3dGoogleHtml.ts), lit by the same
+// calculated sun. The button shows only when the phone is online and the tiles
+// door answers (services/tiles3d). It needs a signal and nothing of it is kept;
+// if it fails the offline view comes back by itself. Google's credit line must
+// stay on the picture while HD is on.
 
 type Props = {
   pair: Pair;
@@ -23,6 +32,8 @@ type Props = {
   full?: boolean;
   onJump: (minute: number) => void;
   onFull: () => void;          // open or close full screen
+  hdOn?: boolean;              // HD wanted (kept by the parent so full screen opens the way the small view was)
+  onHd?: (on: boolean) => void;
 };
 
 // The package's prop types don't resolve against this React Native version's types; the props used below are its documented ones.
@@ -33,7 +44,7 @@ type Moments = { firstSubject: number | null; lastSubject: number | null; firstH
 const LENSES = [24, 50, 100];
 const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
 
-export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump, onFull }: Props) {
+export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -46,6 +57,17 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
   const booted = useRef(false);
   const sent = useRef(false);
   const ready = phase === 'ready';
+  // HD: undefined = still asking whether it is there, null = not available
+  const [hdCfg, setHdCfg] = useState<HdSetup | null | undefined>(undefined);
+  const [hd, setHd] = useState<string | null>(null);      // Google's root tile set while the HD page is showing
+  const [wantLocal, setWantLocal] = useState(false);
+  const [hdNote, setHdNote] = useState<string | null>(null);
+  const [credits, setCredits] = useState('');
+  const [hdLoading, setHdLoading] = useState(false);
+  const hdRef = useRef<string | null>(null);
+  hdRef.current = hd;
+  const want = hdOn ?? wantLocal;
+  const setWant = useCallback((on: boolean) => { if (onHd) onHd(on); else setWantLocal(on); }, [onHd]);
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
 
@@ -79,6 +101,35 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
     return out;
   }, [day0, vLat, vLng]);
 
+  // Is the HD picture there at all (online, deployed, under its daily cap)? One small call, remembered for 5 minutes.
+  useEffect(() => {
+    let alive = true;
+    hdSetup().then(v => { if (alive) setHdCfg(v); });
+    return () => { alive = false; };
+  }, []);
+
+  // Change between the offline page and the HD page: the web view is made anew, so everything it reported is cleared.
+  const swap = useCallback((root: string | null) => {
+    booted.current = false; sent.current = false;
+    setLit(null); setMoments(null); setLook(null); setCredits(''); setHdLoading(false); setProblem(null);
+    setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p));
+    setHd(root);
+  }, []);
+  useEffect(() => {
+    if (!want) { if (hd) swap(null); return; }
+    if (hd || !hdCfg) return;
+    let alive = true;
+    hdRoot().then(root => {
+      if (!alive) return;
+      if (root) { setHdNote(null); swap(root); }
+      else { hdForget(); setHdNote("The HD picture isn't available right now."); setWant(false); }
+    });
+    return () => { alive = false; };
+  }, [want, hd, hdCfg, swap, setWant]);
+  // HD is wanted and on its way: the offline page is not started just to be replaced
+  // (one that is already showing stays up until the HD page takes over)
+  const holding = want && !hd && hdCfg !== null && phase !== 'ready';
+
   // Hand the page its place and the terrain once both the page and the file are there.
   const start = useCallback(() => {
     if (!booted.current || sent.current || !region || !b64) return;
@@ -87,11 +138,12 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
       n: region.n, north: region.north, south: region.south, west: region.west, east: region.east,
       W: region.width_m, D: region.depth_m, base: region.base_m, step: region.step_m, ground: region.ground,
       eye: pair.v, target: pair.s, focal,
+      ...(hd && hdCfg ? { tiles: { base: hdCfg.base, draco: hdCfg.draco, root: hd } } : null),
     };
     run(`window.S3D.init(${JSON.stringify(cfg)})`);
     for (let i = 0; i < b64.length; i += CHUNK) run(`window.S3D.chunk("${b64.slice(i, i + CHUNK)}")`);
     run('window.S3D.done()');
-  }, [region, b64, pair.v, pair.s, focal, run]);
+  }, [region, b64, pair.v, pair.s, focal, run, hd, hdCfg]);
   useEffect(() => { start(); }, [start]);
 
   const onMessage = useCallback((e: { nativeEvent: { data: string } }) => {
@@ -103,8 +155,17 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
     else if (m.type === 'state') setLit({ subjectLit: !!m.subjectLit, hereLit: !!m.hereLit, up: !!m.up });
     else if (m.type === 'moments') setMoments({ firstSubject: m.firstSubject ?? null, lastSubject: m.lastSubject ?? null, firstHere: m.firstHere ?? null, lastHere: m.lastHere ?? null });
     else if (m.type === 'look') setLook(typeof m.deg === 'number' ? m.deg : null);
-    else if (m.type === 'error') { setProblem(String(m.msg ?? '')); setPhase(p => (p === 'ready' ? p : 'error')); }
-  }, [start]);
+    else if (m.type === 'credits') setCredits(typeof m.text === 'string' ? m.text : '');
+    else if (m.type === 'hd') setHdLoading(!!m.loading);
+    else if (m.type === 'error') {
+      if (hdRef.current) {
+        // the HD page gave up (no signal, Google's session ran out, the phone's memory): back to the offline view
+        hdForget();
+        setHdNote("The HD picture couldn't load. Showing the offline view.");
+        setWant(false);
+      } else { setProblem(String(m.msg ?? '')); setPhase(p => (p === 'ready' ? p : 'error')); }
+    }
+  }, [start, setWant]);
 
   // The sun follows the slider; the place and the day's first / last light follow the chosen shot.
   const az = sun.az, alt = sun.alt;
@@ -120,7 +181,7 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
 
   const waiting = phase === 'finding' ? 'Finding the terrain for this spot…'
     : phase === 'loading' ? 'Getting the terrain (once, about 2 MB)…'
-    : phase === 'starting' ? 'Drawing the terrain…'
+    : phase === 'starting' ? (holding || hd ? 'Getting the HD picture…' : 'Drawing the terrain…')
     : phase === 'none' ? 'No 3D terrain for this area yet.'
     : phase === 'failed' ? "Couldn't get the terrain. It needs a signal the first time."
     : null;
@@ -135,11 +196,11 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
   return (
     <View style={full ? styles.fullWrap : undefined} accessibilityLabel={`3D view ${ready ? 'ready' : phase}`}>
       <View style={[styles.frame, full ? styles.frameFull : { height }]}>
-        {region && b64 ? (
+        {region && b64 && !holding ? (
           <Web
             ref={web}
-            key={region.id}
-            source={{ html: SUN3D_HTML }}
+            key={`${region.id}:${hd ? 'hd' : 'own'}`}
+            source={hd && hdCfg ? { html: SUN3D_GOOGLE_HTML, baseUrl: hdCfg.origin } : { html: SUN3D_HTML }}
             originWhitelist={['*']}
             javaScriptEnabled
             onMessage={onMessage}
@@ -168,12 +229,31 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
               </TouchableOpacity>
             ))}
           </View>
-          <TouchableOpacity onPress={onFull} style={styles.fullBtn} accessibilityRole="button" accessibilityLabel={full ? 'Close full screen' : 'Open the 3D view full screen'} hitSlop={6}>
-            <Ionicons name={full ? 'contract-outline' : 'expand-outline'} size={18} color="#ffffff" />
-          </TouchableOpacity>
+          <View style={styles.rightBtns}>
+            {hdCfg && region && b64 ? (
+              <TouchableOpacity
+                onPress={() => { setHdNote(null); setWant(!want); }}
+                style={[styles.hdBtn, want && styles.lensOn]}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: want }}
+                accessibilityLabel="HD picture from Google. Needs a signal."
+                hitSlop={6}
+              >
+                <Text style={[styles.lensText, want && styles.lensTextOn]}>HD</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity onPress={onFull} style={styles.fullBtn} accessibilityRole="button" accessibilityLabel={full ? 'Close full screen' : 'Open the 3D view full screen'} hitSlop={6}>
+              <Ionicons name={full ? 'contract-outline' : 'expand-outline'} size={18} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
         </View>
+        {hd && ready ? (
+          <Text style={styles.credits} pointerEvents="none" numberOfLines={2} accessibilityLabel={`Picture: ${credits || 'Google'}`}>
+            {/google/i.test(credits) ? credits : `Google${credits ? `; ${credits}` : ''}`}
+          </Text>
+        ) : null}
         {ready && look != null ? (
-          <Text style={styles.caption} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm · drag to look around</Text>
+          <Text style={styles.caption} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm · {hd && hdLoading ? 'loading the picture…' : 'drag to look around'}</Text>
         ) : null}
       </View>
 
@@ -186,6 +266,7 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
       ) : phase === 'error' && problem ? (
         <Text style={styles.status}>{problem}</Text>
       ) : null}
+      {hdNote && !hd ? <Text style={styles.status}>{hdNote}</Text> : null}
 
       {chips.length > 0 && (
         <View style={styles.moments}>
@@ -204,7 +285,13 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
           ))}
         </View>
       )}
-      {ready ? <Text style={styles.note}>Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes.</Text> : null}
+      {ready ? (
+        <Text style={styles.note}>
+          {hd
+            ? "Google's picture with the calculated sun and shadows laid over it" + (region?.ground === 'snow' ? ', and snow added' : '') + '. No clouds. Needs a signal; times are within a few minutes.'
+            : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes.'}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -222,8 +309,11 @@ const styles = StyleSheet.create({
   lensOn: { backgroundColor: '#ffffff' },
   lensText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   lensTextOn: { color: '#000000' },
+  rightBtns: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  hdBtn: { minWidth: 40, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   fullBtn: { width: 36, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   caption: { position: 'absolute', left: 10, right: 10, bottom: 8, color: '#ffffff', fontSize: 11, textShadowColor: 'rgba(0,0,0,0.9)', textShadowRadius: 3, textShadowOffset: { width: 0, height: 1 } },
+  credits: { position: 'absolute', left: 10, right: 10, bottom: 24, color: '#ffffff', fontSize: 9, textAlign: 'right', textShadowColor: 'rgba(0,0,0,0.9)', textShadowRadius: 3, textShadowOffset: { width: 0, height: 1 } },
   status: { color: colors.textSecondary, fontSize: 13, marginTop: 8, paddingHorizontal: 2 },
   sunOn: { color: '#F0B04A', fontWeight: '700' },
   moments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },

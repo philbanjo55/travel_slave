@@ -90,6 +90,7 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
   const [tab, setTab] = useState<Tab>('map');
   const [viewing, setViewing] = useState<Pair | null>(null);
   const [full3d, setFull3d] = useState(false);
+  const [hd3d, setHd3d] = useState(false);   // the 3D view's HD picture: off until tapped, kept when going full screen
   const pair = stop.pairs[Math.min(pairIdx, stop.pairs.length - 1)];
   const openPhoto = (p: Pair) => { if (p.photo_id) setViewing(p); };
 
@@ -146,7 +147,7 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
         full3d ? (
           <View style={styles.fullNote}><Text style={styles.fullNoteText}>Showing full screen</Text></View>
         ) : (
-          <Sun3DPanel pair={pair} sun={light.sun} day0={day0} height={208} onJump={setMinute} onFull={() => setFull3d(true)} />
+          <Sun3DPanel pair={pair} sun={light.sun} day0={day0} height={208} onJump={setMinute} onFull={() => setFull3d(true)} hdOn={hd3d} onHd={setHd3d} />
         )
       ) : (
         <PhotoPanel pair={pair} onOpen={() => openPhoto(pair)} onAdd={() => onEdit(pair.vantage_id)} />
@@ -218,7 +219,7 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
       <Modal visible={full3d} animationType="fade" onRequestClose={() => setFull3d(false)}>
         <View style={styles.fullScreen}>
           {full3d ? (
-            <Sun3DPanel full pair={pair} sun={light.sun} day0={day0} onJump={setMinute} onFull={() => setFull3d(false)} />
+            <Sun3DPanel full pair={pair} sun={light.sun} day0={day0} onJump={setMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} />
           ) : null}
           <View style={styles.fullBar}>
             <View style={styles.timeRow}>
