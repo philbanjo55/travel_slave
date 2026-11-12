@@ -204,6 +204,13 @@ export async function fetchStopPairs(stopId: string): Promise<PairCheck[]> {
   return Array.isArray(data) ? (data as PairCheck[]) : [];
 }
 
+// Walk mode in the 3D view: moves only the shot's stand pin (name, subject and its height stay as they are).
+export async function moveVantage(tripId: string, stopId: string, vantageId: string, lat: number, lng: number): Promise<void> {
+  const { error } = await supabase.rpc('sun_vantage_move', { p_stop_id: stopId, p_vantage_id: vantageId, p_lat: lat, p_lng: lng });
+  if (error) throw rpcError(error);
+  await refreshSunPlan(tripId, true);   // the 3D view, the sun times and the planner pick up the new spot
+}
+
 // Adds or edits a shot. The label (T1, T2, ...) is assigned by the database.
 export async function saveSunShot(tripId: string, stopId: string, p: ShotInput): Promise<PairCheck> {
   const { data, error } = await supabase.rpc('sun_shot_save', {
