@@ -363,8 +363,35 @@ def tell_t_setup():
     V.check('tell-setup-alive', C.app_alive())
 
 
+def side_by_side_card():
+    """The day card as YOUR DAY VS T'S DAY (12 Nov 2026, Phil: crowded card, "how do I view T?"): two columns, Details opens."""
+    if open_live() is None or open_today() is None:
+        return
+    s = scroll_find("YOUR DAY VS T'S DAY")
+    V.check('card-side-by-side', s is not None, "today's card on the trip page")
+    if s is None:
+        seen, _ = V.texts_all(6)
+        print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
+    V.show('card-side-by-side', s)
+    seen, _ = V.texts_all(2)
+    V.check('card-columns', seen_has(seen, 'YOURS') and seen_has(seen, "T'S"), ' | '.join(t for t in seen if len(t) > 2)[:600])
+    V.check('card-no-old-crowd', not seen_has(seen, 'moved here from your') and not seen_has(seen, 'Week from today'), 'the long lists are not on the card until Details is opened')
+    scroll_top()
+    s = scroll_find('Details')
+    if s is None:
+        V.check('card-details-open', False, 'no Details link'); return
+    s = mid_screen(s, 'Details')
+    V.check('card-details-tap', V.tap_text(s, 'Details'), 'tap Details')
+    time.sleep(1.5)
+    seen2, _ = V.texts_all(4)
+    V.check('card-details-open', seen_has(seen2, 'open the plan'), ' | '.join(t for t in seen2 if len(t) > 3)[:900])
+    V.show('card-details', C.capture(1))
+    V.check('card-no-object-text', not seen_has(seen2, '[object Object]') and not seen_has(seen2, 'undefined'))
+    V.check('card-alive', C.app_alive())
+
+
 def main():
-    for st in (today_auto_open, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup):
+    for st in (today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup):
         try:
             st()
         except Exception as e:
