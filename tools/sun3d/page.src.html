@@ -1,0 +1,328 @@
+<title>Teton Sun Preview</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<style>
+/* Layout: one photo frame (3:2, like the camera) with the day's light controls directly under it. Single dark look, matching the Philm+Frame app. */
+:root {
+  color-scheme: dark;
+  --bg: #000000;
+  --surface: #111111;
+  --line: #2a2a2a;
+  --fg: #ffffff;
+  --dim: #888888;
+  --green: #5aaa7a;
+  --sun: #f2b266;
+  --font: Roboto, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+html, body { background: var(--bg); color: var(--fg); font-family: var(--font); }
+body { font-size: 15px; line-height: 1.4; }
+.wrap { max-width: 860px; margin: 0 auto; padding-block: 20px 28px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 16px; }
+.eyebrow { font-size: 11px; letter-spacing: 1.6px; font-weight: 700; color: var(--dim); }
+h1 { margin: 4px 0 0; font-size: 22px; font-weight: 700; text-wrap: balance; }
+.lede { margin: 6px 0 0; color: var(--dim); font-size: 14px; max-width: 62ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { min-height: 40px; padding: 0 14px; border-radius: 20px; border: 1px solid var(--line); background: transparent; color: var(--fg); font-family: inherit; font-size: 14px; cursor: pointer; }
+.chip[aria-pressed="true"] { border-color: var(--green); color: var(--green); font-weight: 700; }
+.chip:focus-visible, .seg button:focus-visible, .moment:focus-visible, .play:focus-visible, input[type=range]:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.frame { position: relative; width: 100%; max-width: 100%; aspect-ratio: 3 / 2; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; touch-action: none; cursor: grab; }
+.frame:active { cursor: grabbing; }
+.frame canvas { display: block; width: 100%; height: 100%; }
+.cap { position: absolute; left: 10px; bottom: 10px; right: 10px; display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: #ffffff; text-shadow: 0 1px 3px rgba(0,0,0,.9); pointer-events: none; }
+.cap span:last-child { text-align: right; }
+.fail[hidden] { display: none; }
+.fail { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; text-align: center; color: var(--dim); }
+.earth { color: var(--green); font-size: 13px; font-weight: 700; text-decoration: none; align-self: flex-start; min-height: 28px; display: flex; align-items: center; }
+.earth:hover { text-decoration: underline; }
+.timeRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.clock { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.clock b { font-size: 30px; font-weight: 400; font-variant-numeric: tabular-nums; line-height: 1; }
+.clock span { color: var(--dim); font-size: 13px; }
+.play { min-height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--fg); font-family: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+input[type=range] { width: 100%; height: 32px; accent-color: var(--green); margin: 0; }
+.scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; margin-top: -8px; }
+.status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.stat { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.stat .k { font-size: 11px; letter-spacing: 1.4px; font-weight: 700; color: var(--dim); }
+.stat .v { font-size: 15px; font-weight: 700; }
+.stat .v.on { color: var(--sun); }
+.moments { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.moment { min-height: 58px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--fg); font-family: inherit; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.moment .k { font-size: 12px; color: var(--dim); line-height: 1.25; }
+.moment .v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.row .k { font-size: 11px; letter-spacing: 1.4px; font-weight: 700; color: var(--dim); }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { min-height: 40px; padding: 0 14px; border: none; background: transparent; color: var(--dim); font-family: inherit; font-size: 14px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: #000000; font-weight: 700; }
+.note { color: var(--dim); font-size: 13px; max-width: 65ch; margin: 0; }
+@media (max-width: 520px) { .moments { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">3D PREVIEW · CONCEPT · WED 30 DEC 2026</div>
+    <h1>Teton Sun Preview</h1>
+    <p class="lede">The real shape of the Tetons from where you'd stand, with the sun where it will be that day. Drag the picture to look around. Move the slider to move the sun.</p>
+  </header>
+
+  <div class="chips" id="stops" role="group" aria-label="Where you stand"></div>
+
+  <div class="frame" id="frame">
+    <canvas id="view" aria-label="3D view of the Teton range from the chosen stop"></canvas>
+    <div class="cap"><span id="capL"></span><span id="capR"></span></div>
+    <div class="fail" id="fail" hidden>This browser can't draw 3D here. Try opening the page in Chrome or Safari.</div>
+  </div>
+
+  <a class="earth" id="earth" href="https://earth.google.com/web/" target="_blank" rel="noopener">Compare: this spot in Google Earth (photo look, no winter light) ›</a>
+
+  <div class="timeRow">
+    <div class="clock"><b id="clock">8:10 AM</b><span id="sunTxt"></span></div>
+    <button class="play" id="play" type="button">Play the day</button>
+  </div>
+  <div>
+    <input type="range" id="time" min="390" max="1080" step="2" value="490" aria-label="Time of day, Jackson time">
+    <div class="scale"><span>6:30 AM</span><span>9</span><span>noon</span><span>3</span><span>6:00 PM</span></div>
+  </div>
+
+  <div class="status">
+    <div class="stat"><div class="k" id="subjK">THE SUMMIT</div><div class="v" id="subjV"></div></div>
+    <div class="stat"><div class="k">WHERE YOU STAND</div><div class="v" id="hereV"></div></div>
+  </div>
+
+  <div class="moments" id="moments"></div>
+
+  <div class="row">
+    <div class="k">LENS</div>
+    <div class="seg" id="lens" role="group" aria-label="Lens">
+      <button type="button" data-f="24">24 mm</button>
+      <button type="button" data-f="50">50 mm</button>
+      <button type="button" data-f="100">100 mm</button>
+    </div>
+  </div>
+
+  <p class="note">This is bare terrain from the elevation data we already store (one point every 120 to 170 m), coloured as snow, rock and forest by height and steepness. There are no trees, buildings, river or photos in it, and no clouds. Sun times come from the terrain's own shadows, so expect them to be a few minutes off. Times are Jackson time.</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/*__SUN__*/
+const DEM_B64 = "/*__DEM__*/";
+(function () {
+  const NR = 335, NC = 454, STEP = 0.0015, NORTH = 43.9505, WEST = -110.92, DX = 120.6, DZ = 166.7;
+  const bin = atob(DEM_B64), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  const H = new Int16Array(u8.buffer);
+  const hB = (c, r) => {
+    c = Math.max(0, Math.min(NC - 1.001, c)); r = Math.max(0, Math.min(NR - 1.001, r));
+    const c0 = c | 0, r0 = r | 0, fc = c - c0, fr = r - r0, i = r0 * NC + c0;
+    return (H[i] * (1 - fc) + H[i + 1] * fc) * (1 - fr) + (H[i + NC] * (1 - fc) + H[i + NC + 1] * fc) * fr;
+  };
+  const cr = (lat, lng) => ({ c: (lng - WEST) / STEP, r: (NORTH - lat) / STEP });
+
+  const GRAND = { peak: true, name: 'Grand Teton', lat: 43.7411, lng: -110.8024 };
+  const MORAN = { peak: true, name: 'Mount Moran', lat: 43.8350, lng: -110.7765 };
+  const STOPS = [
+    { id: 'sro', name: 'Snake River Overlook', lat: 43.7537, lng: -110.6241, subj: GRAND },
+    { id: 'oxbow', name: 'Oxbow Bend', lat: 43.8662, lng: -110.5477, subj: MORAN },
+    { id: 'barn', name: 'T.A. Moulton Barn', lat: 43.6615, lng: -110.6642, subj: GRAND },
+    { id: 'glacier', name: 'Glacier View Turnout', lat: 43.6913, lng: -110.6727, subj: GRAND },
+    { id: 'above', name: 'From above', lat: 43.745, lng: -110.50, subj: GRAND, up: 2600 },
+  ];
+
+  // ---- static terrain arrays
+  const N = NR * NC, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+  const nx = new Float32Array(N), ny = new Float32Array(N), nz = new Float32Array(N), alb = new Float32Array(N * 3);
+  const ss = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  for (let r = 0; r < NR; r++) for (let c = 0; c < NC; c++) {
+    const i = r * NC + c, h = H[i];
+    pos[i * 3] = c * DX; pos[i * 3 + 1] = h; pos[i * 3 + 2] = r * DZ;
+    const hx = (H[r * NC + Math.min(NC - 1, c + 1)] - H[r * NC + Math.max(0, c - 1)]) / (2 * DX);
+    const hz = (H[Math.min(NR - 1, r + 1) * NC + c] - H[Math.max(0, r - 1) * NC + c]) / (2 * DZ);
+    const l = Math.hypot(hx, 1, hz); nx[i] = -hx / l; ny[i] = 1 / l; nz[i] = -hz / l;
+    const slope = Math.acos(ny[i]) * 180 / Math.PI;
+    const n1 = (Math.sin(c * 12.9898 + r * 78.233) * 43758.5453) % 1, noise = Math.abs(n1);
+    const rock = ss(30, 44, slope + noise * 6);
+    const forest = ss(2050, 2130, h) * (1 - ss(2650, 2950, h + noise * 120)) * ss(4, 9, slope) * (1 - rock) * (0.55 + 0.45 * noise);
+    let R = 0.93, G = 0.95, B = 0.98;
+    R += (0.30 - R) * forest; G += (0.37 - G) * forest; B += (0.35 - B) * forest;
+    R += (0.40 - R) * rock; G += (0.39 - G) * rock; B += (0.41 - B) * rock;
+    alb[i * 3] = R; alb[i * 3 + 1] = G; alb[i * 3 + 2] = B;
+  }
+
+  // ---- shadows: march from a point toward the sun across the height grid
+  function vis(c, r, h, ux, uz, tanA) {
+    let L = 110, d = 0, v = 1;
+    for (let k = 0; k < 400; k++) {
+      d += L; const cc = c + ux * d / DX, rr = r + uz * d / DZ, hh = h + 4 + tanA * d;
+      if (cc < 0 || rr < 0 || cc > NC - 1 || rr > NR - 1 || hh > 4200) break;
+      const cl = hh - hB(cc, rr);
+      if (cl <= 0) return 0;
+      const s = cl / (d * 0.02); if (s < v) v = s;
+      L *= 1.04;
+    }
+    return v;
+  }
+  const snap = p => { if (p.s) return p.s; const q = cr(p.lat, p.lng); let best = null; for (let r = Math.round(q.r) - 3; r <= Math.round(q.r) + 3; r++) for (let c = Math.round(q.c) - 3; c <= Math.round(q.c) + 3; c++) { const h = H[r * NC + c]; if (!best || h > best.h) best = { c, r, h }; } return (p.s = best); };
+  const sunVec = s => { const a = s.alt * Math.PI / 180, z = s.az * Math.PI / 180; return { x: Math.sin(z) * Math.cos(a), y: Math.sin(a), z: -Math.cos(z) * Math.cos(a), tan: Math.tan(a), hx: Math.sin(z), hz: -Math.cos(z) }; };
+  const litAt = (p, mins) => { const s = sunPos(mins, 43.75, -110.65); if (s.alt <= 0) return 0; const v = sunVec(s), q = p.peak ? snap(p) : cr(p.lat, p.lng); return vis(q.c, q.r, p.peak ? q.h : hB(q.c, q.r), v.hx, v.hz, v.tan); };
+
+  // ---- light and sky colours by sun height (degrees)
+  const KEY = [
+    //  alt   sun colour          sunI  ambient             zenith              horizon
+    [-18, [1, .5, .3], 0, [.030, .036, .060], [.010, .014, .035], [.030, .040, .080]],
+    [-8, [1, .5, .3], 0, [.085, .105, .180], [.050, .075, .190], [.200, .190, .300]],
+    [-3, [1, .45, .3], 0, [.200, .220, .330], [.110, .170, .380], [.780, .470, .400]],
+    [0, [1, .47, .28], .55, [.270, .290, .400], [.170, .270, .520], [.950, .620, .430]],
+    [3, [1, .62, .40], .85, [.300, .340, .460], [.200, .330, .620], [.960, .760, .580]],
+    [8, [1, .82, .64], 1.0, [.310, .370, .500], [.200, .380, .720], [.820, .840, .880]],
+    [16, [1, .93, .82], 1.05, [.320, .390, .530], [.190, .400, .780], [.720, .820, .920]],
+    [30, [1, .97, .92], 1.1, [.330, .400, .540], [.180, .400, .800], [.700, .810, .930]],
+  ];
+  function atmo(alt) {
+    let a = KEY[0], b = KEY[KEY.length - 1];
+    for (let i = 0; i < KEY.length - 1; i++) if (alt >= KEY[i][0] && alt <= KEY[i + 1][0]) { a = KEY[i]; b = KEY[i + 1]; break; }
+    if (alt <= KEY[0][0]) b = a; if (alt >= b[0]) a = b;
+    const t = a === b ? 0 : (alt - a[0]) / (b[0] - a[0]), m = (p, q) => p.map((v, i) => v + (q[i] - v) * t);
+    return { sun: m(a[1], b[1]), sunI: a[2] + (b[2] - a[2]) * t, amb: m(a[3], b[3]), zen: m(a[4], b[4]), hor: m(a[5], b[5]) };
+  }
+  const tone = x => Math.pow(Math.min(1, x * 0.9), 0.62);
+
+  // ---- scene
+  const canvas = document.getElementById('view'), frame = document.getElementById('frame');
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true }); } catch (e) { document.getElementById('fail').hidden = false; return; }
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x8899aa, 0.000011);
+  const cam = new THREE.PerspectiveCamera(27, 1.5, 6, 260000);
+  cam.rotation.order = 'YXZ';
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const colAttr = new THREE.BufferAttribute(col, 3); geo.setAttribute('color', colAttr);
+  const idx = new Uint32Array((NR - 1) * (NC - 1) * 6); let k = 0;
+  for (let r = 0; r < NR - 1; r++) for (let c = 0; c < NC - 1; c++) { const a = r * NC + c, b = a + 1, d = a + NC, e = d + 1; idx[k++] = a; idx[k++] = d; idx[k++] = b; idx[k++] = b; idx[k++] = d; idx[k++] = e; }
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true })));
+
+  const skyGeo = new THREE.SphereGeometry(200000, 48, 24), skyPos = skyGeo.attributes.position;
+  const skyCol = new THREE.BufferAttribute(new Float32Array(skyPos.count * 3), 3); skyGeo.setAttribute('color', skyCol);
+  const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+  scene.add(sky);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(2100, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }));
+  const halo = new THREE.Mesh(new THREE.CircleGeometry(9000, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, transparent: true, opacity: 0.22, depthWrite: false }));
+  scene.add(halo); scene.add(disc);
+
+  // ---- state
+  let stop = STOPS[0], mins = 490, yaw = 0, pitch = 0, focal = 50, dirty = true, relight = true, playing = false, moments = [];
+  const $ = id => document.getElementById(id);
+  const fmt = m => { m = Math.round(m); const h = Math.floor(m / 60), mm = String(m % 60).padStart(2, '0'); return `${((h + 11) % 12) + 1}:${mm} ${h < 12 ? 'AM' : 'PM'}`; };
+  const compass = d => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(((d % 360) + 360) % 360 / 45) % 8];
+
+  function light() {
+    const s = sunPos(mins, 43.75, -110.65), v = sunVec(s), A = atmo(s.alt), up = s.alt > 0;
+    const sr = A.sun[0] * A.sunI, sg = A.sun[1] * A.sunI, sb = A.sun[2] * A.sunI;
+    for (let r = 0, i = 0; r < NR; r++) for (let c = 0; c < NC; c++, i++) {
+      let d = 0;
+      if (up) { const lam = nx[i] * v.x + ny[i] * v.y + nz[i] * v.z; if (lam > 0) d = lam * vis(c, r, H[i], v.hx, v.hz, v.tan); }
+      const sh = 0.75 + 0.25 * ny[i];
+      col[i * 3] = tone(alb[i * 3] * (A.amb[0] * sh + sr * d));
+      col[i * 3 + 1] = tone(alb[i * 3 + 1] * (A.amb[1] * sh + sg * d));
+      col[i * 3 + 2] = tone(alb[i * 3 + 2] * (A.amb[2] * sh + sb * d));
+    }
+    colAttr.needsUpdate = true;
+    const glow = s.alt > -10 ? Math.max(0, 1 - Math.abs(s.alt - 2) / 16) : 0;
+    for (let j = 0; j < skyPos.count; j++) {
+      const x = skyPos.getX(j) / 200000, y = skyPos.getY(j) / 200000, z = skyPos.getZ(j) / 200000;
+      const t = Math.pow(Math.max(0, y), 0.45), g = Math.pow(Math.max(0, x * v.x + y * v.y + z * v.z), 10) * glow;
+      skyCol.setXYZ(j, Math.min(1, A.hor[0] + (A.zen[0] - A.hor[0]) * t + g * 0.9), Math.min(1, A.hor[1] + (A.zen[1] - A.hor[1]) * t + g * 0.55), Math.min(1, A.hor[2] + (A.zen[2] - A.hor[2]) * t + g * 0.25));
+    }
+    skyCol.needsUpdate = true;
+    scene.fog.color.setRGB(A.hor[0], A.hor[1], A.hor[2]);
+    disc.visible = halo.visible = s.alt > -1;
+    disc.material.color.setRGB(1, Math.min(1, .75 + A.sun[1] * .25), Math.min(1, .5 + A.sun[2] * .5));
+    halo.material.color.setRGB(A.sun[0], A.sun[1], A.sun[2]);
+
+    $('clock').textContent = fmt(mins);
+    $('sunTxt').textContent = s.alt > 0 ? `Sun ${s.alt.toFixed(0)}° up, to the ${compass(s.az)} (${s.az.toFixed(0)}°)` : s.alt > -6 ? 'Sun is down: twilight' : 'Dark';
+    const a = litAt(stop.subj, mins) > 0.5, b = litAt(stop, mins) > 0.5;
+    $('subjK').textContent = stop.subj.name.toUpperCase() + ' SUMMIT';
+    $('subjV').textContent = a ? 'In the sun' : s.alt > 0 ? 'In shadow' : 'No sun yet'; $('subjV').className = 'v' + (a ? ' on' : '');
+    if (s.alt <= 0 && mins > 720) $('subjV').textContent = 'Sun has gone';
+    $('hereV').textContent = stop.up ? 'In the air' : b ? 'In the sun' : s.alt > 0 ? 'In shade' : mins > 720 ? 'Sun has gone' : 'No sun yet'; $('hereV').className = 'v' + (b && !stop.up ? ' on' : '');
+    return v;
+  }
+
+  function place() {
+    const q = cr(stop.lat, stop.lng), y = hB(q.c, q.r) + (stop.up || 5);
+    cam.position.set(q.c * DX, y, q.r * DZ);
+    cam.rotation.set(pitch, -yaw, 0);
+    cam.fov = 2 * Math.atan(12 / focal) * 180 / Math.PI; cam.updateProjectionMatrix();
+    sky.position.copy(cam.position);
+    const deg = ((yaw * 180 / Math.PI) % 360 + 360) % 360;
+    $('capL').textContent = stop.name; $('capR').textContent = `Looking ${compass(deg)} ${deg.toFixed(0)}° · ${focal} mm`;
+  }
+  function aim() {
+    const a = cr(stop.lat, stop.lng), b = snap(stop.subj);
+    const dx = (b.c - a.c) * DX, dz = (b.r - a.r) * DZ, dist = Math.hypot(dx, dz);
+    yaw = Math.atan2(dx, -dz);
+    const top = Math.atan2(b.h - (hB(a.c, a.r) + (stop.up || 5)), dist);
+    pitch = stop.up ? top - 0.03 : top * 0.45;
+  }
+  function findMoments() {
+    const first = p => { for (let m = 420; m <= 1050; m += 2) if (litAt(p, m) > 0.5) return m; return null; };
+    const last = p => { for (let m = 1050; m >= 420; m -= 2) if (litAt(p, m) > 0.5) return m; return null; };
+    const n = stop.subj.name.replace('Mount ', '').replace(' Teton', '');
+    moments = [[`First sun on the ${n}`, first(stop.subj)], ['Sun reaches you', stop.up ? null : first(stop)], ['You lose the sun', stop.up ? null : last(stop)], [`Last sun on the ${n}`, last(stop.subj)]];
+    const box = $('moments'); box.textContent = '';
+    for (const [kk, m] of moments) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'moment';
+      const k1 = document.createElement('span'); k1.className = 'k'; k1.textContent = kk;
+      const v1 = document.createElement('span'); v1.className = 'v'; v1.textContent = m == null ? '—' : fmt(m);
+      b.append(k1, v1); if (m != null) b.addEventListener('click', () => setTime(m)); else b.disabled = true;
+      box.append(b);
+    }
+  }
+  function setTime(m) { mins = Math.max(390, Math.min(1080, m)); $('time').value = String(mins); relight = dirty = true; }
+  function setStop(s) {
+    stop = s; aim(); findMoments();
+    for (const b of $('stops').children) b.setAttribute('aria-pressed', String(b.dataset.id === s.id));
+    const g = cr(s.lat, s.lng), hd = ((yaw * 180 / Math.PI) % 360 + 360) % 360;
+    $('earth').href = `https://earth.google.com/web/@${s.lat},${s.lng},${Math.round(hB(g.c, g.r))}a,${s.up ? 9000 : 2500}d,35y,${hd.toFixed(0)}h,${s.up ? 60 : 80}t,0r`;
+    relight = dirty = true;
+  }
+  function size() { const w = frame.clientWidth, h = frame.clientHeight; if (!w || !h) return; renderer.setSize(w, h, false); cam.aspect = w / h; dirty = true; }
+
+  let lastT = 0;
+  function tick(t) {
+    if (playing) { const dt = Math.min(100, t - lastT); mins += dt * 0.03; if (mins >= 1050) { mins = 1050; playing = false; $('play').textContent = 'Play the day'; } $('time').value = String(Math.round(mins)); relight = dirty = true; }
+    lastT = t;
+    if (dirty) {
+      let v = null; if (relight) { v = light(); light.v = v; relight = false; }
+      place(); v = light.v;
+      for (const m of [disc, halo]) { m.position.set(cam.position.x + v.x * 190000, cam.position.y + v.y * 190000, cam.position.z + v.z * 190000); m.lookAt(cam.position); }
+      renderer.render(scene, cam); dirty = false;
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // ---- controls
+  for (const s of STOPS) { const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.dataset.id = s.id; b.textContent = s.name; b.addEventListener('click', () => setStop(s)); $('stops').append(b); }
+  $('time').addEventListener('input', e => { playing = false; $('play').textContent = 'Play the day'; setTime(+e.target.value); });
+  $('play').addEventListener('click', () => { playing = !playing; if (playing && mins >= 1040) mins = 420; $('play').textContent = playing ? 'Pause' : 'Play the day'; });
+  for (const b of $('lens').children) { b.setAttribute('aria-pressed', String(+b.dataset.f === focal)); b.addEventListener('click', () => { focal = +b.dataset.f; for (const o of $('lens').children) o.setAttribute('aria-pressed', String(o === b)); dirty = true; }); }
+  let drag = null;
+  frame.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; frame.setPointerCapture(e.pointerId); });
+  frame.addEventListener('pointermove', e => { if (!drag) return; const per = (cam.fov * Math.PI / 180) / frame.clientHeight; yaw -= (e.clientX - drag.x) * per; pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; dirty = true; });
+  frame.addEventListener('pointerup', () => { drag = null; }); frame.addEventListener('pointercancel', () => { drag = null; });
+  frame.addEventListener('keydown', e => { const st = 0.03; if (e.key === 'ArrowLeft') yaw -= st; else if (e.key === 'ArrowRight') yaw += st; else if (e.key === 'ArrowUp') pitch += st; else if (e.key === 'ArrowDown') pitch -= st; else return; e.preventDefault(); dirty = true; });
+  frame.tabIndex = 0;
+  new ResizeObserver(size).observe(frame);
+
+  setStop(STOPS[0]);
+  const f0 = moments[0][1]; if (f0 != null) setTime(f0 + 12);
+  size(); requestAnimationFrame(tick);
+  window.__sun3d = { bench: () => { const t = performance.now(); light(); return Math.round(performance.now() - t); }, setStop: id => setStop(STOPS.find(s => s.id === id)), setTime, moments: () => moments };
+})();
+</script>
