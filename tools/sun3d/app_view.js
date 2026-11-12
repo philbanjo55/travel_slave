@@ -453,6 +453,7 @@
       if (fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453) > .9) discard;   // slightly see-through, in any order
       gl_FragColor = vec4(vCol, 1.);
     }`;
+  const TREE_LIGHT = 40000;   // on a small phone
   const TREE_MAX = 90000;   // points a box unless cfg.detail.maxTrees says otherwise: enough to read as trees, light enough for a small phone
   const POP = (() => { const t = new Uint8Array(256); for (let i = 1; i < 256; i++) t[i] = (i & 1) + t[i >> 1]; return t; })();
   // Tree points for a detail box, at most `cap`: many small ones close to the stand spot, fewer and larger ones farther
@@ -460,16 +461,22 @@
   // everywhere. With the trees' own returns (`raw`: the tree file as unpacked, n lines of 1 + n x 8 bytes, 64 height
   // slices a cell, one bit each) the points sit only where a return came from, so each tree keeps its shape; without
   // it (round 2 data) they are made up between each canopy top and a few metres under it.
-  function treePoints(D, raw, bins, bh, cap) {
-    const n = D.n, k = D.kind, e = crg(D, eye), dx = D.dx, dz = D.dz, line = n * 8 + 1;
+  function treePoints(D, raw, bins, bh, cap, fine) {
+    const n = D.n, k = D.kind, e = crg(D, eye), dx = D.dx, dz = D.dz, line = n * fine * 8 + 1;
     if (!k) return null;
     const thin = (r, c) => Math.min(3, 60 / Math.max(1, Math.hypot((c - e.c) * dx, (r - e.r) * dz)));
     const edge = (r, c) => Math.min((c + 0.5) * dx, (n - c - 0.5) * dx, (r + 0.5) * dz, (n - r - 0.5) * dz) >= D.band;   // not in the strip that blends into the coarser grid
-    const V = raw, at = (r, c) => r * line + 1 + c * 8;
+    // a cell's 8 bytes of slices; on the light grid (fine = 2) a cell is four of the file's cells, their slices joined
+    const V = raw, B = new Uint8Array(8);
+    const slices = (r, c) => {
+      const o = r * fine * line + 1 + c * fine * 8;
+      if (fine === 1) { for (let i = 0; i < 8; i++) B[i] = V[o + i]; return; }
+      for (let i = 0; i < 8; i++) B[i] = V[o + i] | V[o + 8 + i] | V[o + line + i] | V[o + line + 8 + i];
+    };
     let sum = 0;
     for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
       if (k[r * n + c] < 8 || !edge(r, c)) continue;
-      if (V) { const o = at(r, c); sum += (POP[V[o]] + POP[V[o + 1]] + POP[V[o + 2]] + POP[V[o + 3]] + POP[V[o + 4]] + POP[V[o + 5]] + POP[V[o + 6]] + POP[V[o + 7]]) * thin(r, c); }
+      if (V) { slices(r, c); sum += (POP[B[0]] + POP[B[1]] + POP[B[2]] + POP[B[3]] + POP[B[4]] + POP[B[5]] + POP[B[6]] + POP[B[7]]) * thin(r, c); }
       else sum += thin(r, c);
     }
     if (!sum) return null;
@@ -485,9 +492,9 @@
       if (v < 8 || !edge(r, c)) continue;
       const w = thin(r, c), want = per * w, top = (v - 8) * 0.2;
       if (V) {
-        const o = at(r, c), size = 0.38 / Math.sqrt(w) * big;
+        const size = 0.38 / Math.sqrt(w) * big * (fine === 2 ? 1.5 : 1); slices(r, c);
         for (let b = 0; b < bins; b++) {
-          if (!(V[o + (b >> 3)] & (1 << (b & 7)))) continue;
+          if (!(B[b >> 3] & (1 << (b & 7)))) continue;
           let cnt = Math.floor(want); if (rnd() < want - cnt) cnt++;
           for (let j = 0; j < cnt && m < room; j++) { const hg = Math.min(top + 0.2, (b + rnd()) * bh); put(r, c, i, hg, Math.max(0, Math.min(1, (top - hg) / 7)), size); }
         }
@@ -513,9 +520,23 @@
     const blob = new Blob(idat); free(buf); buf = null;   // the blob has its own copy
     return new Uint8Array(await new Response(blob.stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
   }
-  async function decode(list, n, base, step) {
+  // skip = 2 keeps every other cell each way (the light foreground of a small phone): a quarter of the memory
+  async function decode(list, n, base, step, skip) {
     const raw = await inflate(list);
     if (raw.length !== n * (2 * n + 1)) throw new Error('terrain file has the wrong size');
+    if (skip === 2) {
+      const m = n >> 1, HF = new Float32Array(m * m); let up = new Uint16Array(n), cur = new Uint16Array(n), hi = -1e9;
+      for (let r = 0, p = 0; r < n; r++) {
+        p++;
+        for (let c = 0; c < n; c++, p += 2) {
+          const v = (((raw[p] << 8) | raw[p + 1]) + (c ? cur[c - 1] : 0) + (r ? up[c] : 0) - (r && c ? up[c - 1] : 0)) & 65535; cur[c] = v;
+          if (!(r & 1) && !(c & 1) && (r >> 1) < m && (c >> 1) < m) { const h = base + v * step; HF[(r >> 1) * m + (c >> 1)] = h; if (h > hi) hi = h; }
+        }
+        const t = up; up = cur; cur = t;
+      }
+      free(raw);
+      return { HF, hi };
+    }
     const HF = new Float32Array(n * n); let up = new Uint16Array(n), cur = new Uint16Array(n), hi = -1e9;   // only two lines of the 16-bit values are kept
     for (let r = 0, p = 0; r < n; r++) {
       p++;
@@ -670,16 +691,35 @@
     };
     try {
       const dc = my.detail, C = R.ctx, kx = my.W / (my.east - my.west), kz = my.D / (my.north - my.south);
+      // A small phone (2 GB or less, or detail.light) gets the light foreground: every other cell of the box each way
+      // (1 m, a quarter of the memory) and fewer tree points. Enough for barns, trees and water to be there.
+      const light = dc.light != null ? !!dc.light : (navigator.deviceMemory || 8) <= 2, fine = light && !(dc.n & 1) ? 2 : 1, dn = dc.n / fine;
       // 1. the heights: inside the near box when there is one, else inside the wide grid
       let list = dparts; dparts = [];
-      const m = await decode(list, dc.n, dc.base || 0, dc.step || 0.02); list = null;
+      const m = await decode(list, dc.n, dc.base || 0, dc.step || 0.02, fine); list = null;
       const w = (dc.east - dc.west) * kx, d = (dc.north - dc.south) * kz, P = NR || my, pcell = NR ? Math.max(NR.w, NR.d) / (G - 1) : Math.max(my.W, my.D) / (G - 1);
       const keep = Math.max(4, Math.min(25, 0.5 * pcell)), band = keep + Math.max(16, Math.min(45, 2 * pcell));
       if (!(dc.west >= P.west && dc.east <= P.east && dc.south >= P.south && dc.north <= P.north) || Math.min(w, d) < 4 * band) throw new Error('detail grid does not fit');
-      const D = { n: dc.n, HF: m.HF, north: dc.north, south: dc.south, west: dc.west, east: dc.east, x0: (dc.west - my.west) * kx, z0: (my.north - dc.north) * kz, w, d, dx: w / dc.n, dz: d / dc.n, keep, band, up: NR || FAR, lift: 2, kind: null };
+      const D = { n: dn, HF: m.HF, north: dc.north, south: dc.south, west: dc.west, east: dc.east, x0: (dc.west - my.west) * kx, z0: (my.north - dc.north) * kz, w, d, dx: w / dn, dz: d / dn, keep, band, up: NR || FAR, lift: 2, kind: null };
       await step('heights');
       // 2. the class mask (without it: bare shapes), and the water of the 6 km around (0 none, 1 moving, 2 still)
-      if (mparts.length) { list = mparts; mparts = []; try { D.kind = await decodeMask(list, dc.n); } catch (e) { D.kind = null; } list = null; }
+      if (mparts.length) {
+        list = mparts; mparts = [];
+        try {
+          let k = await decodeMask(list, dc.n);
+          if (fine === 2) {   // four cells into one: a building wins, then the tallest tree, then water
+            const q = new Uint8Array(dn * dn), n2 = dc.n;
+            for (let r = 0; r < dn; r++) for (let c = 0; c < dn; c++) {
+              let best = 0, o = r * 2 * n2 + c * 2;
+              for (const v of [k[o], k[o + 1], k[o + n2], k[o + n2 + 1]]) { const rank = v === 2 ? 1000 : v >= 8 ? v : v === 3 ? 4 : 0, br = best === 2 ? 1000 : best >= 8 ? best : best === 3 ? 4 : 0; if (rank > br) best = v; }
+              q[r * dn + c] = best;
+            }
+            free(k); k = q;
+          }
+          D.kind = k;
+        } catch (e) { D.kind = null; }
+        list = null;
+      }
       let W = null; const wc = my.water;
       if (wc && wparts.length) {
         list = wparts; wparts = [];
@@ -704,7 +744,7 @@
       if (D.kind) {
         let raw = null; const tc = dc.trees || {};
         if (dc.trees && tparts.length) { list = tparts; tparts = []; try { raw = await inflate(list); if (raw.length !== dc.n * (dc.n * 8 + 1)) raw = null; } catch (e) { raw = null; } list = null; await step('tree file'); }
-        tp = treePoints(D, raw, Math.min(64, tc.bins || 64), tc.bin || 0.6, Math.max(1000, Math.min(520000, dc.maxTrees || TREE_MAX))); free(raw); raw = null;
+        tp = treePoints(D, raw, Math.min(64, tc.bins || 64), tc.bin || 0.6, Math.max(1000, Math.min(520000, dc.maxTrees || (light ? TREE_LIGHT : TREE_MAX))), fine); free(raw); raw = null;
       }
       tparts = [];
       await step('trees');
@@ -753,7 +793,7 @@
       R.cam.near = 1; oldT.dispose(); if (oldN) oldN.dispose();
       if (touched) focus(); else { aim(); heading(); }
       foreState = 2; relight = dirty = true;
-      post({ type: 'foreground', ok: true, detail: D.n, trees: det.count, real: !!(tp && tp.real), water: wmap ? W.n : 0, ice, ms: Math.round(performance.now() - t0) });
+      post({ type: 'foreground', ok: true, light, detail: D.n, trees: det.count, real: !!(tp && tp.real), water: wmap ? W.n : 0, ice, ms: Math.round(performance.now() - t0) });
       if (lastPath) window.S3D.path(lastPath);   // the day's first / last light again, now from the survey's ground and buildings
     } catch (e) {
       for (const t of made) { try { t.dispose(); } catch (x) { /* nothing to let go */ } }

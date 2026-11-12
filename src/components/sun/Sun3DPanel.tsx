@@ -26,6 +26,10 @@ import { compassPoint } from './sunStyle';
 // line. The Foreground button (leaf, on by default, remembered while the app is
 // open) turns the detail box off: the page is started again without it, so it
 // draws exactly what it drew before this level existed.
+// The plain view always comes first: the foreground's files are handed to the
+// page only after it has said 'ready', and the page builds them in steps. If the
+// web view's process dies with the foreground on (a small phone), the view is
+// started once more without it and one line says so.
 //
 // HD (optional, off until tapped): the same view drawn on Google's 3D picture
 // (tools/sun3d/app_view_google.js -> sun3dGoogleHtml.ts), lit by the same
@@ -76,6 +80,7 @@ let lastLens = '135';
 let lastFrame: FrameMode = 'land';
 let lastForeground = true;
 let lastIce: boolean | null = null;
+let foregroundTooHeavy = false;   // the web view died with the foreground on: it stays off until the user turns it on again
 const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
 
 export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd }: Props) {
@@ -112,6 +117,9 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const [problem, setProblem] = useState<string | null>(null);
   const booted = useRef(false);
   const sent = useRef(false);
+  const foreSent = useRef(false);
+  const [gen, setGen] = useState(0);                         // bumped to start the web view afresh after it died
+  const [heavy, setHeavy] = useState(foregroundTooHeavy);
   const loaded = useRef<string | null>(null);   // the files the page holds: "<region>|<fine box or nothing>|<detail box or nothing>"
   const ready = phase === 'ready';
   // Full screen runs edge to edge: the lines under the picture keep a margin from the sides of the phone.
@@ -203,12 +211,15 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   // Foreground on / off: the page is started again with or without the detail box (off = exactly the page without it).
   const setForeground = useCallback((on: boolean) => {
     lastForeground = on; setForegroundState(on);
+    if (on) { foregroundTooHeavy = false; setHeavy(false); }
     if (hdRef.current) return;   // the HD page has no detail box: nothing to restart
-    booted.current = false; sent.current = false;
+    booted.current = false; sent.current = false; foreSent.current = false;
     setLit(null); setMoments(null); setLook(null); setShapes(false); setProblem(null);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p));
   }, []);
   const useDetail = foreground && !hd && !!detail && !!detailB64;
+  const useDetailRef = useRef(false);
+  useDetailRef.current = useDetail;
   // Frozen lakes: still water drawn as snow-covered ice, rivers open. Default from the area's ground; a tap changes it in place.
   const iceOn = iceChoice ?? (region ? region.ground !== 'green' : true);
   const setIce = useCallback((on: boolean) => { lastIce = on; setIceChoice(on); run(`window.S3D.ice(${on ? 'true' : 'false'})`); }, [run]);
@@ -227,39 +238,60 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
       near: !hd && near && nearB64
         ? { n: near.n, north: near.north, south: near.south, west: near.west, east: near.east, base: near.base_m, step: near.step_m }
         : undefined,
-      detail: useDetail && detail
-        ? {
-          n: detail.n, north: detail.north, south: detail.south, west: detail.west, east: detail.east, base: detail.base_m, step: detail.step_m,
-          trees: treesB64 ? { bins: detail.trees_bins ?? 64, bin: detail.trees_bin_m ?? 0.6 } : undefined,
-        }
-        : undefined,
-      water: useDetail && detail && waterB64
-        ? { n: detail.water_n, north: detail.water_north, south: detail.water_south, west: detail.water_west, east: detail.water_east }
-        : undefined,
       ice: iceOn,
       ...(hd && hdCfg ? { tiles: { base: hdCfg.base, draco: hdCfg.draco, root: hd } } : null),
     };
     run(`window.S3D.init(${JSON.stringify(cfg)})`);
     for (let i = 0; i < b64.length; i += CHUNK) run(`window.S3D.chunk("${b64.slice(i, i + CHUNK)}")`);
     if (!hd && near && nearB64) for (let i = 0; i < nearB64.length; i += CHUNK) run(`window.S3D.chunk("${nearB64.slice(i, i + CHUNK)}","near")`);
-    if (useDetail && detailB64) {
-      for (let i = 0; i < detailB64.length; i += CHUNK) run(`window.S3D.chunk("${detailB64.slice(i, i + CHUNK)}","detail")`);
-      if (maskB64) for (let i = 0; i < maskB64.length; i += CHUNK) run(`window.S3D.chunk("${maskB64.slice(i, i + CHUNK)}","mask")`);
-      if (treesB64) for (let i = 0; i < treesB64.length; i += CHUNK) run(`window.S3D.chunk("${treesB64.slice(i, i + CHUNK)}","trees")`);
-      if (waterB64) for (let i = 0; i < waterB64.length; i += CHUNK) run(`window.S3D.chunk("${waterB64.slice(i, i + CHUNK)}","water")`);
-    }
     run('window.S3D.done()');
   // iceOn is read when the page starts; a later tap goes to the page directly (setIce), so it is not a reason to start again
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [region, near, b64, nearB64, detail, detailB64, maskB64, treesB64, waterB64, useDetail, pair.v, pair.s, focal, lens, full, run, hd, hdCfg]);
+  }, [region, near, b64, nearB64, pair.v, pair.s, focal, lens, full, run, hd, hdCfg]);
   useEffect(() => { start(); }, [start]);
+
+  // The foreground (detail box, tree returns, water) goes to the page only once the plain view is up ('ready'): several
+  // MB of text that must not stand between the user and a first picture. The page builds it in steps and answers
+  // 'foreground' (ok, or dropped: the plain view then simply stays).
+  const sendFore = useCallback(() => {
+    if (foreSent.current || !useDetail || !detail || !detailB64) return;
+    foreSent.current = true;
+    const fore = {
+      detail: {
+        n: detail.n, north: detail.north, south: detail.south, west: detail.west, east: detail.east, base: detail.base_m, step: detail.step_m,
+        trees: treesB64 ? { bins: detail.trees_bins ?? 64, bin: detail.trees_bin_m ?? 0.6 } : undefined,
+      },
+      water: waterB64 ? { n: detail.water_n, north: detail.water_north, south: detail.water_south, west: detail.water_west, east: detail.water_east } : undefined,
+      ice: iceOn,
+    };
+    run(`window.S3D.fore(${JSON.stringify(fore)})`);
+    const feed = (data: string | null, kind: string) => { if (data) for (let i = 0; i < data.length; i += CHUNK) run(`window.S3D.chunk("${data.slice(i, i + CHUNK)}","${kind}")`); };
+    feed(detailB64, 'detail'); feed(maskB64, 'mask'); feed(treesB64, 'trees'); feed(waterB64, 'water');
+    run('window.S3D.foreDone()');
+  }, [useDetail, detail, detailB64, maskB64, treesB64, waterB64, iceOn, run]);
+  useEffect(() => { if (ready) sendFore(); }, [ready, sendFore]);
+
+  // The web view's own process died (Android: out of memory, or killed) or its graphics context went. With the
+  // foreground on, that is the likely cause: start once more WITHOUT it, switch it off for this session and say so.
+  // Without the foreground nothing is restarted: no loop.
+  const onGone = useCallback(() => {
+    if (hdRef.current) { hdForget(); setHdNote("The HD picture couldn't load. Showing the offline view."); setWant(false); return; }
+    booted.current = false; sent.current = false; foreSent.current = false;
+    setLit(null); setMoments(null); setLook(null); setShapes(false);
+    if (useDetailRef.current) {
+      lastForeground = false; foregroundTooHeavy = true;
+      setForegroundState(false); setHeavy(true); setProblem(null); setPhase('starting'); setGen(g => g + 1);
+    } else { setProblem('The 3D view stopped on this phone.'); setPhase('error'); }
+  }, [setWant]);
 
   const onMessage = useCallback((e: { nativeEvent: { data: string } }) => {
     let m: any = null;
     try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
     if (!m || typeof m.type !== 'string') return;
-    if (m.type === 'boot') { booted.current = true; start(); }
-    else if (m.type === 'ready') { setShapes(!!m.detail); setPhase('ready'); }
+    if (m.type === 'boot') { booted.current = true; foreSent.current = false; start(); }
+    else if (m.type === 'ready') setPhase('ready');
+    else if (m.type === 'foreground') setShapes(!!m.ok);   // not ok = the page dropped it and kept the plain view
+    else if (m.type === 'lost') onGone();
     else if (m.type === 'state') setLit({ subjectLit: !!m.subjectLit, hereLit: !!m.hereLit, up: !!m.up, trees: !!m.trees });
     else if (m.type === 'moments') setMoments({ firstSubject: m.firstSubject ?? null, lastSubject: m.lastSubject ?? null, firstHere: m.firstHere ?? null, lastHere: m.lastHere ?? null, trees: !!m.trees });
     else if (m.type === 'look') setLook(typeof m.deg === 'number' ? m.deg : null);
@@ -272,7 +304,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
         setWant(false);
       } else { setProblem(String(m.msg ?? '')); setPhase(p => (p === 'ready' ? p : 'error')); }
     }
-  }, [start, setWant]);
+  }, [start, setWant, onGone]);
 
   // The sun follows the slider; the place and the day's first / last light follow the chosen shot.
   const az = sun.az, alt = sun.alt;
@@ -307,11 +339,13 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
         {region && b64 && !holding ? (
           <Web
             ref={web}
-            key={hd ? `${region.id}:hd` : `${region.id}|${near?.id ?? ''}|${useDetail && detail ? detail.id : ''}`}
+            key={hd ? `${region.id}:hd:${gen}` : `${region.id}|${near?.id ?? ''}|${useDetail && detail ? detail.id : ''}|${gen}`}
             source={hd && hdCfg ? { html: SUN3D_GOOGLE_HTML, baseUrl: hdCfg.origin } : { html: SUN3D_HTML }}
             originWhitelist={['*']}
             javaScriptEnabled
             onMessage={onMessage}
+            onRenderProcessGone={onGone}
+            onContentProcessDidTerminate={onGone}
             scrollEnabled={false}
             overScrollMode="never"
             setSupportMultipleWindows={false}
@@ -406,6 +440,9 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
         <Text style={[styles.status, pad]}>
           {lit?.trees ? 'Trees near you may block the sun here right now' : 'Trees near you may block the sun here at times today'} (summer survey; bare in winter if they are cottonwoods). The times don't count them.
         </Text>
+      ) : null}
+      {heavy && !foreground && !hd ? (
+        <Text style={[styles.status, pad]}>The foreground was too heavy for this phone, so it is off. The view below is the plain one.</Text>
       ) : null}
       {hdNote && !hd ? <Text style={[styles.status, pad]}>{hdNote}</Text> : null}
 
