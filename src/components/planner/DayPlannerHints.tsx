@@ -15,6 +15,8 @@ import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../..
 import { useTripStore } from '../../store/tripStore';
 import { PlanCheckRow } from './PlanCheck';
 import { TellTRow } from './TellT';
+import { covers, useNotes } from '../../services/tNotes';
+import { placements, samePlace } from '../../services/plannerWeekPure';
 import { errText } from '../../utils/errText';
 export { dayScore, moveReasons } from '../../services/plannerDay';
 export type { DayScore } from '../../services/plannerDay';
@@ -177,7 +179,11 @@ export function useDayPlanner(tripId: string | null, date: string | null | undef
 // expected). Under it: the plan check, Re-plan now (today), his notes, and one button that shows T's day on the
 // timeline (ghost mode, where Accept lives). Everything else (when the plan was made, why each stop moved, the
 // week) is behind Details.
-function DayCol({ title, num, rows, tz, accent, empty }: { title: string; num: string | null; rows: PlanVisit[]; tz?: string; accent?: boolean; empty: string }) {
+function DayCol({ title, num, rows, tz, accent, empty, tagOf }: {
+  title: string; num: string | null; rows: PlanVisit[]; tz?: string; accent?: boolean; empty: string;
+  // What T did with one of Phil's own stops that is not on T's day: "Skipped (your note)", "T moved it to Fri".
+  tagOf?: (v: PlanVisit) => string | null;
+}) {
   const said = rows.map(v => `${v.start ? clock12(v.start, tz) : ''} ${v.name}`).join(', ');
   return (
     <View style={[styles.col, accent ? styles.colT : null]} accessibilityLabel={`${accent ? "T's day" : 'Your day'}${num ? `, ${num} good shots of big subjects expected` : ''}: ${said || 'nothing'}`}>
@@ -187,11 +193,13 @@ function DayCol({ title, num, rows, tz, accent, empty }: { title: string; num: s
       </View>
       {rows.length ? rows.map((v, i) => {
         const vd = v.p_good != null && v.rated !== false && !v.booked ? verdictOf(v.p_good) : null;
+        const tag = tagOf ? tagOf(v) : null;
         return (
           <View key={`${v.stop_id}:${i}`} style={styles.colRow}>
             <Text style={styles.colTime}>{v.start ? clock12(v.start, tz) : ''}</Text>
             <Text style={styles.colName} numberOfLines={2}>{v.name}</Text>
             {v.done ? <Text style={styles.colSub}>Done</Text>
+              : tag ? <Text style={styles.colSub}>{tag}</Text>
               : vd ? <Text style={[styles.colVerdict, { color: VERDICT_COLOR[vd] }]}>{VERDICT_TEXT[vd]}</Text> : null}
           </View>
         );
@@ -208,6 +216,18 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
   // Tell T (worksheet g4): a plan-check flag can start a note; the places a quick button offers are the trip's rated ones.
   const [tell, setTell] = useState<string | null>(null);
   const { currentTripData: tripData } = useTripStore();
+  // Places a note in force tells T to leave out on this day.
+  const { notes } = useNotes(tripId);
+  const skipIds = useMemo(() => {
+    const out = new Set<string>();
+    for (const n of notes) if (n.status === 'active' && covers(n, date)) {
+      for (const r of (n.rules ?? []) as any[]) {
+        const on = Array.isArray(r.dates) ? r.dates.includes(date) : (!r.from_date || date >= r.from_date) && (!r.to_date || date <= r.to_date);
+        if (r.type === 'skip' && on) for (const id of r.stops ?? []) out.add(id);
+      }
+    }
+    return out;
+  }, [notes, date]);
   const places = useMemo(() => {
     const names = new Set<string>();
     for (const d of tripData?.days ?? []) for (const st of d.stops ?? []) if (planner?.tiers.has(st.id) && !st.time_locked) names.add(st.name);
@@ -233,8 +253,17 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
   const tRows = (planner.best?.visits ?? []).filter(v => v.start);
   // Today, after the last stop on either list: nothing left to change (Phil put two notes on a finished day).
   const ends = [...mineRows, ...tRows].map(v => Date.parse(v.end ?? v.start ?? '')).filter(Number.isFinite);
-  const today = date === tripToday(run, date);
-  const dayDone = !past && today && ends.length > 0 && Date.now() > Math.max(...ends);
+  const tToday = tripToday(run, date);
+  const dayDone = !past && date === tToday && ends.length > 0 && Date.now() > Math.max(...ends);
+  const week = planner.week ?? null;
+  const tagOf = (v: PlanVisit): string | null => {
+    if (v.booked || (v.rated === false && v.p_good == null)) return null;
+    if (tRows.some(t => samePlace(week, t.stop_id, v.stop_id))) return null;
+    if ([...skipIds].some(id => samePlace(week, id, v.stop_id))) return 'Skipped (your note)';
+    const o = placements(week, v.stop_id).filter(p => p.date !== date && p.date >= tToday).sort((a, b) => a.date.localeCompare(b.date))[0];
+    return o ? `T moved it to ${format(new Date(`${o.date}T12:00:00`), 'EEE')}` : "Not on T's plan";
+  };
+  const dayWords = format(new Date(`${date}T12:00:00`), 'EEE d MMM');
   const mineNum = !score.bigOnDay ? null : score.mine != null ? shotsText(score.mine) : '–';
   const tNum = !score.bigOnDay ? null : shotsText(score.best);
   const caption = grey ? 'Grey day: no big subject is a good bet.'
@@ -245,6 +274,7 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
     <View style={styles.card}>
       <View style={styles.cardHead}>
         <Text style={styles.label}>YOUR DAY VS T'S DAY</Text>
+        <Text style={styles.planned}>{dayWords}</Text>
         <TouchableOpacity onPress={() => setDetails(d => !d)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 6 }} accessibilityRole="button"
           accessibilityLabel={details ? 'Hide the details' : 'Show the details of this plan'}>
           <Text style={styles.moreLink}>{details ? 'Less' : 'Details'} ›</Text>
@@ -255,13 +285,13 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
       ) : null}
       {dayDone ? <Text style={styles.warn}>Today's stops are done. Notes for tomorrow go on tomorrow's day.</Text> : null}
       <View style={styles.cols}>
-        <DayCol title="YOURS" num={mineNum} rows={mineRows} tz={tz} empty={planner.mine ? 'Nothing on your list' : 'Your list is not scored yet'} />
+        <DayCol title="YOURS" num={mineNum} rows={mineRows} tz={tz} empty={planner.mine ? 'Nothing on your list' : 'Your list is not scored yet'} tagOf={tagOf} />
         <DayCol title="T'S" num={tNum} rows={tRows} tz={tz} accent empty="Nothing planned" />
       </View>
       <Text style={styles.cardSub}>{caption}</Text>
       {!past ? <PlanCheckRow tripId={tripId} date={date} tz={tz} onTellT={setTell} /> : null}
       {!past && !dayDone && date === format(new Date(), 'yyyy-MM-dd') ? <ReplanNowRow tripId={tripId} /> : null}
-      {!past ? <TellTRow tripId={tripId} date={date} dayLabel={format(new Date(`${date}T12:00:00`), 'EEE d MMM')} places={places} open={tell} onOpened={() => setTell(null)} /> : null}
+      {!past ? <TellTRow tripId={tripId} date={date} dayLabel={dayWords} places={places} open={tell} onOpened={() => setTell(null)} /> : null}
       {past ? <Text style={styles.cardSub}>This day is over: nothing to change.</Text> : score.reasons.length ? (
         <TouchableOpacity onPress={onShowChanges} style={styles.useBtn} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Show T's changes on the timeline">
           <Text style={styles.useText}>{real.length ? "Use T's day" : "See what T leaves out"} ›</Text>
