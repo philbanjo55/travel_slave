@@ -619,6 +619,14 @@ def sun_3d():
     t0 = time.time()
     # Put the 3D picture in the middle of the screen (its full-screen button is the handle): a fixed swipe left the
     # caption off screen on one run, and the view was marked not ready although it had drawn.
+    # Without a signal the panel may need a moment before its full-screen button exists; the search below scrolls on
+    # down the page when it does not find it at once, and the first offline run ended up staring at the page's end.
+    if OFFLINE:
+        for _ in range(12):
+            tab = C.capture(3)
+            if V.has(tab, 'Open the 3D view full screen') or V.has(tab, 'Looking '):
+                break
+        print('INFO sun3d offline, after the tab tap: ' + ' | '.join(x for x in tab.all_texts if len(x.strip()) > 2)[:1200], flush=True)
     f0 = scroll_find('Open the 3D view full screen', 8)
     if f0 is not None:
         mid_screen(f0, 'Open the 3D view full screen')
