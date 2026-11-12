@@ -96,6 +96,41 @@ fetches every wide file and fine box the trip's stand spots need, one at a time 
 shows "3D terrain saved for this trip: 9 of 9 areas". With no signal the saved lists still choose the files; a
 missing fine box means the wide grid draws alone. Grand Teton: 3.7 MB (9 areas), Faroes: 6.3 MB (12 areas).
 
+## Third level: real foreground from a laser survey (`lidar/build_detail.py`, 12 Nov 2026; built, NOT uploaded or applied)
+
+`TRIP_Q=<read-only SQL helper> python3 tools/sun3d/lidar/build_detail.py build <work dir> --trip <uuid> --wide-file <the region's wide file>`
+(`plan` lists the boxes; a rerun reads `<work>/pins.json` and the survey tiles kept in `<work>/cache`, ~700 MB for the
+Teton trip). Source: USGS 3DEP lidar as an Entwine EPT on AWS, project `WY_GrandTetonNP_1_D22` (2022, 2-9 points per
+0.5 m cell). One box per stand spot (500 m, 1000 x 1000 cells of 0.5 m; stand spots within 150 m share one), two files
+a box: `<id>_lidar.png` = the highest return per cell after cleaning (the page's 16-bit format, **`step_m` 0.02**,
+`base_m` = the box's lowest height less 5 m) and `<id>_mask.png` (8-bit, one byte a cell: 0 ground, 1 tree, 2 building,
+3 water). The script's own header lists the cleaning steps. Output: `files/`, `look/<id>.png` (a map to look at),
+`upload.txt`, `detail.json`, `terrain_detail.sql` (= `supabase/migrations/20261112140000_terrain_detail_regions.sql`).
+
+Grand Teton: 19 boxes, 38 files, 9.9 MB. Emily's Pond Levee and Teton Pines Nordic Center are south of the survey
+(it ends at 43.538 N): no detail there. The survey's ground sits on the wide grid (middle difference 0.0 to +0.3 m).
+
+- The page: `cfg.detail` + `S3D.chunk(b64, 'detail')` / `S3D.chunk(b64, 'mask')`. A third mesh inside the near mesh (or
+  the far mesh with no near box); the coarser meshes are cut out under it; 4-25 m at its edge match the surroundings,
+  the next 16-45 m blend. Its light pass colours by the mask (wood, dark conifer, dark water, snow elsewhere; snow on
+  flat roofs) and marches shadows through its own heights, then on into the near and far grids. `vis()` / `lit()`
+  start on the detail grid when the pin is inside it, 2 m above the survey's ground (the eye is there too; 3 m on the
+  other grids). The detail box must lie inside the shot's near box (`terrain.ts` `detailFor` checks; the page leaves
+  the detail out otherwise and says so with a `detail` message). The HD (Google) page ignores it.
+- With no `detail` the page is unchanged: 0 of 450,000 pixels differ on four Teton shots with a near box and on one
+  without (old page vs new page, 12 Nov 2026).
+- What it cannot do: a height grid drapes a skin over things, so trees are dark lumps without trunks or gaps and a
+  barn is a block with slightly sloping walls. The survey was flown with leaves on and every tree is drawn (and casts
+  shade) as a solid conifer: bare winter cottonwoods let most of the sun through in reality (T.A. Moulton stand spot:
+  the page now says "in shade" all day because of the cottonwood row to its south). Cabins the survey left unsorted
+  are found by their solid tops; a parked bus or RV would be found the same way. Nothing is drawn beyond the box.
+  A stand pin 10-20 m off now matters (Snake River Overlook, Oxbow Bend: trees fill the frame from the stored pin).
+- Tests: scratchpad `lidar_build/test/` (`run.js` feeds the page like the app, `spots.py` picks the files like
+  `terrain.ts`). First / last light, 30 Dec 2026, every minute, near box only -> with detail: T.A. Moulton "sun
+  reaches you / you lose the sun" 08:29 / 16:14 -> never; Oxbow Bend 08:13 / 16:20 -> 09:07 / 15:41; Snake River
+  Overlook 16:33 -> 16:34; Cunningham Cabin unchanged; subject times unchanged everywhere. Start (decode + build, this
+  machine, software graphics): about 0.65 s with detail against 0.52 s without. Not run on a phone.
+
 ## How accurate the sun times are (measured 12 Nov 2026)
 
 Checked against 102 real webcam pictures on 5 clear December / January days in Grand Teton (27 events; resort

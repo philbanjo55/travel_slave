@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
 import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
-import { nearFor, regionFor, terrainData, TerrainNear, TerrainRegion, tripTerrainLine, useTripTerrain } from '../../services/terrain';
+import { detailFor, detailMask, nearFor, regionFor, terrainData, TerrainDetail, TerrainNear, TerrainRegion, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import type { Pair, SkyPos } from '../../utils/sunEngine';
@@ -18,6 +18,9 @@ import { compassPoint } from './sunStyle';
 // does the drawing, this component feeds it the place, the sun and the lens.
 // Where a fine grid is listed around the stand spot (Faroes close-ups, Teton
 // foregrounds) the shot gets that too; the page draws it inside the wide one.
+// Where a detail box is listed around the stand spot (Grand Teton, from a 2022
+// laser survey) the shot gets its heights and class mask as well: trees,
+// buildings and water near you are drawn as shapes and cast shadows.
 //
 // HD (optional, off until tapped): the same view drawn on Google's 3D picture
 // (tools/sun3d/app_view_google.js -> sun3dGoogleHtml.ts), lit by the same
@@ -75,6 +78,10 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const [near, setNear] = useState<TerrainNear | null>(null);
   const [b64, setB64] = useState<string | null>(null);
   const [nearB64, setNearB64] = useState<string | null>(null);
+  const [detail, setDetail] = useState<TerrainDetail | null>(null);
+  const [detailB64, setDetailB64] = useState<string | null>(null);
+  const [maskB64, setMaskB64] = useState<string | null>(null);
+  const [shapes, setShapes] = useState(false);   // the page says it is drawing the detail box
   const [lensId, setLensState] = useState(lastLens);
   const pickLens = LENSES.find(l => l.id === lensId) ?? LENSES[2];
   const focal = pickLens.f;
@@ -94,7 +101,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const [problem, setProblem] = useState<string | null>(null);
   const booted = useRef(false);
   const sent = useRef(false);
-  const loaded = useRef<string | null>(null);   // the files the page holds: "<region>|<fine box or nothing>"
+  const loaded = useRef<string | null>(null);   // the files the page holds: "<region>|<fine box or nothing>|<detail box or nothing>"
   const ready = phase === 'ready';
   // Full screen runs edge to edge: the lines under the picture keep a margin from the sides of the phone.
   const pad = full ? styles.fullPad : null;
@@ -121,20 +128,27 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
       const stand = { lat: vLat, lng: vLng };
       const r = await regionFor(stand);
       const nr = r ? await nearFor(r, stand, { lat: sLat, lng: sLng }) : null;
+      const dt0 = r ? await detailFor(r, nr, stand, { lat: sLat, lng: sLng }) : null;
       if (!alive) return;
-      if (r && loaded.current === `${r.id}|${nr?.id ?? ''}`) return;   // same files: the page only gets the new view
+      if (r && loaded.current === `${r.id}|${nr?.id ?? ''}|${dt0?.id ?? ''}`) return;   // same files: the page only gets the new view
       loaded.current = null; booted.current = false; sent.current = false;
-      setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setLit(null); setMoments(null);
+      setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setDetail(null); setDetailB64(null); setMaskB64(null); setShapes(false); setLit(null); setMoments(null);
       if (!r) { setPhase('none'); return; }
       setPhase('loading');
       // The fine file is an extra: with a weak signal it gets 10 s, then the wide grid draws alone (the download carries on).
       const fine = nr ? Promise.race([terrainData(nr), new Promise<null>(res => setTimeout(() => res(null), 10000))]) : Promise.resolve(null);
-      const [d, nd] = await Promise.all([terrainData(r), fine]);
+      // The detail box is an extra in the same way (heights + class mask; without the mask it draws as bare shapes).
+      const late = <T,>(p: Promise<T | null>) => Promise.race([p, new Promise<null>(res => setTimeout(() => res(null), 10000))]);
+      const mk = dt0 ? detailMask(dt0) : null;
+      const [d, nd, dd, md] = await Promise.all([terrainData(r), fine, dt0 ? late(terrainData(dt0)) : null, mk ? late(terrainData(mk)) : null]);
       if (!alive) return;
       if (!d) { setPhase('failed'); return; }
       // No fine file (no signal the first time): the wide grid alone still draws, and the next shot tries again.
-      loaded.current = `${r.id}|${nr && nd ? nr.id : ''}`;
-      setRegion(r); setNear(nr && nd ? nr : null); setB64(d); setNearB64(nr && nd ? nd : null); setPhase('starting');
+      // The detail box was chosen to sit inside the fine box, so it is only used when that one came too.
+      const dt = dt0 && dd && (!nr || nd) ? dt0 : null;
+      loaded.current = `${r.id}|${nr && nd ? nr.id : ''}|${dt ? dt.id : ''}`;
+      setRegion(r); setNear(nr && nd ? nr : null); setB64(d); setNearB64(nr && nd ? nd : null);
+      setDetail(dt); setDetailB64(dt ? dd : null); setMaskB64(dt ? md : null); setPhase('starting');
     })();
     return () => { alive = false; };
   }, [vLat, vLng, sLat, sLng]);
@@ -158,7 +172,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   // Change between the offline page and the HD page: the web view is made anew, so everything it reported is cleared.
   const swap = useCallback((root: string | null) => {
     booted.current = false; sent.current = false;
-    setLit(null); setMoments(null); setLook(null); setHdLoading(false); setProblem(null);
+    setLit(null); setMoments(null); setLook(null); setHdLoading(false); setProblem(null); setShapes(false);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p));
     setHd(root);
   }, []);
@@ -188,13 +202,20 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
       near: !hd && near && nearB64
         ? { n: near.n, north: near.north, south: near.south, west: near.west, east: near.east, base: near.base_m, step: near.step_m }
         : undefined,
+      detail: !hd && detail && detailB64
+        ? { n: detail.n, north: detail.north, south: detail.south, west: detail.west, east: detail.east, base: detail.base_m, step: detail.step_m }
+        : undefined,
       ...(hd && hdCfg ? { tiles: { base: hdCfg.base, draco: hdCfg.draco, root: hd } } : null),
     };
     run(`window.S3D.init(${JSON.stringify(cfg)})`);
     for (let i = 0; i < b64.length; i += CHUNK) run(`window.S3D.chunk("${b64.slice(i, i + CHUNK)}")`);
     if (!hd && near && nearB64) for (let i = 0; i < nearB64.length; i += CHUNK) run(`window.S3D.chunk("${nearB64.slice(i, i + CHUNK)}","near")`);
+    if (!hd && detail && detailB64) {
+      for (let i = 0; i < detailB64.length; i += CHUNK) run(`window.S3D.chunk("${detailB64.slice(i, i + CHUNK)}","detail")`);
+      if (maskB64) for (let i = 0; i < maskB64.length; i += CHUNK) run(`window.S3D.chunk("${maskB64.slice(i, i + CHUNK)}","mask")`);
+    }
     run('window.S3D.done()');
-  }, [region, near, b64, nearB64, pair.v, pair.s, focal, lens, full, run, hd, hdCfg]);
+  }, [region, near, b64, nearB64, detail, detailB64, maskB64, pair.v, pair.s, focal, lens, full, run, hd, hdCfg]);
   useEffect(() => { start(); }, [start]);
 
   const onMessage = useCallback((e: { nativeEvent: { data: string } }) => {
@@ -202,7 +223,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
     try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
     if (!m || typeof m.type !== 'string') return;
     if (m.type === 'boot') { booted.current = true; start(); }
-    else if (m.type === 'ready') setPhase('ready');
+    else if (m.type === 'ready') { setShapes(!!m.detail); setPhase('ready'); }
     else if (m.type === 'state') setLit({ subjectLit: !!m.subjectLit, hereLit: !!m.hereLit, up: !!m.up });
     else if (m.type === 'moments') setMoments({ firstSubject: m.firstSubject ?? null, lastSubject: m.lastSubject ?? null, firstHere: m.firstHere ?? null, lastHere: m.lastHere ?? null });
     else if (m.type === 'look') setLook(typeof m.deg === 'number' ? m.deg : null);
@@ -250,7 +271,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
         {region && b64 && !holding ? (
           <Web
             ref={web}
-            key={hd ? `${region.id}:hd` : `${region.id}|${near?.id ?? ''}`}
+            key={hd ? `${region.id}:hd` : `${region.id}|${near?.id ?? ''}|${detail?.id ?? ''}`}
             source={hd && hdCfg ? { html: SUN3D_GOOGLE_HTML, baseUrl: hdCfg.origin } : { html: SUN3D_HTML }}
             originWhitelist={['*']}
             javaScriptEnabled
@@ -344,7 +365,9 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
         <Text style={[styles.note, pad]}>
           {hd
             ? `Picture: Google Maps. ${region?.ground === 'green' ? 'Light and shadows' : 'Light, shadows and snow'} are calculated from elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles. No clouds. Needs a signal; times are within a few minutes.${left != null ? ` HD views left: ${leftToday != null ? `${leftToday} today, ` : ''}${left} this month.` : ''}`
-            : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes. Elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'}
+            : shapes
+              ? 'Terrain shape and calculated sun. Trees, buildings and water close to you are rough shapes from a 2022 laser survey (leaf-on, all trees drawn as conifers); none farther off, no clouds. Times are within a few minutes. Elevation data: USGS 3DEP lidar, ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'
+              : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes. Elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'}
         </Text>
       ) : null}
       {ready ? (
