@@ -452,8 +452,6 @@ def sun_3d():
     first = next((i for i, l in enumerate(mine) if 'unknown:ReactHost' in l or 'JavascriptException' in l or 'FATAL' in l), None)
     if first is None:
         print('INFO sun3d log: no ReactHost error line in the app log', flush=True)
-        for line in mine[-40:]:
-            print('INFO sun3d tail ' + line[:300], flush=True)
     else:
         for line in mine[max(0, first - 25): first + 40]:
             print('INFO sun3d head ' + line[:400], flush=True)
@@ -485,6 +483,13 @@ def sun_3d():
             why = bad[0]; break
         t = C.capture(3)
     V.show('sun3d-view', t)
+    if not ok:   # what the web view itself said (its console and errors land in logcat as chromium lines)
+        seen_now, _ = V.texts_all(2)
+        print('INFO sun3d not ready, on screen: ' + ' | '.join(x for x in seen_now if len(x) > 3)[-1200:], flush=True)
+        web = [l for l in C.adb('logcat', '-d', '-t', '4000', timeout=90).splitlines()
+               if any(w in l for w in ('chromium', 'WebView', 'RNCWebView', 'cr_', 'Console', 'WebGL', 'GL error'))]
+        for line in web[-40:]:
+            print('INFO sun3d web ' + line[:300], flush=True)
     if not ok and why in ("couldn't start", 'too old'):
         V.check('sun3d-ready', None, "the emulator's web view can't draw it: " + why)
     else:
