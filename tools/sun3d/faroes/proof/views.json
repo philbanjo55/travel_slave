@@ -117,5 +117,78 @@
   "mins": 540,
   "utc_off": 1,
   "aim_up": -60
+ },
+ {
+  "name": "tjornuvik",
+  "title": "Tjørnuvík, main shot toward Risin og Kellingin",
+  "box": "fod_tjornuvik",
+  "near": "fo_streymoy_north",
+  "stand": [
+   62.284861,
+   -7.157109
+  ],
+  "subject": [
+   62.326355,
+   -7.096934
+  ],
+  "lens": 135,
+  "date": [
+   2027,
+   5,
+   15
+  ],
+  "mins": 960,
+  "utc_off": 1,
+  "aim_up": 40
+ },
+ {
+  "name": "traelanipa",
+  "title": "Trælanípa 'lake' (stand pin moved 40 m south-west onto the cliff top: the stored pin is in the sea)",
+  "box": "fod_traelanipa_sorvagsvatn_bosdalafossur_2",
+  "near": "fo_vagar_south",
+  "stand": [
+   62.021396,
+   -7.22986
+  ],
+  "stored_stand": [
+   62.021576,
+   -7.229197
+  ],
+  "subject": [
+   62.022864,
+   -7.229517
+  ],
+  "lens": 90,
+  "date": [
+   2027,
+   5,
+   15
+  ],
+  "mins": 780,
+  "utc_off": 1,
+  "aim_up": -10
+ },
+ {
+  "name": "vidareidi",
+  "title": "Viðareiði, main shot toward Malinsfjall (village at mid-distance)",
+  "box": "fod_vidareidi_villingardalsfjall_malinsfjall",
+  "near": "fo_vidoy",
+  "stand": [
+   62.372441,
+   -6.553208
+  ],
+  "subject": [
+   62.345708,
+   -6.5372
+  ],
+  "lens": 90,
+  "date": [
+   2027,
+   5,
+   15
+  ],
+  "mins": 540,
+  "utc_off": 1,
+  "aim_up": -380
  }
 ]
