@@ -60,3 +60,17 @@ trees and water stay). It works; see CLAUDE.md for what was found.
   and buildings are not in it, lakes draw as grass, and the source is a smooth surface model: Stóri Drangur is
   a 50 m cone (really 70 m with an arch), Lítli Drangur a shoulder of the headland. A pin 100 m off now
   matters: the Kallur stand pin sits on the west cliff face in this data.
+
+## How accurate the sun times are (measured 12 Nov 2026)
+
+Checked against 102 real webcam pictures on 5 clear December / January days in Grand Teton (27 events; resort
+panoramas every 10 min, Tetonia every 15 min, so each real event is known to about +-3 to 7.5 min):
+- a ridge or peak blocking a sun that is still 3-16 degrees up (15 events): average error +0.5 min, typical 1.3,
+  worst +4: within about 5 minutes, no lean either way;
+- sunrise / sunset on high points with the old rule (10 events): typical 8.5 min, worst 13 (first sun too late,
+  last sun too early); sun setting behind a peak on the horizon (2 events): 7-8 min early.
+The rule now used for first / last light follows from that: the sun's top edge (+0.27 deg) against a hard skyline,
+and a high point sees below the flat horizon by 0.95 deg x sqrt(its km above the area's low ground, the 10th
+percentile of the grid). On the test cases that put 10 of 12 sunrise / sunset rows inside what the pictures show
+(the base level in the check was a fixed 2,000 m; the percentile gives 2,012 m for the Teton file).
+Not checked: trees and buildings, terrain beyond the grid, morning valley-floor events, summer, the Faroes.

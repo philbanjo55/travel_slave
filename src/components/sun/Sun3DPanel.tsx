@@ -83,7 +83,7 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
     const out: number[][] = [];
     for (let m = 0; m < 1440; m += 4) {
       const s = sunPosition(day0 + m * 60000, vLat, vLng);
-      if (s.alt > -1) out.push([m, Math.round(s.az * 100) / 100, Math.round(s.alt * 100) / 100]);
+      if (s.alt > -2.5) out.push([m, Math.round(s.az * 100) / 100, Math.round(s.alt * 100) / 100]);
     }
     return out;
   }, [day0, vLat, vLng]);

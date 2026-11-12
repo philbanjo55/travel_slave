@@ -15,7 +15,7 @@
   const fail = t => { say(t); post({ type: 'error', msg: t }); };
   window.onerror = msg => { post({ type: 'error', msg: String(msg) }); };
 
-  let cfg = null, parts = [], nparts = [], FAR = null, NR = null, maxH = 4250;
+  let cfg = null, parts = [], nparts = [], FAR = null, NR = null, maxH = 4250, baseH = 0;
   let R = null;   // everything three.js, once built
   let eye = null, target = null, yaw = 0, pitch = 0, focal = 50, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
   const G = 768;  // mesh points per side
@@ -58,7 +58,12 @@
   const herePoint = () => { const e = pick(eye); return { g: e.g, c: e.c, r: e.r, h: gh(e.g, e.c, e.r) }; };
   // where the camera stands: on the fine grid the highest ground within a step, so a pin on a steep slope does not put the eye inside the hill
   const eyeH = e => { let h = gh(e.g, e.c, e.r); if (e.g === NR) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + 3; };
-  const lit = (p, az, alt) => { if (alt <= 0) return false; const v = sunVec(az, alt); return vis(p, v.hx, v.hz, v.tan) > 0.5; };
+  // First / last direct light. Measured 12 Nov 2026 against 102 webcam pictures (27 events, tools/sun3d/README.md): with
+  // the old rule (whole disc clear of a soft skyline, never below the flat horizon) ridge-blocked events were right to a
+  // few minutes but sunrise / sunset on high points were 5-13 min off. So: the sun's top edge (+0.27 deg) against a hard
+  // skyline, and a high point sees a little below the flat horizon (0.95 deg x sqrt of its km above the area's low ground).
+  const dipOf = h => 0.95 * Math.sqrt(Math.max(0, h - baseH) / 1000);
+  const lit = (p, az, alt) => { const limb = alt + 0.27; if (limb <= -dipOf(p.h)) return false; const v = sunVec(az, limb); return vis(p, v.hx, v.hz, v.tan) > 0; };
 
   const KEY = [
     [-18, [1, .5, .3], 0, [.030, .036, .060], [.010, .014, .035], [.030, .040, .080]], [-8, [1, .5, .3], 0, [.085, .105, .180], [.050, .075, .190], [.200, .190, .300]],
@@ -75,7 +80,7 @@
 
   const LIGHT_FS = `
     precision highp float;
-    uniform sampler2D hmap; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec2 size; uniform float texel; uniform float snowMode; uniform float maxH;
+    uniform sampler2D hmap; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec2 size; uniform float texel; uniform float snowMode; uniform float maxH; uniform float baseH;
     #ifdef NEAR
     uniform sampler2D fmap; uniform vec4 rect; uniform vec2 fsize; uniform float step0;
     #endif
@@ -105,7 +110,7 @@
         if (h < .6) alb = vec3(.07, .16, .24);
       }
       float d = 0.;
-      if (sunDir.y > 0.) {
+      if (sunDir.y > -sin(radians(.95) * sqrt(max(0., h - baseH) / 1000.))) {   // a high point still sees a sun just under the flat horizon
         float lam = dot(n, sunDir);
         if (lam > 0.) {
           vec2 dir = normalize(sunDir.xz) / size; float tanA = sunDir.y / length(sunDir.xz);
@@ -208,6 +213,7 @@
     const f = await decode(parts, cfg.n, cfg.base, cfg.step); parts = [];
     FAR = { n: cfg.n, HF: f.HF, north: cfg.north, south: cfg.south, west: cfg.west, east: cfg.east, x0: 0, z0: 0, w: cfg.W, d: cfg.D, dx: cfg.W / cfg.n, dz: cfg.D / cfg.n };
     maxH = f.hi + 60; NR = null;
+    { const s = []; for (let i = 0; i < f.HF.length; i += 37) s.push(f.HF[i]); s.sort((a, b) => a - b); baseH = s[Math.floor(s.length * 0.1)] || 0; }   // the area's low ground: valley floor, or the sea
     const nc = cfg.near, list = nparts; nparts = [];
     if (!nc || !list.length) return;
     try {   // the fine grid is an extra: if its file is bad the wide one still draws
@@ -235,9 +241,9 @@
     const size = new THREE.Vector2(FAR.w, FAR.d);
     const rt = n => { const t = new THREE.WebGLRenderTarget(n, n, { minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true, depthBuffer: false }); t.texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); return t; };
     const lo = rt(Math.min(1024, N)), hi = rt(N);
-    const sunU = { sunDir: { value: new THREE.Vector3(0, 1, 0) }, sunCol: { value: new THREE.Vector3() }, amb: { value: new THREE.Vector3() }, snowMode: { value: cfg.ground === 'green' ? 0 : 1 }, maxH: { value: maxH } };
+    const sunU = { sunDir: { value: new THREE.Vector3(0, 1, 0) }, sunCol: { value: new THREE.Vector3() }, amb: { value: new THREE.Vector3() }, snowMode: { value: cfg.ground === 'green' ? 0 : 1 }, maxH: { value: maxH }, baseH: { value: baseH } };
     const lightVS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }';
-    const lightMat = new THREE.ShaderMaterial({ uniforms: { hmap: { value: hmap }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: size }, texel: { value: 1 / N }, snowMode: sunU.snowMode, maxH: sunU.maxH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
+    const lightMat = new THREE.ShaderMaterial({ uniforms: { hmap: { value: hmap }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: size }, texel: { value: 1 / N }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
     const lightScene = new THREE.Scene(), lightCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), lightMat); quad.frustumCulled = false; lightScene.add(quad);
 
@@ -252,7 +258,7 @@
     let near = null;
     if (NR) {
       const nmap = heightTex(NR), rect = new THREE.Vector4(NR.x0, NR.z0, NR.w, NR.d);
-      const nLight = new THREE.ShaderMaterial({ defines: { NEAR: 1 }, uniforms: { hmap: { value: nmap }, fmap: { value: hmap }, rect: { value: rect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(NR.dx, NR.dz) }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(NR.w, NR.d) }, texel: { value: 1 / NR.n }, snowMode: sunU.snowMode, maxH: sunU.maxH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
+      const nLight = new THREE.ShaderMaterial({ defines: { NEAR: 1 }, uniforms: { hmap: { value: nmap }, fmap: { value: hmap }, rect: { value: rect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(NR.dx, NR.dz) }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(NR.w, NR.d) }, texel: { value: 1 / NR.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
       // the same triangles as the far mesh; the outer ring of points is the skirt (y = 1), the next ring is the box edge
       const np = new Float32Array(G * G * 3), sk = i => (i === 0 || i === G - 1 ? 1 : 0), at = i => Math.max(0, Math.min(1, (i - 1) / (G - 3)));
       for (let j = 0, k = 0; j < G; j++) for (let i = 0; i < G; i++) { np[k++] = at(i); np[k++] = sk(i) || sk(j); np[k++] = at(j); }
