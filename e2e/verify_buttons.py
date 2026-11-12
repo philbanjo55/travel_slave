@@ -423,23 +423,26 @@ def sun_3d():
     row = re.compile(r'^\d{1,2}:\d{2} [AP]M .*(' + '|'.join(re.escape(n) for n in names) + ')')
     stop = None
     s = C.capture(1.0)
-    for _ in range(14):
+    for _ in range(24):
+        # Only tap a row that sits in the middle of the screen, from the capture it was found in: a stale position
+        # near the bottom edge is Android's own Home button (the second run tapped it and left the app).
         hit = next((c for c in s.clickables if row.match(c['label'])), None)
-        if hit is not None:
-            h = 1920
-            if not (0.25 * h <= hit['xy'][1] <= 0.80 * h):
-                nudge_up(); s = C.capture(1.2)
-                hit = next((c for c in s.clickables if row.match(c['label'])), hit)
+        if hit is not None and 0.30 * 1920 <= hit['xy'][1] <= 0.72 * 1920:
             C.tap(hit['xy']); stop = hit['label']; break
-        C.swipe_up(); s = C.capture(1.0)
-    V.check('sun3d-stop-tap', stop is not None, stop or "no timeline row with a shot stop on today's list")
+        if hit is not None and hit['xy'][1] < 0.30 * 1920:
+            C.adb('shell', 'input', 'swipe', '540', '900', '540', '1200', '500')   # a little back down
+        else:
+            C.adb('shell', 'input', 'swipe', '540', '1300', '540', '950', '500')   # a little further up
+        s = C.capture(1.2)
+    V.check('sun3d-stop-tap', stop is not None, (stop or "no timeline row with a shot stop on today's list")[:80])
     if stop is None:
         seen, _ = V.texts_all(6)
         print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
     t = C.capture(4)
     V.show('sun3d-stop-page', t)
-    opened = not V.has(t, 'Open the Planner')   # the trip page's header icon is gone on a stop page
-    V.check('sun3d-stop-open', opened, 'stop page on screen' if opened else 'still on the trip page')
+    texts = [x for x in t.all_texts if x.strip()]
+    opened = len(texts) > 3 and not V.has(t, 'Open the Planner')   # app still on screen, and not the trip page
+    V.check('sun3d-stop-open', opened, 'stop page on screen' if opened else ('the app is not on screen' if len(texts) <= 3 else 'still on the trip page'))
     if not opened:
         return
     time.sleep(3)
