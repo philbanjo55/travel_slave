@@ -14,6 +14,9 @@ import crawl as C
 import verify as V
 
 
+OFFLINE = False   # set by offline_3d(): the network is off and every check name gets an 'offline-' prefix
+
+
 def seen_has(seen, needle):
     return any(needle.lower() in t.lower() for t in seen)
 
@@ -705,6 +708,8 @@ def sun_3d():
             V.check('sun3d-hd-off', off_ok and not seen_has(seen_off, 'Picture: Google Maps') and seen_has(seen_off, 'Looking '), 'back to the offline view')
         else:
             print('INFO sun3d hd: no HD button (the door says it is off or unreachable)', flush=True)
+        if OFFLINE:
+            V.check('sun3d-hd-hidden', not any(hd_label in c['label'] for c in f.clickables), 'no HD button without a signal (it needs one)')
         # Full screen, while the button is on screen with the caption.
         f = C.capture(1)
         if V.tap_text(f, 'Open the 3D view full screen'):
@@ -758,14 +763,43 @@ def sun_3d():
         line = next((x for x in seen if '3D terrain' in x), None)
         V.check('sun3d-saved-line', line is not None, (line or 'no "3D terrain saved for this trip" line')[:110])
     try:
-        stop_page_cut_offs()
+        if not OFFLINE: stop_page_cut_offs()
     except Exception as e:
         print(f'INFO cut-off checks on the stop page stopped: {e}', flush=True)
     V.check('sun3d-alive', C.app_alive())
 
 
+def offline_3d():
+    """12 Nov 2026 (Phil: "add to the test an offline check as well to see what features would still work. I'm hoping
+    all of the 3d ones"). Runs last: by now the trip, the sun plan and the 3D terrain are saved on the phone. Network
+    off, app started fresh (nothing in memory), then the whole 3D pass again; every check is named offline-<name>."""
+    global OFFLINE
+    orig = V.check
+    C.adb('shell', 'svc', 'wifi', 'disable'); C.adb('shell', 'svc', 'data', 'disable'); time.sleep(6)
+    ping = (C.adb('shell', 'ping', '-c', '1', '-W', '2', '8.8.8.8') or '').strip().splitlines()
+    print('INFO offline: wifi and mobile data off; ping: ' + (ping[-1] if ping else 'no answer')[:140], flush=True)
+    gone = not any(' 0% packet loss' in l for l in ping)
+    orig('offline-network-off', gone, 'the emulator has no way out' if gone else 'the network is still up: the offline checks below prove nothing')
+    OFFLINE = True
+    V.check = lambda name, ok=None, note='': orig('offline-' + name, ok, note)
+    try:
+        C.launch()
+        first = C.capture(2)
+        print('INFO offline first screen: ' + ' | '.join(t for t in first.all_texts if len(t.strip()) > 2)[:900], flush=True)
+        sun_3d()
+        # What else is on a stop page and the trip page without a signal (read by a person, not judged here)
+        seen, _ = V.texts_all(3)
+        print('INFO offline stop page end: ' + ' | '.join(t for t in seen if len(t) > 3)[-1500:], flush=True)
+        V.back(); time.sleep(2)
+        top = C.capture(2)
+        print('INFO offline trip page: ' + ' | '.join(t for t in top.all_texts if len(t.strip()) > 2)[:1800], flush=True)
+    finally:
+        V.check = orig; OFFLINE = False
+        C.adb('shell', 'svc', 'wifi', 'enable'); C.adb('shell', 'svc', 'data', 'enable'); time.sleep(10)
+
+
 def main():
-    for st in (sun_3d, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup):
+    for st in (sun_3d, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, offline_3d):
         try:
             st()
         except Exception as e:
