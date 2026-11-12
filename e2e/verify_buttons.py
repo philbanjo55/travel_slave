@@ -590,7 +590,11 @@ def sun_3d():
     # The caption under the picture ("Looking W 259 ...") is what says it has drawn; bring it onto the screen first
     # (run 6 drew fine, but the caption sat below the fold while this loop waited).
     t0 = time.time()
-    C.adb('shell', 'input', 'swipe', '540', '1500', '540', '1000', '500')
+    # Put the 3D picture in the middle of the screen (its full-screen button is the handle): a fixed swipe left the
+    # caption off screen on one run, and the view was marked not ready although it had drawn.
+    f0 = scroll_find('Open the 3D view full screen', 8)
+    if f0 is not None:
+        mid_screen(f0, 'Open the 3D view full screen')
     t = C.capture(2); ok = False; why = ''
     for _ in range(40):   # the first time it downloads the terrain (a few MB), then draws
         if V.has(t, 'Looking '):
