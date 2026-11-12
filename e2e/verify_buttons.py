@@ -689,6 +689,10 @@ def sun_3d():
         seen, _ = V.texts_all(2)
         V.check('sun3d-moments', seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you'), 'first / last light chips')
         V.check('sun3d-status', seen_has(seen, 'You: '), 'in the sun / in shade line')
+        # 12 Nov 2026: Phil's 4x5 lenses, the frame box button and the Street View link
+        V.check('sun3d-lenses-4x5', all(seen_has(seen, f'{f} millimetre lens') for f in (75, 90, 135, 300)), '75 / 90 / 135 / 300 lens buttons')
+        V.check('sun3d-frame-button', seen_has(seen, '4x5 frame box'), 'frame box button')
+        V.check('sun3d-street-view', seen_has(seen, 'Street View from this spot'), 'Street View link')
         V.check('sun3d-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined'))
         line = next((x for x in seen if '3D terrain' in x), None)
         V.check('sun3d-saved-line', line is not None, (line or 'no "3D terrain saved for this trip" line')[:110])
