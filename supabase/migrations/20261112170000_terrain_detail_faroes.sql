@@ -60,16 +60,16 @@ insert into public.terrain_detail_regions (id, parent, north, south, west, east,
   ('fod_sandoy_drangarnir_soltuvik', 'faroes', 61.84856, 61.839345, -6.914752, -6.89526, 1024, 1024.0, 1024.1, -5, 0.02, 1.0, 'fod_sandoy_drangarnir_soltuvik_ground.png', 57198, 'fod_sandoy_drangarnir_soltuvik_mask.png', 4654, 'fod_sandoy_drangarnir_soltuvik_photo.jpg', 165599, null, null, 'ArcticDEM v4.1 2 m ground (no buildings in it), water classes, aerial photo and 0 building outlines (heights assumed) from Umhvørvisstovan.')
 on conflict (id) do nothing;
 
-update public.terrain_near_regions set color_path = 'fo_vagar_west_photo.jpg', color_bytes = 588679 where id = 'fo_vagar_west';
-update public.terrain_near_regions set color_path = 'fo_vagar_south_photo.jpg', color_bytes = 455350 where id = 'fo_vagar_south';
-update public.terrain_near_regions set color_path = 'fo_sandavagur_photo.jpg', color_bytes = 542124 where id = 'fo_sandavagur';
-update public.terrain_near_regions set color_path = 'fo_kvivik_photo.jpg', color_bytes = 550024 where id = 'fo_kvivik';
-update public.terrain_near_regions set color_path = 'fo_streymoy_north_photo.jpg', color_bytes = 590271 where id = 'fo_streymoy_north';
-update public.terrain_near_regions set color_path = 'fo_eysturoy_north_photo.jpg', color_bytes = 504197 where id = 'fo_eysturoy_north';
-update public.terrain_near_regions set color_path = 'fo_kalsoy_north_photo.jpg', color_bytes = 297708 where id = 'fo_kalsoy_north';
-update public.terrain_near_regions set color_path = 'fo_torshavn_south_photo.jpg', color_bytes = 547866 where id = 'fo_torshavn_south';
-update public.terrain_near_regions set color_path = 'fo_nordradalur_photo.jpg', color_bytes = 568480 where id = 'fo_nordradalur';
-update public.terrain_near_regions set color_path = 'fo_vidoy_photo.jpg', color_bytes = 574822 where id = 'fo_vidoy';
-update public.terrain_near_regions set color_path = 'fo_sandoy_photo.jpg', color_bytes = 369135 where id = 'fo_sandoy';
+update public.terrain_near_regions set color_path = 'fo_vagar_west_photo.jpg', color_bytes = 591256 where id = 'fo_vagar_west';
+update public.terrain_near_regions set color_path = 'fo_vagar_south_photo.jpg', color_bytes = 458735 where id = 'fo_vagar_south';
+update public.terrain_near_regions set color_path = 'fo_sandavagur_photo.jpg', color_bytes = 545627 where id = 'fo_sandavagur';
+update public.terrain_near_regions set color_path = 'fo_kvivik_photo.jpg', color_bytes = 551182 where id = 'fo_kvivik';
+update public.terrain_near_regions set color_path = 'fo_streymoy_north_photo.jpg', color_bytes = 594684 where id = 'fo_streymoy_north';
+update public.terrain_near_regions set color_path = 'fo_eysturoy_north_photo.jpg', color_bytes = 507848 where id = 'fo_eysturoy_north';
+update public.terrain_near_regions set color_path = 'fo_kalsoy_north_photo.jpg', color_bytes = 302291 where id = 'fo_kalsoy_north';
+update public.terrain_near_regions set color_path = 'fo_torshavn_south_photo.jpg', color_bytes = 549406 where id = 'fo_torshavn_south';
+update public.terrain_near_regions set color_path = 'fo_nordradalur_photo.jpg', color_bytes = 569855 where id = 'fo_nordradalur';
+update public.terrain_near_regions set color_path = 'fo_vidoy_photo.jpg', color_bytes = 581005 where id = 'fo_vidoy';
+update public.terrain_near_regions set color_path = 'fo_sandoy_photo.jpg', color_bytes = 377374 where id = 'fo_sandoy';
 
 -- No detail box: ⚓ Tindhólmur — Landing on the Islet (failed the data check); Bøur Viewpoint, Drangarnir - Golden Hour Landing, Drangarnir — Guided (failed the data check)

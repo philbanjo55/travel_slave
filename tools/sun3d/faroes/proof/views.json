@@ -120,16 +120,16 @@
  },
  {
   "name": "tjornuvik",
-  "title": "Tjørnuvík, main shot toward Risin og Kellingin",
+  "title": "Tjørnuvík toward Risin og Kellingin (stand moved to the shore; the two stacks are missing from the height data)",
   "box": "fod_tjornuvik",
   "near": "fo_streymoy_north",
   "stand": [
-   62.284861,
-   -7.157109
+   62.289023,
+   -7.144349
   ],
   "subject": [
-   62.326355,
-   -7.096934
+   62.3221,
+   -7.1037
   ],
   "lens": 135,
   "date": [
@@ -139,7 +139,15 @@
   ],
   "mins": 960,
   "utc_off": 1,
-  "aim_up": 40
+  "aim_up": 30,
+  "stored_stand": [
+   62.284861,
+   -7.157109
+  ],
+  "stored_subject": [
+   62.326355,
+   -7.096934
+  ]
  },
  {
   "name": "traelanipa",

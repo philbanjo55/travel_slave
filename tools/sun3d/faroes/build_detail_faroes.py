@@ -33,22 +33,29 @@ What `build` does:
      `check` (Copernicus) is printed too and decides only where no contour crosses the box. The contours are judged on
      ground under 30 degrees (on a sea cliff a few metres sideways read as tens of metres of height); plus the stops' stored
      heights over all boxes together. A box that FAILS is left out;
-  4. buildings: the outlines as upright flat-roofed blocks on that ground. THERE IS NO HEIGHT DATA: the outlines' own Z is
-     the building's foot (checked: it reads ground + 0.7 m whatever way the outline was collected), and the 2 m mosaic
-     shows a house as a bump of under 1.5 m. So: the ArcticDEM bump where it is believable (2.5 to 15 m; rare), a church's
-     roof height from the topo map's church layer (topo/topo_20/MapServer/75, roof_elevation), else by size: under
-     20 m2 2.5 m, to 300 m2 5 m, larger 7 m, a church 8 m. Towers and lighthouses are mapped as points only
-     (topo/topo_20/MapServer/85): each becomes a 4 m block, 6 m high (both assumed);
-  5. water: sea, lakes, and the mapped stream lines at their mapped width (at least one cell);
+  4. buildings (round 2): NOT in the heights file. Each box gets <id>_bld.json: every outline as a record (outline in
+     metres from the box's north-west corner, foot / eave / ridge heights, ridge direction = the long side of its
+     smallest rectangle, roof gable or flat, roof and wall colour from the photo). THERE IS NO HEIGHT DATA (the outlines'
+     own Z is the building's foot; the 2 m mosaic shows a house as a bump of under 1.5 m), so heights are assumed and
+     modest: a house eave 2.6 m and ridge 4.4 m, a shed (under 20 m2) 1.9 / 2.6 m, a hall (over 300 m2) 4 / 6 m, no roof
+     steeper than 40 degrees; a church takes its roof height from the topo map's church layer (topo/topo_20/MapServer/75)
+     where it has one, else 8 m. Towers and lighthouses (mapped as points, topo/topo_20/MapServer/85) are 4 m squares,
+     6 m high. The file says "heights": "assumed", "sun_checks": false: draw them, never count them in a sun time.
+     A building at a stand spot carries skip: 1;
+  5. water: sea and lakes are class 3 in the mask, the mapped stream lines (at their mapped width, at least one cell)
+     class 4: where a stream runs over steep ground the page can draw a fall;
   6. colour: one aerial photo per box, north up, on exactly the box's lat / lng grid (asked in EPSG:4326 with the
-     picture's sides in the box's own lat / lng proportion, the answer's extent checked, then resized to 2048 x 2048),
-     no-data patches (pure white) filled, older surveys' colours pulled toward the newest one's, saved as a JPEG of
-     at most about 500 KB. The alignment is checked against the building outlines (see `align_check`);
-  7. files in <work>/files: <id>_ground.png = ground + buildings in the page's format (16-bit prediction residuals,
-     height = base_m + value * step_m, step 0.02), <id>_mask.png (8-bit: 0 ground, 2 building, 3 water; 8 and up = tree
-     is never used here: there are no tree heights), <id>_photo.jpg; raw arrays in <work>/raw/<id>.npz; a top-down
-     look-at picture per box in <work>/look; <work>/coverage.json (per shot: box, photo survey and year, buildings,
-     water); <work>/detail.json (the rows); <work>/upload.txt; the draft migration (--migration; NOT applied).
+     picture's sides in the box's own lat / lng proportion, the answer's extent checked, then resized to 2048 x 2048);
+     no-data patches (pure white) filled; ONE calm tone for every box (each survey's land colours pulled most of the way
+     to the same middle colour, colour swings damped: see TONE); the sea one colour; a JPEG of at most about 500 KB.
+     The alignment is checked against the building outlines (`align_check`). The same is made for every 4 m fine box
+     of the region (<fine box id>_photo.jpg, 2048 px, at most 600 KB): colour beyond the detail box;
+  7. files in <work>/files: <id>_ground.png = the GROUND (water flat) in the page's format (16-bit prediction residuals,
+     height = base_m + value * step_m, step 0.02), <id>_mask.png (8-bit: 0 ground, 3 sea or lake, 4 stream), <id>_photo.jpg,
+     <id>_bld.json, <fine box id>_photo.jpg; raw arrays in <work>/raw/<id>.npz; a top-down look-at picture per box in
+     <work>/look; <work>/coverage.json (per shot: box, photo survey and year, buildings, water); <work>/detail.json
+     (the rows, with each box's photo tone `tint` and cliff colour `rock`); <work>/near_photos.json; <work>/upload.txt;
+     the draft migration (--migration; NOT applied).
 
 Needs: numpy, pillow, scipy, tifffile, imagecodecs; curl. A first run fetches about 0.9 GB into <work>/cache (ArcticDEM
 blocks, the agency's answers, the 50 m contour lines of the islands); a rerun fetches nothing.
@@ -58,7 +65,10 @@ Found on the first run (12 Nov 2026, the Faroes trip: 74 shots, 38 boxes planned
     file and the 4 m fine boxes are the same ArcticDEM heights less the same sea level, so they share it;
   - on sea cliffs the two surveys disagree by tens of metres (a few metres sideways). Two boxes failed outright even on
     their gentle ground: the Tindhólmur islet (41 m under) and the western Drangarnir headland;
-  - the photo sits on the building outlines to the pixel in all 17 boxes that have enough buildings to tell.
+  - the photo sits on the building outlines to the pixel in 16 of the 17 boxes that have enough buildings to tell.
+Round 2 (same day, 36 boxes + 11 fine-box photos, 144 files, 31.0 MB): one constant fits the height gap: +3.3 m brings 30 of
+32 boxes within 1.5 m of the agency's contours, the same at every contour level from 50 to 400 m and on every island.
+Risin og Kellingin (and the other stacks off Eidiskollur) are flat sea in ArcticDEM: missing from every level.
 """
 import argparse, hashlib, io, json, math, os, struct, subprocess, sys, time, urllib.parse, zlib
 from concurrent.futures import ThreadPoolExecutor
@@ -829,10 +839,16 @@ def main():
 
     # one photo per 4 m fine box too (colour beyond the detail box: far cliffs, stacks, the village across the fjord)
     nrows = []
+    from PIL import Image
     if not a.only and not a.no_near:
         for nr in [r for r in pins.get('nears', []) if r['parent'] == a.region]:
             nbox = (nr['north'], nr['south'], nr['west'], nr['east']); t0 = time.time(); P = 2048
             sea_n = ~(raster(P, nbox, land_shapes, 'poly') > 0.5)
+            npath = f"{C}/{nr['path']}"      # a stack the coastline leaves out but the heights have is land too (its colour must not be the sea's)
+            if not os.path.exists(npath): subprocess.run(["curl", "-sS", "-f", "-m", "180", "-o", npath, FILES_URL + nr['path']])
+            if os.path.exists(npath) and os.path.getsize(npath):
+                nh = read_png(npath, nr.get('base_m') or 0.0, nr.get('step_m') or 0.5)
+                sea_n &= np.asarray(Image.fromarray(nh.astype(np.float32)).resize((P, P), Image.BILINEAR)) < 0.6
             _, rgbn, topn, nodn, pn = photo(nr['id'], nbox, max(nr['width_m'], nr['depth_m']), sea_n, ag, P)
             jp = f"{F}/{nr['id']}_photo.jpg"; jsize, jq, jbytes = save_jpeg(jp, rgbn, 600_000)
             Image.fromarray(rgbn).resize((1024, 1024)).save(f"{LOOK}/{nr['id']}_photo.jpg", quality=85)

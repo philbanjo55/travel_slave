@@ -13,7 +13,9 @@
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true }); renderer.setPixelRatio(1); renderer.setSize(W, H, false);
   const scene = new THREE.Scene();
   const cam = new THREE.PerspectiveCamera(2 * Math.atan(48 / focal) * 180 / Math.PI, W / H, 0.5, 90000);   // 4x5 film, landscape: 120 x 96 mm
-  cam.position.set(0, meta.eye + 1.6, 0); cam.lookAt(X(meta.subject[1]), meta.subject_h + meta.aim_up, Z(meta.subject[0]));
+  // the same camera as the round 1 picture of this view, when there is one (its eye height and aim)
+  const r1 = await fetch(`data/${name}/meta.json`).then(r => r.ok ? r.json() : null).catch(() => null);
+  cam.position.set(0, (r1 ? r1.eye_after : meta.eye) + 1.6, 0); cam.lookAt(X(meta.subject[1]), (r1 ? r1.subject_h : meta.subject_h) + meta.aim_up, Z(meta.subject[0]));
   const sa = meta.sun.alt * Math.PI / 180, sz = meta.sun.az * Math.PI / 180;
   const sunDir = new THREE.Vector3(Math.sin(sz) * Math.cos(sa), Math.sin(sa), -Math.cos(sz) * Math.cos(sa));
   const k = Math.min(1, Math.max(0, meta.sun.alt / 25)), ks = k * k * (3 - 2 * k);
@@ -50,8 +52,8 @@
     uniform sampler2D lmap, photo, near, kmap; uniform float mode, side, cutOn, cells; uniform vec4 cut, nrect; uniform vec3 tint, rock;
     varying vec2 vUv; varying vec3 vPos; varying vec3 vN; varying float vH;
     // basalt in beds: flat-lying bands by height, darker joints, a little of the grass tone on the ledges
-    vec3 cliff(vec3 pos, float slope) { float bed = vnoise(vec2(pos.y * .30, (pos.x + pos.z) * .012)), fine = vnoise(vec2(pos.y * 1.7, (pos.x - pos.z) * .05)), joint = vnoise(vec2((pos.x - pos.z) * .55, pos.y * .05));
-      vec3 c = rock * (.72 + .5 * bed + .22 * fine - .18 * step(.72, joint));
+    vec3 cliff(vec3 pos, float slope) { float bed = vnoise(vec2(pos.y * .30, (pos.x + pos.z) * .012)), fine = vnoise(vec2(pos.y * 1.7, (pos.x - pos.z) * .05)), joint = vnoise(vec2((pos.x - pos.z) * .16, pos.y * .03));
+      vec3 c = rock * (.74 + .34 * bed + .14 * fine - .07 * smoothstep(.6, .8, joint));
       float ledge = smoothstep(.62, .8, vnoise(vec2(pos.y * .22 + 3., (pos.x + pos.z) * .02))) * (1. - smoothstep(60., 80., slope));
       return mix(c, tint * .8, ledge * .5); }
     vec3 plain(vec3 pos, float h, float slope) { float pch = vnoise(pos.xz / 300.) * .6 + vnoise(pos.xz / 90.) * .4;
@@ -74,13 +76,15 @@
           if (slope > 40. && (kind == 4. || ku == 4. || ku2 == 4.)) fall = 1.;
           // close to the eye a 0.5 m photo is a blur: grass and stones of our own on top of it
           float w = 1. - smoothstep(7., 30., dcam);
-          float tuft = vnoise(vPos.xz * 9.) * .5 + vnoise(vPos.xz * 31.) * .3 + vnoise(vPos.xz * 2.3) * .2;
-          ph *= 1. + w * (.75 * (tuft - .5));
-          float blade = vnoise(vec2(vPos.x * 70. + vPos.z * 11., vPos.z * 9.)); ph *= 1. + w * w * .30 * (blade - .5);
-          float stone = step(.955, hash(floor(vPos.xz * 3.))) * step(.5, vnoise(vPos.xz * .35)); ph = mix(ph, vec3(.52, .51, .49) * (.8 + .4 * hash(floor(vPos.xz * 3.) + 9.)), stone * w * .7);
+          float tuft = vnoise(vPos.xz * 7.) * .45 + vnoise(vPos.xz * 23.) * .35 + vnoise(vPos.xz * 2.1) * .2;
+          ph *= 1. + w * (.5 * (tuft - .5));
+          vec2 sc = vPos.xz * 1.6, si = floor(sc); float sr = length(fract(sc) - .5 - .25 * (vec2(hash(si), hash(si + 5.)) - .5));       // a few round stones
+          float stone = step(.94, hash(si + 2.)) * (1. - smoothstep(.06, .10 + .06 * hash(si + 3.), sr)); ph = mix(ph, vec3(.62, .61, .58) * (.85 + .3 * hash(si + 9.)), stone * w * .55);
         }
-        alb = mix(ph, cliff(vPos, slope), smoothstep(50., 62., slope));              // a photo from above shows nothing of an upright face
+        alb = mix(ph, cliff(vPos, slope), smoothstep(44., 56., slope));              // a photo from above shows nothing of an upright face
+        if (mode > 1.5 && slope > 50.) { vec2 upv2 = length(n.xz) > .01 ? -normalize(n.xz) / cells : vec2(0.); vis = max(vis, texture2D(lmap, vUv + upv2 * 1.6).r * .85); }   // a wall has no cell of its own: the sun its top gets
       }
+      lam = mix(lam, .5 * lam + .22, smoothstep(55., 75., slope));                      // an upright face in a 1-2 m grid is a row of facets: evened out
       vec3 col = alb * (amb + sunCol * lam * vis);
       if (fall > .5) col = mix(vec3(.84, .88, .92), vec3(.98), vnoise(vec2(vPos.x * 3. + vPos.z * 3., vPos.y * .35))) * (amb * 1.25 + sunCol * (.3 + .6 * lam) * vis);
       else if (mode > 1.5 && kind == 3. && slope < 25.) col = (sea || vH < .6) ? waterCol(vPos, vis) : mix(col, waterCol(vPos, vis), .92);
