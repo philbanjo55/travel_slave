@@ -1,12 +1,14 @@
 // Drives the built HD page the way the app does (fake ReactNativeWebView, base64 chunks, S3D calls) and saves
 // a picture per job. Needs app_relay.js running, playwright, and the Teton elevation file (build_dem.py).
-//   PAGE=<built page.html> DEM=<teton-dem.png> WORK=<relay's WORK> OUT=<dir> node app_run.js '<json opts>'
-//   opts: { w, h, dpr, err, origin: 'file' | 'relay', headers, tiles, base, rootFromCache, path, ground,
-//           jobs: [{ name, az, alt, focal?, view?: [eyeLat, eyeLng, targetLat, targetLng], wait? }] }
+//   PAGE=<built page.html> DEM=<teton-dem.png> OUT=<dir> node app_run.js '<json opts>'
+//   opts: { w, h, dpr, err, origin: 'file' | 'relay', headers, tiles, base, handRoot, probe, path, ground, noStats,
+//           jobs: [{ name, az, alt, focal?, size?: [w, h], view?: [eyeLat, eyeLng, targetLat, targetLng], wait? }] }
+//   base = another door than the relay's, e.g. the deployed function; with headers {"x-tiles-test": "<token>"}
+//   it can be tried while switched off. handRoot = fetch the root first and hand it to the page, as the app does.
 // e.g. '{"path":true,"jobs":[{"name":"a_sro_1000","az":145.6,"alt":15.35},{"name":"b_sro_0815","az":125,"alt":2.3}]}'
 const { chromium } = require('playwright'); const fs = require('fs');
 const o = Object.assign({ w: 400, h: 240, dpr: 2, err: 0, origin: 'file', port: 8771, tag: '' }, JSON.parse(process.argv[2] || '{}'));
-const path0 = require('path'), PAGE = path0.resolve(process.env.PAGE || 'page.html'), DEM = path0.resolve(process.env.DEM || 'teton-dem.png'), WORK = path0.resolve(process.env.WORK || '.'), OUT = path0.resolve(process.env.OUT || '.');
+const path0 = require('path'), PAGE = path0.resolve(process.env.PAGE || 'page.html'), DEM = path0.resolve(process.env.DEM || 'teton-dem.png'), OUT = path0.resolve(process.env.OUT || '.');
 const RELAY = 'http://127.0.0.1:' + o.port, BASE = o.base || RELAY + '/functions/v1/tiles-proxy';
 const stats = async () => JSON.parse(await (await fetch(RELAY + '/stats')).text());
 (async () => {
@@ -17,8 +19,20 @@ const stats = async () => JSON.parse(await (await fetch(RELAY + '/stats')).text(
   await p.goto(o.origin === 'relay' ? RELAY + '/page.html' : 'file://' + PAGE);
   const b64 = fs.readFileSync(DEM).toString('base64');
   const s0 = o.noStats ? null : await stats(), t0 = Date.now();
+  let handed = null;
+  if (o.handRoot) {
+    const r = await fetch(BASE + '/v1/3dtiles/root.json', { headers: o.headers || {} }); handed = await r.text();
+    console.log('root:', r.status, 'cache-control:', r.headers.get('cache-control'), '| etag:', r.headers.get('etag'), '| bytes', handed.length);
+    if (o.probe) {   // one tile file: Google's caching headers as the door hands them on, then a revalidation
+      let uri = null; (function w(t) { if (uri) return; if (t.content && t.content.uri) { uri = t.content.uri; return; } (t.children || []).forEach(w); })(JSON.parse(handed).root);
+      const t1 = await fetch(BASE + uri, { headers: o.headers || {} }); const n = (await t1.arrayBuffer()).byteLength, tag = t1.headers.get('etag');
+      console.log('tile:', t1.status, 'cache-control:', t1.headers.get('cache-control'), '| etag:', tag, '| bytes', n);
+      const t2 = await fetch(BASE + uri, { headers: Object.assign({ 'if-none-match': tag || '' }, o.headers || {}) });
+      console.log('same tile with if-none-match:', t2.status, 'bytes', (await t2.arrayBuffer()).byteLength, '| etag:', t2.headers.get('etag'));
+    }
+  }
   await p.evaluate(c => window.S3D.init(c), { n: 2048, north: 43.95, south: 43.45, west: -110.92, east: -110.24, W: 54727, D: 55566, base: 1500, step: 0.5, ground: o.ground || 'snow', eye: { lat: 43.7537, lng: -110.6241 }, target: { lat: 43.7411, lng: -110.8024 }, focal: 50,
-    tiles: Object.assign(o.rootFromCache ? { root: fs.readFileSync(WORK + '/cache/' + require('crypto').createHash('sha1').update('/v1/3dtiles/root.json').digest('hex'), 'utf8') } : {}, { base: BASE, draco: RELAY + '/draco/', errorTarget: o.err || undefined, headers: o.headers }, o.tiles || {}) });
+    tiles: Object.assign(handed ? { root: handed } : {}, { base: BASE, draco: RELAY + '/draco/', errorTarget: o.err || undefined, headers: o.headers }, o.tiles || {}) });
   for (let i = 0; i < b64.length; i += 240000) await p.evaluate(s => window.S3D.chunk(s), b64.slice(i, i + 240000));
   await p.evaluate(() => window.S3D.done());
   const settle = async (name, max) => {
@@ -33,6 +47,7 @@ const stats = async () => JSON.parse(await (await fetch(RELAY + '/stats')).text(
     return 'TIMEOUT ' + JSON.stringify(last);
   };
   for (const j of o.jobs || []) {
+    if (j.size) { await p.setViewportSize({ width: j.size[0], height: j.size[1] }); await p.waitForTimeout(300); }
     await p.evaluate(j => { if (j.view) window.S3D.view(...j.view); if (j.focal) window.S3D.focal(j.focal); window.S3D.sun(j.az, j.alt); }, j);
     const r = await settle(j.name, j.wait || 240);
     await p.screenshot({ path: OUT + '/' + j.name + '.png' });

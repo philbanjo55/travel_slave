@@ -12,7 +12,13 @@
 //                     wait? }        seconds to wait for the first picture before giving up (default 20)
 //   S3D.chunk / done / sun / focal / view / path / recenter: as the offline page
 // Replies: boot, ready, state, moments, look, error (as the offline page; after an error the app goes back to the
-// offline page), plus credits {text} (Google's attribution: it must be shown on screen) and hd {shown, loading}.
+// offline page), plus credits {text, band} and hd {shown, loading}.
+// Google's Map Tiles policy (read 12 Nov 2026) is met on the page itself, along the bottom of the picture (#attr):
+// the unmodified outlined Google Maps logo, 18 px high with its clear space (the words "Google Maps" when the view is
+// tiny), the tiles' data credits in one line beside it (most frequent first; they wrap when they don't fit), and above
+// them a line saying which part is Google's and which is ours. The app keeps its own labels off that band
+// (`band` = its height in px). Tiles are held in memory only; the web view's own HTTP cache follows the
+// Cache-Control / ETag headers the door passes through from Google. Nothing is written to storage.
 // It still needs our elevation file: the light map, the first / last light checks and the camera all come from it.
 // Built into src/components/sun/sun3dGoogleHtml.ts by tools/sun3d/build_app_google_html.js. Do not edit the generated file.
 import * as THREE from 'three';
@@ -23,7 +29,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 const post = m => { try { window.ReactNativeWebView.postMessage(JSON.stringify(m)); } catch (e) { /* not in the app */ } };
 const say = t => { const m = document.getElementById('msg'); m.textContent = t || ''; m.style.display = t ? 'flex' : 'none'; };
 let dead = false;
-const fail = (t, detail) => { if (dead) return; dead = true; say(t); post({ type: 'error', msg: t, detail: detail ? String(detail).slice(0, 300) : undefined }); stop(); };
+const fail = (t, detail) => { if (dead) return; dead = true; say(t); const a = document.getElementById('attr'); if (a) a.style.display = 'none'; post({ type: 'error', msg: t, detail: detail ? String(detail).slice(0, 300) : undefined }); stop(); };
 window.onerror = msg => { fail("The HD picture couldn't be drawn.", msg); };
 window.addEventListener('unhandledrejection', e => { fail("The HD picture couldn't be drawn.", e && e.reason && (e.reason.message || e.reason)); });
 
@@ -31,7 +37,22 @@ const RAD = Math.PI / 180, A_WGS = 6378137, E2 = 0.00669437999014;
 let cfg = null, parts = [], HF = null, N = 0, W = 0, D = 0, maxH = 4250, DXm = 1, DZm = 1;
 let R = null;   // everything three.js, once built
 let eye = null, target = null, yaw = 0, pitch = 0, focal = 50, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
-let groundY = null, frames = 0, calm = 0, t0 = 0, shown = false, lastCredits = '', lastHd = '';
+let groundY = null, frames = 0, calm = 0, t0 = 0, shown = false, lastCredits = null, lastHd = '';
+
+// ---- Google's attribution band, on the picture ----
+const el = id => document.getElementById(id);
+function band(on) {
+  const a = el('attr'); if (!a) return;
+  a.style.display = on ? 'block' : 'none';
+  a.classList.toggle('small', window.innerWidth < 230 || window.innerHeight < 120);
+  el('ours').textContent = 'Picture: Google Maps. ' + (cfg && cfg.ground === 'green' ? 'Light and shadows are calculated.' : 'Light, shadows and snow are calculated.');
+}
+// the credits stay on one line beside the logo when they fit, and wrap (shown in full) when they don't
+function fit() { const c = el('cred'); if (!c) return; c.classList.remove('wrap'); if (c.scrollWidth > c.clientWidth + 1) c.classList.add('wrap'); }
+function credits(text) {
+  const c = el('cred'); if (c) { c.textContent = text; fit(); }
+  post({ type: 'credits', text, band: el('attr') ? el('attr').offsetHeight : 0 });
+}
 
 // ---- our elevation grid: the same point checks as the offline page ----
 const hB = (c, r) => {
@@ -280,6 +301,7 @@ function resize() {
   // detail follows the picture's height in pixels, up to a cap: a tall full-screen view would otherwise pull over twice the data
   const px = h * R.renderer.getPixelRatio(), k = Math.min(1, (cfg.tiles.lodPx || 1000) / px);
   R.tiles.setResolution(R.cam, w * R.renderer.getPixelRatio() * k, px * k); dirty = true;
+  if (shown) { band(true); fit(); }
 }
 function stop() {
   clearTimeout(hiTimer);
@@ -300,12 +322,12 @@ function tick() {
     const cam = R.cam, v = R.sv;
     for (const o of [R.disc, R.halo]) { o.position.set(cam.position.x + v.x * 190000, cam.position.y + v.y * 190000, cam.position.z + v.z * 190000); o.lookAt(cam.position); }
     R.renderer.render(R.scene, cam); dirty = false;
-    if (!shown && st.visible > 0 && groundY != null) { shown = true; say(''); }
+    if (!shown && st.visible > 0 && groundY != null) { shown = true; say(''); band(true); lastCredits = null; }
   }
   if (!shown && Date.now() - t0 > (cfg.tiles.wait || 20) * 1000) return fail("Google's 3D picture didn't arrive. It needs a good signal.", 'nothing to show after ' + Math.round((Date.now() - t0) / 1000) + ' s, ' + st.failed + ' failed');
   if (st.failed > 40) return fail("Google's 3D picture stopped loading.", st.failed + ' tiles failed');
   if (frames % 30 === 0) {
-    const c = t.getCreditsString(); if (c !== lastCredits) { lastCredits = c; post({ type: 'credits', text: c }); }
+    const c = t.getCreditsString(); if (shown && c !== lastCredits) { lastCredits = c; credits(c); }
     const hd = JSON.stringify({ shown, loading: busy || calm < 40 }); if (hd !== lastHd) { lastHd = hd; post({ type: 'hd', shown, loading: busy || calm < 40, tiles: st.visible, failed: st.failed }); }
   }
   requestAnimationFrame(tick);
@@ -341,7 +363,7 @@ window.S3D = {
     const moved = !eye || eye.lat !== eLat || eye.lng !== eLng;
     eye = { lat: eLat, lng: eLng }; target = { lat: tLat, lng: tLng }; if (!R || dead) return;
     if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.');
-    if (moved) { frame(); if (shown) { shown = false; t0 = Date.now(); say("Getting Google's 3D picture…"); } }
+    if (moved) { frame(); if (shown) { shown = false; t0 = Date.now(); band(false); say("Getting Google's 3D picture…"); } }
     aim(); relight = dirty = true; heading();
   },
   recenter() { if (R && !dead) { aim(); dirty = true; heading(); } },
