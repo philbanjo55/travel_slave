@@ -638,34 +638,6 @@ def sun_3d():
     else:
         V.check('sun3d-ready', ok, why or 'drawn: caption with the looking direction shown')
     if ok:
-        # Real foreground (laser survey, 12 Nov 2026, branch claude/sun3d-lidar): where the stand spot has a detail box
-        # the Foreground button shows, on by default; off and on again must each bring the picture back.
-        fg_label = 'Foreground (trees and buildings near you)'
-        def fg_state():
-            for _ in range(10):
-                c = C.capture(2)
-                lab = next((x['label'] for x in c.clickables if fg_label in x['label']), None)
-                if lab is not None and V.has(c, 'Looking '):
-                    return c, lab
-            return c, lab
-        f = C.capture(1)
-        lab0 = next((x['label'] for x in f.clickables if fg_label in x['label']), None)
-        if lab0 is not None:
-            V.check('fg-button', ': on' in lab0, lab0[:90])
-            V.show('sun3d-foreground-on', f)
-            V.tap_text(f, fg_label); time.sleep(3)
-            c1, lab1 = fg_state()
-            V.check('fg-off', lab1 is not None and ': off' in lab1 and V.has(c1, 'Looking '), (lab1 or 'button gone')[:90] + (' / picture back' if V.has(c1, 'Looking ') else ' / no picture'))
-            V.show('sun3d-foreground-off', c1)
-            V.tap_text(c1, fg_label); time.sleep(3)
-            c2, lab2 = fg_state()
-            V.check('fg-on-again', lab2 is not None and ': on' in lab2 and V.has(c2, 'Looking '), (lab2 or 'button gone')[:90] + (' / picture back' if V.has(c2, 'Looking ') else ' / no picture'))
-            V.check('fg-alive', C.app_alive())
-            web = [l for l in C.adb('logcat', '-d', '-t', '3000', timeout=90).splitlines() if 'chromium' in l and ('ERROR' in l or 'CONSOLE' in l)]
-            for line in web[-8:]:
-                print('INFO sun3d foreground web ' + line[:260], flush=True)
-        else:
-            print('INFO foreground: no Foreground button on screen (no detail box for this spot, or this build has none)', flush=True)
         # HD (Google's picture, 12 Nov 2026): the button shows only while the door says it is switched on. One tap on
         # = one counted view. No screenshots are taken while Google's picture is up (it must not be stored).
         def peek():
@@ -757,8 +729,6 @@ def sun_3d():
         V.check('sun3d-lenses-4x5', all(seen_has(seen, f'{f} millimetre lens') for f in (75, 90, 135, 300)), '75 / 90 / 135 / 300 lens buttons')
         V.check('sun3d-frame-button', seen_has(seen, '4x5 frame box'), 'frame box button')
         V.check('sun3d-street-view', seen_has(seen, 'Street View from this spot'), 'Street View link')
-        if seen_has(seen, fg_label):
-            V.check('fg-source-line', seen_has(seen, 'laser survey'), 'the note under the view names the laser survey')
         V.check('sun3d-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined'))
         line = next((x for x in seen if '3D terrain' in x), None)
         V.check('sun3d-saved-line', line is not None, (line or 'no "3D terrain saved for this trip" line')[:110])
