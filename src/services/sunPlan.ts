@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from './supabase';
 import { downloadPhoto } from './photoCache';
+import { saveTripTerrain } from './terrain';
 import type { Pair } from '../utils/sunEngine';
 
 // Sun & Moon planner data: which vantage -> subject pairs each stop has, with
@@ -90,6 +91,7 @@ export function refreshSunPlan(tripId: string, force = false): Promise<SunPlan |
       listeners.forEach(fn => fn(tripId));
       writeCached(tripId, plan).catch(e => console.warn('[sun] cache write failed:', e));
       saveVantagePhotos(plan);
+      saveTerrain(tripId, plan);
       return plan;
     } catch (e) {
       console.warn('[sun] plan fetch failed, keeping the saved copy:', e);
@@ -116,6 +118,20 @@ async function saveVantagePhotos(plan: SunPlan): Promise<void> {
   }
 }
 
+// The 3D view's terrain for every stand spot in the trip goes onto the phone too (TEST app; services/terrain.ts):
+// in the background, one file at a time, nothing waits for it and it cannot throw.
+function saveTerrain(tripId: string, plan: SunPlan): void {
+  try {
+    const shots: { v: { lat: number; lng: number }; s: { lat: number; lng: number } }[] = [];
+    for (const st of Object.values(plan.stops ?? {})) {
+      for (const p of st?.pairs ?? []) {
+        if (p?.v && p?.s && Number.isFinite(p.v.lat) && Number.isFinite(p.v.lng)) shots.push({ v: p.v, s: p.s });
+      }
+    }
+    saveTripTerrain(tripId, shots);
+  } catch { /* the 3D tab still fetches its own file when opened */ }
+}
+
 // The pairs for one stop: from memory, else the saved file, then refreshed in
 // the background. `ready` turns true once the saved copy has been checked, so
 // callers can tell "no pairs" from "not loaded yet".
@@ -131,7 +147,7 @@ export function useSunStopState(tripId: string | null | undefined, stopId: strin
     (async () => {
       if (!memory[tripId]) {
         const cached = await readCached(tripId);
-        if (cached && !memory[tripId]) memory[tripId] = cached;
+        if (cached && !memory[tripId]) { memory[tripId] = cached; saveTerrain(tripId, cached); }   // no signal: still counts what is saved
         if (alive && memory[tripId]) setPlan(memory[tripId]);
       }
       if (alive) setReady(true);
