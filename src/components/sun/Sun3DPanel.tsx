@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
 import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
-import { detailFor, detailMask, nearFor, regionFor, terrainData, TerrainDetail, TerrainNear, TerrainRegion, tripTerrainLine, useTripTerrain } from '../../services/terrain';
+import { detailFor, detailMask, detailTrees, detailWater, nearFor, regionFor, terrainData, TerrainDetail, TerrainNear, TerrainRegion, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import type { Pair, SkyPos } from '../../utils/sunEngine';
@@ -75,6 +75,7 @@ const FRAME_SAY: Record<FrameMode, string> = { land: 'landscape', port: 'portrai
 let lastLens = '135';
 let lastFrame: FrameMode = 'land';
 let lastForeground = true;
+let lastIce: boolean | null = null;
 const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
 
 export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd }: Props) {
@@ -87,6 +88,9 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const [detail, setDetail] = useState<TerrainDetail | null>(null);
   const [detailB64, setDetailB64] = useState<string | null>(null);
   const [maskB64, setMaskB64] = useState<string | null>(null);
+  const [treesB64, setTreesB64] = useState<string | null>(null);
+  const [waterB64, setWaterB64] = useState<string | null>(null);
+  const [iceChoice, setIceChoice] = useState<boolean | null>(lastIce);   // null = the page's own default (frozen where the ground is snow)
   const [shapes, setShapes] = useState(false);   // the page says it is drawing the detail box
   const [foreground, setForegroundState] = useState(lastForeground);
   const [lensId, setLensState] = useState(lastLens);
@@ -139,7 +143,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
       if (!alive) return;
       if (r && loaded.current === `${r.id}|${nr?.id ?? ''}|${dt0?.id ?? ''}`) return;   // same files: the page only gets the new view
       loaded.current = null; booted.current = false; sent.current = false;
-      setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setDetail(null); setDetailB64(null); setMaskB64(null); setShapes(false); setLit(null); setMoments(null);
+      setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setShapes(false); setLit(null); setMoments(null);
       if (!r) { setPhase('none'); return; }
       setPhase('loading');
       // The fine file is an extra: with a weak signal it gets 10 s, then the wide grid draws alone (the download carries on).
@@ -147,7 +151,9 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
       // The detail box is an extra in the same way (heights + class mask; without the mask it draws as bare shapes).
       const late = <T,>(p: Promise<T | null>) => Promise.race([p, new Promise<null>(res => setTimeout(() => res(null), 10000))]);
       const mk = dt0 ? detailMask(dt0) : null;
-      const [d, nd, dd, md] = await Promise.all([terrainData(r), fine, dt0 ? late(terrainData(dt0)) : null, mk ? late(terrainData(mk)) : null]);
+      const tk = dt0 ? detailTrees(dt0) : null, wk = dt0 ? detailWater(dt0) : null;   // tree returns and the wide water: extras of the extra
+      const [d, nd, dd, md, td, wd] = await Promise.all([terrainData(r), fine, dt0 ? late(terrainData(dt0)) : null, mk ? late(terrainData(mk)) : null,
+        tk ? late(terrainData(tk)) : null, wk ? late(terrainData(wk)) : null]);
       if (!alive) return;
       if (!d) { setPhase('failed'); return; }
       // No fine file (no signal the first time): the wide grid alone still draws, and the next shot tries again.
@@ -155,7 +161,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
       const dt = dt0 && dd && (!nr || nd) ? dt0 : null;
       loaded.current = `${r.id}|${nr && nd ? nr.id : ''}|${dt ? dt.id : ''}`;
       setRegion(r); setNear(nr && nd ? nr : null); setB64(d); setNearB64(nr && nd ? nd : null);
-      setDetail(dt); setDetailB64(dt ? dd : null); setMaskB64(dt ? md : null); setPhase('starting');
+      setDetail(dt); setDetailB64(dt ? dd : null); setMaskB64(dt ? md : null); setTreesB64(dt ? td : null); setWaterB64(dt ? wd : null); setPhase('starting');
     })();
     return () => { alive = false; };
   }, [vLat, vLng, sLat, sLng]);
@@ -203,6 +209,9 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p));
   }, []);
   const useDetail = foreground && !hd && !!detail && !!detailB64;
+  // Frozen lakes: still water drawn as snow-covered ice, rivers open. Default from the area's ground; a tap changes it in place.
+  const iceOn = iceChoice ?? (region ? region.ground !== 'green' : true);
+  const setIce = useCallback((on: boolean) => { lastIce = on; setIceChoice(on); run(`window.S3D.ice(${on ? 'true' : 'false'})`); }, [run]);
   // HD is wanted and on its way: the offline page is not started just to be replaced
   // (one that is already showing stays up until the HD page takes over)
   const holding = want && !hd && hdCfg !== null && phase !== 'ready';
@@ -219,8 +228,15 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
         ? { n: near.n, north: near.north, south: near.south, west: near.west, east: near.east, base: near.base_m, step: near.step_m }
         : undefined,
       detail: useDetail && detail
-        ? { n: detail.n, north: detail.north, south: detail.south, west: detail.west, east: detail.east, base: detail.base_m, step: detail.step_m }
+        ? {
+          n: detail.n, north: detail.north, south: detail.south, west: detail.west, east: detail.east, base: detail.base_m, step: detail.step_m,
+          trees: treesB64 ? { bins: detail.trees_bins ?? 64, bin: detail.trees_bin_m ?? 0.6 } : undefined,
+        }
         : undefined,
+      water: useDetail && detail && waterB64
+        ? { n: detail.water_n, north: detail.water_north, south: detail.water_south, west: detail.water_west, east: detail.water_east }
+        : undefined,
+      ice: iceOn,
       ...(hd && hdCfg ? { tiles: { base: hdCfg.base, draco: hdCfg.draco, root: hd } } : null),
     };
     run(`window.S3D.init(${JSON.stringify(cfg)})`);
@@ -229,9 +245,13 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
     if (useDetail && detailB64) {
       for (let i = 0; i < detailB64.length; i += CHUNK) run(`window.S3D.chunk("${detailB64.slice(i, i + CHUNK)}","detail")`);
       if (maskB64) for (let i = 0; i < maskB64.length; i += CHUNK) run(`window.S3D.chunk("${maskB64.slice(i, i + CHUNK)}","mask")`);
+      if (treesB64) for (let i = 0; i < treesB64.length; i += CHUNK) run(`window.S3D.chunk("${treesB64.slice(i, i + CHUNK)}","trees")`);
+      if (waterB64) for (let i = 0; i < waterB64.length; i += CHUNK) run(`window.S3D.chunk("${waterB64.slice(i, i + CHUNK)}","water")`);
     }
     run('window.S3D.done()');
-  }, [region, near, b64, nearB64, detail, detailB64, maskB64, useDetail, pair.v, pair.s, focal, lens, full, run, hd, hdCfg]);
+  // iceOn is read when the page starts; a later tap goes to the page directly (setIce), so it is not a reason to start again
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [region, near, b64, nearB64, detail, detailB64, maskB64, treesB64, waterB64, useDetail, pair.v, pair.s, focal, lens, full, run, hd, hdCfg]);
   useEffect(() => { start(); }, [start]);
 
   const onMessage = useCallback((e: { nativeEvent: { data: string } }) => {
@@ -351,6 +371,18 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
                 <Ionicons name="leaf-outline" size={17} color={foreground ? '#000000' : '#ffffff'} />
               </TouchableOpacity>
             ) : null}
+            {useDetail && ready && shapes && region?.ground === 'snow' ? (
+              <TouchableOpacity
+                onPress={() => setIce(!iceOn)}
+                style={[styles.fullBtn, iceOn && styles.lensOn]}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: iceOn }}
+                accessibilityLabel={`Frozen lakes: ${iceOn ? 'on' : 'off'}. Tap to change.`}
+                hitSlop={6}
+              >
+                <Ionicons name="snow-outline" size={17} color={iceOn ? '#000000' : '#ffffff'} />
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity onPress={onFull} style={styles.fullBtn} accessibilityRole="button" accessibilityLabel={full ? 'Close full screen' : 'Open the 3D view full screen'} hitSlop={6}>
               <Ionicons name={full ? 'contract-outline' : 'expand-outline'} size={18} color="#ffffff" />
             </TouchableOpacity>
@@ -399,7 +431,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
           {hd
             ? `Picture: Google Maps. ${region?.ground === 'green' ? 'Light and shadows' : 'Light, shadows and snow'} are calculated from elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles. No clouds. Needs a signal; times are within a few minutes.${left != null ? ` HD views left: ${leftToday != null ? `${leftToday} today, ` : ''}${left} this month.` : ''}`
             : shapes
-              ? 'Terrain shape and calculated sun. Buildings, water and trees close to you come from a 2022 summer laser survey: buildings as blocks, trees as dots; none farther off, no clouds. Sun times count the ground and buildings, not the trees. Times are within a few minutes. Elevation data: USGS 3DEP lidar, ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'
+              ? 'Terrain shape and calculated sun. Buildings and trees close to you, and water within about 3 km, come from a 2022 summer laser survey: buildings as blocks, trees as dots, none farther off; no clouds. With the snowflake on, lakes and slow water are drawn frozen and rivers open (a guess from the slope of the water). Sun times count the ground and buildings, not the trees. Times are within a few minutes. Elevation data: USGS 3DEP lidar, ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'
               : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes. Elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'}
         </Text>
       ) : null}

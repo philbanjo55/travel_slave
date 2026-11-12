@@ -144,6 +144,43 @@ Grand Teton: 19 boxes, 38 files, 7.4 MB. Emily's Pond Levee and Teton Pines Nord
   unchanged. Start (decode + build, this machine, software graphics): about 0.75 s with detail against 0.52 s
   without. Not run on a phone.
 
+### Round 3 (12 Nov 2026): the trees' own returns, and water out to 3 km (built, NOT uploaded or applied)
+
+`build_detail.py ... --suffix _v3 --out files_v3` now writes two more files a box and the columns for them
+(`20261112160000_terrain_detail_v3.sql` adds the columns and fills the 19 rows; heights and mask keep round 2's format,
+so an app from before this round keeps working on the same rows; 34 of the 38 round 2 files are byte-identical and keep
+their names, Blacktail 2 and Oxbow Bend gained water cells and got `_v3` names):
+- `<id>_trees_v3.png`: 8-bit, n lines of n x 8 bytes: per cell 64 bits, bit k = a laser return in the slice k x 0.6 m
+  above the ground (tree cells only, returns from 1 m up). 8 KB to 1.5 MB a box (Taggart & Bradley 2, all forest:
+  2.5 million filled slices), 5.9 MB for the 19.
+- `<id>_water_v3.png`: 8-bit, 1500 x 1500 cells of 4 m over the 6 km around the box: 0 none, 1 moving, 2 still. 4-15 KB.
+  Read from a thinned sample of the survey (octree depth 8, a point every ~2.8 m wherever anything came back). Water =
+  cells whose only returns are the survey's water class, plus the cells with no return at all that join them, where
+  the wide terrain file is flat and within 12 m of that water's level, or within 40 m of water found that way.
+  Still or moving = the water level's slope over ~100 m (under 1.2 m a km = still).
+- The page: `cfg.detail.trees` + chunks `'trees'`, `cfg.water` + chunks `'water'`, `cfg.ice` / `S3D.ice(bool)`.
+  Tree points sit in the filled slices (up to 520,000 a box; near the stand spot several small ones a slice, far off one
+  larger one for every few). Open water is drawn where you look from: the sky mirrored (more the flatter the view), a
+  dark body, a glint toward a low sun; inside the box in the detail mesh, beyond it as one sheet laid on the near / far
+  ground (drawn after the ground, a shade toward the eye). With `ice` (default where the ground is snow) still water
+  is snow with a faint blue cast and a darker shore line in the box; only moving water is open.
+- What was found (water inside the 500 m box / within the 6 km, of which still): Oxbow Bend 3.3 ha / 423 ha (353);
+  Willow Flats 0 / 401 (342); Swan Lake 6.0 ha / 1,607 (1,586: Jackson Lake); Taggart & Bradley 8.4 ha / 74 (40);
+  Jenny Lake bridge 0 / 78 (26), Jenny Lake off road 0 / 306 (284); Menor's Ferry 3.8 ha / 39; Chapel 0.6 ha / 41;
+  Snake River Overlook 0 / 65; Blacktail 0 and 130 m2 / 38; Cunningham 0 / 43; Elk Ranch 0 / 57; Glacier View 0 / 32;
+  Teton Point 0 / 44; the Moulton barns 0 / 6-10. **Shane Cabins: none**: the survey has no water returns for the Gros
+  Ventre there, and 30% of that 6 km is outside the survey (Cunningham 22%, the airport corner at Moose 4%).
+- Where the lake-or-river guess is wrong: a slow, flat reach of a river counts as still (parts of the Snake below
+  the dam, and pools), so with `ice` it is drawn frozen; the oxbow itself, which does freeze, counts as moving in
+  places because its few water returns make the level look sloped; blocks are 32 m, so the change shows as steps.
+- What it cannot do: narrow creeks (Cottonwood Creek at the Jenny Lake bridge) have no water class in the survey and
+  are not drawn; the water is the 2022 summer shore (Jackson Lake was drawn down about 8 m then: its bay at Willow
+  Flats is dry in the survey, so nothing of the lake is within Willow Flats' 3 km); nothing mirrors in the water but
+  the sky; from the stored pins of Snake River Overlook and Blacktail Ponds the rim and the trees hide the river
+  (30 m forward at the rim it shows); trees still have no trunks (airborne laser hardly sees them; not added).
+- Tests (same harness): first / last light at the stand spot unchanged from round 2 on the four spots; with no
+  `detail` 0 pixels differ from the page before this level; start about 0.85 s (0.52 s without detail).
+
 ## How accurate the sun times are (measured 12 Nov 2026)
 
 Checked against 102 real webcam pictures on 5 clear December / January days in Grand Teton (27 events; resort

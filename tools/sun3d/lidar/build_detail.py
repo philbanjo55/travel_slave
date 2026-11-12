@@ -48,6 +48,8 @@ from build_trip_terrain import load_pins, read_png, at, slug   # noqa: E402
 
 EPT = 'https://usgs-lidar-public.s3.us-west-2.amazonaws.com/'
 R = 6378137.0
+BINS, BIN_M = 64, 0.6        # tree file: per cell 64 height slices of 0.6 m above the ground, one bit each
+WIDE_HALF, WIDE_CELL, WIDE_DEPTH = 3000.0, 4.0, 8   # the wide water layer: 6 km box, 4 m cells, survey read down to octree depth 8 (a point every ~2.8 m)
 TREE0, TREE_STEP = 8, 0.2   # mask byte of a tree cell = TREE0 + its canopy height above the ground / TREE_STEP
 STEP = 0.02         # metres per height value in the detail files (0.5 m cells lit by a low sun show every centimetre)
 G_MESH = 768        # the page's mesh points per side
@@ -62,6 +64,11 @@ def write_heights(path, h, base, step):
     res = ((p[1:, 1:] - p[1:, :-1] - p[:-1, 1:] + p[:-1, :-1]) % 65536).astype('>u2')
     raw = b''.join(b'\x00' + res[i].tobytes() for i in range(n))
     open(path, 'wb').write(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', n, n, 16, 0, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b''))
+
+def write_bytes(path, rows):
+    """Any bytes as an 8-bit greyscale PNG (filter 0), one array row a line: the page unpacks it like the other files."""
+    h, w = rows.shape; raw = b''.join(b'\x00' + rows[i].tobytes() for i in range(h))
+    open(path, 'wb').write(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 0, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b''))
 
 def write_mask(path, m):
     n = m.shape[0]; raw = b''.join(b'\x00' + m[i].astype(np.uint8).tobytes() for i in range(n))
@@ -134,16 +141,19 @@ class Survey:
             except Exception as e: err = e; time.sleep(1 + 2 * i)
         raise err
 
-    def nodes(self, x0, x1, y0, y1):
-        """Every data node whose square touches the box: {key: points}."""
+    def nodes(self, x0, x1, y0, y1, maxd=99):
+        """Every data node whose square touches the box: {key: points}. maxd = read no deeper (a thinned, even sample)."""
         b = self.bounds; size = self.size; out = {}
         def load(key):
             if key not in self.hier: self.hier[key] = json.loads(self.get(f'ept-hierarchy/{key}.json'))
             for kk, v in self.hier[key].items():
                 d, x, y, z = map(int, kk.split('-')); s = size / (1 << d)
                 if b[0] + x * s > x1 or b[0] + (x + 1) * s < x0 or b[1] + y * s > y1 or b[1] + (y + 1) * s < y0: continue
+                if d > maxd: continue
                 if v == -1:
-                    if kk != key: load(kk)
+                    if kk == key: continue
+                    if d == maxd: out[kk] = -1      # a node with its own list of deeper ones: it exists, and nothing deeper is wanted
+                    else: load(kk)
                 elif v > 0: out[kk] = v
         load('0-0-0-0')
         return out
@@ -158,13 +168,14 @@ class Survey:
 def merc(lat, lng): return R * math.radians(lng), R * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
 
 
-def grid_box(sv, box, n, log):
-    """The survey's points on the box's n x n lat / lng grid (row 0 = north)."""
+def grid_box(sv, box, n, log, keep=False):
+    """The survey's points on the box's n x n lat / lng grid (row 0 = north). keep = also every point that is not
+    ground, water or building (cell + height): the trees' own returns."""
     north, south, west, east = box
     x0, y1 = merc(north, west); x1, y0 = merc(south, east)
     keys = sv.nodes(x0, x1, y0, y1); order = sorted(keys, key=lambda s: int(s.split('-')[0]))
     top = np.full((n, n), -1e9, np.float32); cls = np.zeros((n, n), np.uint8); gsum = np.zeros((n, n), np.float64); gcnt = np.zeros((n, n), np.int32)
-    wmin = np.full((n, n), 1e9, np.float32); cnt = np.zeros((n, n), np.int32); multi = np.zeros((n, n), np.int32); total = 0
+    wmin = np.full((n, n), 1e9, np.float32); cnt = np.zeros((n, n), np.int32); multi = np.zeros((n, n), np.int32); total = 0; pr, pc, pz = [], [], []
     with cf.ThreadPoolExecutor(8) as ex:
         for x, y, z, c, many in ex.map(lambda k: sv.points(k, x0, x1, y0, y1), order):
             if not len(x): continue
@@ -179,19 +190,93 @@ def grid_box(sv, box, n, log):
             if g.any(): np.add.at(gsum, (ri[g], ci[g]), z[g]); np.add.at(gcnt, (ri[g], ci[g]), 1)
             w = c == 9
             if w.any(): np.minimum.at(wmin, (ri[w], ci[w]), z[w])
+            if keep:
+                u = (c != 2) & (c != 9) & (c != 6)
+                pr.append(ri[u].astype(np.int16)); pc.append(ci[u].astype(np.int16)); pz.append(z[u])
     log(f"{len(order)} survey nodes, {total:,} points in the box ({total / (n * n):.1f} a cell), cells with none: {int((cnt == 0).sum()):,} of {n * n:,}")
-    return dict(top=top, cls=cls, gsum=gsum, gcnt=gcnt, wmin=wmin, cnt=cnt, multi=multi, total=total)
+    return dict(top=top, cls=cls, gsum=gsum, gcnt=gcnt, wmin=wmin, cnt=cnt, multi=multi, total=total,
+                pts=(np.concatenate(pr), np.concatenate(pc), np.concatenate(pz)) if keep and pr else None)
 
 
-def clean(g, box, n, cell, stands):
-    """Surface heights and the class mask from the gridded points."""
+def wide_water(sv, clat, clng, terrain, log):
+    """Where the water is in the 6 km around a stand spot, for the river and the lakes beyond the detail box.
+    Read from a thinned sample of the survey (octree depth 8: a point every ~2.8 m wherever anything came back), on 4 m
+    cells. Water = cells whose only returns are the survey's water class, plus the cells with no return at all that
+    join them (water swallows the laser). An empty cell only counts where the wide terrain file is flat and within
+    12 m of the water level beside it: outside the survey, and on a hole in it, everything is empty too.
+    Still or moving: the water level's slope over ~100 m. Under 1.2 m a km = still (a lake, a pond, a slow backwater),
+    more = moving (a river). Returns classes (0 none, 1 moving, 2 still), the level, and numbers to print."""
+    n = int(round(2 * WIDE_HALF / WIDE_CELL)); kx = 111320 * math.cos(math.radians(clat)); kz = 111132
+    box = tuple(round(v, 6) for v in (clat + WIDE_HALF / kz, clat - WIDE_HALF / kz, clng - WIDE_HALF / kx, clng + WIDE_HALF / kx)); north, south, west, east = box
+    x0, y1 = merc(north, west); x1, y0 = merc(south, east)
+    keys = sv.nodes(x0, x1, y0, y1, WIDE_DEPTH); order = sorted(keys, key=lambda s: int(s.split('-')[0]))
+    cnt = np.zeros((n, n), np.int32); gcnt = np.zeros((n, n), np.int32); wsum = np.zeros((n, n), np.float64); wcnt = np.zeros((n, n), np.int32); total = 0
+    with cf.ThreadPoolExecutor(8) as ex:
+        for x, y, z, c, _ in ex.map(lambda k: sv.points(k, x0, x1, y0, y1), order):
+            if not len(x): continue
+            total += len(x)
+            lat = np.degrees(np.arctan(np.sinh(y / R))); lng = np.degrees(x / R)
+            ri = ((north - lat) / (north - south) * n).astype(np.int32).clip(0, n - 1); ci = ((lng - west) / (east - west) * n).astype(np.int32).clip(0, n - 1)
+            np.add.at(cnt, (ri, ci), 1)
+            w = c == 9; g = ~w
+            np.add.at(gcnt, (ri[g], ci[g]), 1); np.add.at(wsum, (ri[w], ci[w]), z[w]); np.add.at(wcnt, (ri[w], ci[w]), 1)
+    has = cnt > 0; seed = (wcnt > 0) & (gcnt == 0)
+    out = dict(box=box, n=n, cls=np.zeros((n, n), np.uint8), level=np.zeros((n, n)), water_m2=0.0, still_m2=0.0, nodata=float((~has).mean()), points=total, nodes=len(order))
+    if not seed.any(): log(f"wide water: {len(order)} nodes, {total:,} points; no water returns in the 6 km box"); return out
+    level = fill(wsum / np.maximum(wcnt, 1), seed)
+    for _ in range(8): level = box3(level)
+    la = north - (np.arange(n) + .5) * (north - south) / n; lo = west + (np.arange(n) + .5) * (east - west) / n
+    th, tbox = terrain; terr = at(th, tbox, la[:, None] + 0 * lo[None, :], lo[None, :] + 0 * la[:, None])
+    gy, gx = np.gradient(np.nan_to_num(terr, nan=0.0), WIDE_CELL)
+    fits = np.isfinite(terr) & (np.abs(terr - level) < 12.0) & (np.hypot(gx, gy) < 0.08)
+    water = flood(seed, seed | (~has & fits))
+    for _ in range(10): water |= grow1(water) & ~has     # the river's own edge: empty cells within 40 m of that water, whatever the coarse terrain file says of the bank
+    water = spread(shrink(water, 2), 2) | (grow1(spread(shrink(water, 2), 2)) & water)   # no slivers one cell wide
+    if not water.any(): log("wide water: water returns, but no patch 8 m wide"); return out
+    # still or moving: the level's slope, taken on 32 m blocks of water cells
+    k = 8; m = n // k
+    bs = np.where(water, level, 0.0)[:m * k, :m * k].reshape(m, k, m, k).sum((1, 3)); bc = water[:m * k, :m * k].reshape(m, k, m, k).sum((1, 3))
+    bl = np.divide(bs, bc, out=np.zeros_like(bs), where=bc > 0); bw = bc > 0; slope = np.zeros((m, m)); seen = np.zeros((m, m), bool)
+    for step in (3, 2, 1):   # against the water block ~100 m off each way (same water: under 2 m apart in level), nearer ones only where there is none
+        prev = seen.copy()
+        for dr, dc in ((step, 0), (-step, 0), (0, step), (0, -step)):
+            o = np.zeros((m, m)); ow = np.zeros((m, m), bool)
+            src = (slice(max(0, dr), m + min(0, dr)), slice(max(0, dc), m + min(0, dc))); dst = (slice(max(0, -dr), m + min(0, -dr)), slice(max(0, -dc), m + min(0, -dc)))
+            o[dst] = bl[src]; ow[dst] = bw[src]
+            use = bw & ow & (np.abs(o - bl) < 2.0) & ~prev
+            slope = np.where(use, np.maximum(slope, np.abs(o - bl) / (step * k * WIDE_CELL)), slope); seen |= use
+    mv = bw & (slope > 0.0012)
+    mv = bw & (box3(mv.astype(float)) * 9 >= np.maximum(1, box3(bw.astype(float)) * 9) * 0.5)        # the local majority of water blocks
+    up = np.zeros((n, n), bool); up[:m * k, :m * k] = np.repeat(np.repeat(mv, k, 0), k, 1)
+    moving = water & up
+    cls = np.zeros((n, n), np.uint8); cls[water] = 2; cls[moving] = 1
+    a2 = WIDE_CELL * WIDE_CELL
+    out.update(cls=cls, level=level, water_m2=float(water.sum() * a2), still_m2=float((water & ~moving).sum() * a2), nodata=float((~has & ~water).mean()),
+               returns=int(seed.sum()), levels=(float(np.percentile(level[water], 2)), float(np.percentile(level[water], 98))))
+    log(f"wide water (6 km box, 4 m cells): {len(order)} nodes, {total:,} points; water {water.sum() * a2 / 1e4:.1f} ha ({(water & ~moving).sum() * a2 / 1e4:.1f} still, {moving.sum() * a2 / 1e4:.1f} moving), "
+        f"levels {out['levels'][0]:.1f}..{out['levels'][1]:.1f} m, {int(seed.sum()):,} cells with water returns; no data (no return, not water): {out['nodata']:.1%} of the box")
+    return out
+
+
+def clean(g, box, n, cell, stands, ww=None):
+    """Surface heights, the class mask and the trees' own returns from the gridded points. ww = the wide water layer."""
     north, south, west, east = box
     top, cls, cnt = g['top'].astype(np.float64), g['cls'], g['cnt']; has = cnt > 0
     gnd_ok = g['gcnt'] > 0; wat_ok = (g['wmin'] < 1e8) & ~gnd_ok
     # water: laser light is swallowed by water, so open water is mostly cells with no return at all. Water = the cells
-    # whose only low return is water, plus the empty cells joined to them (an empty cell under a tree is not joined)
-    water = flood(wat_ok & (~has | (cls == 9)), ~has | (wat_ok & (cls == 9)))
-    level = fill(g['wmin'], wat_ok)
+    # whose only low return is water, plus the empty cells joined to them (an empty cell under a tree is not joined).
+    # The wide layer adds what this box alone cannot know: an empty patch that is water there (its water returns lie
+    # outside the box) starts the same search here.
+    seed = wat_ok & (~has | (cls == 9)); wide_here = np.zeros((n, n), bool); wide_lvl = None
+    if ww is not None and ww['cls'].any():
+        wb = ww['box']; wn = ww['n']
+        wr = (((wb[0] - (north - (np.arange(n) + .5) * (north - south) / n)) / (wb[0] - wb[1])) * wn).astype(int).clip(0, wn - 1)
+        wc = ((((west + (np.arange(n) + .5) * (east - west) / n) - wb[2]) / (wb[3] - wb[2])) * wn).astype(int).clip(0, wn - 1)
+        wide_here = ww['cls'][np.ix_(wr, wc)] > 0; wide_lvl = ww['level'][np.ix_(wr, wc)]
+        seed |= ~has & wide_here
+    water = flood(seed, ~has | (wat_ok & (cls == 9)))
+    added = int((water & ~flood(wat_ok & (~has | (cls == 9)), ~has | (wat_ok & (cls == 9)))).sum()) if wide_here.any() else 0
+    level = fill(g['wmin'], wat_ok) if wat_ok.any() else (wide_lvl if wide_lvl is not None else np.zeros((n, n)))
     for _ in range(12): level = box3(level)
     base = fill(g['gsum'] / np.maximum(g['gcnt'], 1), gnd_ok) if gnd_ok.any() else level
     for _ in range(6): base = np.where(gnd_ok, base, box3(base))        # the filled patches, smoothed
@@ -250,8 +335,19 @@ def clean(g, box, n, cell, stands):
     surf = np.where(bld, top, base)
     mask = np.zeros((n, n), np.uint8); mask[water] = 3
     mask[tree] = (TREE0 + np.clip(np.round(hag / TREE_STEP), 1, 255 - TREE0)).astype(np.uint8)[tree]; mask[bld] = 2
+    # the trees' own returns: per tree cell, which 0.6 m slices above the ground a return came from (one bit each). The
+    # page puts its points there, so a spruce is a cone and a cottonwood a spread crown, at their real heights.
+    vox = np.zeros((n, n), np.uint64); nv = 0
+    if g.get('pts') is not None:
+        pr, pc, pz = g['pts']; pr = pr.astype(np.int64); pc = pc.astype(np.int64)
+        h = pz - base[pr, pc]; ok = tree[pr, pc] & (h >= 1.0) & (h <= hag[pr, pc] + 0.3)
+        b = np.clip((h[ok] / BIN_M).astype(np.int64), 0, BINS - 1)
+        np.bitwise_or.at(vox, (pr[ok], pc[ok]), np.left_shift(np.uint64(1), b.astype(np.uint64)))
+        tb = np.clip((hag / BIN_M).astype(np.int64), 0, BINS - 1)                    # every tree cell has at least its top
+        vox = np.where(tree, vox | np.left_shift(np.uint64(1), tb.astype(np.uint64)), np.uint64(0))
+        nv = int(sum(int(((vox >> np.uint64(i)) & np.uint64(1)).sum()) for i in range(BINS)))
     return surf, mask, base, dict(thin=thin, tallest=float(np.max(np.where(tree | bld, hag, 0.0))), filled=int((~base_ok).sum()), found=int((found & bld).sum()),
-                                  parked=int(parked.sum()), pins=pins)
+                                  parked=int(parked.sum()), pins=pins, vox=vox, voxels=nv, water_added=added)
 
 
 def look(path, surf, mask, cell):
@@ -324,7 +420,7 @@ def main():
     ap.add_argument('--trip'); ap.add_argument('--pins'); ap.add_argument('--q')
     ap.add_argument('--project', default='WY_GrandTetonNP_1_D22'); ap.add_argument('--prefix', default='gtd')
     ap.add_argument('--pad', type=float, default=250.0); ap.add_argument('--merge', type=float, default=150.0); ap.add_argument('--close', type=float, default=600.0)
-    ap.add_argument('--only', help='comma list of box ids')
+    ap.add_argument('--only', help='comma list of box ids'); ap.add_argument('--suffix', default='', help='added to every file name, e.g. _v3'); ap.add_argument('--out', default='files', help='folder under the work dir')
     ap.add_argument('--wide-file', help="the region's wide file, to print how the survey's ground sits against it"); ap.add_argument('--migration', default='terrain_detail.sql')
     a = ap.parse_args(); os.makedirs(a.work, exist_ok=True)
     if not a.pins and not a.trip and os.path.exists(f"{a.work}/pins.json"): a.pins = f"{a.work}/pins.json"
@@ -341,10 +437,10 @@ def main():
               + (f"  [WARN] pokes out of fine box {', '.join(b['outside'])}: the page will leave the detail out there" if b['outside'] else ''))
     if a.cmd == 'plan': return
 
-    os.makedirs(f"{a.work}/files", exist_ok=True); os.makedirs(f"{a.work}/look", exist_ok=True)
+    F = f"{a.work}/{a.out}"; os.makedirs(F, exist_ok=True); os.makedirs(f"{a.work}/look", exist_ok=True)
     sv = Survey(a.project, f"{a.work}/cache"); cb = sv.conf
     regions = {r['id']: r for r in pins.get('regions', [])}; wide = {}
-    rows, uploads, missing, table, pinrep = [], [], [], [], []
+    rows, uploads, missing, table, pinrep, more = [], [], [], [], [], {}
     for b in boxes:
         t0 = time.time(); bid, box, n, cell = b['id'], b['box'], b['n'], b['cell']
         print(f"\n{bid} ({', '.join(b['stops'])})", flush=True)
@@ -352,31 +448,45 @@ def main():
         x0, y1 = merc(box[0], box[2]); x1, y0 = merc(box[1], box[3])
         if x1 < cb[0] or x0 > cb[3] or y1 < cb[1] or y0 > cb[4]:
             print("  outside the survey: left out"); missing.append((bid, b['stops'], 'outside the survey area')); continue
-        g = grid_box(sv, box, n, lambda s: print('  ' + s, flush=True))
+        say = lambda s: print('  ' + s, flush=True); r = regions.get(b['region']); ww = None
+        if a.wide_file and r:   # the water of the 6 km around first: the box's own water search starts from it too
+            if r['id'] not in wide: wide[r['id']] = read_png(a.wide_file, r['base_m'], r['step_m'])
+            ww = wide_water(sv, (box[0] + box[1]) / 2, (box[2] + box[3]) / 2, (wide[r['id']], (r['north'], r['south'], r['west'], r['east'])), say)
+        g = grid_box(sv, box, n, say, keep=True)
         got = float((g['cnt'] > 0).mean())
         if got < 0.5:
             print(f"  the survey has points in only {got:.0%} of the box: left out"); missing.append((bid, b['stops'], f"survey covers {got:.0%} of the box")); continue
-        surf, mask, base, st = clean(g, box, n, cell, b['stands'])
+        surf, mask, base, st = clean(g, box, n, cell, b['stands'], ww)
         base_m = math.floor(float(surf.min())) - 5
-        hp, mp = f"{a.work}/files/{bid}_lidar.png", f"{a.work}/files/{bid}_mask.png"
+        hp, mp, tp, wp = (f"{F}/{bid}_{k}{a.suffix}.png" for k in ('lidar', 'mask', 'trees', 'water'))
         write_heights(hp, surf, base_m, STEP); write_mask(mp, mask); look(f"{a.work}/look/{bid}.png", surf, mask, cell)
+        extra = dict(trees_path=None, trees_bytes=None, water_path=None, water_bytes=None, water_n=None, water_north=None, water_south=None, water_west=None, water_east=None, voxels=st['voxels'], water_wide_m2=0.0, water_still_m2=0.0, nodata=None)
+        if st['voxels']:
+            write_bytes(tp, st['vox'].astype('<u8').view(np.uint8).reshape(n, n * 8)); extra.update(trees_path=os.path.basename(tp), trees_bytes=os.path.getsize(tp)); uploads.append(tp)
+        if ww is not None:
+            extra.update(water_wide_m2=ww['water_m2'], water_still_m2=ww['still_m2'], nodata=ww['nodata'])
+            if ww['cls'].any():
+                write_bytes(wp, ww['cls']); wb = ww['box']
+                extra.update(water_path=os.path.basename(wp), water_bytes=os.path.getsize(wp), water_n=ww['n'], water_north=wb[0], water_south=wb[1], water_west=wb[2], water_east=wb[3]); uploads.append(wp)
         assert np.abs(read_png(hp, base_m, STEP) - surf).max() <= STEP / 2 + 1e-6
         nt, nb, nw = int((mask >= TREE0).sum()), int((mask == 2).sum()), int((mask == 3).sum()); a2 = cell * cell
         print(f"  cells {n} x {n} at {cell} m; buildings {nb:,} cells ({nb * a2:,.0f} m2, {st['found']:,} cells found as solid raised patches, {st['parked']:,} cells of vans and the like put on the ground), trees {nt:,} ({nt * a2 / 1e4:.2f} ha), water {nw:,} ({nw * a2 / 1e4:.2f} ha); thin high cells removed {st['thin']:,}; "
               f"ground filled in {st['filled']:,} cells; tallest thing {st['tallest']:.1f} m; heights {surf.min():.1f}..{surf.max():.1f} m")
         note = ''
-        r = regions.get(b['region'])
         if a.wide_file and r:
-            if r['id'] not in wide: wide[r['id']] = read_png(a.wide_file, r['base_m'], r['step_m'])
             k = 60; la = box[0] - (np.arange(k) + .5) * (box[0] - box[1]) / k; lo = box[2] + (np.arange(k) + .5) * (box[3] - box[2]) / k
             LA = la[:, None] + 0 * lo[None, :]; LO = lo[None, :] + 0 * la[:, None]
             df = at(base, box, LA, LO) - at(wide[r['id']], (r['north'], r['south'], r['west'], r['east']), LA, LO)
+
             note = f"; ground against the wide grid: middle {np.median(df):+.1f} m, 9 in 10 within {np.percentile(np.abs(df), 90):.1f} m"
+            if st['water_added']: note += f"; {st['water_added']:,} water cells found through the wide layer"
         hs, ms = os.path.getsize(hp), os.path.getsize(mp)
+        print(f"  trees: {st['voxels']:,} filled 0.6 m slices in {nt:,} cells, file {(extra['trees_bytes'] or 0) / 1e3:.0f} KB; wide water file {(extra['water_bytes'] or 0) / 1e3:.1f} KB")
         print(f"  files: heights {hs / 1e3:.0f} KB, mask {ms / 1e3:.1f} KB{note}; {time.time() - t0:.0f} s", flush=True)
         kxl = 111320 * math.cos(math.radians((box[0] + box[1]) / 2))
         rows.append((bid, b['region'], box, n, (box[3] - box[2]) * kxl, (box[0] - box[1]) * 111132, base_m, cell, os.path.basename(hp), hs, os.path.basename(mp), ms))
-        uploads += [hp, mp]; table.append((bid, n, cell, hs, ms, nb, nt, nw, g['total']))
+        more[bid] = extra
+        uploads += [hp, mp]; table.append((bid, n, cell, hs, ms, nb, nt, nw, g['total'], extra))
         for pin in st['pins']:
             who = sorted({f"{sh['stop']} / {sh['subject']}" for sh in pins.get('shots', []) if abs(sh['vlat'] - pin['lat']) < 1.5e-5 and abs(sh['vlng'] - pin['lng']) < 1.5e-5})
             pinrep.append(dict(box=bid, shots=who, **pin))
@@ -389,6 +499,9 @@ def main():
 -- step_m 0.02 here) and a class mask (8-bit: 0 ground / snow, 2 building, 3 water, 8 and up = tree, its canopy top
 -- (value - 8) x 0.2 m above the ground). The page (tools/sun3d/app_view.js, cfg.detail) draws the box inside the
 -- shot's fine box (or the wide grid), buildings as blocks and trees as points; sun times use ground and buildings only.
+-- Two more files a row (round 3): trees_path = the trees' own laser returns (8-bit PNG, n x 8 bytes a line: per cell
+-- 64 bits, bit k = a return in the slice k x trees_bin_m above the ground) and water_path = where the water is in the
+-- 6 km around the box (8-bit PNG, water_n x water_n over water_north..water_east: 0 none, 1 moving, 2 still).
 -- A table of its own for the same reason as terrain_near_regions: older app builds read the other two tables whole.
 --
 -- Before applying: upload the files listed in upload.txt to bucket `terrain`.
@@ -406,6 +519,9 @@ create table if not exists public.terrain_detail_regions (
   bytes integer,
   mask_path text,                     -- class mask, object path in bucket terrain
   mask_bytes integer,
+  trees_path text, trees_bytes integer, trees_bins integer, trees_bin_m double precision,
+  water_path text, water_bytes integer, water_n integer,
+  water_north double precision, water_south double precision, water_west double precision, water_east double precision,
   note text,
   created_at timestamptz not null default now()
 );
@@ -417,15 +533,22 @@ do $$ begin
 end $$;
 """
     if rows:
-        sql += "\ninsert into public.terrain_detail_regions (id, parent, north, south, west, east, n, width_m, depth_m, base_m, step_m, cell_m, path, bytes, mask_path, mask_bytes, note) values\n" + ",\n".join(
-            f"  ('{bid}', '{reg}', {box[0]}, {box[1]}, {box[2]}, {box[3]}, {n}, {w:.1f}, {d:.1f}, {base_m}, {STEP}, {cell}, '{hp}', {hs}, '{mp}', {ms}, 'USGS 3DEP lidar {a.project}, ground + buildings per {cell} m cell, tree canopy heights in the mask.')"
+        sq = lambda v: 'null' if v is None else (f"'{v}'" if isinstance(v, str) else str(v))
+        sql += "\ninsert into public.terrain_detail_regions (id, parent, north, south, west, east, n, width_m, depth_m, base_m, step_m, cell_m, path, bytes, mask_path, mask_bytes, trees_path, trees_bytes, trees_bins, trees_bin_m, water_path, water_bytes, water_n, water_north, water_south, water_west, water_east, note) values\n" + ",\n".join(
+            f"  ('{bid}', '{reg}', {box[0]}, {box[1]}, {box[2]}, {box[3]}, {n}, {w:.1f}, {d:.1f}, {base_m}, {STEP}, {cell}, '{hp}', {hs}, '{mp}', {ms}, "
+            f"{sq(more[bid]['trees_path'])}, {sq(more[bid]['trees_bytes'])}, {BINS if more[bid]['trees_path'] else 'null'}, {BIN_M if more[bid]['trees_path'] else 'null'}, "
+            + ", ".join(sq(more[bid][k]) for k in ('water_path', 'water_bytes', 'water_n', 'water_north', 'water_south', 'water_west', 'water_east'))
+            + f", 'USGS 3DEP lidar {a.project}, ground + buildings per {cell} m cell, tree canopy heights in the mask.')"
             for bid, reg, box, n, w, d, base_m, cell, hp, hs, mp, ms in rows) + "\non conflict (id) do nothing;\n"
     if missing: sql += "\n-- Not covered by the survey, no detail there: " + "; ".join(f"{', '.join(stops)} ({why})" for _, stops, why in missing) + "\n"
     open(f"{a.work}/{a.migration}", 'w').write(sql); open(f"{a.work}/upload.txt", 'w').write("\n".join(uploads) + "\n")
-    json.dump([dict(id=bid, parent=reg, north=box[0], south=box[1], west=box[2], east=box[3], n=n, width_m=w, depth_m=d, base_m=base_m, step_m=STEP, cell_m=cell, path=hp, bytes=hs, mask_path=mp, mask_bytes=ms)
+    json.dump([dict(id=bid, parent=reg, north=box[0], south=box[1], west=box[2], east=box[3], n=n, width_m=w, depth_m=d, base_m=base_m, step_m=STEP, cell_m=cell, path=hp, bytes=hs, mask_path=mp, mask_bytes=ms,
+                    trees_bins=BINS if more[bid]['trees_path'] else None, trees_bin_m=BIN_M if more[bid]['trees_path'] else None, **more[bid])
                for bid, reg, box, n, w, d, base_m, cell, hp, hs, mp, ms in rows], open(f"{a.work}/detail.json", 'w'), indent=1)   # the rows again, for tests
-    print("\nbox | grid | cell | heights KB | mask KB | building cells | tree cells | water cells | points")
-    for bid, n, cell, hs, ms, nb, nt, nw, tot in table: print(f"{bid} | {n} x {n} | {cell} m | {hs / 1e3:.0f} | {ms / 1e3:.1f} | {nb:,} | {nt:,} | {nw:,} | {tot:,}")
+    print("\nbox | grid | cell | heights KB | mask KB | trees KB | wide water KB | building cells | tree cells | tree slices | water in the box m2 | water in the 6 km ha (still) | no data in the 6 km")
+    for bid, n, cell, hs, ms, nb, nt, nw, tot, ex in table:
+        print(f"{bid} | {n} x {n} | {cell} m | {hs / 1e3:.0f} | {ms / 1e3:.1f} | {(ex['trees_bytes'] or 0) / 1e3:.0f} | {(ex['water_bytes'] or 0) / 1e3:.1f} | {nb:,} | {nt:,} | {ex['voxels']:,} | {nw * cell * cell:,.0f} | "
+              f"{ex['water_wide_m2'] / 1e4:.1f} ({ex['water_still_m2'] / 1e4:.1f}) | {'' if ex['nodata'] is None else format(ex['nodata'], '.1%')}")
     print(f"\nwrote {a.work}/{a.migration} ({len(rows)} boxes) and {a.work}/upload.txt ({len(uploads)} files, {sum(os.path.getsize(p) for p in uploads) / 1e6:.1f} MB)")
     json.dump(pinrep, open(f"{a.work}/pins_report.json", 'w'), indent=1)
     f1 = lambda v: 'none in the box' if v is None else f"{v:.0f} m"

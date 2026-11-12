@@ -42,6 +42,10 @@ export type TerrainDetail = {
   n: number; base_m: number; step_m: number;
   path: string; bytes: number | null;
   mask_path: string | null; mask_bytes: number | null;
+  // round 3 (absent until its migration is applied): the trees' own laser returns, and where the water is in the 6 km around
+  trees_path?: string | null; trees_bytes?: number | null; trees_bins?: number | null; trees_bin_m?: number | null;
+  water_path?: string | null; water_bytes?: number | null; water_n?: number | null;
+  water_north?: number | null; water_south?: number | null; water_west?: number | null; water_east?: number | null;
 };
 type Point = { lat: number; lng: number };
 type Box = { north: number; south: number; west: number; east: number };
@@ -113,7 +117,7 @@ async function loadDetail(): Promise<TerrainDetail[]> {
   if (details) return details;
   try {
     const call = supabase.from('terrain_detail_regions')
-      .select('id, parent, north, south, west, east, n, base_m, step_m, path, bytes, mask_path, mask_bytes');
+      .select('*');   // every column there is: naming one the table does not have yet would fail the whole list
     const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('terrain list timed out')), CALL_TIMEOUT_MS));
     const { data: rows, error } = (await Promise.race([call, timeout])) as any;
     if (error || !Array.isArray(rows)) throw error ?? new Error('no detail list');
@@ -184,6 +188,15 @@ export function detailMask(d: TerrainDetail): TerrainFile | null {
   return d.mask_path ? { id: `${d.id}_mask`, path: d.mask_path, bytes: d.mask_bytes } : null;
 }
 
+// The two round 3 files of a detail box, each null when the row has none.
+export function detailTrees(d: TerrainDetail): TerrainFile | null {
+  return d.trees_path ? { id: `${d.id}_trees`, path: d.trees_path, bytes: d.trees_bytes ?? null } : null;
+}
+export function detailWater(d: TerrainDetail): TerrainFile | null {
+  return d.water_path && d.water_n && d.water_north != null && d.water_south != null && d.water_west != null && d.water_east != null
+    ? { id: `${d.id}_water`, path: d.water_path, bytes: d.water_bytes ?? null } : null;
+}
+
 type TerrainFile = { id: string; path: string; bytes: number | null };
 const fileFor = (r: TerrainFile) => `${DIR}terrain_${r.id}_${r.bytes ?? 0}.png`;
 const fetching: Record<string, Promise<boolean> | undefined> = {};
@@ -241,7 +254,7 @@ export function terrainData(r: TerrainFile): Promise<string | null> {
 // ---- Saved ahead for a whole trip ----
 
 // areas = what the trip's stand spots need (wide regions, fine boxes, detail boxes); saved = how many are on the phone.
-// A detail box is one area with two files (heights + class mask): it counts as saved when both are there.
+// A detail box is one area with up to four files (heights, class mask, tree returns, wide water): saved when all are there.
 export type TripTerrain = { areas: number; saved: number; bytes: number; busy: boolean };
 const tripState: Record<string, TripTerrain | undefined> = {};
 const tripRun: Record<string, { again: Shot[] | null } | undefined> = {};
@@ -265,7 +278,7 @@ async function tripAreas(shots: Shot[]): Promise<TerrainFile[][]> {
     const nr = pickNear(allNear, r, sh.v, sh.s);
     if (nr) out.set(`n:${nr.id}`, [nr]);
     const dt = pickDetail(allDetail, r, nr, sh.v, sh.s);
-    if (dt) { const m = detailMask(dt); out.set(`d:${dt.id}`, m ? [dt, m] : [dt]); }
+    if (dt) out.set(`d:${dt.id}`, [dt, detailMask(dt), detailTrees(dt), detailWater(dt)].filter((f): f is TerrainFile => !!f));
   }
   return [...out.values()];
 }
