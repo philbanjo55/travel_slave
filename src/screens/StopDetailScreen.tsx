@@ -121,6 +121,10 @@ export default function StopDetailScreen() {
   const fieldPhotos = allPhotos.filter((p: any) => p.photo_type === 'field').sort(byPosition);
 
   const handlePhotoLongPress = (photoId: string, type: string, after?: () => void) => {
+    if (allPhotos.find((p: any) => p.id === photoId)?.borrowed) {
+      Alert.alert('From your real trip', 'This photo belongs to the real trip, so it can only be removed there. Photos you add here stay on the practice trip.');
+      return;
+    }
     Alert.alert('Delete Photo', `Remove this ${type} photo?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => { deletePhoto(photoId); after?.(); } },
@@ -474,7 +478,7 @@ export default function StopDetailScreen() {
         visible={!!viewerPhoto}
         onClose={closeViewer}
         onDelete={(p) => handlePhotoLongPress(p.id, viewerKind, closeViewer)}
-        onMakeFirst={viewerKind === 'reference' ? async (p) => {
+        onMakeFirst={viewerKind === 'reference' && !refPhotos.some((r: any) => r.borrowed) ? async (p) => {
           const ok = await makeFirst(p.id, refPhotos.map((r: any) => r.id));
           if (!ok) Alert.alert('Not saved', 'Could not change the photo order. Check your connection and try again.');
           return ok;
