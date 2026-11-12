@@ -341,8 +341,13 @@ def plan_check_card():
                     if x2 - x1 > 8 and y2 - y1 > 8:
                         return ((x1 + x2) // 2, (y1 + y2) // 2)
             return None
+        # Start from the top of the page and step down: the search above can end below the link (the card's own label
+        # holds the same words, so it is "found" while the link itself is already above the screen; from there the old
+        # loop only went further down and never met it).
+        scroll_top(8)
+        w = C.capture(1.2)
         link = None
-        for _ in range(12):
+        for _ in range(30):
             link = link_xy(w)
             if link is not None and 0.30 * 2400 <= link[1] <= 0.72 * 2400:
                 break
