@@ -18,6 +18,11 @@
 //   S3D.fore({ detail, water, ice })   then its chunks ('detail', 'mask', 'trees', 'water')   then S3D.foreDone().
 //   Foreground chunks sent before done() (the test harness) are treated the same way. `lost` = the graphics context went.
 //   S3D.sun(az, alt)  degrees, from the app's own sun engine      S3D.focal(mm)
+//   Smoothness (12 Nov 2026, see "Smooth by construction" below): while the view is being moved (a drag, the time slider,
+//   walk mode) frames may be drawn lighter and one full-quality frame follows when it stops. When a movement ends the
+//   page posts `perf` {kind: 'look' | 'sun', ms: median frame time, worst, frames, level: 0 full .. 3 low, quality: its
+//   name, levels: {look, sun}, px: canvas pixels while moving, pts: tree points drawn, timed: 'fence' | 'frame'}, at
+//   most once a second. cfg.level = {look, sun} (the `levels` of an earlier page) starts a new page at those levels.
 //   S3D.view(eyeLat, eyeLng, targetLat, targetLng)                S3D.path([[minute, az, alt], ...]) -> 'moments'
 // Two levels (Faroes close-ups): the wide grid (far) draws everything; where a near grid is given, the far mesh is cut
 // out inside it and a second, finer mesh is drawn there (denser around the shot), lit from its own heights, with
@@ -63,7 +68,7 @@
   //    resolution, share of the tree points, size of the light pass, and at the two lowest levels every other point
   //    of the meshes: first the near and detail ones, whose triangles are smaller than a pixel anyway, last the far
   //    one, which is the skyline). When it stops, one frame is drawn at full quality, with the full light pass if
-  //    the sun moved. A single change (a tap) is drawn at full quality at once.
+  //    the sun moved.
   // 4. The governor. Average frame time while moving over SLOW_MS: one level down; under FAST_MS: one level up (a
   //    level that proved too slow right after a step up is not tried again). Two levels are kept, one for looking
   //    around / walking and one for the sun (which also pays for a light pass); the app hands them back at the next
@@ -74,8 +79,7 @@
   const SLOW_MS = 24, FAST_MS = 12, REST = { look: 150, sun: 260, walk: 280 };   // ms after the last change before the sharp frame (walk steps come 130 ms apart; the full light pass is heavy, so the sun waits as long as it always did)
   const PX_MAX = 1400000;   // canvas pixels at most: 2 device pixels a point on a phone screen (412 x 800 at 2 = 1.32 M), less on a bigger one
   const lv = { look: 0, sun: 0 }, noUp = { look: [], sun: [] }, tried = { look: false, sun: false };
-  let act = null, owe = false, quick = false, sharp = false, restTimer = null, lastPerf = -1e9, lensKey = '';
-  const pend = { look: false, sun: false, walk: false };   // a change of this kind is waiting for its sharp frame: the next one makes it a run
+  let act = null, owe = false, quick = false, sharp = false, restTimer = null, resting = false, lastPerf = -1e9, lensKey = '';
   const gate = { sync: null, t0: 0, act: null, gov: false, off: false, wait: false, poll: null };
 
   // A grid: n x n heights (HF, row 0 = north) over a lat/lng box; x0, z0, w, d place it in the far grid's metres.
@@ -946,17 +950,19 @@
   }
   function resize() { const w = window.innerWidth, h = window.innerHeight; if (!R || !w || !h) return; R.cam.aspect = w / h; dirty = true; }   // draw() sizes the canvas
 
-  // A change from outside. A run of changes (a drag; a second sun position or walk step before the first one's sharp
-  // frame, i.e. the slider being dragged or an arrow held) is a movement: drawn at the phone's level. A single change
-  // is drawn at full quality. Either way the sharp frame (full light pass, full resolution, every tree point, every
-  // triangle) comes REST ms after the last change.
+  // A change from outside (the view dragged, a sun position, a walk step): a movement begins or goes on, drawn at the
+  // phone's level. The first change cannot be told from a single tap, so a tap is drawn the same way; on a phone that
+  // keeps up (level 0) that is full quality anyway. The sharp frame (full light pass, full resolution, every tree
+  // point, every triangle) comes REST ms after the last change.
   function touch(kind) {
-    const run = kind === 'look' || pend[kind]; pend[kind] = true;
-    if (run && !act) act = { kind: kind === 'sun' ? 'sun' : 'look', ms: [], sum: 0, n: 0, slow: 0, px: 0, pts: 0 };
-    clearTimeout(restTimer); restTimer = setTimeout(rest, REST[kind]); dirty = true;
+    if (!act) act = { kind: kind === 'sun' ? 'sun' : 'look', ms: [], sum: 0, n: 0, slow: 0, px: 0, pts: 0 };
+    clearTimeout(restTimer); restTimer = setTimeout(rested, REST[kind]); resting = false; dirty = true;
   }
+  // The timer only says "nothing for REST ms": the movement is taken as over at the next frame callback, if still nothing
+  // has come. A page that was held up (and its timers with it) so first hears the changes that were waiting.
+  function rested() { restTimer = null; resting = true; }
   function rest() {
-    clearTimeout(restTimer); restTimer = null; pend.look = pend.sun = pend.walk = false;
+    clearTimeout(restTimer); restTimer = null; resting = false;
     const a = act, t = performance.now(); act = null;
     if (a && a.ms.length >= 3 && t - lastPerf >= 1000) {   // a number for the phone test: how the movement that just ended went
       const m = a.ms.slice().sort((x, y) => x - y); lastPerf = t;
@@ -1031,7 +1037,7 @@
     R.halo.position.copy(R.disc.position); R.halo.lookAt(cam.position);
     R.renderer.render(R.scene, cam); dirty = false; frames++;
     owe = quick || q !== QL[0]; sharp = false;
-    if (owe && restTimer == null) restTimer = setTimeout(rest, REST.sun);   // a light change nobody touched for (the foreground coming in, ice on / off)
+    if (owe && restTimer == null && !resting) restTimer = setTimeout(rested, REST.sun);   // a light change nobody touched for (the foreground coming in, ice on / off)
     if (a) { a.px = cw * ch; a.pts = pts; }
     gate.t0 = t0; gate.act = a; gate.gov = !fresh && foreState !== 1;
     if (!gate.off && !R.lost) {
@@ -1042,6 +1048,7 @@
     if (gate.off) gate.wait = true;
   }
   function tick() {
+    if (resting) rest();
     if (R) { const t = performance.now(), free = gpuFree(t); if (dirty && free) draw(t); }
     requestAnimationFrame(tick);
   }
