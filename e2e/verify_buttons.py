@@ -626,7 +626,16 @@ def sun_3d():
             tab = C.capture(3)
             if V.has(tab, 'Open the 3D view full screen') or V.has(tab, 'Looking '):
                 break
-        print('INFO sun3d offline, after the tab tap: ' + ' | '.join(x for x in tab.all_texts if len(x.strip()) > 2)[:1200], flush=True)
+        def where(st, words=('SUN & MOON', 'Looking ', 'millimetre lens', '3D terrain', 'terrain', 'Horizon', 'Photo', 'NO SUN', 'full screen')):
+            out = []
+            for nd in (st.root.iter('node') if st.root is not None else []):
+                t = (nd.get('text') or nd.get('content-desc') or '').strip()
+                if nd.get('package') == V.PKG and t and (t == '3D' or any(w.lower() in t.lower() for w in words)):
+                    x1, y1, x2, y2 = C.bounds(nd); out.append(f'{t[:40]}@y{y1}-{y2}{"*" if nd.get("selected") == "true" else ""}')
+            return ' ; '.join(out)[:900]
+        print('INFO sun3d offline, at the tab tap (old capture): ' + where(s), flush=True)
+        print('INFO sun3d offline, 36 s after the tab tap: ' + where(tab), flush=True)
+        print('INFO sun3d offline, all texts then: ' + ' | '.join(x for x in tab.all_texts if len(x.strip()) > 2)[:5000], flush=True)
     f0 = scroll_find('Open the 3D view full screen', 8)
     if f0 is not None:
         mid_screen(f0, 'Open the 3D view full screen')
