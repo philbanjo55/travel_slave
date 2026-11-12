@@ -10,10 +10,12 @@ export type TripCtx = {
   today: string; nowClock: string; sun?: Record<string, { first_light: string; sunrise: string; sunset: string }>;
   // Rental gear (skis, snowshoes), when the trip has it: the places that need it and when it is picked up / returned.
   gear?: { places: string[]; pickup?: { date: string; time: string }; ret?: { date: string; time: string } };
+  // Notes already in force (today or later), in the words Phil saw when he OK'd them.
+  inForce?: string[];
 };
 // A rule as the planner reads it (solver-replay NoteRule): stop ids, HH:MM in the trip's time zone, dates.
 export type Rule = { type: string; dates?: string[]; from_date?: string; to_date?: null; time?: string; from?: string; to?: string;
-  at?: string | null; label?: string; stops?: string[]; places?: string[]; then?: string[]; then_places?: string[]; minutes?: number; count?: number; factor?: number; tier?: string; why?: string };
+  at?: string | null; off_trip?: boolean; label?: string; stops?: string[]; places?: string[]; then?: string[]; then_places?: string[]; minutes?: number; count?: number; factor?: number; tier?: string; why?: string };
 
 const TYPES = ['back_by', 'leave_after', 'busy', 'skip', 'must', 'max_visit', 'max_leg', 'stay', 'day_off', 'max_stops',
   'slow_roads', 'no_gear', 'gear_to', 'gear_from', 'first', 'last', 'before', 'optional', 'only_top', 'arrive_by'] as const;
@@ -23,7 +25,7 @@ export const SYSTEM = `You read a short note from a landscape photographer on a 
 Rule types (use only these):
 - back_by {time}: be back at the hotel by this time. When he gives the time to be back ("back by 6", "back by 6 for dinner"), use exactly that time. Only when he gives the time of the thing itself ("dinner at 7", "a 6pm reservation") work back from it: about 20 minutes before, for getting ready and the drive.
 - leave_after {time}: do not leave the hotel before this time. "Sleep in" with no time = 09:00; "sleep in till 9" = 09:00; "breakfast at 8" = leaving about 45 minutes after it starts; "nothing before 10" = 10:00.
-- busy {from, to, at_place, label}: a block of time that is taken (lunch, a call, a booking). at_place is one of the trip's places if it happens there, else null (the hotel). label is 2-4 words, e.g. "Lunch at the inn".
+- busy {from, to, at_place, off_trip, label}: a block of time that is taken (lunch, a call, a booking). at_place is one of the trip's places if it happens there, else null (the hotel). off_trip is true only when it happens at a place that is not in the list and is not the hotel (see Places). label is 2-4 words, e.g. "Lunch at the inn".
 - skip {places}: leave these places out.
 - must {places, from, to}: he wants this place on that day. from / to bound when the visit STARTS, only if he says when: "at sunrise" = from 45 minutes before sunrise to sunrise; "at sunset" = from 90 to 30 minutes before sunset; "morning" = from first light to 11:00; "afternoon" = from 12:00; "around 3" = 14:30 to 15:30. With no time said, from and to are null (T picks the best light).
 - max_visit {minutes}: no single stop longer than this ("tired", "nothing long", "easy on the legs" = 90 unless he gives a number).
@@ -53,6 +55,7 @@ Places:
 - "Skip X" / "not doing X" with no day words: if X is on the note's day in the places list, skip it that day. If X is only on other days, ask whether he means the whole trip or which day (do not pick rest of trip yourself). This asking is only for skips: every other rule with no day words is for the note's day.
 - Never work out a place from a description alone ("the cliffs", "the waterfall", "the lake"): use it only if exactly one listed place has that word in its name, else ask or leave it in cant_use.
 - A road or trail closure: skip the listed places you are confident need that road or trail; if you are not confident which places it affects, ask.
+- A place that is NOT in the list and is not the hotel (a cafe, a museum, a sleigh ride, a shop, a photo spot he has not added to the trip): T cannot plan a stop there or work out the drive, so T only keeps the time free: one busy rule with at_place null, off_trip true and the thing as the label ("Elk Refuge sleigh ride"). It needs a start: a clock time he gives, or "at sunrise" (from 45 minutes before sunrise) / "at sunset" (from 60 minutes before sunset) from the day's sun times. Length: what he says, else 1 hour (2 hours for a museum, a tour or a meal out, 90 minutes for a photo spot); when you assume the length, say so in why ("Sleigh ride at 2, length not given: 1 hour assumed"). If he gives no time at all ("I want to stop at the wildlife museum today"), do not guess: ask when, with three 2-hour blocks that fit a normal day as options (e.g. "10 AM to 12 PM", "1 PM to 3 PM", "3 PM to 5 PM") plus "Never mind"; an answer of "Never mind" means no rules. Do not put "it is not one of the trip's places" in cant_use (the preview says it); the one exception is a photo spot, where cant_use gets: "<name> as a photo stop: it is not on the trip, so T only keeps the time free. Add it to the trip in the app to have T plan its light and weather." Dinner out in the evening stays a back_by, as above. "I'm at <a place not listed>" is still cant_use (see now).
 
 Right now (now): only when the trip is under way. These are about this very moment, whichever day card they were typed on; they are not rules: T re-plans the rest of today from them once. Leave now null otherwise.
 - here_place: where he says he is ("I'm at Oxbow", "still at the barns", "back at the hotel" = "hotel"). A listed place or "hotel"; a place that is not listed goes in cant_use.
@@ -64,6 +67,8 @@ Right now (now): only when the trip is under way. These are about this very mome
 What happened (recap): when he reports how a place went, today or earlier on the trip, one item per place: result "nailed" (he got the shot he wanted: "nailed it", "got a great one", "got the shot"), "got" (he got something but wants better: "got it but flat light", "ok, would go back"), "missed" (no shot: "clouded out", "missed it", "didn't get it", "skipped it"). Only listed places, only results he reports (never a plan or a wish). A recap is not a rule: do not add a skip for a place he nailed (T stops planning it by itself). "Done with X for the rest of the trip" with no word on how it went is a skip, not a recap. Praise for the light or the day with no result ("the light was amazing at Oxbow") is not a recap: cant_use.
 
 Questions (question): when the note asks T something instead of telling it ("what if we skip Jenny Lake?", "why is Oxbow on Thursday?", "what's the best day for Mormon Row?", "when should I do the barns?"), fill question and leave now and recap empty. kind: "what_if" (what would happen if...: then rules holds the "if" as rules, exactly as if he had told T to do it, and nothing else), "why" (why a place is where it is on the plan), "best_day" (which day or time suits a place), "other" (anything else: T cannot answer it yet). places = the listed places the question is about. For why, best_day and other, rules stays empty.
+
+Notes already in force: the list (when there is one) holds what he has already told T, in the words he saw. When the new note pulls against one of them, never answer as if that note were not there, and never add a rule that fights it. Say in cant_use which note is in the way, quoting it, and that he can remove it with its x. The usual case: he wants an earlier start ("start earlier", "wake up at 5", "up early tomorrow", "leave at 6") on a day with a "Leave no earlier than ..." note: cant_use gets one sentence like: An earlier start on Thu 12 Nov: your note "Leave no earlier than 9 AM" is in the way. Remove it (tap its x) and T starts at first light again. The same goes for wanting a place a note leaves out, or a late evening on a day with a "Be back ... by" note. With no note in the way, an earlier start needs no rule (T already starts from first light when the light is worth it): say that in cant_use, as before. A new note that only repeats one in force: say it is already in force, no rule.
 
 When to ask instead of guessing: if the note could mean two different things that would change the plan (which place, which day, what time), return one short question in ask with 2-4 short answer options, and no rules. Do not ask when a sensible default above covers it.
 
@@ -80,7 +85,7 @@ export function buildSchema(ctx: TripCtx) {
       ask: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, required: ['question', 'options'],
         properties: { question: { type: 'string' }, options: { type: 'array', items: { type: 'string' } } } }] },
       rules: { type: 'array', items: { type: 'object', additionalProperties: false,
-        required: ['type', 'dates', 'rest_of_trip', 'time', 'from', 'to', 'places', 'then_places', 'at_place', 'minutes', 'count', 'factor', 'tier', 'label', 'why'],
+        required: ['type', 'dates', 'rest_of_trip', 'time', 'from', 'to', 'places', 'then_places', 'at_place', 'off_trip', 'minutes', 'count', 'factor', 'tier', 'label', 'why'],
         properties: {
           type: { type: 'string', enum: [...TYPES] },
           dates: { type: 'array', items: { type: 'string', enum: ctx.dates } },
@@ -89,7 +94,7 @@ export function buildSchema(ctx: TripCtx) {
           places: { type: 'array', items: { type: 'string', enum: places } },
           then_places: { type: 'array', items: { type: 'string', enum: places } },
           factor: { type: ['number', 'null'] }, tier: { type: ['string', 'null'] },
-          at_place: NULLSTR, minutes: { type: ['integer', 'null'] }, count: { type: ['integer', 'null'] }, label: NULLSTR, why: { type: 'string' },
+          at_place: NULLSTR, off_trip: { type: 'boolean' }, minutes: { type: ['integer', 'null'] }, count: { type: ['integer', 'null'] }, label: NULLSTR, why: { type: 'string' },
         } } },
       now: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, required: ['here_place', 'late_minutes', 'stay_minutes', 'sky', 'why'],
         properties: {
@@ -131,6 +136,7 @@ export function userText(ctx: TripCtx, date: string, text: string, answer: { que
   }
   if (ctx.gear?.places.length) L.push('', `Rental gear (skis / snowshoes): picked up ${ctx.gear.pickup ? `${dayWords(ctx.gear.pickup.date)} ${ctx.gear.pickup.time}` : 'on the trip'}, returned ${ctx.gear.ret ? `${dayWords(ctx.gear.ret.date)} ${ctx.gear.ret.time}` : 'on the trip'}. Places that need it: ${ctx.gear.places.join(', ')}.`);
   else L.push('', 'This trip has no rental gear: do not use no_gear, gear_to or gear_from.');
+  if (ctx.inForce?.length) L.push('', 'Notes already in force (he can remove one with its x):', ...ctx.inForce.map(t => `- ${t}`));
   L.push('', `Note: "${text}"`);
   if (answer) L.push('', `You asked: "${answer.question}". He answered: "${answer.choice}". Do not ask again; use the answer.`);
   return L.join('\n');
@@ -163,7 +169,7 @@ export function toRules(ctx: TripCtx, date: string, raw: any[]): { rules: Rule[]
       case 'busy': {
         const a = t(r.from), b = t(r.to); if (!a || !b || b <= a || hm(b) - hm(a) > 600) { bad('the busy time'); break; }
         const at = ctx.places.find(p => p.name === r.at_place)?.ids[0] ?? null;
-        rules.push({ type: 'busy', from: a, to: b, at, label: (typeof r.label === 'string' && r.label.trim() ? r.label.trim().slice(0, 40) : 'Busy') + ' (your note)', ...scope, why }); break;
+        rules.push({ type: 'busy', from: a, to: b, at, ...(r.off_trip === true && !at ? { off_trip: true } : {}), label: (typeof r.label === 'string' && r.label.trim() ? r.label.trim().slice(0, 40) : 'Busy') + ' (your note)', ...scope, why }); break;
       }
       case 'skip': if (!stops.length) { bad('the place to skip'); break; } rules.push({ type: 'skip', stops, places: names, ...scope, why }); break;
       case 'must': {
@@ -209,7 +215,7 @@ export function sayLines(ctx: TripCtx, rules: Rule[]): { text: string; when: str
     const p = list(r.places ?? []);
     const text = r.type === 'back_by' ? `Be back at ${hotelOn(r)} by ${clock12(r.time!)}`
       : r.type === 'leave_after' ? `Leave no earlier than ${clock12(r.time!)}`
-      : r.type === 'busy' ? `Keep ${clock12(r.from!)} to ${clock12(r.to!)} free: ${r.label!.replace(/ \(your note\)$/, '')}`
+      : r.type === 'busy' ? `Keep ${clock12(r.from!)} to ${clock12(r.to!)} free: ${r.label!.replace(/ \(your note\)$/, '')}${r.off_trip ? `. It isn't one of the trip's places, so T plans the drives as if it were at ${hotelOn(r)}: make the block longer if it's far` : ''}`
       : r.type === 'skip' ? `Leave out ${p}`
       : r.type === 'must' ? `Put ${p} on the plan${r.from && r.to ? `, starting between ${clock12(r.from)} and ${clock12(r.to)}` : r.from ? `, starting after ${clock12(r.from)}` : r.to ? `, starting by ${clock12(r.to)}` : ''}. Only your bookings come first`
       : r.type === 'max_visit' ? `Keep every stop under ${mins(r.minutes!)}`

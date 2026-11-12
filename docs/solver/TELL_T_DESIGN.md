@@ -1,9 +1,8 @@
 # "Tell T about your day" (worksheet g4): design
 
-Status (11 Nov 2026): everything on Phil's list is built except "a place not on the trip" (one question for Phil
-first). Nothing is live: the note-aware planner (solver-replay v100) is NOT deployed, notes are switched on for no
-trip (planner_t_trips.config.tell), the app screens are on the test branch only (claude/planner-buttons-test), and
-two edits to live database functions wait in docs/solver/pending/. See "Built and tested (11 Nov)" at the end.
+Status (11 Nov 2026): everything on Phil's list is built. Live since 11 Nov: the note-aware planner (solver-replay v101) is deployed, notes are switched on for Teton
+Live and the real Grand Teton trip (planner_t_trips.config.tell; Faroes trips off), the app screens are in the TEST
+app, and sky reports beat the cameras (t_truth, 20261111192002). See "Built and tested (11 Nov)" at the end.
 Phil's page: the "Tell T" design artifact (link in the Planner Tracker).
 
 ## What it is
@@ -208,8 +207,23 @@ reading test is one trip, 60 notes.
 
 **Not tested until Phil says go** (each needs a deploy or a live switch)
 - The deployed planner following a real saved note end to end on Teton Live (type, preview, OK, re-plan, delete).
-- A field weather report changing a live re-plan (needs docs/solver/pending/20261111060000_t_field_reports_live.sql).
+- A field weather report changing a live re-plan: done 11 Nov, 19:20 UTC, after `20261111192002_t_truth_field_reports` (cameras said out, a "socked in" note re-planned today in 33 s with the peaks hidden; report voided, day re-planned by the cameras).
 
 **Going live, in order, each on Phil's OK:** 1. deploy solver-replay v100; 2. apply the pending SQL; 3. switch
 `tell` on for Teton Live only and run real notes for a few days; 4. merge the app screens into the work branch (TEST
 app); 5. later, the real trips.
+
+## A place not on the trip (11 Nov 2026, Phil: "your suggestion is fine" = keep the time free, don't add a stop)
+
+- "Sleigh ride at the Elk Refuge at 2", "coffee at Persephone at 10 for an hour", "Add Schwabacher Landing tomorrow at
+  sunrise": one `busy` rule with `off_trip: true`, placed at the hotel. The preview says so: "Keep 2 PM to 3 PM free:
+  Elk Refuge sleigh ride. It isn't one of the trip's places, so T plans the drives as if it were at <hotel>: make the
+  block longer if it's far". No length given = 1 hour (2 hours for a museum / tour / meal out, 90 minutes for a photo
+  spot), said in the line's reason.
+- No time at all ("I want to stop at the wildlife museum today"): T asks when (three 2-hour blocks + "Never mind").
+- A photo spot also gets: add it to the trip in the app to have T plan its light and weather.
+- Unchanged: dinner out in the evening is still "be back by"; "I'm at <a place not listed>" still can't be used.
+- Only `t-notes/logic.ts` changed (prompt, schema field `off_trip`, preview wording). The planner reads the same busy
+  block as before. Tests on a test copy before the live deploy: `notes_test.py --off` 18 of 18; the main 40 again
+  39 of 40 (the miss, "it's snowing hard" read as peaks hidden, is not from this change). Live: a draft off-trip note
+  on Teton Live went through the planner's cost check (Friday lost Willow Flats to fit the hour) and was removed.

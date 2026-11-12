@@ -4,7 +4,8 @@ t-notes function with dry: true (nothing stored). Pass mark (Phil's design): 38 
 place or date in the rest.   python3 tools/tell_t/notes_test.py [case numbers...]"""
 import json, subprocess, sys, concurrent.futures as cf
 
-URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/t-notes'
+import os
+URL = os.environ.get('T_NOTES_URL', 'https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/t-notes')   # T_NOTES_URL: a test copy of the function
 TRIP = '5e247891-d800-4d07-b5e0-8ad748ae2754'   # Grand Teton Winter 2026, 29 Dec - 4 Jan
 A = '2026-12-30T14:40:00Z'                      # Wed 30 Dec, 7:40 AM in Jackson
 D = {'tue': '2026-12-29', 'wed': '2026-12-30', 'thu': '2026-12-31', 'fri': '2027-01-01', 'sat': '2027-01-02', 'sun': '2027-01-03', 'mon': '2027-01-04'}
@@ -179,6 +180,28 @@ FO = [
  ("nothing longer than 3 hours for the rest of the trip", [frest('max_visit', '16', minutes=180)]),
  ("ravnagjogv only if its foggy", {'any': ['ask', 'none', [frest('optional', '16', places=['Ravnagjógv Gorge'])]]}),
 ]
+# A place that is not on the trip (Phil, 11 Nov 2026: keep the time free, do not add a stop). off = rule.off_trip.
+def b(day, fr, to, off=True, **kw): return r('busy', day, **{'from': fr, 'to': to, 'off': off}, **kw)
+OFF = [
+ ("Sleigh ride at the Elk Refuge at 2", [b('wed', '14:00', '15:00', tol_to=60)]),
+ ("Coffee at Persephone at 10 for an hour tomorrow", [b('thu', '10:00', '11:00')]),
+ ("I want to stop at the National Museum of Wildlife Art today", 'ask'),
+ ("wildlife art museum 1 to 3 on Friday", [b('fri', '13:00', '15:00')]),
+ ("Holly wants to see the antler arches in the town square sometime tomorrow", 'ask'),
+ ("Add Schwabacher Landing tomorrow at sunrise", [b('thu', '07:10', '08:40', tol=15, tol_to=45)]),
+ ("dog sledding 9 to 1 on Saturday", [b('sat', '09:00', '13:00')]),
+ ("Lunch at the inn 12 to 2", [b('wed', '12:00', '14:00', off=False)]),
+ ("massage at the hotel spa at 4 for 90 minutes", [b('wed', '16:00', '17:30', off=False)]),
+ ("lunch at Dornans at 12:30", [b('wed', '12:30', '13:30', tol_to=60)]),
+ ("Dinner at Snake River Grill at 7:30", [r('back_by', 'wed', time='19:10', tol=15)]),
+ ("I'm at the Elk Refuge visitor center", 'none'),
+ ("skip the sleigh ride", 'none'),
+ ("sleigh ride at 2 tomorrow and skip Menor's Ferry tomorrow", [b('thu', '14:00', '15:00', tol_to=60), r('skip', 'thu', places=["Menor's Ferry"])]),
+ ("want to shoot Schwabacher Landing sometime this week", ('ask', 'none')),
+ ("National Elk Refuge sleigh ride 10am-11:30 Sunday", [b('sun', '10:00', '11:30')]),
+ ("ice skating in Teton Village tomorrow 3-4", [b('thu', '15:00', '16:00')]),
+ ("snowmobile tour all morning Friday, 8 to noon", [b('fri', '08:00', '12:00')]),
+]
 TRIP_OF = {}
 
 def call(case):
@@ -203,10 +226,11 @@ def match(e, a):
     if 'factor' in e and abs(e['factor'] - (a.get('factor') or 0)) > 0.001: return False
     if 'tier' in e and e['tier'] != a.get('tier'): return False
     if 'then_places' in e and sorted(e['then_places']) != sorted(a.get('then_places') or []): return False
+    if 'off' in e and bool(a.get('off_trip')) != e['off']: return False   # a place not on the trip: T only keeps the time free
     tol = e.get('tol', 0)
     for k in ('time', 'from', 'to'):
         if k in e:
-            if not a.get(k) or abs(mins(e[k]) - mins(a[k])) > tol: return False
+            if not a.get(k) or abs(mins(e[k]) - mins(a[k])) > (e.get('tol_to', tol) if k == 'to' else tol): return False
         elif k == 'from' and e.get('from_any'): pass   # "morning" = from first light: any start is fine
         elif k in ('from', 'to') and e['type'] == 'must' and a.get(k) and not e.get('anytime'): return False   # a time nobody asked for
     return True
@@ -278,6 +302,7 @@ if __name__ == '__main__':
     if '--more' in sys.argv: CASES = MORE; sys.argv.remove('--more')
     if '--fo' in sys.argv: CASES = FO; sys.argv.remove('--fo')
     if '--now' in sys.argv: CASES = NOWC; sys.argv.remove('--now')
+    if '--off' in sys.argv: CASES = OFF; sys.argv.remove('--off')
     pick = [int(x) for x in sys.argv[1:]] or range(1, len(CASES) + 1)
     with cf.ThreadPoolExecutor(6) as ex: results = list(ex.map(lambda i: (i, call(CASES[i - 1])), pick))
     ok = 0; cost = 0.0; bad = []
