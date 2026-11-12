@@ -438,7 +438,21 @@ def sun_3d():
     if stop is None:
         seen, _ = V.texts_all(6)
         print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
-    t = C.capture(4)
+    # What Android itself says happened in the seconds after the tap (the first three runs lost the app here).
+    for wait in (1.5, 2.5):
+        time.sleep(wait)
+        act = [l.strip() for l in C.adb('shell', 'dumpsys', 'activity', 'activities').splitlines()
+               if 'ResumedActivity' in l or 'mFocusedApp' in l or 'topResumedActivity' in l]
+        print(f'INFO sun3d after tap +{wait}s: focus={C.focus_pkg()} pid={C.adb("shell", "pidof", V.PKG).strip()} ' + ' ¦ '.join(act)[:500], flush=True)
+    words = ('ActivityTaskManager', 'ActivityManager', 'FATAL', 'Fatal signal', 'libc    :', 'DEBUG   :', 'ReactNative', 'ReactHost',
+             'RNCWebView', 'chromium', 'WebView', 'Killing', 'has died', 'Force finishing', 'moveTaskToBack', 'START u0', 'philmframe',
+             'unknown:', 'SoLoader', 'JavascriptException', 'TurboModule', 'Displayed', 'ANR in', 'lowmemorykiller', 'OutOfMemory')
+    lines = [l for l in C.adb('logcat', '-d', '-t', '900', timeout=60).splitlines() if any(w in l for w in words)]
+    for line in lines[-70:]:
+        print('INFO sun3d log ' + line[:300], flush=True)
+    for line in C.adb('logcat', '-d', '-b', 'crash', '-t', '60', timeout=60).strip().splitlines()[-40:]:
+        print('INFO sun3d crash ' + line[:300], flush=True)
+    t = C.capture(1)
     V.show('sun3d-stop-page', t)
     texts = [x for x in t.all_texts if x.strip()]
     opened = len(texts) > 3 and not V.has(t, 'Open the Planner')   # app still on screen, and not the trip page
