@@ -19,7 +19,7 @@
 
   let cfg = null, parts = [], nparts = [], FAR = null, NR = null, maxH = 4250, baseH = 0;
   let R = null;   // everything three.js, once built
-  let eye = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
+  let eye = null, eye0 = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
   const G = 768;  // mesh points per side
 
   // A grid: n x n heights (HF, row 0 = north) over a lat/lng box; x0, z0, w, d place it in the far grid's metres.
@@ -367,6 +367,12 @@
   function inside(p) { return p && p.lat <= cfg.north && p.lat >= cfg.south && p.lng >= cfg.west && p.lng <= cfg.east; }
   function heading() { post({ type: 'look', deg: Math.round(((yaw * 180 / Math.PI) % 360 + 360) % 360) }); }
 
+  const WALK_MAX = 400;
+  function told() {
+    const kz = 111132, kx = 111320 * Math.cos(eye.lat * Math.PI / 180);
+    post({ type: 'eye', lat: eye.lat, lng: eye.lng, moved: Math.round(Math.hypot((eye.lat - eye0.lat) * kz, (eye.lng - eye0.lng) * kx)) });
+    post({ type: 'state', subjectLit: lit(subjPoint(), sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
+  }
   let drag = null;
   function wire() {
     const c = R.canvas;
@@ -378,7 +384,7 @@
   }
 
   window.S3D = {
-    init(c) { cfg = c; parts = []; nparts = []; eye = c.eye; target = c.target; focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    init(c) { cfg = c; parts = []; nparts = []; eye = c.eye; eye0 = c.eye; target = c.target; focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
     chunk(s, which) { (which === 'near' ? nparts : parts).push(s); },
     async done() {
       try {
@@ -395,8 +401,22 @@
     // inline(true): the small view inside a scrolling page. A sideways drag looks around; up-down drags are left to the
     // page (touch-action pan-y), so the two no longer fight. Full screen: free look both ways.
     inline(v) { inline = !!v; const c = document.getElementById('view'); if (c) c.style.touchAction = inline ? 'pan-y' : 'none'; },
-    view(eLat, eLng, tLat, tLng) { eye = { lat: eLat, lng: eLng }; target = { lat: tLat, lng: tLng }; if (!R) return; if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.'); say(''); aim(); relight = dirty = true; heading(); },
+    view(eLat, eLng, tLat, tLng) { eye = { lat: eLat, lng: eLng }; eye0 = eye; target = { lat: tLat, lng: tLng }; if (!R) return; if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.'); say(''); aim(); relight = dirty = true; heading(); },
     recenter() { if (R) { aim(); dirty = true; heading(); } },
+    // Walk mode (12 Nov 2026): step the viewpoint f metres forward and r metres to the right of where the view is
+    // looking, on the ground, at most WALK_MAX metres from the shot's own stand spot. The app is told where the
+    // viewpoint now is ('eye') and whether that spot is in the sun; it asks for the day's first / last light again
+    // (path) when the walking stops. home() goes back to the stand spot.
+    walk(f, r) {
+      if (!R || !eye || !eye0) return;
+      const kz = 111132, kx = 111320 * Math.cos(eye.lat * Math.PI / 180);
+      const de = Math.sin(yaw) * f + Math.cos(yaw) * r, dn = Math.cos(yaw) * f - Math.sin(yaw) * r;
+      const next = { lat: eye.lat + dn / kz, lng: eye.lng + de / kx };
+      const off = Math.hypot((next.lat - eye0.lat) * kz, (next.lng - eye0.lng) * kx);
+      if (!inside(next) || off > WALK_MAX) { post({ type: 'walk', stopped: inside(next) ? 'far' : 'edge', max: WALK_MAX }); return; }
+      eye = next; dirty = true; told();
+    },
+    home() { if (!R || !eye0) return; eye = eye0; aim(); dirty = true; heading(); told(); },
     path(arr) {
       if (!R) return;
       const s = subjPoint(), h = herePoint(); let fs = null, ls = null, fh = null, lh = null;
