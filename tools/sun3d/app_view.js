@@ -1,9 +1,13 @@
 // The 3D sun view that runs inside the app's web view (TEST app, stop page, Sun & Moon -> 3D).
 // The app drives it through window.S3D; it answers with window.ReactNativeWebView.postMessage(JSON).
-//   S3D.init(cfg)   cfg = { n, north, south, west, east, W, D, base, step, ground, eye:{lat,lng}, target:{lat,lng}, focal }
-//   S3D.chunk(b64)  the elevation file, in base64 pieces; then S3D.done()
+//   S3D.init(cfg)   cfg = { n, north, south, west, east, W, D, base, step, ground, eye:{lat,lng}, target:{lat,lng}, focal,
+//                           near?: { n, north, south, west, east, base, step } }   a small fine grid around the shot, inside the wide one
+//   S3D.chunk(b64)  the elevation file, in base64 pieces; S3D.chunk(b64, 'near') for the fine grid's file; then S3D.done()
 //   S3D.sun(az, alt)  degrees, from the app's own sun engine      S3D.focal(mm)
 //   S3D.view(eyeLat, eyeLng, targetLat, targetLng)                S3D.path([[minute, az, alt], ...]) -> 'moments'
+// Two levels (Faroes close-ups): the wide grid (far) draws everything; where a near grid is given, the far mesh is cut
+// out inside it and a second, finer mesh is drawn there (denser around the shot), lit from its own heights, with
+// shadows that carry on into the far grid beyond its edge. The point checks use the finer grid where it holds the pin.
 // Built into src/components/sun/sun3dHtml.ts by tools/sun3d/build_app_html.js. Do not edit the generated file.
 (function () {
   const post = m => { try { window.ReactNativeWebView.postMessage(JSON.stringify(m)); } catch (e) { /* not in the app */ } };
@@ -11,22 +15,35 @@
   const fail = t => { say(t); post({ type: 'error', msg: t }); };
   window.onerror = msg => { post({ type: 'error', msg: String(msg) }); };
 
-  let cfg = null, parts = [], HF = null, N = 0, W = 0, D = 0, maxH = 4250, DXm = 1, DZm = 1;
+  let cfg = null, parts = [], nparts = [], FAR = null, NR = null, maxH = 4250;
   let R = null;   // everything three.js, once built
   let eye = null, target = null, yaw = 0, pitch = 0, focal = 50, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
+  const G = 768;  // mesh points per side
 
-  const hB = (c, r) => {
-    c = Math.max(0, Math.min(N - 1.001, c)); r = Math.max(0, Math.min(N - 1.001, r));
-    const c0 = c | 0, r0 = r | 0, fc = c - c0, fr = r - r0, i = r0 * N + c0;
-    return (HF[i] * (1 - fc) + HF[i + 1] * fc) * (1 - fr) + (HF[i + N] * (1 - fc) + HF[i + N + 1] * fc) * fr;
+  // A grid: n x n heights (HF, row 0 = north) over a lat/lng box; x0, z0, w, d place it in the far grid's metres.
+  const gh = (g, c, r) => {
+    const n = g.n, H = g.HF;
+    c = Math.max(0, Math.min(n - 1.001, c)); r = Math.max(0, Math.min(n - 1.001, r));
+    const c0 = c | 0, r0 = r | 0, fc = c - c0, fr = r - r0, i = r0 * n + c0;
+    return (H[i] * (1 - fc) + H[i + 1] * fc) * (1 - fr) + (H[i + n] * (1 - fc) + H[i + n + 1] * fc) * fr;
   };
-  const cr = p => ({ c: (p.lng - cfg.west) / (cfg.east - cfg.west) * N - 0.5, r: (cfg.north - p.lat) / (cfg.north - cfg.south) * N - 0.5 });
-  function vis(c, r, h, ux, uz, tanA) {
-    let L = 30, d = 0, v = 1;
+  const crg = (g, p) => ({ c: (p.lng - g.west) / (g.east - g.west) * g.n - 0.5, r: (g.north - p.lat) / (g.north - g.south) * g.n - 0.5 });
+  const cr = p => crg(FAR, p);
+  // the grid a pin is read from: the near one when the pin is inside it, past the strip where the two meshes meet
+  const pick = p => {
+    if (NR) { const q = crg(NR, p); if (Math.min((q.c + 0.5) * NR.dx, (NR.n - 0.5 - q.c) * NR.dx, (q.r + 0.5) * NR.dz, (NR.n - 0.5 - q.r) * NR.dz) >= NR.band) return { g: NR, c: q.c, r: q.r }; }
+    const q = cr(p); return { g: FAR, c: q.c, r: q.r };
+  };
+  function vis(p, ux, uz, tanA) {
+    let g = p.g, c = p.c, r = p.r, L = g === NR ? 5 : 30, d = 0, v = 1;
     for (let k = 0; k < 260; k++) {
-      d += L; const cc = c + ux * d / DXm, rr = r + uz * d / DZm, hh = h + 3 + tanA * d;
-      if (cc < 0 || rr < 0 || cc > N - 1 || rr > N - 1 || hh > maxH) break;
-      const cl = hh - hB(cc, rr);
+      d += L; let cc = c + ux * d / g.dx, rr = r + uz * d / g.dz; const hh = p.h + 3 + tanA * d;
+      if (g === NR && (cc < 0 || rr < 0 || cc > g.n - 1 || rr > g.n - 1)) {   // past the near grid's edge: carry on in the far one
+        c = (NR.x0 + (c + 0.5) * NR.dx) / FAR.dx - 0.5; r = (NR.z0 + (r + 0.5) * NR.dz) / FAR.dz - 0.5; g = FAR;
+        cc = c + ux * d / g.dx; rr = r + uz * d / g.dz;
+      }
+      if (cc < 0 || rr < 0 || cc > g.n - 1 || rr > g.n - 1 || hh > maxH) break;
+      const cl = hh - gh(g, cc, rr);
       if (cl <= 0) return 0;
       const s = cl / (d * 0.02); if (s < v) v = s;
       L *= 1.03;
@@ -34,12 +51,14 @@
     return v;
   }
   // the highest grid point close to a pin: a summit pin a few metres off would sit in the summit's own shadow
-  const snap = (p, rad) => { const q = cr(p); let best = null; for (let r = Math.round(q.r) - rad; r <= Math.round(q.r) + rad; r++) for (let c = Math.round(q.c) - rad; c <= Math.round(q.c) + rad; c++) { if (r < 0 || c < 0 || r >= N || c >= N) continue; const h = HF[r * N + c]; if (!best || h > best.h) best = { c, r, h }; } return best; };
+  const snap = (q, rad) => { const g = q.g, n = g.n; let best = null; for (let r = Math.round(q.r) - rad; r <= Math.round(q.r) + rad; r++) for (let c = Math.round(q.c) - rad; c <= Math.round(q.c) + rad; c++) { if (r < 0 || c < 0 || r >= n || c >= n) continue; const h = g.HF[r * n + c]; if (!best || h > best.h) best = { g, c, r, h }; } return best; };
   const sunVec = (az, alt) => { const a = alt * Math.PI / 180, z = az * Math.PI / 180; return { x: Math.sin(z) * Math.cos(a), y: Math.sin(a), z: -Math.cos(z) * Math.cos(a), tan: Math.tan(a), hx: Math.sin(z), hz: -Math.cos(z) }; };
-  const far = () => { const a = cr(eye), b = cr(target); return Math.hypot((b.c - a.c) * DXm, (b.r - a.r) * DZm); };
-  const subjPoint = () => { const q = far() > 3000 ? snap(target, 4) : null; if (q) return q; const c = cr(target); return { c: c.c, r: c.r, h: hB(c.c, c.r) + 6 }; };
-  const herePoint = () => { const c = cr(eye); return { c: c.c, r: c.r, h: hB(c.c, c.r) }; };
-  const lit = (p, az, alt) => { if (alt <= 0) return false; const v = sunVec(az, alt); return vis(p.c, p.r, p.h, v.hx, v.hz, v.tan) > 0.5; };
+  const far = () => { const a = cr(eye), b = cr(target); return Math.hypot((b.c - a.c) * FAR.dx, (b.r - a.r) * FAR.dz); };
+  const subjPoint = () => { const t = pick(target), q = far() > 3000 ? snap(t, t.g === NR ? 6 : 4) : null; if (q) return q; return { g: t.g, c: t.c, r: t.r, h: gh(t.g, t.c, t.r) + 6 }; };
+  const herePoint = () => { const e = pick(eye); return { g: e.g, c: e.c, r: e.r, h: gh(e.g, e.c, e.r) }; };
+  // where the camera stands: on the fine grid the highest ground within a step, so a pin on a steep slope does not put the eye inside the hill
+  const eyeH = e => { let h = gh(e.g, e.c, e.r); if (e.g === NR) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + 3; };
+  const lit = (p, az, alt) => { if (alt <= 0) return false; const v = sunVec(az, alt); return vis(p, v.hx, v.hz, v.tan) > 0.5; };
 
   const KEY = [
     [-18, [1, .5, .3], 0, [.030, .036, .060], [.010, .014, .035], [.030, .040, .080]], [-8, [1, .5, .3], 0, [.085, .105, .180], [.050, .075, .190], [.200, .190, .300]],
@@ -57,6 +76,9 @@
   const LIGHT_FS = `
     precision highp float;
     uniform sampler2D hmap; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec2 size; uniform float texel; uniform float snowMode; uniform float maxH;
+    #ifdef NEAR
+    uniform sampler2D fmap; uniform vec4 rect; uniform vec2 fsize; uniform float step0;
+    #endif
     varying vec2 vUv;
     float H(vec2 uv) { vec2 t = texture2D(hmap, uv).rg; return t.r + t.g; }
     float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -87,6 +109,22 @@
         float lam = dot(n, sunDir);
         if (lam > 0.) {
           vec2 dir = normalize(sunDir.xz) / size; float tanA = sunDir.y / length(sunDir.xz);
+    #ifdef NEAR
+          float L = step0, dist = 0., v = 1.;
+          for (int k = 0; k < 128; k++) {
+            dist += L; vec2 p = vUv + dir * dist; float hh = h + 3. + tanA * dist;
+            if (hh > maxH) break;
+            float gr;
+            if (p.x < 0. || p.y < 0. || p.x > 1. || p.y > 1.) {
+              vec2 q = (rect.xy + p * rect.zw) / fsize;
+              if (q.x < 0. || q.y < 0. || q.x > 1. || q.y > 1.) break;
+              vec2 t = texture2D(fmap, q).rg; gr = t.r + t.g;
+            } else gr = H(p);
+            float cl = hh - gr;
+            if (cl <= 0.) { v = 0.; break; }
+            v = min(v, cl / (dist * .02)); L *= 1.045;
+          }
+    #else
           float L = 34., dist = 0., v = 1.;
           for (int k = 0; k < 110; k++) {
             dist += L; vec2 p = vUv + dir * dist; float hh = h + 3. + tanA * dist;
@@ -95,82 +133,170 @@
             if (cl <= 0.) { v = 0.; break; }
             v = min(v, cl / (dist * .02)); L *= 1.045;
           }
+    #endif
           d = lam * v;
         }
       }
       vec3 c = alb * (amb * (.72 + .28 * n.y) + sunCol * d);
       gl_FragColor = vec4(pow(min(c * .9, vec3(1.)), vec3(.62)), 1.);
     }`;
+  // The far mesh. With a near grid (HOLE) it is cut out inside the near box: untouched for the first `keep` metres inside the
+  // edge (the near mesh matches it there), then pushed down under the near mesh, and not drawn at all past `band` metres.
   const TERRAIN_VS = `
     uniform sampler2D hmap; uniform vec2 size; varying vec2 vUv; varying float vDist;
-    void main() { vUv = position.xz; vec2 t = texture2D(hmap, vUv).rg; vec4 mv = viewMatrix * vec4(vUv.x * size.x, t.r + t.g, vUv.y * size.y, 1.); vDist = length(mv.xyz); gl_Position = projectionMatrix * mv; }`;
+    #ifdef HOLE
+    uniform vec4 hole; uniform float keep; uniform float band;
+    #endif
+    void main() {
+      vUv = position.xz; vec2 t = texture2D(hmap, vUv).rg; float y = t.r + t.g;
+    #ifdef HOLE
+      vec2 w = vUv * size; float din = min(min(w.x - hole.x, hole.z - w.x), min(w.y - hole.y, hole.w - w.y));
+      y -= clamp(din - keep, 0., band) * .5;
+    #endif
+      vec4 mv = viewMatrix * vec4(vUv.x * size.x, y, vUv.y * size.y, 1.); vDist = length(mv.xyz); gl_Position = projectionMatrix * mv;
+    }`;
   const TERRAIN_FS = `
     precision highp float; uniform sampler2D lmap; uniform vec3 fogCol; uniform float fogD; varying vec2 vUv; varying float vDist;
-    void main() { vec3 c = texture2D(lmap, vUv).rgb; float f = 1. - exp(-pow(fogD * vDist, 2.)); gl_FragColor = vec4(mix(c, fogCol, f), 1.); }`;
+    #ifdef HOLE
+    uniform vec2 size; uniform vec4 hole; uniform float band;
+    #endif
+    void main() {
+    #ifdef HOLE
+      vec2 w = vUv * size; if (min(min(w.x - hole.x, hole.z - w.x), min(w.y - hole.y, hole.w - w.y)) > band) discard;
+    #endif
+      vec3 c = texture2D(lmap, vUv).rgb; float f = 1. - exp(-pow(fogD * vDist, 2.)); gl_FragColor = vec4(mix(c, fogCol, f), 1.);
+    }`;
+  // The near mesh: its points bunch up around `focus` (the shot), its outer ring hangs down as a skirt, and toward the box
+  // edge both its heights and its colours fade into the far grid's, so the two meshes meet without a step.
+  const NEAR_VS = `
+    uniform sampler2D hmap; uniform sampler2D fmap; uniform vec4 rect; uniform vec2 fsize; uniform vec2 focus; uniform float keep; uniform float band;
+    varying vec2 vUv; varying vec2 vF; varying float vT; varying float vDist;
+    float wp(float s, float f) { float d = s - f; float m = d < 0. ? f : 1. - f; if (m < .0005) return f; float x = abs(d) / m; return f + sign(d) * m * x * (.35 + .65 * x * x); }
+    void main() {
+      vec2 uv = vec2(wp(position.x, focus.x), wp(position.z, focus.y));
+      vec2 w = rect.xy + uv * rect.zw; vUv = uv; vF = w / fsize;
+      float din = min(min(uv.x, 1. - uv.x) * rect.z, min(uv.y, 1. - uv.y) * rect.w);
+      vT = smoothstep(keep, band, din);
+      vec2 a = texture2D(hmap, uv).rg; vec2 b = texture2D(fmap, vF).rg;
+      float y = mix(b.r + b.g, a.r + a.g, vT) - position.y * 90.;
+      vec4 mv = viewMatrix * vec4(w.x, y, w.y, 1.); vDist = length(mv.xyz); gl_Position = projectionMatrix * mv;
+    }`;
+  const NEAR_FS = `
+    precision highp float; uniform sampler2D lmap; uniform sampler2D flmap; uniform vec3 fogCol; uniform float fogD; varying vec2 vUv; varying vec2 vF; varying float vT; varying float vDist;
+    void main() { vec3 c = mix(texture2D(flmap, vF).rgb, texture2D(lmap, vUv).rgb, vT); float f = 1. - exp(-pow(fogD * vDist, 2.)); gl_FragColor = vec4(mix(c, fogCol, f), 1.); }`;
 
-  async function decode() {
-    let len = 0; const bins = parts.map(s => { const b = atob(s); len += b.length; return b; }); parts = [];
+  async function decode(list, n, base, step) {
+    let len = 0; const bins = list.map(s => { const b = atob(s); len += b.length; return b; });
     const buf = new Uint8Array(len); let o = 0;
     for (const b of bins) { for (let i = 0; i < b.length; i++) buf[o + i] = b.charCodeAt(i); o += b.length; }
     const dv = new DataView(buf.buffer), idat = []; o = 8;
     while (o < buf.length) { const l = dv.getUint32(o), type = String.fromCharCode(buf[o + 4], buf[o + 5], buf[o + 6], buf[o + 7]); if (type === 'IDAT') idat.push(buf.subarray(o + 8, o + 8 + l)); o += 12 + l; }
     const raw = new Uint8Array(await new Response(new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
-    if (raw.length !== N * (2 * N + 1)) throw new Error('terrain file has the wrong size');
-    const q = new Uint16Array(N * N); HF = new Float32Array(N * N); let hi = -1e9;
-    for (let r = 0, p = 0; r < N; r++) {
+    if (raw.length !== n * (2 * n + 1)) throw new Error('terrain file has the wrong size');
+    const q = new Uint16Array(n * n), HF = new Float32Array(n * n); let hi = -1e9;
+    for (let r = 0, p = 0; r < n; r++) {
       p++;
-      for (let c = 0; c < N; c++, p += 2) {
-        const i = r * N + c, res = (raw[p] << 8) | raw[p + 1];
-        q[i] = (res + (c ? q[i - 1] : 0) + (r ? q[i - N] : 0) - (r && c ? q[i - N - 1] : 0)) & 65535;
-        const h = cfg.base + q[i] * cfg.step; HF[i] = h; if (h > hi) hi = h;
+      for (let c = 0; c < n; c++, p += 2) {
+        const i = r * n + c, res = (raw[p] << 8) | raw[p + 1];
+        q[i] = (res + (c ? q[i - 1] : 0) + (r ? q[i - n] : 0) - (r && c ? q[i - n - 1] : 0)) & 65535;
+        const h = base + q[i] * step; HF[i] = h; if (h > hi) hi = h;
       }
     }
-    maxH = hi + 60;
+    return { HF, hi };
+  }
+  async function load() {
+    const f = await decode(parts, cfg.n, cfg.base, cfg.step); parts = [];
+    FAR = { n: cfg.n, HF: f.HF, north: cfg.north, south: cfg.south, west: cfg.west, east: cfg.east, x0: 0, z0: 0, w: cfg.W, d: cfg.D, dx: cfg.W / cfg.n, dz: cfg.D / cfg.n };
+    maxH = f.hi + 60; NR = null;
+    const nc = cfg.near, list = nparts; nparts = [];
+    if (!nc || !list.length) return;
+    try {   // the fine grid is an extra: if its file is bad the wide one still draws
+      const m = await decode(list, nc.n, nc.base || 0, nc.step || 0.5), kx = cfg.W / (cfg.east - cfg.west), kz = cfg.D / (cfg.north - cfg.south);
+      const w = (nc.east - nc.west) * kx, d = (nc.north - nc.south) * kz, cell = Math.max(cfg.W, cfg.D) / (G - 1);
+      if (!(nc.west >= cfg.west && nc.east <= cfg.east && nc.south >= cfg.south && nc.north <= cfg.north) || Math.min(w, d) < 12 * cell) throw new Error('near grid does not fit');
+      NR = { n: nc.n, HF: m.HF, north: nc.north, south: nc.south, west: nc.west, east: nc.east, x0: (nc.west - cfg.west) * kx, z0: (cfg.north - nc.north) * kz, w, d, dx: w / nc.n, dz: d / nc.n, keep: 1.6 * cell, band: 4.2 * cell };
+      maxH = Math.max(maxH, m.hi + 60);
+    } catch (e) { NR = null; post({ type: 'near', ok: false, msg: String(e && e.message || e) }); }
   }
 
+  function heightTex(g) {
+    const n = g.n, half = new Uint16Array(n * n * 2);
+    for (let i = 0; i < n * n; i++) { const base = Math.floor(g.HF[i] / 64) * 64; half[i * 2] = THREE.DataUtils.toHalfFloat(base); half[i * 2 + 1] = THREE.DataUtils.toHalfFloat(g.HF[i] - base); }
+    const hmap = new THREE.DataTexture(half, n, n, THREE.RGFormat, THREE.HalfFloatType);
+    hmap.internalFormat = 'RG16F'; hmap.magFilter = hmap.minFilter = THREE.LinearFilter; hmap.wrapS = hmap.wrapT = THREE.ClampToEdgeWrapping; hmap.needsUpdate = true;
+    return hmap;
+  }
   function build() {
     const canvas = document.getElementById('view');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     if (!renderer.capabilities.isWebGL2) throw new Error('no WebGL2');
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    const half = new Uint16Array(N * N * 2);
-    for (let i = 0; i < N * N; i++) { const base = Math.floor(HF[i] / 64) * 64; half[i * 2] = THREE.DataUtils.toHalfFloat(base); half[i * 2 + 1] = THREE.DataUtils.toHalfFloat(HF[i] - base); }
-    const hmap = new THREE.DataTexture(half, N, N, THREE.RGFormat, THREE.HalfFloatType);
-    hmap.internalFormat = 'RG16F'; hmap.magFilter = hmap.minFilter = THREE.LinearFilter; hmap.wrapS = hmap.wrapT = THREE.ClampToEdgeWrapping; hmap.needsUpdate = true;
-    const size = new THREE.Vector2(W, D);
+    const N = FAR.n, hmap = heightTex(FAR);
+    const size = new THREE.Vector2(FAR.w, FAR.d);
     const rt = n => { const t = new THREE.WebGLRenderTarget(n, n, { minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true, depthBuffer: false }); t.texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); return t; };
     const lo = rt(Math.min(1024, N)), hi = rt(N);
-    const lightMat = new THREE.ShaderMaterial({ uniforms: { hmap: { value: hmap }, sunDir: { value: new THREE.Vector3(0, 1, 0) }, sunCol: { value: new THREE.Vector3() }, amb: { value: new THREE.Vector3() }, size: { value: size }, texel: { value: 1 / N }, snowMode: { value: cfg.ground === 'green' ? 0 : 1 }, maxH: { value: maxH } }, vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }', fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
+    const sunU = { sunDir: { value: new THREE.Vector3(0, 1, 0) }, sunCol: { value: new THREE.Vector3() }, amb: { value: new THREE.Vector3() }, snowMode: { value: cfg.ground === 'green' ? 0 : 1 }, maxH: { value: maxH } };
+    const lightVS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }';
+    const lightMat = new THREE.ShaderMaterial({ uniforms: { hmap: { value: hmap }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: size }, texel: { value: 1 / N }, snowMode: sunU.snowMode, maxH: sunU.maxH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
     const lightScene = new THREE.Scene(), lightCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), lightMat); quad.frustumCulled = false; lightScene.add(quad);
 
-    const G = 768, pos = new Float32Array(G * G * 3);
+    const pos = new Float32Array(G * G * 3);
     for (let j = 0, k = 0; j < G; j++) for (let i = 0; i < G; i++) { pos[k++] = i / (G - 1); pos[k++] = 0; pos[k++] = j / (G - 1); }
     const idx = new Uint32Array((G - 1) * (G - 1) * 6); let m = 0;
     for (let j = 0; j < G - 1; j++) for (let i = 0; i < G - 1; i++) { const a = j * G + i, b = a + 1, d = a + G, e = d + 1; idx[m++] = a; idx[m++] = d; idx[m++] = b; idx[m++] = b; idx[m++] = d; idx[m++] = e; }
-    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(new THREE.BufferAttribute(idx, 1));
-    const terrMat = new THREE.ShaderMaterial({ uniforms: { hmap: { value: hmap }, lmap: { value: lo.texture }, size: { value: size }, fogCol: { value: new THREE.Vector3() }, fogD: { value: 0.000011 } }, vertexShader: TERRAIN_VS, fragmentShader: TERRAIN_FS });
+    const index = new THREE.BufferAttribute(idx, 1);
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(index);
+    const fog = { fogCol: { value: new THREE.Vector3() }, fogD: { value: 0.000011 } };
+    const terrU = { hmap: { value: hmap }, lmap: { value: lo.texture }, size: { value: size }, fogCol: fog.fogCol, fogD: fog.fogD };
+    let near = null;
+    if (NR) {
+      const nmap = heightTex(NR), rect = new THREE.Vector4(NR.x0, NR.z0, NR.w, NR.d);
+      const nLight = new THREE.ShaderMaterial({ defines: { NEAR: 1 }, uniforms: { hmap: { value: nmap }, fmap: { value: hmap }, rect: { value: rect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(NR.dx, NR.dz) }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(NR.w, NR.d) }, texel: { value: 1 / NR.n }, snowMode: sunU.snowMode, maxH: sunU.maxH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
+      // the same triangles as the far mesh; the outer ring of points is the skirt (y = 1), the next ring is the box edge
+      const np = new Float32Array(G * G * 3), sk = i => (i === 0 || i === G - 1 ? 1 : 0), at = i => Math.max(0, Math.min(1, (i - 1) / (G - 3)));
+      for (let j = 0, k = 0; j < G; j++) for (let i = 0; i < G; i++) { np[k++] = at(i); np[k++] = sk(i) || sk(j); np[k++] = at(j); }
+      const ngeo = new THREE.BufferGeometry(); ngeo.setAttribute('position', new THREE.BufferAttribute(np, 3)); ngeo.setIndex(index);
+      const nlo = rt(Math.min(1024, NR.n)), nhi = rt(NR.n);
+      const mat = new THREE.ShaderMaterial({ uniforms: { hmap: { value: nmap }, fmap: { value: hmap }, lmap: { value: nlo.texture }, flmap: { value: lo.texture }, rect: { value: rect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: NR.keep }, band: { value: NR.band }, fogCol: fog.fogCol, fogD: fog.fogD }, vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
+      const mesh = new THREE.Mesh(ngeo, mat); mesh.frustumCulled = false;
+      near = { lightMat: nLight, lo: nlo, hi: nhi, mat, mesh };
+      terrU.hole = { value: new THREE.Vector4(NR.x0, NR.z0, NR.x0 + NR.w, NR.z0 + NR.d) }; terrU.keep = { value: NR.keep }; terrU.band = { value: NR.band };
+    }
+    const terrMat = new THREE.ShaderMaterial({ defines: near ? { HOLE: 1 } : {}, uniforms: terrU, vertexShader: TERRAIN_VS, fragmentShader: TERRAIN_FS });
+    if (near) {   // two grids are a lot for a phone: let go of the copies the graphics card now holds
+      const drop = function () { this.array = null; }; index.onUpload(drop); geo.attributes.position.onUpload(drop); near.mesh.geometry.attributes.position.onUpload(drop);
+      for (const t of [hmap, near.mat.uniforms.hmap.value]) t.onUpdate = () => { t.image = { data: null, width: t.image.width, height: t.image.height }; t.onUpdate = null; };
+    }
     const scene = new THREE.Scene(), terrain = new THREE.Mesh(geo, terrMat); terrain.frustumCulled = false; scene.add(terrain);
-    const cam = new THREE.PerspectiveCamera(27, 1.5, 4, 260000); cam.rotation.order = 'YXZ';
+    if (near) scene.add(near.mesh);
+    const cam = new THREE.PerspectiveCamera(27, 1.5, near ? 2 : 4, 260000); cam.rotation.order = 'YXZ';
     const skyGeo = new THREE.SphereGeometry(200000, 48, 24), skyPos = skyGeo.attributes.position, skyCol = new THREE.BufferAttribute(new Float32Array(skyPos.count * 3), 3); skyGeo.setAttribute('color', skyCol);
     const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })); sky.frustumCulled = false; scene.add(sky);
     const disc = new THREE.Mesh(new THREE.CircleGeometry(2100, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }));
     const halo = new THREE.Mesh(new THREE.CircleGeometry(9000, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, transparent: true, opacity: 0.22, depthWrite: false }));
     scene.add(halo); scene.add(disc);
-    R = { renderer, canvas, lo, hi, lightMat, lightScene, lightCam, terrMat, scene, cam, sky, skyPos, skyCol, disc, halo, sv: sunVec(180, 20) };
+    R = { renderer, canvas, lo, hi, lightMat, quad, lightScene, lightCam, terrMat, near, scene, cam, sky, skyPos, skyCol, disc, halo, sv: sunVec(180, 20) };
   }
 
-  function lightPass(target) {
-    R.renderer.setRenderTarget(target); R.renderer.render(R.lightScene, R.lightCam); R.renderer.setRenderTarget(null);
-    R.terrMat.uniforms.lmap.value = target.texture;
+  function lightPass(full) {
+    const r = R.renderer, t = full ? R.hi : R.lo;
+    R.quad.material = R.lightMat; r.setRenderTarget(t); r.render(R.lightScene, R.lightCam);
+    R.terrMat.uniforms.lmap.value = t.texture;
+    if (R.near) {
+      const nt = full ? R.near.hi : R.near.lo;
+      R.quad.material = R.near.lightMat; r.setRenderTarget(nt); r.render(R.lightScene, R.lightCam);
+      R.near.mat.uniforms.lmap.value = nt.texture; R.near.mat.uniforms.flmap.value = t.texture;
+    }
+    r.setRenderTarget(null);
   }
   function light() {
     const v = sunVec(sun.az, sun.alt), A = atmo(sun.alt); R.sv = v;
     R.lightMat.uniforms.sunDir.value.set(v.x, v.y, v.z);
     R.lightMat.uniforms.sunCol.value.set(A.sun[0] * A.sunI, A.sun[1] * A.sunI, A.sun[2] * A.sunI);
     R.lightMat.uniforms.amb.value.set(A.amb[0], A.amb[1], A.amb[2]);
-    lightPass(R.lo);   // quick pass while the time is moving, the full one once it rests
-    clearTimeout(hiTimer); hiTimer = setTimeout(() => { if (R) { lightPass(R.hi); dirty = true; } }, 260);
+    lightPass(false);   // quick pass while the time is moving, the full one once it rests
+    clearTimeout(hiTimer); hiTimer = setTimeout(() => { if (R) { lightPass(true); dirty = true; } }, 260);
     const glow = sun.alt > -10 ? Math.max(0, 1 - Math.abs(sun.alt - 2) / 16) : 0, sp = R.skyPos;
     for (let j = 0; j < sp.count; j++) {
       const x = sp.getX(j) / 200000, y = sp.getY(j) / 200000, z = sp.getZ(j) / 200000;
@@ -185,14 +311,21 @@
     post({ type: 'state', subjectLit: lit(subjPoint(), sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
   }
   function aim() {
-    const a = cr(eye), b = cr(target), dx = (b.c - a.c) * DXm, dz = (b.r - a.r) * DZm, dist = Math.hypot(dx, dz);
+    const a = cr(eye), b = cr(target), dx = (b.c - a.c) * FAR.dx, dz = (b.r - a.r) * FAR.dz, dist = Math.hypot(dx, dz);
     yaw = dist > 5 ? Math.atan2(dx, -dz) : 0;
-    const top = dist > 3000 ? Math.atan2(snap(target, 4).h - (hB(a.c, a.r) + 3), dist) : 0.04;
-    pitch = Math.max(0.01, top * 0.45);
+    const e = pick(eye), t = pick(target), up = eyeH(e);
+    if (dist > 3000 || t.g !== NR) {
+      const top = dist > 3000 ? Math.atan2(snap(t, t.g === NR ? 6 : 4).h - up, dist) : 0.04;
+      pitch = Math.max(0.01, top * 0.45);
+    } else pitch = Math.max(-0.6, Math.min(0.6, Math.atan2(gh(t.g, t.c, t.r) + 6 - up, Math.max(dist, 20))));   // a close subject on the fine grid: look straight at it, up or down
+    if (R && R.near) {   // the near mesh is densest a little past the middle of the shot
+      const p = crg(NR, eye), q = crg(NR, target), k = 0.6;
+      R.near.mat.uniforms.focus.value.set(Math.max(0, Math.min(1, (p.c + (q.c - p.c) * k + 0.5) / NR.n)), Math.max(0, Math.min(1, (p.r + (q.r - p.r) * k + 0.5) / NR.n)));
+    }
   }
   function place() {
-    const q = cr(eye), cam = R.cam;
-    cam.position.set((q.c + 0.5) * DXm, hB(q.c, q.r) + 3, (q.r + 0.5) * DZm); cam.rotation.set(pitch, -yaw, 0);
+    const q = cr(eye), e = pick(eye), cam = R.cam;
+    cam.position.set((q.c + 0.5) * FAR.dx, eyeH(e), (q.r + 0.5) * FAR.dz); cam.rotation.set(pitch, -yaw, 0);
     cam.fov = 2 * Math.atan(12 / focal) * 180 / Math.PI; cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
   }
   function resize() { const w = window.innerWidth, h = window.innerHeight; if (!R || !w || !h) return; R.renderer.setSize(w, h, false); R.cam.aspect = w / h; dirty = true; }
@@ -220,14 +353,14 @@
   }
 
   window.S3D = {
-    init(c) { cfg = c; parts = []; N = c.n; W = c.W; D = c.D; DXm = W / N; DZm = D / N; eye = c.eye; target = c.target; focal = c.focal || 50; },
-    chunk(s) { parts.push(s); },
+    init(c) { cfg = c; parts = []; nparts = []; eye = c.eye; target = c.target; focal = c.focal || 50; },
+    chunk(s, which) { (which === 'near' ? nparts : parts).push(s); },
     async done() {
       try {
         if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");
         if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.');
-        await decode(); build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
-        post({ type: 'ready', n: N, gl: 'webgl2' }); heading();
+        await load(); build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
+        post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0 }); heading();
       } catch (e) { fail("The 3D view couldn't start on this phone."); post({ type: 'error', msg: String(e && e.message || e) }); }
     },
     sun(az, alt) { sun = { az, alt }; relight = dirty = true; },

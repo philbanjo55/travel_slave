@@ -34,3 +34,29 @@ trees and water stay). It works; see CLAUDE.md for what was found.
   our light map. `window.__g.set({stop, mins, focal, mode})`: mode 0 Google as is, 1 + our sun,
   2 + snow.
 - `shot.js '<jobs json>' <errorTarget>`: headless renders to `out_<name>.png`.
+
+## The app's view and two-level terrain (Faroes close-ups, 12 Nov 2026)
+
+- `app_view.js` is the page inside the app's web view (built into `src/components/sun/sun3dHtml.ts` by
+  `build_app_html.js <three.min.js r128>`; rebuild after every edit). It takes one wide grid and, optionally,
+  one fine grid inside it (`cfg.near`, file sent with `S3D.chunk(b64, 'near')`):
+  - the far mesh is cut out inside the fine box (kept for the first ~160 m inside the edge, then pushed down,
+    not drawn past ~420 m); the near mesh has its own heights and light map, bunches its points around the
+    shot, hangs a skirt at its edge, and fades heights and colours into the far grid's toward the edge;
+  - near shadows are marched in the fine grid and carry on into the far grid beyond the box;
+  - "is it in the sun" and first / last light read the fine grid when the pin is inside it;
+  - a close subject on the fine grid is looked at directly (up or down), not at a fixed slight upward tilt.
+  With no `near` the page draws exactly what it did before (Teton check: 0 of 540,000 pixels differ).
+- Tables: `terrain_regions` (wide, one per area) and `terrain_near_regions` (fine boxes, `parent` = region).
+  `src/services/terrain.ts` `nearFor` picks the smallest box that holds both the stand spot and the subject.
+- `build_dem_arctic.py <work dir> <out.png> <north> <south> <west> <east> [n] [res]`: elevation from the
+  ArcticDEM v4.1 mosaics (Polar Geospatial Center, CC-BY-4.0, north of 60 N), read in blocks straight from the
+  public bucket. Use it instead of `build_dem.py` in the Faroes: the terrarium tiles there carry heights above
+  the ellipsoid (~58 m too high), fill the fjords with blocks at 0-130 m (sea drawn as land at any zoom) and
+  have no sea stacks. ArcticDEM fills open water at the local sea level, which the script fits and takes off.
+  `pip install tifffile imagecodecs`.
+- `build_faroes.sh <work dir>`: the wide Faroes file plus the 11 fine boxes (6 MB together).
+- What the data cannot do: a height grid has no arches or overhangs (Drangarnir's arch, sea caves), waterfalls
+  and buildings are not in it, lakes draw as grass, and the source is a smooth surface model: Stóri Drangur is
+  a 50 m cone (really 70 m with an arch), Lítli Drangur a shoulder of the headland. A pin 100 m off now
+  matters: the Kallur stand pin sits on the west cliff face in this data.
