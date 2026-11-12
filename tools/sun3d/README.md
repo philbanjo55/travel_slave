@@ -34,3 +34,32 @@ trees and water stay). It works; see CLAUDE.md for what was found.
   our light map. `window.__g.set({stop, mins, focal, mode})`: mode 0 Google as is, 1 + our sun,
   2 + snow.
 - `shot.js '<jobs json>' <errorTarget>`: headless renders to `out_<name>.png`.
+
+## HD picture in the app (`app_view_google.js`, 12 Nov 2026)
+
+The same idea as a page for the app's web view, with the offline page's `S3D` calls and replies
+(`app_view.js` is untouched), so `Sun3DPanel.tsx` can swap one for the other ("HD" button).
+
+- `app_view_google.js` -> `node tools/sun3d/build_app_google_html.js <dir with node_modules>` ->
+  `src/components/sun/sun3dGoogleHtml.ts` (one page, ~620 KB: three 0.160 + 3d-tiles-renderer 0.3.31
+  bundled by esbuild; nothing from a CDN). A second argument also writes the page as a file for tests.
+- `init` gets `tiles: { base, draco, root?, headers?, errorTarget?, lodPx?, lift?, wait? }`: `base` is our
+  door to Google (`supabase/functions/tiles-proxy`), `draco` the folder with three.js's DRACO decoder files
+  (`node_modules/three/examples/jsm/libs/draco/gltf/`: `draco_wasm_wrapper.js`, `draco_decoder.wasm`,
+  `draco_decoder.js`), `root` the root tile set when the app already holds it. Every tile address is
+  rewritten to `<base>/v1/3dtiles/...`, whatever host or path Google's tile set names.
+- The scene is centred where you stand (x east, y up, z south); each tile vertex is mapped back to
+  lat / lng to read our light map (checked against the ellipsoid: within ~1 m over the Teton grid). A
+  small second camera looks straight down so Google's own ground under you is loaded, and the eye is put
+  4 m above it (our grid and Google's surface differ by some metres). Ground beyond our grid gets
+  flat-ground light.
+- Replies: the offline page's, plus `credits {text}` (Google's attribution: it must be on screen) and
+  `hd {shown, loading}`. `error` = give up (root refused, nothing drawn in 20 s, over 40 failed tiles, lost
+  graphics context): the app goes back to the offline page.
+- Test: `google/app_relay.js` (the door's shape on :8771, with counts) + `google/app_run.js` (drives the
+  page headless like the app does). Measured at Snake River Overlook, 400 x 240 at 2x, detail 30: first
+  view 502 files / 22 MB, the 100 mm lens 285 files / 16 MB more; full screen (400 x 800) 629 files / 27 MB.
+  Detail 20 was 728 files / 31 MB for the first view. Not tried on a phone.
+- `tiles-proxy` was run here with Deno against a stand-in for its table (not deployed, table not made):
+  the page drew through it, and it refused at the cap (429) and with the count unreachable (503) without
+  asking Google.
