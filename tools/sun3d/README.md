@@ -96,6 +96,54 @@ fetches every wide file and fine box the trip's stand spots need, one at a time 
 shows "3D terrain saved for this trip: 9 of 9 areas". With no signal the saved lists still choose the files; a
 missing fine box means the wide grid draws alone. Grand Teton: 3.7 MB (9 areas), Faroes: 6.3 MB (12 areas).
 
+## Third level: real foreground from a laser survey (`lidar/build_detail.py`, 12 Nov 2026; built, NOT uploaded or applied)
+
+`TRIP_Q=<read-only SQL helper> python3 tools/sun3d/lidar/build_detail.py build <work dir> --trip <uuid> --wide-file <the region's wide file>`
+(`plan` lists the boxes; a rerun reads `<work>/pins.json` and the survey tiles kept in `<work>/cache`, ~700 MB for the
+Teton trip). Source: USGS 3DEP lidar as an Entwine EPT on AWS, project `WY_GrandTetonNP_1_D22` (2022, 2-9 points per
+0.5 m cell). One box per stand spot (500 m, 1000 x 1000 cells of 0.5 m; stand spots within 150 m share one), two files
+a box:
+- `<id>_lidar.png`: the BARE surface = ground, water and buildings, no trees (the page's 16-bit format, **`step_m` 0.02**,
+  `base_m` = the box's lowest height less 5 m);
+- `<id>_mask.png`: 8-bit, one byte a cell: 0 ground, 2 building, 3 water, 8 and up = tree, its canopy top
+  (value - 8) x 0.2 m above the ground.
+The script's header lists the cleaning steps (noise, wires, low things, water, buildings the survey left unsorted found
+as solid raised patches of 25 m2 and 2.2 m or more, tidy footprints). Output: `files/`, `look/<id>.png` (a map to look
+at), `upload.txt`, `detail.json`, `pins_report.json` (every stand spot's distance to the nearest tree and building),
+`terrain_detail.sql` (= `supabase/migrations/20261112150000_terrain_detail_regions.sql`).
+
+Grand Teton: 19 boxes, 38 files, 7.4 MB. Emily's Pond Levee and Teton Pines Nordic Center are south of the survey
+(it ends at 43.538 N): no detail there. The survey's ground sits on the wide grid (middle difference 0.0 to +0.3 m).
+
+- The page: `cfg.detail` + `S3D.chunk(b64, 'detail')` / `S3D.chunk(b64, 'mask')`. A third mesh inside the near mesh (or
+  the far mesh with no near box); the coarser meshes are cut out under it; 4-25 m at its edge match the surroundings,
+  the next 16-45 m blend. The detail box must lie inside the shot's near box (`terrain.ts` `detailFor` checks; the page
+  leaves the detail out otherwise and says so with a `detail` message). The HD (Google) page ignores it.
+- Buildings: blocks with upright walls. The mesh blends heights only between cells of the same kind (building or
+  not), so a roof keeps its ridge and its edge drops straight down. Wood colour, a little lighter on the roof under snow.
+- Trees: not in the surface. Up to 520,000 points a box between each canopy top and a few metres under it (small and
+  many close to the stand spot, fewer and larger farther off; none within 12 m of the eye, none in the blend strip),
+  round, 10% of their pixels left out so they are a little see-through in any drawing order. Lit by the sun the
+  ground under them gets (the detail light map's alpha) less what the crowns toward the sun take.
+- Sun: the detail light pass marches shadows through ground and buildings, then on into the near and far grids; under a
+  canopy the ground only gets a soft, lighter shade. `vis()` / `lit()` and first / last light use ground and buildings
+  only, 2 m above the survey's ground on the detail grid (3 m on the other grids). The survey is leaf-on and cannot
+  tell a bare winter cottonwood from a spruce, so trees never move a time; the `state` and `moments` messages carry
+  `trees: true` when the surveyed trees would hide a sun the rest lets through (now / some time that day) and the panel
+  says so in one line.
+- Foreground switch (panel, leaf button, on by default): off starts the page again without `detail`.
+- With no `detail` the page is unchanged: 0 of 450,000 pixels differ on four Teton shots with a near box and on one
+  without (old page vs new page, 12 Nov 2026).
+- What it cannot do: trees have no trunks and no lower crown, and read as dotted bushes, not as spruce or cottonwood;
+  a building is a plain block (no doors, logs, eaves); nothing is drawn beyond the box; a stand pin 10-20 m off now
+  matters (see `pins_report.json`).
+- Tests: scratchpad `lidar_build/test/` (`run.js` feeds the page like the app, `spots.py` picks the files like
+  `terrain.ts`). First / last light at the stand spot, 30 Dec 2026, every minute, near box only -> with detail:
+  T.A. Moulton 08:29 / 16:14 -> the same (trees flag on); Oxbow Bend 08:13 / 16:20 -> 08:13 / 16:21 (trees flag on);
+  Snake River Overlook 08:24 / 16:33 -> 08:24 / 16:34; Cunningham Cabin 08:50 / 16:37 -> the same; subject times
+  unchanged. Start (decode + build, this machine, software graphics): about 0.75 s with detail against 0.52 s
+  without. Not run on a phone.
+
 ## How accurate the sun times are (measured 12 Nov 2026)
 
 Checked against 102 real webcam pictures on 5 clear December / January days in Grand Teton (27 events; resort
