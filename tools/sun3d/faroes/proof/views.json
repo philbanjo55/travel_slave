@@ -1,0 +1,121 @@
+[
+ {
+  "name": "mulafossur",
+  "title": "Múlafossur, main shot (waterfall and backdrop)",
+  "box": "fod_mulafossur",
+  "near": "fo_vagar_west",
+  "stand": [
+   62.105875,
+   -7.434931
+  ],
+  "subject": [
+   62.107668,
+   -7.436115
+  ],
+  "lens": 90,
+  "date": [
+   2027,
+   5,
+   15
+  ],
+  "mins": 840,
+  "utc_off": 1,
+  "aim_up": -8
+ },
+ {
+  "name": "saksun",
+  "title": "Saksun, 'behind barns' toward the lagoon",
+  "box": "fod_saksun",
+  "near": "fo_streymoy_north",
+  "stand": [
+   62.246789,
+   -7.175784
+  ],
+  "subject": [
+   62.247803,
+   -7.187768
+  ],
+  "lens": 135,
+  "date": [
+   2027,
+   5,
+   15
+  ],
+  "mins": 600,
+  "utc_off": 1,
+  "aim_up": 20
+ },
+ {
+  "name": "gjogv",
+  "title": "Gjógv, main shot (village in frame)",
+  "box": "fod_gjogv_gorge",
+  "near": "fo_eysturoy_north",
+  "stand": [
+   62.325021,
+   -6.946044
+  ],
+  "subject": [
+   62.325333,
+   -6.943117
+  ],
+  "lens": 90,
+  "date": [
+   2027,
+   5,
+   15
+  ],
+  "mins": 1020,
+  "utc_off": 1,
+  "aim_up": 6
+ },
+ {
+  "name": "kallur",
+  "title": "Kallur, main shot (stand pin moved 105 m east onto the ridge: the stored pin is in the sea)",
+  "box": "fod_kallur",
+  "near": "fo_kalsoy_north",
+  "stand": [
+   62.370786,
+   -6.812091
+  ],
+  "subject": [
+   62.362338,
+   -6.811075
+  ],
+  "lens": 90,
+  "date": [
+   2027,
+   5,
+   15
+  ],
+  "mins": 1170,
+  "utc_off": 1,
+  "aim_up": -170,
+  "stored_stand": [
+   62.370786,
+   -6.814125
+  ]
+ },
+ {
+  "name": "bour",
+  "title": "Bøur, Panoramic Viewpoint toward Drangarnir and Tindhólmur",
+  "box": "fod_bour_panoramic_viewpoint",
+  "near": "fo_vagar_west",
+  "stand": [
+   62.085177,
+   -7.366927
+  ],
+  "subject": [
+   62.07528,
+   -7.41444
+  ],
+  "lens": 135,
+  "date": [
+   2027,
+   5,
+   15
+  ],
+  "mins": 540,
+  "utc_off": 1,
+  "aim_up": -60
+ }
+]
