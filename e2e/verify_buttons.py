@@ -474,10 +474,14 @@ def sun_3d():
         print('INFO stop page: ' + ' | '.join(seen)[:1500], flush=True); return
     s = mid_screen(s, 'SUN & MOON')
     V.check('sun3d-tab', V.tap_text(s, '3D', exact=True), 'tap the 3D tab')
+    # The caption under the picture ("Looking W 259 ...") is what says it has drawn; bring it onto the screen first
+    # (run 6 drew fine, but the caption sat below the fold while this loop waited).
+    t0 = time.time()
+    C.adb('shell', 'input', 'swipe', '540', '1500', '540', '1000', '500')
     t = C.capture(2); ok = False; why = ''
-    for _ in range(40):   # the first time it downloads the terrain (2 MB), then draws
+    for _ in range(40):   # the first time it downloads the terrain (a few MB), then draws
         if V.has(t, 'Looking '):
-            ok = True; break
+            ok = True; print(f'INFO sun3d drawn within {time.time() - t0:.0f} s of the tab tap', flush=True); break
         bad = [x for x in ("couldn't start", 'too old', "Couldn't get the terrain", 'No 3D terrain', 'outside the 3D terrain') if V.has(t, x)]
         if bad:
             why = bad[0]; break
@@ -495,21 +499,29 @@ def sun_3d():
     else:
         V.check('sun3d-ready', ok, why or 'drawn: caption with the looking direction shown')
     if ok:
-        time.sleep(6)
+        # Full screen first, while the button is on screen with the caption.
+        f = C.capture(1)
+        if V.tap_text(f, 'Open the 3D view full screen'):
+            g = C.capture(5)
+            V.show('sun3d-full', g)
+            V.check('sun3d-full-open', V.has(g, 'Close'), 'full screen with Close')
+            t1 = time.time(); drawn = False
+            for _ in range(12):
+                if V.has(g, 'Looking '):
+                    drawn = True; break
+                g = C.capture(3)
+            V.check('sun3d-full-drawn', drawn, f'full-screen view drawn within {time.time() - t1:.0f} s' if drawn else 'no caption in full screen')
+            V.show('sun3d-full-drawn', g)
+            V.back(); time.sleep(2)
+        else:
+            V.check('sun3d-full-open', False, 'no full-screen button on screen')
+        time.sleep(4)
         seen, _ = V.texts_all(2)
         V.check('sun3d-moments', seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you'), 'first / last light chips')
         V.check('sun3d-status', seen_has(seen, 'You: '), 'in the sun / in shade line')
         V.check('sun3d-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined'))
         line = next((x for x in seen if '3D terrain' in x), None)
         V.check('sun3d-saved-line', line is not None, (line or 'no "3D terrain saved for this trip" line')[:110])
-        f = scroll_find('Looking ', 6)
-        if f is not None and V.tap_text(f, 'Open the 3D view full screen'):
-            g = C.capture(5)
-            V.show('sun3d-full', g)
-            V.check('sun3d-full-open', V.has(g, 'Close'), 'full screen with Close')
-            V.back(); time.sleep(1.5)
-        else:
-            V.check('sun3d-full-open', False, 'no full-screen button')
     V.check('sun3d-alive', C.app_alive())
 
 
