@@ -13,6 +13,12 @@ import { IS_TEST_APP } from '../utils/variant';
 // fine boxes (4-7 m a point) inside a region; a shot whose stand spot sits in
 // one gets that file too, and the page draws both.
 //
+// Third level (Grand Teton): public.terrain_detail_regions lists small boxes
+// (about 500 m, 0.5-1 m a point) around a stand spot, made from a public laser
+// survey: the highest return per cell, so trees and buildings are real shapes,
+// plus a class mask (tree / building / water) for their colours. Two files a
+// box. The page draws it inside the fine box, or the wide grid without one.
+//
 // Saved ahead (TEST app): whenever a trip's sun plan loads, saveTripTerrain
 // fetches every file that trip's stand spots need, one at a time in the
 // background, so a stop never opened at home still has its 3D view in the field.
@@ -30,6 +36,17 @@ export type TerrainNear = {
   n: number; base_m: number; step_m: number;
   path: string; bytes: number | null;
 };
+export type TerrainDetail = {
+  id: string; parent: string;
+  north: number; south: number; west: number; east: number;
+  n: number; base_m: number; step_m: number;
+  path: string; bytes: number | null;
+  mask_path: string | null; mask_bytes: number | null;
+  // round 3 (absent until its migration is applied): the trees' own laser returns, and where the water is in the 6 km around
+  trees_path?: string | null; trees_bytes?: number | null; trees_bins?: number | null; trees_bin_m?: number | null;
+  water_path?: string | null; water_bytes?: number | null; water_n?: number | null;
+  water_north?: number | null; water_south?: number | null; water_west?: number | null; water_east?: number | null;
+};
 type Point = { lat: number; lng: number };
 type Box = { north: number; south: number; west: number; east: number };
 
@@ -37,10 +54,12 @@ const FILES_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co/storage/v1/object/pu
 const DIR = `${FileSystem.documentDirectory}pf_cache/`;
 const LIST_FILE = `${DIR}terrain_regions.json`;
 const NEAR_FILE = `${DIR}terrain_near_regions.json`;
+const DETAIL_FILE = `${DIR}terrain_detail_regions.json`;
 const CALL_TIMEOUT_MS = 12000;
 
 let regions: TerrainRegion[] | null = null;
 let nears: TerrainNear[] | null = null;
+let details: TerrainDetail[] | null = null;
 const data: Record<string, string> = {};
 const inflight: Record<string, Promise<string | null> | undefined> = {};
 
@@ -108,6 +127,39 @@ async function loadNear(): Promise<TerrainNear[]> {
   return (await ask()) ?? [];
 }
 
+// The detail boxes. None (no table yet, no signal and nothing saved) just means no real foreground is drawn.
+// Saved copy first, the server behind it: the list must never hold a first picture up (it is asked once per app run,
+// and the answer replaces the saved copy for the next call).
+let detailAsk: Promise<TerrainDetail[] | null> | null = null;
+function askDetail(): Promise<TerrainDetail[] | null> {
+  if (detailAsk) return detailAsk;
+  detailAsk = (async () => {
+    try {
+      const call = supabase.from('terrain_detail_regions')
+        .select('*');   // every column there is: naming one the table does not have yet would fail the whole list
+      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('terrain list timed out')), CALL_TIMEOUT_MS));
+      const { data: rows, error } = (await Promise.race([call, timeout])) as any;
+      if (error || !Array.isArray(rows)) throw error ?? new Error('no detail list');
+      details = rows as TerrainDetail[];
+      try { await ensureDir(); await FileSystem.writeAsStringAsync(DETAIL_FILE, JSON.stringify(rows)); } catch { /* the list is still usable */ }
+      return details;
+    } catch {
+      detailAsk = null;   // no signal: asked again next time
+      return null;
+    }
+  })();
+  return detailAsk;
+}
+async function loadDetail(): Promise<TerrainDetail[]> {
+  if (details) return details;
+  const ask = askDetail();
+  try {
+    const saved = JSON.parse(await FileSystem.readAsStringAsync(DETAIL_FILE));
+    if (Array.isArray(saved)) return saved as TerrainDetail[];
+  } catch { /* nothing saved yet: wait for the server */ }
+  return (await ask) ?? [];
+}
+
 export function inRegion(r: Box, p: Point): boolean {
   return p.lat <= r.north && p.lat >= r.south && p.lng >= r.west && p.lng <= r.east;
 }
@@ -139,6 +191,39 @@ function pickNear(all: TerrainNear[], region: TerrainRegion, stand: Point, subje
     if ((both && !bestBoth) || (both === bestBoth && area < bestArea)) { best = r; bestBoth = both; bestArea = area; }
   }
   return best;
+}
+
+// The detail box for a shot: one inside this region (and inside the shot's fine box when it has one: the page draws
+// the detail inside that) that holds the stand spot at least 100 m from its edge, taking first the ones that hold the
+// subject too, then the one the stand spot sits deepest in. `near` must be the fine box the shot really uses.
+export async function detailFor(region: TerrainRegion, near: TerrainNear | null, stand: Point, subject: Point): Promise<TerrainDetail | null> {
+  return pickDetail(await loadDetail(), region, near, stand, subject);
+}
+function pickDetail(all: TerrainDetail[], region: TerrainRegion, near: TerrainNear | null, stand: Point, subject: Point): TerrainDetail | null {
+  const kx = 111320 * Math.cos(stand.lat * Math.PI / 180), kz = 111132;
+  let best: TerrainDetail | null = null, bestBoth = false, bestIn = 0;
+  for (const r of all) {
+    if (r.parent !== region.id || !inRegion(r, stand)) continue;
+    if (near && !(r.north <= near.north && r.south >= near.south && r.west >= near.west && r.east <= near.east)) continue;
+    const inside = Math.min((r.north - stand.lat) * kz, (stand.lat - r.south) * kz, (stand.lng - r.west) * kx, (r.east - stand.lng) * kx);
+    if (inside < 100) continue;
+    const both = inRegion(r, subject);
+    if (!best || (both && !bestBoth) || (both === bestBoth && inside > bestIn)) { best = r; bestBoth = both; bestIn = inside; }
+  }
+  return best;
+}
+// The class mask of a detail box, as a file of its own (null when the box has none: it then draws as bare shapes).
+export function detailMask(d: TerrainDetail): TerrainFile | null {
+  return d.mask_path ? { id: `${d.id}_mask`, path: d.mask_path, bytes: d.mask_bytes } : null;
+}
+
+// The two round 3 files of a detail box, each null when the row has none.
+export function detailTrees(d: TerrainDetail): TerrainFile | null {
+  return d.trees_path ? { id: `${d.id}_trees`, path: d.trees_path, bytes: d.trees_bytes ?? null } : null;
+}
+export function detailWater(d: TerrainDetail): TerrainFile | null {
+  return d.water_path && d.water_n && d.water_north != null && d.water_south != null && d.water_west != null && d.water_east != null
+    ? { id: `${d.id}_water`, path: d.water_path, bytes: d.water_bytes ?? null } : null;
 }
 
 type TerrainFile = { id: string; path: string; bytes: number | null };
@@ -197,7 +282,8 @@ export function terrainData(r: TerrainFile): Promise<string | null> {
 
 // ---- Saved ahead for a whole trip ----
 
-// areas = the files the trip's stand spots need (wide regions + fine boxes); saved = how many are on the phone.
+// areas = what the trip's stand spots need (wide regions, fine boxes, detail boxes); saved = how many are on the phone.
+// A detail box is one area with up to four files (heights, class mask, tree returns, wide water): saved when all are there.
 export type TripTerrain = { areas: number; saved: number; bytes: number; busy: boolean };
 const tripState: Record<string, TripTerrain | undefined> = {};
 const tripRun: Record<string, { again: Shot[] | null } | undefined> = {};
@@ -209,16 +295,19 @@ function setTrip(tripId: string, t: TripTerrain): void {
   tripListeners.forEach(fn => fn(tripId));
 }
 
-// Every terrain file this trip's shots use, by the same choice the 3D panel makes. Works with no signal from the saved lists.
-async function tripFiles(shots: Shot[]): Promise<TerrainFile[]> {
-  const out = new Map<string, TerrainFile>();
-  const [all, allNear] = [await loadRegions(), await loadNear()];   // asked once, not per shot
+// Every terrain area this trip's shots use (each a list of files), by the same choice the 3D panel makes. Works with
+// no signal from the saved lists.
+async function tripAreas(shots: Shot[]): Promise<TerrainFile[][]> {
+  const out = new Map<string, TerrainFile[]>();
+  const [all, allNear, allDetail] = [await loadRegions(), await loadNear(), await loadDetail()];   // asked once, not per shot
   for (const sh of shots) {
     const r = all.find(x => inRegion(x, sh.v));
     if (!r) continue;
-    out.set(`r:${r.id}`, r);
+    out.set(`r:${r.id}`, [r]);
     const nr = pickNear(allNear, r, sh.v, sh.s);
-    if (nr) out.set(`n:${nr.id}`, nr);
+    if (nr) out.set(`n:${nr.id}`, [nr]);
+    const dt = pickDetail(allDetail, r, nr, sh.v, sh.s);
+    if (dt) out.set(`d:${dt.id}`, [dt, detailMask(dt), detailTrees(dt), detailWater(dt)].filter((f): f is TerrainFile => !!f));
   }
   return [...out.values()];
 }
@@ -234,16 +323,18 @@ export function saveTripTerrain(tripId: string, shots: Shot[]): void {
   tripRun[tripId] = mine;
   (async () => {
     try {
-      const files = await tripFiles(shots);
-      const bytes = files.reduce((n, f) => n + (f.bytes ?? 0), 0);
-      const have = await Promise.all(files.map(onPhone));
+      const areas = await tripAreas(shots);
+      const bytes = areas.reduce((n, a) => n + a.reduce((k, f) => k + (f.bytes ?? 0), 0), 0);
+      const have = await Promise.all(areas.map(async a => (await Promise.all(a.map(onPhone))).every(Boolean)));
       let saved = have.filter(Boolean).length;
-      setTrip(tripId, { areas: files.length, saved, bytes, busy: saved < files.length });
-      for (let i = 0; i < files.length; i++) {
+      setTrip(tripId, { areas: areas.length, saved, bytes, busy: saved < areas.length });
+      for (let i = 0; i < areas.length; i++) {
         if (have[i]) continue;
-        if (await saveFile(files[i])) { saved++; setTrip(tripId, { areas: files.length, saved, bytes, busy: true }); }
+        let ok = true;
+        for (const f of areas[i]) ok = (await saveFile(f)) && ok;   // files already there are not fetched again
+        if (ok) { saved++; setTrip(tripId, { areas: areas.length, saved, bytes, busy: true }); }
       }
-      setTrip(tripId, { areas: files.length, saved, bytes, busy: false });
+      setTrip(tripId, { areas: areas.length, saved, bytes, busy: false });
     } catch {
       const t = tripState[tripId];
       if (t) setTrip(tripId, { ...t, busy: false });
