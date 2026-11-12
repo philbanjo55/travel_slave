@@ -6,7 +6,7 @@ import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
 import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
 import { inRegion, regionFor, terrainData, TerrainRegion } from '../../services/terrain';
-import { hdForget, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
+import { hdForget, hdLeftThisMonth, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import type { Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
@@ -20,9 +20,11 @@ import { compassPoint } from './sunStyle';
 // HD (optional, off until tapped): the same view drawn on Google's 3D picture
 // (tools/sun3d/app_view_google.js -> sun3dGoogleHtml.ts), lit by the same
 // calculated sun. The button shows only when the phone is online and the tiles
-// door answers (services/tiles3d). It needs a signal and nothing of it is kept;
-// if it fails the offline view comes back by itself. Google's credit line must
-// stay on the picture while HD is on.
+// door says it is switched on (services/tiles3d). It needs a signal and nothing
+// of it is kept; if it fails the offline view comes back by itself. Google's
+// attribution (Google Maps logo, data credits, and the line saying which part
+// is Google's) is drawn by the page along the bottom of the picture: nothing of
+// ours may sit on it, so our caption moves to the top while HD is on.
 
 type Props = {
   pair: Pair;
@@ -62,7 +64,6 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
   const [hd, setHd] = useState<string | null>(null);      // Google's root tile set while the HD page is showing
   const [wantLocal, setWantLocal] = useState(false);
   const [hdNote, setHdNote] = useState<string | null>(null);
-  const [credits, setCredits] = useState('');
   const [hdLoading, setHdLoading] = useState(false);
   const hdRef = useRef<string | null>(null);
   hdRef.current = hd;
@@ -111,7 +112,7 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
   // Change between the offline page and the HD page: the web view is made anew, so everything it reported is cleared.
   const swap = useCallback((root: string | null) => {
     booted.current = false; sent.current = false;
-    setLit(null); setMoments(null); setLook(null); setCredits(''); setHdLoading(false); setProblem(null);
+    setLit(null); setMoments(null); setLook(null); setHdLoading(false); setProblem(null);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p));
     setHd(root);
   }, []);
@@ -155,7 +156,6 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
     else if (m.type === 'state') setLit({ subjectLit: !!m.subjectLit, hereLit: !!m.hereLit, up: !!m.up });
     else if (m.type === 'moments') setMoments({ firstSubject: m.firstSubject ?? null, lastSubject: m.lastSubject ?? null, firstHere: m.firstHere ?? null, lastHere: m.lastHere ?? null });
     else if (m.type === 'look') setLook(typeof m.deg === 'number' ? m.deg : null);
-    else if (m.type === 'credits') setCredits(typeof m.text === 'string' ? m.text : '');
     else if (m.type === 'hd') setHdLoading(!!m.loading);
     else if (m.type === 'error') {
       if (hdRef.current) {
@@ -185,6 +185,7 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
     : phase === 'none' ? 'No 3D terrain for this area yet.'
     : phase === 'failed' ? "Couldn't get the terrain. It needs a signal the first time."
     : null;
+  const left = hd ? hdLeftThisMonth() : null;
   const subject = pair.subject_name || 'The subject';
   const chips: { label: string; minute: number | null }[] = moments ? [
     { label: `First sun on ${subject}`, minute: moments.firstSubject },
@@ -247,13 +248,8 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
             </TouchableOpacity>
           </View>
         </View>
-        {hd && ready ? (
-          <Text style={styles.credits} pointerEvents="none" numberOfLines={2} accessibilityLabel={`Picture: ${credits || 'Google'}`}>
-            {/google/i.test(credits) ? credits : `Google${credits ? `; ${credits}` : ''}`}
-          </Text>
-        ) : null}
         {ready && look != null ? (
-          <Text style={styles.caption} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm · {hd && hdLoading ? 'loading the picture…' : 'drag to look around'}</Text>
+          <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm · {hd && hdLoading ? 'loading the picture…' : 'drag to look around'}</Text>
         ) : null}
       </View>
 
@@ -288,7 +284,7 @@ export default function Sun3DPanel({ pair, sun, day0, height = 208, full, onJump
       {ready ? (
         <Text style={styles.note}>
           {hd
-            ? "Google's picture with the calculated sun and shadows laid over it" + (region?.ground === 'snow' ? ', and snow added' : '') + '. No clouds. Needs a signal; times are within a few minutes.'
+            ? `Picture: Google Maps. ${region?.ground === 'green' ? 'Light and shadows' : 'Light, shadows and snow'} are calculated. No clouds. Needs a signal; times are within a few minutes.${left != null ? ` HD views left this month: ${left}.` : ''}`
             : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes.'}
         </Text>
       ) : null}
@@ -313,7 +309,7 @@ const styles = StyleSheet.create({
   hdBtn: { minWidth: 40, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   fullBtn: { width: 36, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   caption: { position: 'absolute', left: 10, right: 10, bottom: 8, color: '#ffffff', fontSize: 11, textShadowColor: 'rgba(0,0,0,0.9)', textShadowRadius: 3, textShadowOffset: { width: 0, height: 1 } },
-  credits: { position: 'absolute', left: 10, right: 10, bottom: 24, color: '#ffffff', fontSize: 9, textAlign: 'right', textShadowColor: 'rgba(0,0,0,0.9)', textShadowRadius: 3, textShadowOffset: { width: 0, height: 1 } },
+  captionHd: { top: 46, bottom: undefined },   // Google's attribution has the bottom of the picture
   status: { color: colors.textSecondary, fontSize: 13, marginTop: 8, paddingHorizontal: 2 },
   sunOn: { color: '#F0B04A', fontWeight: '700' },
   moments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
