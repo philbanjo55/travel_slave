@@ -81,6 +81,10 @@ const snap = (p, rad) => { const q = cr(p); let best = null; for (let r = Math.r
 const sunVec = (az, alt) => { const a = alt * RAD, z = az * RAD; return { x: Math.sin(z) * Math.cos(a), y: Math.sin(a), z: -Math.cos(z) * Math.cos(a), tan: Math.tan(a), hx: Math.sin(z), hz: -Math.cos(z) }; };
 const far = () => { const a = cr(eye), b = cr(target); return Math.hypot((b.c - a.c) * DXm, (b.r - a.r) * DZm); };
 const subjPoint = () => { const q = far() > 3000 ? snap(target, 4) : null; if (q) return q; const c = cr(target); return { c: c.c, r: c.r, h: hB(c.c, c.r) + 6 }; };
+// The subject counts as lit when either the nearby high point or the pin itself is (12 Nov 2026, same as app_view.js:
+// a pin at the foot of a wall, e.g. Teton Point Turnout's "main" in the Teton Glacier bowl, read "never in the sun").
+const pinPoint = () => { const c = cr(target); return { c: c.c, r: c.r, h: hB(c.c, c.r) + 6 }; };
+const subjLit = (az, alt, s, q) => lit(s || subjPoint(), az, alt) || lit(q || pinPoint(), az, alt);
 const herePoint = () => { const c = cr(eye); return { c: c.c, r: c.r, h: hB(c.c, c.r) }; };
 // The sun counts when its centre clears the terrain. A high point sees it a little below the flat horizon (the dip).
 const dipOf = h => 0.95 * Math.sqrt(Math.max(0, h - baseH) / 1000);
@@ -280,7 +284,7 @@ function light() {
   R.disc.visible = R.halo.visible = sun.alt > -1;
   R.disc.material.color.setRGB(1, Math.min(1, .75 + A.sun[1] * .25), Math.min(1, .5 + A.sun[2] * .5));
   R.halo.material.color.setRGB(A.sun[0], A.sun[1], A.sun[2]);
-  post({ type: 'state', subjectLit: lit(subjPoint(), sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
+  post({ type: 'state', subjectLit: subjLit(sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
 }
 function aim() {
   const a = cr(eye), t = local(target, 0), dist = Math.hypot(t.x, t.z);
@@ -391,8 +395,8 @@ window.S3D = {
   recenter() { if (R && !dead) { aim(); dirty = true; heading(); } },
   path(arr) {
     if (!R) return;
-    const s = subjPoint(), h = herePoint(); let fs = null, ls = null, fh = null, lh = null;
-    for (const [m, az, alt] of arr) { if (lit(s, az, alt)) { if (fs == null) fs = m; ls = m; } if (lit(h, az, alt)) { if (fh == null) fh = m; lh = m; } }
+    const s = subjPoint(), q = pinPoint(), h = herePoint(); let fs = null, ls = null, fh = null, lh = null;
+    for (const [m, az, alt] of arr) { if (subjLit(az, alt, s, q)) { if (fs == null) fs = m; ls = m; } if (lit(h, az, alt)) { if (fh == null) fh = m; lh = m; } }
     post({ type: 'moments', firstSubject: fs, lastSubject: ls, firstHere: fh, lastHere: lh });
   },
 };
