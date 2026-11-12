@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -296,6 +297,7 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, onAccepted
   apply: any | null; onClose: () => void; tripId?: string; run?: PlanRun | null; plan?: Plan; mine?: Plan;
   onAccepted?: (result: any) => void;
 }) {
+  const insets = useSafeAreaInsets();   // the sheet's buttons stay above Android's Home / Back buttons
   const { currentTripData, loadTrip } = useTripStore();
   const [busy, setBusy] = useState(false);
   const tierOf = useTierOf(tripId);
@@ -327,7 +329,7 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, onAccepted
   return (
     <Modal visible={!!apply} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.sheetBg}>
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: spacing.xxl + insets.bottom }]}>
           <View style={styles.sheetHead}>
             <Text style={styles.sheetTitle}>What would change</Text>
             <TouchableOpacity onPress={onClose} style={styles.iconBtn} accessibilityLabel="Close">
