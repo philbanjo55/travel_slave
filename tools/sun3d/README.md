@@ -17,3 +17,20 @@ Artifact: https://claude.ai/artifact/Pb98xc4aXLU43cuyTcVxTU. No Google data in i
   and "where you stand" are point checks on the CPU.
 - Sun times are a few minutes off: the sun never counts before the flat-horizon sunrise, and
   terrain outside the area casts no shadow.
+
+## Google 3D tiles with our sun (test harness, `google/`)
+
+Tried 12 Nov 2026: Google's Photorealistic 3D Tiles of the Tetons, relit by our own light pass
+(sun angle + shadows from the 27 m grid) and optionally "snowed" (bright ground turns white, dark
+trees and water stay). It works; see CLAUDE.md for what was found.
+
+- `relay.js`: local server on :8770. `/v1/...` goes to `tile.googleapis.com` with curl through the
+  session proxy, which adds the key (network secret, header `X-Goog-Api-Key`); tiles are kept on
+  disk for the run only: delete `cache/` afterwards.
+- `main.js`: three 0.160 + 3d-tiles-renderer 0.3.31 (`npm i three@0.160.0 3d-tiles-renderer@0.3.31
+  esbuild`, copy `../sun.js` to `src/sun.js` with `export { sunPos }`, bundle to `dist/main.js`,
+  `dist/index.html` holds a 1200 x 800 canvas `#view`). The tiles are moved into a local frame at
+  the middle of our grid (x east, y up, z south) so a tile's world position maps straight onto
+  our light map. `window.__g.set({stop, mins, focal, mode})`: mode 0 Google as is, 1 + our sun,
+  2 + snow.
+- `shot.js '<jobs json>' <errorTarget>`: headless renders to `out_<name>.png`.
