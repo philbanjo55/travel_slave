@@ -97,6 +97,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const [waterB64, setWaterB64] = useState<string | null>(null);
   const [iceChoice, setIceChoice] = useState<boolean | null>(lastIce);   // null = the page's own default (frozen where the ground is snow)
   const [shapes, setShapes] = useState(false);   // the page says it is drawing the detail box
+  const [foreBusy, setForeBusy] = useState(false);   // the foreground has been sent and the page has not answered yet
   const [foreground, setForegroundState] = useState(lastForeground);
   const [lensId, setLensState] = useState(lastLens);
   const pickLens = LENSES.find(l => l.id === lensId) ?? LENSES[2];
@@ -120,7 +121,9 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const foreSent = useRef(false);
   const [gen, setGen] = useState(0);                         // bumped to start the web view afresh after it died
   const [heavy, setHeavy] = useState(foregroundTooHeavy);
-  const loaded = useRef<string | null>(null);   // the files the page holds: "<region>|<fine box or nothing>|<detail box or nothing>"
+  const loaded = useRef<string | null>(null);   // the files the plain view holds: "<region>|<fine box or nothing>"
+  const loadedDetail = useRef('');               // the detail box whose files are loaded (or loading) for this shot
+  const nearUsed = useRef<TerrainNear | null>(null);
   const ready = phase === 'ready';
   // Full screen runs edge to edge: the lines under the picture keep a margin from the sides of the phone.
   const pad = full ? styles.fullPad : null;
@@ -147,29 +150,37 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
       const stand = { lat: vLat, lng: vLng };
       const r = await regionFor(stand);
       const nr = r ? await nearFor(r, stand, { lat: sLat, lng: sLng }) : null;
-      const dt0 = r ? await detailFor(r, nr, stand, { lat: sLat, lng: sLng }) : null;
       if (!alive) return;
-      if (r && loaded.current === `${r.id}|${nr?.id ?? ''}|${dt0?.id ?? ''}`) return;   // same files: the page only gets the new view
-      loaded.current = null; booted.current = false; sent.current = false;
-      setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setShapes(false); setLit(null); setMoments(null);
-      if (!r) { setPhase('none'); return; }
-      setPhase('loading');
-      // The fine file is an extra: with a weak signal it gets 10 s, then the wide grid draws alone (the download carries on).
-      const fine = nr ? Promise.race([terrainData(nr), new Promise<null>(res => setTimeout(() => res(null), 10000))]) : Promise.resolve(null);
-      // The detail box is an extra in the same way (heights + class mask; without the mask it draws as bare shapes).
-      const late = <T,>(p: Promise<T | null>) => Promise.race([p, new Promise<null>(res => setTimeout(() => res(null), 10000))]);
-      const mk = dt0 ? detailMask(dt0) : null;
-      const tk = dt0 ? detailTrees(dt0) : null, wk = dt0 ? detailWater(dt0) : null;   // tree returns and the wide water: extras of the extra
-      const [d, nd, dd, md, td, wd] = await Promise.all([terrainData(r), fine, dt0 ? late(terrainData(dt0)) : null, mk ? late(terrainData(mk)) : null,
-        tk ? late(terrainData(tk)) : null, wk ? late(terrainData(wk)) : null]);
-      if (!alive) return;
-      if (!d) { setPhase('failed'); return; }
-      // No fine file (no signal the first time): the wide grid alone still draws, and the next shot tries again.
-      // The detail box was chosen to sit inside the fine box, so it is only used when that one came too.
-      const dt = dt0 && dd && (!nr || nd) ? dt0 : null;
-      loaded.current = `${r.id}|${nr && nd ? nr.id : ''}|${dt ? dt.id : ''}`;
-      setRegion(r); setNear(nr && nd ? nr : null); setB64(d); setNearB64(nr && nd ? nd : null);
-      setDetail(dt); setDetailB64(dt ? dd : null); setMaskB64(dt ? md : null); setTreesB64(dt ? td : null); setWaterB64(dt ? wd : null); setPhase('starting');
+      if (!(r && loaded.current === `${r.id}|${nr?.id ?? ''}`)) {   // (same files: the page only gets the new view)
+        loaded.current = null; loadedDetail.current = ''; nearUsed.current = null; booted.current = false; sent.current = false; foreSent.current = false;
+        setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setShapes(false); setForeBusy(false); setLit(null); setMoments(null);
+        if (!r) { setPhase('none'); return; }
+        setPhase('loading');
+        // The fine file is an extra: with a weak signal it gets 10 s, then the wide grid draws alone (the download carries on).
+        const fine = nr ? Promise.race([terrainData(nr), new Promise<null>(res => setTimeout(() => res(null), 10000))]) : Promise.resolve(null);
+        const [d, nd] = await Promise.all([terrainData(r), fine]);
+        if (!alive) return;
+        if (!d) { setPhase('failed'); return; }
+        // No fine file (no signal the first time): the wide grid alone still draws, and the next shot tries again.
+        loaded.current = `${r.id}|${nr && nd ? nr.id : ''}`; nearUsed.current = nr && nd ? nr : null;
+        setRegion(r); setNear(nearUsed.current); setB64(d); setNearB64(nr && nd ? nd : null); setPhase('starting');
+      }
+      // The foreground's files come behind the plain view, never before it: the detail box for this shot (it must sit
+      // inside the fine box the page really has), its mask, the tree returns and the wide water.
+      const dt0 = await detailFor(r, nearUsed.current, stand, { lat: sLat, lng: sLng });
+      if (!alive || (dt0?.id ?? '') === loadedDetail.current) return;
+      if (foreSent.current) {   // the page already holds another box's foreground: start it afresh for this one
+        booted.current = false; sent.current = false; foreSent.current = false;
+        setLit(null); setMoments(null); setLook(null); setShapes(false); setForeBusy(false); setPhase(p => (p === 'ready' ? 'starting' : p)); setGen(g => g + 1);
+      }
+      loadedDetail.current = dt0?.id ?? '';
+      setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null);
+      if (!dt0) return;
+      const mk = detailMask(dt0), tk = detailTrees(dt0), wk = detailWater(dt0);
+      const [dd, md, td, wd] = await Promise.all([terrainData(dt0), mk ? terrainData(mk) : null, tk ? terrainData(tk) : null, wk ? terrainData(wk) : null]);
+      if (!alive || loadedDetail.current !== dt0.id) return;
+      if (!dd) { loadedDetail.current = ''; return; }   // not on the phone and no signal: tried again with the next shot
+      setMaskB64(md); setTreesB64(td); setWaterB64(wd); setDetailB64(dd); setDetail(dt0);
     })();
     return () => { alive = false; };
   }, [vLat, vLng, sLat, sLng]);
@@ -211,11 +222,12 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   // Foreground on / off: the page is started again with or without the detail box (off = exactly the page without it).
   const setForeground = useCallback((on: boolean) => {
     lastForeground = on; setForegroundState(on);
-    if (on) { foregroundTooHeavy = false; setHeavy(false); }
+    if (on) { foregroundTooHeavy = false; setHeavy(false); foreSent.current = false; return; }   // on: sent to the page that is up (sendFore)
     if (hdRef.current) return;   // the HD page has no detail box: nothing to restart
+    // off: the page is started afresh without it, so it draws exactly the plain view
     booted.current = false; sent.current = false; foreSent.current = false;
-    setLit(null); setMoments(null); setLook(null); setShapes(false); setProblem(null);
-    setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p));
+    setLit(null); setMoments(null); setLook(null); setShapes(false); setForeBusy(false); setProblem(null);
+    setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p)); setGen(g => g + 1);
   }, []);
   const useDetail = foreground && !hd && !!detail && !!detailB64;
   const useDetailRef = useRef(false);
@@ -255,7 +267,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   // 'foreground' (ok, or dropped: the plain view then simply stays).
   const sendFore = useCallback(() => {
     if (foreSent.current || !useDetail || !detail || !detailB64) return;
-    foreSent.current = true;
+    foreSent.current = true; setForeBusy(true);
     const fore = {
       detail: {
         n: detail.n, north: detail.north, south: detail.south, west: detail.west, east: detail.east, base: detail.base_m, step: detail.step_m,
@@ -277,7 +289,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const onGone = useCallback(() => {
     if (hdRef.current) { hdForget(); setHdNote("The HD picture couldn't load. Showing the offline view."); setWant(false); return; }
     booted.current = false; sent.current = false; foreSent.current = false;
-    setLit(null); setMoments(null); setLook(null); setShapes(false);
+    setLit(null); setMoments(null); setLook(null); setShapes(false); setForeBusy(false);
     if (useDetailRef.current) {
       lastForeground = false; foregroundTooHeavy = true;
       setForegroundState(false); setHeavy(true); setProblem(null); setPhase('starting'); setGen(g => g + 1);
@@ -290,7 +302,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
     if (!m || typeof m.type !== 'string') return;
     if (m.type === 'boot') { booted.current = true; foreSent.current = false; start(); }
     else if (m.type === 'ready') setPhase('ready');
-    else if (m.type === 'foreground') setShapes(!!m.ok);   // not ok = the page dropped it and kept the plain view
+    else if (m.type === 'foreground') { setShapes(!!m.ok); setForeBusy(false); }   // not ok = the page dropped it and kept the plain view
     else if (m.type === 'lost') onGone();
     else if (m.type === 'state') setLit({ subjectLit: !!m.subjectLit, hereLit: !!m.hereLit, up: !!m.up, trees: !!m.trees });
     else if (m.type === 'moments') setMoments({ firstSubject: m.firstSubject ?? null, lastSubject: m.lastSubject ?? null, firstHere: m.firstHere ?? null, lastHere: m.lastHere ?? null, trees: !!m.trees });
@@ -339,7 +351,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
         {region && b64 && !holding ? (
           <Web
             ref={web}
-            key={hd ? `${region.id}:hd:${gen}` : `${region.id}|${near?.id ?? ''}|${useDetail && detail ? detail.id : ''}|${gen}`}
+            key={hd ? `${region.id}:hd:${gen}` : `${region.id}|${near?.id ?? ''}|${gen}`}
             source={hd && hdCfg ? { html: SUN3D_GOOGLE_HTML, baseUrl: hdCfg.origin } : { html: SUN3D_HTML }}
             originWhitelist={['*']}
             javaScriptEnabled
@@ -441,6 +453,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
           {lit?.trees ? 'Trees near you may block the sun here right now' : 'Trees near you may block the sun here at times today'} (summer survey; bare in winter if they are cottonwoods). The times don't count them.
         </Text>
       ) : null}
+      {foreBusy && ready && !hd ? <Text style={[styles.note, pad]}>Foreground loading…</Text> : null}
       {heavy && !foreground && !hd ? (
         <Text style={[styles.status, pad]}>The foreground was too heavy for this phone, so it is off. The view below is the plain one.</Text>
       ) : null}

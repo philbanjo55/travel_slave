@@ -12,7 +12,9 @@
 //   S3D.ice(bool)   frozen lakes on / off
 //   The foreground (detail box, tree returns, water) never holds the plain view up: done() draws far + near and posts
 //   `ready`; the foreground is built after the first frames, in steps, and `foreground` {ok, detail, trees, water, ms}
-//   says when it is in, or why it was dropped (the plain view then simply stays). The app sends it after `ready`:
+//   says when it is in, or why it was dropped (the plain view then simply stays). While it is being built the page
+//   posts `detail` {stage: 'decode' | 'mask' | 'textures' | 'trees' | 'light' | 'done', ms} so a log shows where a slow
+//   phone is. The app sends the foreground after `ready`:
 //   S3D.fore({ detail, water, ice })   then its chunks ('detail', 'mask', 'trees', 'water')   then S3D.foreDone().
 //   Foreground chunks sent before done() (the test harness) are treated the same way. `lost` = the graphics context went.
 //   S3D.sun(az, alt)  degrees, from the app's own sun engine      S3D.focal(mm)
@@ -461,7 +463,7 @@
   // everywhere. With the trees' own returns (`raw`: the tree file as unpacked, n lines of 1 + n x 8 bytes, 64 height
   // slices a cell, one bit each) the points sit only where a return came from, so each tree keeps its shape; without
   // it (round 2 data) they are made up between each canopy top and a few metres under it.
-  async function treePoints(D, blob, bins, bh, cap, fine) {
+  async function treePoints(D, blob, bins, bh, cap, fine, breathe) {
     const n = D.n, k = D.kind, e = crg(D, eye), dx = D.dx, dz = D.dz, len = n * fine * 8 + 1;
     if (!k) return null;
     const thin = (r, c) => Math.min(3, 60 / Math.max(1, Math.hypot((c - e.c) * dx, (r - e.r) * dz)));
@@ -470,7 +472,7 @@
     // each(fn): fn(r, a, b) for every row of the box; a (and b on the light grid, where a cell is four of the file's) = the file's line(s)
     const keep = fine === 2 ? new Uint8Array(len) : null, B = new Uint8Array(8);
     const each = async fn => {
-      if (!blob) { for (let r = 0; r < n; r++) fn(r, null, null); return; }
+      if (!blob) { for (let r = 0; r < n; r++) { fn(r, null, null); if (breathe && !(r & 127)) await breathe(); } return; }
       const got = await lines(blob, len, (ln, i) => { if (i >= n * fine) return; if (fine === 1) fn(i, ln, null); else if (i & 1) fn(i >> 1, keep, ln); else keep.set(ln); });
       if (got !== n * fine) throw new Error('tree file has the wrong size');
     };
@@ -593,17 +595,20 @@
   // the class mask for the graphics card: r = building (exact, for the walls), g = building or beside one (a wall's
   // side is drawn on the cell beside it, so that takes the wood colour too), b = water (255 moving, 127 still: the wide
   // water layer knows which; without it all water counts as moving), a = tree canopy height / 0.2 m
-  function kindTex(g, WT) {
+  async function kindTex(g, WT, breathe) {
     const n = g.n, k = g.kind, px = new Uint8Array(n * n * 4);
     const still = (r, c) => {
       if (!WT) return false;
       const wc = Math.floor((g.x0 + (c + 0.5) * g.dx - WT.x0) / WT.w * WT.n), wr = Math.floor((g.z0 + (r + 0.5) * g.dz - WT.z0) / WT.d * WT.n);
       return wc >= 0 && wr >= 0 && wc < WT.n && wr < WT.n && WT.cls[wr * WT.n + wc] === 2;
     };
-    if (k) for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    if (k) for (let r = 0; r < n; r++) {
+     if (breathe && r && !(r & 127)) await breathe();   // a slice of lines, then the page gets a turn
+     for (let c = 0; c < n; c++) {
       const i = r * n + c, v = k[i], bl = v === 2; let by = bl;
       if (!by) for (let b = Math.max(0, r - 1); b <= Math.min(n - 1, r + 1) && !by; b++) for (let a = Math.max(0, c - 1); a <= Math.min(n - 1, c + 1); a++) if (k[b * n + a] === 2) { by = true; break; }
       px[i * 4] = bl ? 255 : 0; px[i * 4 + 1] = by ? 255 : 0; px[i * 4 + 2] = v === 3 && !by ? (still(r, c) ? 127 : 255) : 0; px[i * 4 + 3] = v >= 8 ? v - 8 : 0;
+     }
     }
     const t = new THREE.DataTexture(px, n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
     t.magFilter = t.minFilter = THREE.LinearFilter; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
@@ -669,7 +674,7 @@
   }
 
   // ---- The foreground: built after the plain view is up, a step at a time, and dropped whole if anything goes wrong ----
-  const FORE_MS = 20000;
+  const FORE_MS = 60000;   // a slow phone gets a minute; past that the box is dropped and the plain view stays
   const pause = () => new Promise(r => setTimeout(r, 0));
   function queueFore() {
     if (foreState !== 0 || !cfg || !cfg.detail || !dparts.length) return;
@@ -679,8 +684,9 @@
   }
   async function addFore() {
     const t0 = performance.now(), made = [], my = cfg; let where = 'start';
-    const step = async w => {   // between steps the page breathes (the view stays live), and the build may be called off
-      where = w; await pause();
+    const breathe = async () => { await pause(); if (cfg !== my || !R) throw new Error('the view changed'); if (performance.now() - t0 > FORE_MS) throw new Error('took too long'); };
+    const step = async w => {   // between steps the page breathes (the view stays live), says where it is, and the build may be called off
+      where = w; post({ type: 'detail', stage: w, ms: Math.round(performance.now() - t0) }); await pause();
       if (cfg !== my || !R) throw new Error('the view changed');
       if (R.lost) throw new Error('graphics context lost');
       if (performance.now() - t0 > FORE_MS) throw new Error('took too long');
@@ -698,7 +704,7 @@
       const keep = Math.max(4, Math.min(25, 0.5 * pcell)), band = keep + Math.max(16, Math.min(45, 2 * pcell));
       if (!(dc.west >= P.west && dc.east <= P.east && dc.south >= P.south && dc.north <= P.north) || Math.min(w, d) < 4 * band) throw new Error('detail grid does not fit');
       const D = { n: dn, HF: m.HF, north: dc.north, south: dc.south, west: dc.west, east: dc.east, x0: (dc.west - my.west) * kx, z0: (my.north - dc.north) * kz, w, d, dx: w / dn, dz: d / dn, keep, band, up: NR || FAR, lift: 2, kind: null };
-      await step('heights');
+      await step('decode');
       // 2. the class mask (without it: bare shapes), and the water of the 6 km around (0 none, 1 moving, 2 still)
       if (mparts.length) {
         list = mparts; mparts = [];
@@ -727,22 +733,22 @@
       // 3. textures, one at a time: each goes to the graphics card and its copy here is given back before the next is
       //    made, so the three never sit in memory twice together
       const send = t => { made.push(t); R.renderer.initTexture(t); free(t.image.data); t.image = { data: null, width: t.image.width, height: t.image.height }; };
-      const dmap = heightTex(D, 4); send(dmap); await step('height texture');
-      const kmap = kindTex(D, W); send(kmap); await step('mask texture');
+      const dmap = heightTex(D, 4); send(dmap); await breathe();
+      const kmap = await kindTex(D, W, breathe); send(kmap); await breathe();
       let wmap = null;
       if (W) {
         const px = W.cls; for (let i = 0; i < px.length; i++) px[i] = px[i] === 1 ? 255 : px[i] === 2 ? 127 : 0;
         wmap = new THREE.DataTexture(px, W.n, W.n, THREE.LuminanceFormat, THREE.UnsignedByteType); W.cls = null;
         wmap.magFilter = wmap.minFilter = THREE.LinearFilter; wmap.wrapS = wmap.wrapT = THREE.ClampToEdgeWrapping; wmap.needsUpdate = true; send(wmap);
-        await step('water texture');
       }
+      await step('textures');
       // 4. the trees: their own returns when the file came, read a line at a time
       let tp = null;
       if (D.kind) {
         const tc = dc.trees || {}, cap = Math.max(1000, Math.min(520000, dc.maxTrees || (light ? TREE_LIGHT : TREE_MAX))); let blob = null;
         if (dc.trees && tparts.length) { list = tparts; tparts = []; blob = pack(list); list = null; }
-        try { tp = await treePoints(D, blob, Math.min(64, tc.bins || 64), tc.bin || 0.6, cap, fine); }
-        catch (e) { if (!blob) throw e; tp = await treePoints(D, null, 64, 0.6, cap, fine); }   // a bad tree file: made-up points under the canopy tops instead
+        try { tp = await treePoints(D, blob, Math.min(64, tc.bins || 64), tc.bin || 0.6, cap, fine, breathe); }
+        catch (e) { if (!blob) throw e; tp = await treePoints(D, null, 64, 0.6, cap, fine, breathe); }   // a bad tree file: made-up points under the canopy tops instead
       }
       tparts = [];
       await step('trees');
@@ -781,7 +787,7 @@
         const nd = { DHOLE: 1 }; if (wmap) nd.WATER = 1;
         nearMat = new THREE.ShaderMaterial({ defines: nd, uniforms: near.mat.uniforms, vertexShader: NEAR_VS, fragmentShader: NEAR_FS }); made.push(nearMat);
       }
-      await step('materials');
+      await step('light');
       // 6. in, all at once
       const oldT = R.terrMat, oldN = near && near.mat;
       DT = D; maxH = Math.max(maxH, m.hi + 60); sunU.maxH.value = maxH;
@@ -791,6 +797,7 @@
       R.cam.near = 1; oldT.dispose(); if (oldN) oldN.dispose();
       if (touched) focus(); else { aim(); heading(); }
       foreState = 2; relight = dirty = true;
+      post({ type: 'detail', stage: 'done', ms: Math.round(performance.now() - t0) });
       post({ type: 'foreground', ok: true, light, detail: D.n, trees: det.count, real: !!(tp && tp.real), water: wmap ? W.n : 0, ice, ms: Math.round(performance.now() - t0) });
       if (lastPath) window.S3D.path(lastPath);   // the day's first / last light again, now from the survey's ground and buildings
     } catch (e) {

@@ -113,25 +113,36 @@ async function loadNear(): Promise<TerrainNear[]> {
 }
 
 // The detail boxes. None (no table yet, no signal and nothing saved) just means no real foreground is drawn.
+// Saved copy first, the server behind it: the list must never hold a first picture up (it is asked once per app run,
+// and the answer replaces the saved copy for the next call).
+let detailAsk: Promise<TerrainDetail[] | null> | null = null;
+function askDetail(): Promise<TerrainDetail[] | null> {
+  if (detailAsk) return detailAsk;
+  detailAsk = (async () => {
+    try {
+      const call = supabase.from('terrain_detail_regions')
+        .select('*');   // every column there is: naming one the table does not have yet would fail the whole list
+      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('terrain list timed out')), CALL_TIMEOUT_MS));
+      const { data: rows, error } = (await Promise.race([call, timeout])) as any;
+      if (error || !Array.isArray(rows)) throw error ?? new Error('no detail list');
+      details = rows as TerrainDetail[];
+      try { await ensureDir(); await FileSystem.writeAsStringAsync(DETAIL_FILE, JSON.stringify(rows)); } catch { /* the list is still usable */ }
+      return details;
+    } catch {
+      detailAsk = null;   // no signal: asked again next time
+      return null;
+    }
+  })();
+  return detailAsk;
+}
 async function loadDetail(): Promise<TerrainDetail[]> {
   if (details) return details;
+  const ask = askDetail();
   try {
-    const call = supabase.from('terrain_detail_regions')
-      .select('*');   // every column there is: naming one the table does not have yet would fail the whole list
-    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('terrain list timed out')), CALL_TIMEOUT_MS));
-    const { data: rows, error } = (await Promise.race([call, timeout])) as any;
-    if (error || !Array.isArray(rows)) throw error ?? new Error('no detail list');
-    details = rows as TerrainDetail[];
-    try { await ensureDir(); await FileSystem.writeAsStringAsync(DETAIL_FILE, JSON.stringify(rows)); } catch { /* the list is still usable */ }
-    return details;
-  } catch {
-    try {
-      const saved = JSON.parse(await FileSystem.readAsStringAsync(DETAIL_FILE));
-      return Array.isArray(saved) ? (saved as TerrainDetail[]) : [];
-    } catch {
-      return [];
-    }
-  }
+    const saved = JSON.parse(await FileSystem.readAsStringAsync(DETAIL_FILE));
+    if (Array.isArray(saved)) return saved as TerrainDetail[];
+  } catch { /* nothing saved yet: wait for the server */ }
+  return (await ask) ?? [];
 }
 
 export function inRegion(r: Box, p: Point): boolean {
