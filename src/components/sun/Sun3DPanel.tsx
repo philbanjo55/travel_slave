@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
@@ -48,7 +48,16 @@ const Web = WebView as unknown as React.ComponentType<any>;
 
 type Phase = 'finding' | 'none' | 'loading' | 'failed' | 'starting' | 'ready' | 'error';
 type Moments = { firstSubject: number | null; lastSubject: number | null; firstHere: number | null; lastHere: number | null };
-const LENSES = [24, 50, 100];
+// Phil's lenses, in 4x5 terms (12 Nov 2026). The film is 120 x 96 mm as the page counts it (the open area of a
+// 4x5 holder); the page works the view out from that, so 135 mm here is what a 135 mm lens sees on 4x5.
+const LENSES = [75, 90, 135, 300];
+const FILM = { long: 120, short: 96 };
+type FrameMode = 'land' | 'port' | 'off';
+const FRAME_NEXT: Record<FrameMode, FrameMode> = { land: 'port', port: 'off', off: 'land' };
+const FRAME_SAY: Record<FrameMode, string> = { land: 'landscape', port: 'portrait', off: 'off' };
+// The last lens and frame chosen, kept while the app is open so full screen and the next stop start the same way.
+let lastFocal = 135;
+let lastFrame: FrameMode = 'land';
 const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
 
 export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd }: Props) {
@@ -58,7 +67,17 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
   const [near, setNear] = useState<TerrainNear | null>(null);
   const [b64, setB64] = useState<string | null>(null);
   const [nearB64, setNearB64] = useState<string | null>(null);
-  const [focal, setFocal] = useState(50);
+  const [focal, setFocalState] = useState(lastFocal);
+  const [frame, setFrameState] = useState<FrameMode>(lastFrame);
+  const setFocal = useCallback((f: number) => { lastFocal = f; setFocalState(f); }, []);
+  const setFrame = useCallback((m: FrameMode) => { lastFrame = m; setFrameState(m); }, []);
+  // What the page needs for the lens: focal length, the film's width and height as the camera is turned, box on / off.
+  const lens = useMemo(() => ({
+    f: focal,
+    fw: frame === 'port' ? FILM.short : FILM.long,
+    fh: frame === 'port' ? FILM.long : FILM.short,
+    box: frame !== 'off',
+  }), [focal, frame]);
   const [lit, setLit] = useState<{ subjectLit: boolean; hereLit: boolean; up: boolean } | null>(null);
   const [moments, setMoments] = useState<Moments | null>(null);
   const [look, setLook] = useState<number | null>(null);
@@ -155,7 +174,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
     const cfg = {
       n: region.n, north: region.north, south: region.south, west: region.west, east: region.east,
       W: region.width_m, D: region.depth_m, base: region.base_m, step: region.step_m, ground: region.ground,
-      eye: pair.v, target: pair.s, focal,
+      eye: pair.v, target: pair.s, focal, lens, inline: !full,
       near: !hd && near && nearB64
         ? { n: near.n, north: near.north, south: near.south, west: near.west, east: near.east, base: near.base_m, step: near.step_m }
         : undefined,
@@ -165,7 +184,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
     for (let i = 0; i < b64.length; i += CHUNK) run(`window.S3D.chunk("${b64.slice(i, i + CHUNK)}")`);
     if (!hd && near && nearB64) for (let i = 0; i < nearB64.length; i += CHUNK) run(`window.S3D.chunk("${nearB64.slice(i, i + CHUNK)}","near")`);
     run('window.S3D.done()');
-  }, [region, near, b64, nearB64, pair.v, pair.s, focal, run, hd, hdCfg]);
+  }, [region, near, b64, nearB64, pair.v, pair.s, focal, lens, full, run, hd, hdCfg]);
   useEffect(() => { start(); }, [start]);
 
   const onMessage = useCallback((e: { nativeEvent: { data: string } }) => {
@@ -197,7 +216,7 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
     run(`window.S3D.view(${vLat},${vLng},${sLat},${sLng})`);
     run(`window.S3D.path(${JSON.stringify(dayPath)})`);
   }, [ready, vLat, vLng, sLat, sLng, dayPath, run]);
-  useEffect(() => { if (ready) run(`window.S3D.focal(${focal})`); }, [ready, focal, run]);
+  useEffect(() => { if (ready) run(`window.S3D.lens(${JSON.stringify(lens)})`); }, [ready, lens, run]);
 
   const waiting = phase === 'finding' ? 'Finding the terrain for this spot…'
     : phase === 'loading' ? 'Getting the terrain (once, a few MB)…'
@@ -264,13 +283,22 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
                 <Text style={[styles.lensText, want && styles.lensTextOn]}>HD</Text>
               </TouchableOpacity>
             ) : null}
+            <TouchableOpacity
+              onPress={() => setFrame(FRAME_NEXT[frame])}
+              style={[styles.fullBtn, frame !== 'off' && styles.lensOn]}
+              accessibilityRole="button"
+              accessibilityLabel={`4x5 frame box: ${FRAME_SAY[frame]}. Tap to change.`}
+              hitSlop={6}
+            >
+              <Ionicons name={frame === 'port' ? 'tablet-portrait-outline' : frame === 'land' ? 'tablet-landscape-outline' : 'scan-outline'} size={17} color={frame !== 'off' ? '#000000' : '#ffffff'} />
+            </TouchableOpacity>
             <TouchableOpacity onPress={onFull} style={styles.fullBtn} accessibilityRole="button" accessibilityLabel={full ? 'Close full screen' : 'Open the 3D view full screen'} hitSlop={6}>
               <Ionicons name={full ? 'contract-outline' : 'expand-outline'} size={18} color="#ffffff" />
             </TouchableOpacity>
           </View>
         </View>
         {ready && look != null ? (
-          <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm · {hd && hdLoading ? 'loading the picture…' : 'drag to look around'}</Text>
+          <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on 4×5 · {hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}</Text>
         ) : null}
       </View>
 
@@ -309,6 +337,16 @@ export default function Sun3DPanel({ pair, tripId, sun, day0, height = 208, full
             : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes. Elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'}
         </Text>
       ) : null}
+      {ready ? (
+        <TouchableOpacity
+          onPress={() => Linking.openURL(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${pair.v.lat},${pair.v.lng}&heading=${look ?? 0}`).catch(() => {})}
+          accessibilityRole="link"
+          accessibilityLabel="Open Street View at this stand spot, facing the same way"
+          hitSlop={{ top: 6, bottom: 6 }}
+        >
+          <Text style={[styles.streetLink, pad]}>Street View from this spot ›</Text>
+        </TouchableOpacity>
+      ) : null}
       {savedLine ? <Text style={[styles.note, pad]} accessibilityLabel={savedLine}>{savedLine}</Text> : null}
     </View>
   );
@@ -335,6 +373,7 @@ const styles = StyleSheet.create({
   status: { color: colors.textSecondary, fontSize: 13, marginTop: 8, paddingHorizontal: 2 },
   sunOn: { color: '#F0B04A', fontWeight: '700' },
   fullPad: { paddingHorizontal: 14 },
+  streetLink: { color: colors.textSecondary, fontSize: 13, marginTop: 10, paddingHorizontal: 2, textDecorationLine: 'underline' },
   moments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   moment: { flexGrow: 1, flexBasis: '47%', minHeight: 48, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: colors.border, justifyContent: 'center' },
   momentLabel: { color: colors.textSecondary, fontSize: 11 },

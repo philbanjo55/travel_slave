@@ -18,6 +18,7 @@ const safe = s => s.replace(/<\/script/gi, '<\\/script');
 const logo = 'data:image/svg+xml;base64,' + fs.readFileSync(path.join(__dirname, 'google/GoogleMaps_Logo_WithDarkOutline.svg')).toString('base64');
 const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <style>html,body{margin:0;height:100%;background:#111111;overflow:hidden}canvas{display:block;width:100%;height:100%;touch-action:none}
+#frame{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border:1.5px solid rgba(255,255,255,.92);box-shadow:0 0 0 1px rgba(0,0,0,.55),inset 0 0 0 1px rgba(0,0,0,.35);pointer-events:none;display:none;box-sizing:border-box}
 #msg{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;color:#888888;font:14px Roboto,system-ui,sans-serif;text-align:center;padding:16px;background:#111111}
 #attr{display:none;position:absolute;left:0;right:0;bottom:0;padding-top:22px;pointer-events:none;color:#ffffff;font:10px Roboto,system-ui,sans-serif;text-shadow:0 1px 2px rgba(0,0,0,.95),0 0 4px rgba(0,0,0,.7);background:linear-gradient(rgba(0,0,0,0),rgba(0,0,0,.5))}
 #ours{padding:0 10px;margin-bottom:10px;font-size:11px;line-height:14px}
@@ -27,7 +28,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
 #attr.small #glogo{display:none}#attr.small #gtext{display:block}
 #cred{flex:1;min-width:0;margin-left:10px;font-size:9px;line-height:12px;white-space:nowrap;overflow:hidden}
 #cred.wrap{white-space:normal}</style>
-</head><body><canvas id="view"></canvas><div id="msg">Loading the terrain…</div>
+</head><body><canvas id="view"></canvas><div id="frame"></div><div id="msg">Loading the terrain…</div>
 <div id="attr"><div id="ours"></div><div id="row"><img id="glogo" alt="Google Maps" src="${logo}"><span id="gtext">Google Maps</span><div id="cred"></div></div></div>
 <script>${safe(app)}</script></body></html>`;
 const file = path.join(__dirname, '../../src/components/sun/sun3dGoogleHtml.ts');

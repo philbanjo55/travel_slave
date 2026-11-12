@@ -40,7 +40,7 @@ window.addEventListener('unhandledrejection', e => { fail("The HD picture couldn
 const RAD = Math.PI / 180, A_WGS = 6378137, E2 = 0.00669437999014;
 let cfg = null, parts = [], HF = null, N = 0, W = 0, D = 0, maxH = 4250, baseH = 0, DXm = 1, DZm = 1;
 let R = null;   // everything three.js, once built
-let eye = null, target = null, yaw = 0, pitch = 0, focal = 50, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
+let eye = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
 let groundY = null, frames = 0, calm = 0, t0 = 0, shown = false, lastCredits = null, lastHd = '';
 
 // ---- Google's attribution band, on the picture ----
@@ -288,10 +288,20 @@ function aim() {
   const top = dist > 3000 ? Math.atan2(snap(target, 4).h - (hB(a.c, a.r) + 3), dist) : 0.04;
   pitch = Math.max(0.01, top * 0.45);
 }
+// The lens: focal length and the film's width and height in mm as the camera is turned (4x5 landscape = 120 x 96).
+// The view is drawn a little wider than the lens, so the whole frame shows with a margin and the box marks it.
+// Exact for a lens focused far away with no rise, fall or shift.
+function lensFov() {
+  const a = (R && R.cam.aspect) || ((window.innerWidth || 1) / (window.innerHeight || 1));
+  const th = lens.fw / (2 * lens.f), tv = lens.fh / (2 * lens.f), k = Math.max(th / (a * 0.9), tv / 0.9);
+  const el = document.getElementById('frame');
+  if (el) { el.style.display = lens.box ? 'block' : 'none'; el.style.width = (th / (k * a) * 100) + '%'; el.style.height = (tv / k * 100) + '%'; }
+  return 2 * Math.atan(k);
+}
 function place() {
   const cam = R.cam, y = (groundY == null ? guessY() + 40 : groundY) + (cfg.tiles.lift || 4);   // held high until Google's ground is found
   cam.position.set(0, y, 0); cam.rotation.set(pitch, -yaw, 0);
-  cam.fov = 2 * Math.atan(12 / focal) / RAD; cam.updateProjectionMatrix(); cam.updateMatrixWorld(true); R.sky.position.copy(cam.position);
+  cam.fov = lensFov() / RAD; cam.updateProjectionMatrix(); cam.updateMatrixWorld(true); R.sky.position.copy(cam.position);
   const d = R.downCam; d.position.set(0, guessY() + 500, 0); d.rotation.set(-Math.PI / 2, 0, 0); d.updateMatrixWorld(true);
 }
 // Google's ground under the eye, from the tiles loaded so far
@@ -345,14 +355,14 @@ let drag = null;
 function wire() {
   const c = R.canvas;
   c.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
-  c.addEventListener('pointermove', e => { if (!drag) return; const per = (R.cam.fov * RAD) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; dirty = true; });
+  c.addEventListener('pointermove', e => { if (!drag) return; const per = (R.cam.fov * RAD) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; dirty = true; });
   const drop = () => { if (drag) { drag = null; heading(); } };
   c.addEventListener('pointerup', drop); c.addEventListener('pointercancel', drop);
   window.addEventListener('resize', resize);
 }
 
 window.S3D = {
-  init(c) { cfg = c; cfg.tiles = cfg.tiles || {}; parts = []; N = c.n; W = c.W; D = c.D; DXm = W / N; DZm = D / N; eye = c.eye; target = c.target; focal = c.focal || 50; },
+  init(c) { cfg = c; cfg.tiles = cfg.tiles || {}; parts = []; N = c.n; W = c.W; D = c.D; DXm = W / N; DZm = D / N; eye = c.eye; target = c.target; focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
   chunk(s, which) { if (which !== 'near') parts.push(s); },   // the fine grid is not used here
   async done() {
     try {
@@ -365,7 +375,12 @@ window.S3D = {
     } catch (e) { fail("The HD picture couldn't start on this phone.", e && e.message || e); }
   },
   sun(az, alt) { sun = { az, alt }; relight = dirty = true; },
-  focal(f) { focal = f; dirty = true; },
+  focal(f) { lens = Object.assign({}, lens, { f }); dirty = true; },
+    // lens({ f, fw, fh, box }): focal length, film width / height in mm as the camera is turned, frame box on / off
+    lens(o) { lens = Object.assign({}, lens, o || {}); dirty = true; },
+    // inline(true): the small view inside a scrolling page. A sideways drag looks around; up-down drags are left to the
+    // page (touch-action pan-y), so the two no longer fight. Full screen: free look both ways.
+    inline(v) { inline = !!v; const c = document.getElementById('view'); if (c) c.style.touchAction = inline ? 'pan-y' : 'none'; },
   view(eLat, eLng, tLat, tLng) {
     const moved = !eye || eye.lat !== eLat || eye.lng !== eLng;
     eye = { lat: eLat, lng: eLng }; target = { lat: tLat, lng: tLng }; if (!R || dead) return;

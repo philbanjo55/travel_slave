@@ -7,8 +7,9 @@ const three = fs.readFileSync(process.argv[2], 'utf8'), app = fs.readFileSync(pa
 const safe = s => s.replace(/<\/script/gi, '<\\/script');
 const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <style>html,body{margin:0;height:100%;background:#111111;overflow:hidden}canvas{display:block;width:100%;height:100%;touch-action:none}
+#frame{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border:1.5px solid rgba(255,255,255,.92);box-shadow:0 0 0 1px rgba(0,0,0,.55),inset 0 0 0 1px rgba(0,0,0,.35);pointer-events:none;display:none;box-sizing:border-box}
 #msg{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;color:#888888;font:14px Roboto,system-ui,sans-serif;text-align:center;padding:16px;background:#111111}</style>
-</head><body><canvas id="view"></canvas><div id="msg">Loading the terrain…</div>
+</head><body><canvas id="view"></canvas><div id="frame"></div><div id="msg">Loading the terrain…</div>
 <script>${safe(three)}</script>
 <script>${safe(app)}</script></body></html>`;
 const out = path.join(__dirname, '../../src/components/sun/sun3dHtml.ts');

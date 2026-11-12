@@ -19,7 +19,7 @@
 
   let cfg = null, parts = [], nparts = [], FAR = null, NR = null, maxH = 4250, baseH = 0;
   let R = null;   // everything three.js, once built
-  let eye = null, target = null, yaw = 0, pitch = 0, focal = 50, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
+  let eye = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
   const G = 768;  // mesh points per side
 
   // A grid: n x n heights (HF, row 0 = north) over a lat/lng box; x0, z0, w, d place it in the far grid's metres.
@@ -338,10 +338,20 @@
       R.near.mat.uniforms.focus.value.set(Math.max(0, Math.min(1, (p.c + (q.c - p.c) * k + 0.5) / NR.n)), Math.max(0, Math.min(1, (p.r + (q.r - p.r) * k + 0.5) / NR.n)));
     }
   }
+  // The lens: focal length and the film's width and height in mm as the camera is turned (4x5 landscape = 120 x 96).
+  // The view is drawn a little wider than the lens, so the whole frame shows with a margin and the box marks it.
+  // Exact for a lens focused far away with no rise, fall or shift.
+  function lensFov() {
+    const a = (R && R.cam.aspect) || ((window.innerWidth || 1) / (window.innerHeight || 1));
+    const th = lens.fw / (2 * lens.f), tv = lens.fh / (2 * lens.f), k = Math.max(th / (a * 0.9), tv / 0.9);
+    const el = document.getElementById('frame');
+    if (el) { el.style.display = lens.box ? 'block' : 'none'; el.style.width = (th / (k * a) * 100) + '%'; el.style.height = (tv / k * 100) + '%'; }
+    return 2 * Math.atan(k);
+  }
   function place() {
     const q = cr(eye), e = pick(eye), cam = R.cam;
     cam.position.set((q.c + 0.5) * FAR.dx, eyeH(e), (q.r + 0.5) * FAR.dz); cam.rotation.set(pitch, -yaw, 0);
-    cam.fov = 2 * Math.atan(12 / focal) * 180 / Math.PI; cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
+    cam.fov = lensFov() * 180 / Math.PI; cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
   }
   function resize() { const w = window.innerWidth, h = window.innerHeight; if (!R || !w || !h) return; R.renderer.setSize(w, h, false); R.cam.aspect = w / h; dirty = true; }
   function tick() {
@@ -361,14 +371,14 @@
   function wire() {
     const c = R.canvas;
     c.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
-    c.addEventListener('pointermove', e => { if (!drag) return; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; dirty = true; });
+    c.addEventListener('pointermove', e => { if (!drag) return; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; dirty = true; });
     const drop = () => { if (drag) { drag = null; heading(); } };
     c.addEventListener('pointerup', drop); c.addEventListener('pointercancel', drop);
     window.addEventListener('resize', resize);
   }
 
   window.S3D = {
-    init(c) { cfg = c; parts = []; nparts = []; eye = c.eye; target = c.target; focal = c.focal || 50; },
+    init(c) { cfg = c; parts = []; nparts = []; eye = c.eye; target = c.target; focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
     chunk(s, which) { (which === 'near' ? nparts : parts).push(s); },
     async done() {
       try {
@@ -379,7 +389,12 @@
       } catch (e) { fail("The 3D view couldn't start on this phone."); post({ type: 'error', msg: String(e && e.message || e) }); }
     },
     sun(az, alt) { sun = { az, alt }; relight = dirty = true; },
-    focal(f) { focal = f; dirty = true; },
+    focal(f) { lens = Object.assign({}, lens, { f }); dirty = true; },
+    // lens({ f, fw, fh, box }): focal length, film width / height in mm as the camera is turned, frame box on / off
+    lens(o) { lens = Object.assign({}, lens, o || {}); dirty = true; },
+    // inline(true): the small view inside a scrolling page. A sideways drag looks around; up-down drags are left to the
+    // page (touch-action pan-y), so the two no longer fight. Full screen: free look both ways.
+    inline(v) { inline = !!v; const c = document.getElementById('view'); if (c) c.style.touchAction = inline ? 'pan-y' : 'none'; },
     view(eLat, eLng, tLat, tLng) { eye = { lat: eLat, lng: eLng }; target = { lat: tLat, lng: tLng }; if (!R) return; if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.'); say(''); aim(); relight = dirty = true; heading(); },
     recenter() { if (R) { aim(); dirty = true; heading(); } },
     path(arr) {
