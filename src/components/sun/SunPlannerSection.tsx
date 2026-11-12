@@ -70,7 +70,7 @@ function SunPlannerInner({ tripId, stopId, timeLabel, stopName, stopPhotos, stop
   }
   return (
     <>
-      <Planner stop={stop} timeLabel={timeLabel} onEdit={openEditor} />
+      <Planner stop={stop} tripId={tripId} timeLabel={timeLabel} onEdit={openEditor} />
       {editor}
     </>
   );
@@ -83,7 +83,7 @@ const TAB_NAMES: Record<Tab, string> = { map: 'Map', horizon: 'Horizon', photo: 
 // The 3D view is in the TEST app only until Phil has tried it.
 const TABS: Tab[] = IS_TEST_APP ? ['map', 'horizon', 'photo', '3d'] : ['map', 'horizon', 'photo'];
 
-function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: string | null; onEdit: (vantageId?: string | null) => void }) {
+function Planner({ stop, tripId, timeLabel, onEdit }: { stop: SunStop; tripId?: string | null; timeLabel?: string | null; onEdit: (vantageId?: string | null) => void }) {
   const stopMinute = parseTimeLabel(timeLabel);
   const day0 = dayStartMs(stop.date, stop.utc_offset_min);
   const [pairIdx, setPairIdx] = useState(0);
@@ -147,7 +147,7 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
         full3d ? (
           <View style={styles.fullNote}><Text style={styles.fullNoteText}>Showing full screen</Text></View>
         ) : (
-          <Sun3DPanel pair={pair} sun={light.sun} day0={day0} height={208} onJump={setMinute} onFull={() => setFull3d(true)} hdOn={hd3d} onHd={setHd3d} />
+          <Sun3DPanel pair={pair} tripId={tripId} sun={light.sun} day0={day0} height={208} onJump={setMinute} onFull={() => setFull3d(true)} hdOn={hd3d} onHd={setHd3d} />
         )
       ) : (
         <PhotoPanel pair={pair} onOpen={() => openPhoto(pair)} onAdd={() => onEdit(pair.vantage_id)} />
@@ -219,7 +219,7 @@ function Planner({ stop, timeLabel, onEdit }: { stop: SunStop; timeLabel?: strin
       <Modal visible={full3d} animationType="fade" onRequestClose={() => setFull3d(false)}>
         <View style={styles.fullScreen}>
           {full3d ? (
-            <Sun3DPanel full pair={pair} sun={light.sun} day0={day0} onJump={setMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} />
+            <Sun3DPanel full pair={pair} tripId={tripId} sun={light.sun} day0={day0} onJump={setMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} />
           ) : null}
           <View style={styles.fullBar}>
             <View style={styles.timeRow}>

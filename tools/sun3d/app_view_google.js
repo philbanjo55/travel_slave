@@ -11,6 +11,10 @@
 //                     geoid?,        Google's heights minus ours, m, if known (only used until Google's ground is found)
 //                     wait? }        seconds to wait for the first picture before giving up (default 20)
 //   S3D.chunk / done / sun / focal / view / path / recenter: as the offline page
+// The sun rule is the offline page's (app_view.js): the sun's centre against the skyline, plus a horizon dip of
+// 0.95 deg x sqrt(km above the area's low ground) for high points, in the point checks and in the light pass, so
+// first / last light and the lit / shade line are the same in both modes. Google's mesh is the surface here, so the
+// light pass and the point checks use the wide grid alone: a `near` grid in init and "near" chunks are ignored.
 // Replies: boot, ready, state, moments, look, error (as the offline page; after an error the app goes back to the
 // offline page), plus credits {text, band} and hd {shown, loading}.
 // Google's Map Tiles policy (read 12 Nov 2026) is met on the page itself, along the bottom of the picture (#attr):
@@ -34,7 +38,7 @@ window.onerror = msg => { fail("The HD picture couldn't be drawn.", msg); };
 window.addEventListener('unhandledrejection', e => { fail("The HD picture couldn't be drawn.", e && e.reason && (e.reason.message || e.reason)); });
 
 const RAD = Math.PI / 180, A_WGS = 6378137, E2 = 0.00669437999014;
-let cfg = null, parts = [], HF = null, N = 0, W = 0, D = 0, maxH = 4250, DXm = 1, DZm = 1;
+let cfg = null, parts = [], HF = null, N = 0, W = 0, D = 0, maxH = 4250, baseH = 0, DXm = 1, DZm = 1;
 let R = null;   // everything three.js, once built
 let eye = null, target = null, yaw = 0, pitch = 0, focal = 50, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
 let groundY = null, frames = 0, calm = 0, t0 = 0, shown = false, lastCredits = null, lastHd = '';
@@ -78,7 +82,9 @@ const sunVec = (az, alt) => { const a = alt * RAD, z = az * RAD; return { x: Mat
 const far = () => { const a = cr(eye), b = cr(target); return Math.hypot((b.c - a.c) * DXm, (b.r - a.r) * DZm); };
 const subjPoint = () => { const q = far() > 3000 ? snap(target, 4) : null; if (q) return q; const c = cr(target); return { c: c.c, r: c.r, h: hB(c.c, c.r) + 6 }; };
 const herePoint = () => { const c = cr(eye); return { c: c.c, r: c.r, h: hB(c.c, c.r) }; };
-const lit = (p, az, alt) => { if (alt <= 0) return false; const v = sunVec(az, alt); return vis(p.c, p.r, p.h, v.hx, v.hz, v.tan) > 0.5; };
+// The sun counts when its centre clears the terrain. A high point sees it a little below the flat horizon (the dip).
+const dipOf = h => 0.95 * Math.sqrt(Math.max(0, h - baseH) / 1000);
+const lit = (p, az, alt) => { if (alt <= -dipOf(p.h)) return false; const v = sunVec(az, alt); return vis(p.c, p.r, p.h, v.hx, v.hz, v.tan) > 0; };
 const inside = p => p && p.lat <= cfg.north && p.lat >= cfg.south && p.lng >= cfg.west && p.lng <= cfg.east;
 
 const KEY = [
@@ -97,7 +103,7 @@ function atmo(alt) {
 // One pass over our own elevation grid: the light reaching each point (rgb, halved) and how well it holds snow (a).
 const LIGHT_FS = `
   precision highp float;
-  uniform sampler2D hmap; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec2 size; uniform float texel; uniform float maxH;
+  uniform sampler2D hmap; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec2 size; uniform float texel; uniform float maxH; uniform float baseH;
   varying vec2 vUv;
   float H(vec2 uv) { vec2 t = texture2D(hmap, uv).rg; return t.r + t.g; }
   float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -108,7 +114,7 @@ const LIGHT_FS = `
     vec3 n = normalize(vec3(-hx, 1., -hz));
     float slope = degrees(acos(n.y)), fine = hash(floor(vUv / texel));
     float d = 0.;
-    if (sunDir.y > 0.) { float lam = dot(n, sunDir); if (lam > 0.) {
+    if (sunDir.y > -sin(radians(.95) * sqrt(max(0., h - baseH) / 1000.))) { float lam = dot(n, sunDir); if (lam > 0.) {   // a high point still sees a sun just under the flat horizon
       vec2 dir = normalize(sunDir.xz) / size; float tanA = sunDir.y / length(sunDir.xz), L = 34., dist = 0., v = 1.;
       for (int k = 0; k < 110; k++) { dist += L; vec2 p = vUv + dir * dist; float hh = h + 3. + tanA * dist;
         if (p.x < 0. || p.y < 0. || p.x > 1. || p.y > 1. || hh > maxH) break;
@@ -164,6 +170,7 @@ async function decode() {
     }
   }
   maxH = hi + 60;
+  { const lows = []; for (let i = 0; i < HF.length; i += 37) lows.push(HF[i]); lows.sort((a, b) => a - b); baseH = lows[Math.floor(lows.length * 0.1)] || 0; }   // the area's low ground: valley floor, or the sea
 }
 
 function build() {
@@ -180,7 +187,7 @@ function build() {
   const size = new THREE.Vector2(W, D);
   const rt = n => new THREE.WebGLRenderTarget(n, n, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
   const lo = rt(Math.min(1024, N)), hi = rt(N);
-  const lightMat = new THREE.ShaderMaterial({ uniforms: { hmap: { value: hmap }, sunDir: { value: new THREE.Vector3(0, 1, 0) }, sunCol: { value: new THREE.Vector3() }, amb: { value: new THREE.Vector3() }, size: { value: size }, texel: { value: 1 / N }, maxH: { value: maxH } }, vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }', fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
+  const lightMat = new THREE.ShaderMaterial({ uniforms: { hmap: { value: hmap }, sunDir: { value: new THREE.Vector3(0, 1, 0) }, sunCol: { value: new THREE.Vector3() }, amb: { value: new THREE.Vector3() }, size: { value: size }, texel: { value: 1 / N }, maxH: { value: maxH }, baseH: { value: baseH } }, vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }', fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
   const lightScene = new THREE.Scene(), lightCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), lightMat); quad.frustumCulled = false; lightScene.add(quad);
   // one set of uniforms for every tile
@@ -346,7 +353,7 @@ function wire() {
 
 window.S3D = {
   init(c) { cfg = c; cfg.tiles = cfg.tiles || {}; parts = []; N = c.n; W = c.W; D = c.D; DXm = W / N; DZm = D / N; eye = c.eye; target = c.target; focal = c.focal || 50; },
-  chunk(s) { parts.push(s); },
+  chunk(s, which) { if (which !== 'near') parts.push(s); },   // the fine grid is not used here
   async done() {
     try {
       if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");

@@ -239,16 +239,19 @@ export function TellTSheet({ visible, onClose, tripId, date, dayLabel, places, s
 }
 
 // The row on a day card: the button, the notes in force for the day, notes waiting for the OK or for signal.
-export function TellTRow({ tripId, date, dayLabel, places, open, onOpened }: {
+export function TellTRow({ tripId, date, dayLabel, places, open, onOpened, above, side }: {
   tripId: string; date: string; dayLabel: string; places: string[];
   // A note to start from (the plan check's "Tell T" link): the sheet opens with this text.
   open?: string | null; onOpened?: () => void;
+  // The card's main action (shown above the buttons) and a second button beside Tell T.
+  above?: React.ReactNode; side?: React.ReactNode;
 }) {
   const on = useNotesOn(tripId);
   const { notes, waiting } = useNotes(on ? tripId : null);
   const [sheet, setSheet] = useState<{ text?: string; note?: TNote } | null>(null);
   useEffect(() => { if (on && open) { setSheet({ text: open }); onOpened?.(); } }, [on, open]);
-  if (!on) return null;
+  // Notes off for this trip: the card still gets its other actions.
+  if (!on) return above || side ? <View style={{ gap: 8 }}>{above}{side ? <View style={styles.btnRow}>{side}</View> : null}</View> : null;
   const mine = notes.filter(n => n.status === 'active' && covers(n, date));
   const drafts = notes.filter(n => (n.status === 'draft' || n.status === 'asking') && n.typed_on === date);
   const wait = waiting.filter(w => w.date === date);
@@ -282,9 +285,13 @@ export function TellTRow({ tripId, date, dayLabel, places, open, onOpened }: {
           </TouchableOpacity>
         </View>
       ))}
-      <TouchableOpacity onPress={() => setSheet({})} style={styles.tellBtn} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Tell T about this day">
-        <Text style={styles.tellText}>Tell T about this day ›</Text>
-      </TouchableOpacity>
+      {above}
+      <View style={styles.btnRow}>
+        <TouchableOpacity onPress={() => setSheet({})} style={styles.tellBtn} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Tell T about this day">
+          <Text style={styles.tellText}>Tell T</Text>
+        </TouchableOpacity>
+        {side}
+      </View>
       <TellTSheet visible={!!sheet} onClose={() => { setSheet(null); refreshNotes(tripId); }} tripId={tripId} date={date} dayLabel={dayLabel}
         places={places} startText={sheet?.text} startNote={sheet?.note ?? null} />
     </View>
@@ -349,7 +356,8 @@ const styles = StyleSheet.create({
   noteWhen: { fontSize: 12, color: colors.textSecondary },
   x: { fontSize: 14, fontWeight: '800', color: colors.textSecondary, paddingHorizontal: 4 },
   pending: { fontSize: 13, lineHeight: 18, fontWeight: '700', color: '#e0a84b' },
-  tellBtn: { alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: 12, borderRadius: radius.sm, backgroundColor: colors.surface },
-  tellText: { fontSize: 13, fontWeight: '700', color: colors.signalOk },
+  btnRow: { flexDirection: 'row', gap: 8 },
+  tellBtn: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: '#555555' },
+  tellText: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   rules: { marginVertical: spacing.sm, padding: spacing.md, gap: 6, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface },
 });

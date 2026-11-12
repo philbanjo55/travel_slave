@@ -35,6 +35,90 @@ trees and water stay). It works; see CLAUDE.md for what was found.
   2 + snow.
 - `shot.js '<jobs json>' <errorTarget>`: headless renders to `out_<name>.png`.
 
+## The app's view and two-level terrain (Faroes close-ups, 12 Nov 2026)
+
+- `app_view.js` is the page inside the app's web view (built into `src/components/sun/sun3dHtml.ts` by
+  `build_app_html.js <three.min.js r128>`; rebuild after every edit). It takes one wide grid and, optionally,
+  one fine grid inside it (`cfg.near`, file sent with `S3D.chunk(b64, 'near')`):
+  - the far mesh is cut out inside the fine box (kept for the first ~160 m inside the edge, then pushed down,
+    not drawn past ~420 m); the near mesh has its own heights and light map, bunches its points around the
+    shot, hangs a skirt at its edge, and fades heights and colours into the far grid's toward the edge;
+  - near shadows are marched in the fine grid and carry on into the far grid beyond the box;
+  - "is it in the sun" and first / last light read the fine grid when the pin is inside it;
+  - a close subject on the fine grid is looked at directly (up or down), not at a fixed slight upward tilt.
+  With no `near` the page draws exactly what it did before (Teton check: 0 of 540,000 pixels differ).
+- Tables: `terrain_regions` (wide, one per area) and `terrain_near_regions` (fine boxes, `parent` = region).
+  `src/services/terrain.ts` `nearFor` picks the smallest box that holds the stand spot, first those that also
+  hold the subject; with the subject outside the box the view is aimed and the subject's sun read as on the wide grid.
+- `build_dem_arctic.py <work dir> <out.png> <north> <south> <west> <east> [n] [res]`: elevation from the
+  ArcticDEM v4.1 mosaics (Polar Geospatial Center, CC-BY-4.0, north of 60 N), read in blocks straight from the
+  public bucket. Use it instead of `build_dem.py` in the Faroes: the terrarium tiles there carry heights above
+  the ellipsoid (~58 m too high), fill the fjords with blocks at 0-130 m (sea drawn as land at any zoom) and
+  have no sea stacks. ArcticDEM fills open water at the local sea level, which the script fits and takes off.
+  `pip install tifffile imagecodecs`.
+- `build_faroes.sh <work dir>`: the wide Faroes file plus the 11 fine boxes (6 MB together).
+- What the data cannot do: a height grid has no arches or overhangs (Drangarnir's arch, sea caves), waterfalls
+  and buildings are not in it, lakes draw as grass, and the source is a smooth surface model: Stóri Drangur is
+  a 50 m cone (really 70 m with an arch), Lítli Drangur a shoulder of the headland. A pin 100 m off now
+  matters: the Kallur stand pin sits on the west cliff face in this data.
+
+## Terrain for any trip: `build_trip_terrain.py` (12 Nov 2026)
+
+`TRIP_Q=<read-only SQL helper> python3 tools/sun3d/build_trip_terrain.py build <work dir> --region <id> --prefix <xx> --trip <uuid>`
+(or `--pins pins.json`; `--trip` saves that file in the work dir, so a rerun needs no database). In order: pins,
+source (ArcticDEM when the whole area is north of 60 N, else terrarium), the wide file (the listed region's own file,
+or a new 2048 grid over all pins), the DATA CHECK (a FAIL stops the run), fine boxes around the stand spots, a check
+of every box (also against the wide file: the page blends the two), then `terrain_<region>.sql` and `upload.txt`.
+`plan` lists the boxes without building; `check <file> <north> <south> <west> <east> [--base m] --pins ...` checks any file.
+
+Fine boxes: every stand spot gets `--pad` metres of ground (2000) where it fits, a subject within `--close-km` (6)
+stays in the same box, boxes merge while under `--near-max-km` (8) a side. The app picks, per shot, the smallest box
+that holds the stand spot (first those that also hold the subject), `terrain.ts` `nearFor`. The Faroes boxes were
+picked by hand before this script existed (`build_faroes.sh`); `plan` on the Faroes trip gives 15 similar ones.
+
+The data check, on the three files we have (12 Nov 2026):
+
+| File | Stops' stored heights | Land vs Copernicus | Sea along the coast | Airport | Verdict |
+|---|---|---|---|---|---|
+| Teton wide (terrarium z12) | +1.0 m, 100% within 25 m | -0.9 m | no coast | KJAC -4 m | PASS |
+| Faroes wide, old terrarium z12 | +51.3 m, 24% within 25 m | +57.1 m | 38% within 2 m of 0 | EKVG +51 m | FAIL |
+| Faroes wide, ArcticDEM | +0.0 m, 98% within 25 m | +0.3 m | 100% within 2 m of 0 | EKVG -6 m | PASS |
+
+Grand Teton fine boxes (8, terrarium zoom 14, about 6 m a point, 1.45 MB, migration `20261112090000`): the foreground
+gain is small. Looked at 24 and 50 mm, before / after: Snake River Overlook and Oxbow Bend show the bench edge and
+the drop to the river as crisper shapes; the Moulton barn flats look the same. The river itself does not show: in
+winter colours water, snow and flats are all white, and the file has no water mask (flat-ground detection on
+half-metre heights marks the sloping flats in stripes: tried, not usable). A water mask in the file is the next
+step if the foreground matters.
+
+Saved ahead (TEST app): when a trip's sun plan loads (every trip open or sync), `terrain.ts` `saveTripTerrain`
+fetches every wide file and fine box the trip's stand spots need, one at a time in the background, and the 3D panel
+shows "3D terrain saved for this trip: 9 of 9 areas". With no signal the saved lists still choose the files; a
+missing fine box means the wide grid draws alone. Grand Teton: 3.7 MB (9 areas), Faroes: 6.3 MB (12 areas).
+
+## How accurate the sun times are (measured 12 Nov 2026)
+
+Checked against 102 real webcam pictures on 5 clear December / January days in Grand Teton (27 events; resort
+panoramas every 10 min, Tetonia every 15 min, so each real event is known to about +-3 to 7.5 min):
+- a ridge or peak blocking a sun that is still 3-16 degrees up (15 events): average error +0.5 min, typical 1.3,
+  worst +4: within about 5 minutes, no lean either way;
+- sunrise / sunset on high points with the old rule (10 events): typical 8.5 min, worst 13 (first sun too late,
+  last sun too early); sun setting behind a peak on the horizon (2 events): 7-8 min early.
+The rule now used for first / last light follows from that: the sun's centre against a hard skyline, and a high
+point sees below the flat horizon by 0.95 deg x sqrt(its km above the area's low ground, the 10th percentile of the
+grid: 2,012 m for the Teton file). Scored on the 16 point events (window = between which two pictures it happened):
+
+| Rule | High-point sunrise / sunset (12) | Ridge blocks the sun (4) |
+|---|---|---|
+| first rule: whole sun, soft edge, no dip | 2 inside the window, typical 8.3 min, worst 13 | 4 inside, typical 0.5 min |
+| sun's top edge + dip | 10 inside, typical 3.3, worst 9 | 4 inside, +3.3 min late on average |
+| **sun's centre + dip (used)** | 9 inside, typical 3.9, worst 10 | 4 inside, +2.0 min late on average |
+| half-way (+0.135 deg) + dip | 10 inside, typical 3.6, worst 10 | 4 inside, +2.5 min |
+
+The differences between the three new rules are inside the pictures' own 5-minute uncertainty; the centre keeps the
+ridge-blocked times closest. Script: scratchpad `suncheck/score_rules.js`.
+Not checked: trees and buildings, terrain beyond the grid, morning valley-floor events, summer, the Faroes.
+
 ## HD picture in the app (`app_view_google.js`, 12 Nov 2026): built and tested, switched OFF
 
 The same idea as a page for the app's web view, with the offline page's `S3D` calls and replies
@@ -54,6 +138,15 @@ The same idea as a page for the app's web view, with the offline page's `S3D` ca
 - Replies: the offline page's, plus `credits {text, band}` and `hd {shown, loading}`. `error` = give up
   (root refused, nothing drawn in 20 s, over 40 failed tiles, lost graphics context): the app goes back
   to the offline page.
+
+- Sun rule = the normal page's (centre of the sun against the skyline + the horizon dip, in the point checks and in
+  the light pass). Checked 12 Nov on the 30 Dec 2026 sun path, every minute, both pages on the wide grid: Snake River
+  Overlook -> Grand Teton 07:53 / 08:24 / 16:31 / 16:57 and Oxbow Bend -> Mount Moran 07:55 / 08:14 / 16:21 / 16:56
+  (first on subject / reaches you / you lose it / last on subject), identical in both.
+- Near boxes: the HD page lights Google's surface from the wide grid alone and ignores `near` and "near" chunks (the
+  panel does not send them in HD). Against the normal page WITH its near box only the "you" times move: Snake River
+  Overlook loses the sun 16:33 there vs 16:31 in HD; Oxbow Bend 08:13 / 16:20 vs 08:14 / 16:21. Subject times are the
+  same. Left as is (1-2 minutes; feeding the fine grid to the HD point checks would close it).
 
 **Google's Map Tiles policy** (developers.google.com/maps/documentation/tile/policies, read 12 Nov 2026):
 - Attribution is drawn by the page along the bottom of the picture: Google's own outlined logo file,
