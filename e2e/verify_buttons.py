@@ -63,6 +63,104 @@ def nudge_up():
     return C.capture(1.2)
 
 
+# ---- Cut-off check (Phil, 12 Nov 2026: "the full screen mode I can't use any of the controls bc they go past my
+# screen where I have buttons for home etc"). Android reports where its own bars are and where every control is, so
+# a control that sits under the status bar or under the Home / Back buttons can be flagged. The run uses three-button
+# navigation like Phil's phone (e2e/run.sh): the thin gesture bar would hide the problem. What this cannot see: text
+# cut short with "..." and anything drawn inside a web view or a map.
+def bars(s):
+    """(status bar bottom, navigation bar top, width, height) in pixels."""
+    w, h = 1080, 2400
+    m = re.search(r'(\d+)x(\d+)', C.adb('shell', 'wm', 'size') or '')
+    if m:
+        w, h = int(m.group(1)), int(m.group(2))
+    top, nav = 0, h
+    out = C.adb('shell', 'dumpsys', 'window')
+    for kind, x1, y1, x2, y2 in re.findall(r'type=(statusBars|navigationBars)\s+frame=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]', out):
+        y1, y2 = int(y1), int(y2)
+        if kind == 'statusBars' and 0 < y2 < h / 2:
+            top = max(top, y2)
+        if kind == 'navigationBars' and h / 2 < y1 < h:
+            nav = min(nav, y1)
+    # second source: the system's own Home / Back buttons in the screen read
+    for n in (s.root.iter('node') if s is not None and s.root is not None else []):
+        if n.get('package') == 'com.android.systemui' and re.search(r'/(home|back|recent_apps|home_button)$', n.get('resource-id') or ''):
+            y1 = C.bounds(n)[1]
+            if h / 2 < y1 < h:
+                nav = min(nav, y1)
+    return top, nav, w, h
+
+
+def cut_off(label, s=None, strict=True):
+    """strict (a fixed screen or pop-up): a quarter of a control under a bar is a miss. Not strict (a scrolling page read at
+    its end): only a control more than half under a bar. Sides (Phil: "and sides"): a control that touches the left or
+    right edge of the screen without being a full-width row is running off the side (the screen read clips positions at
+    the edge, so touching it is the sign). Rows that scroll sideways (day tabs, chips) are left out: their ends are
+    meant to run off."""
+    s = s or C.capture(1)
+    top, nav, w, h = bars(s)
+    bad, side, seen = [], [], set()
+    count = [0]
+
+    def walk(n, sideways):
+        cls = n.get('class') or ''
+        sideways = sideways or 'HorizontalScrollView' in cls or 'ViewPager' in cls
+        if n.get('package') == V.PKG:
+            txt = (n.get('text') or n.get('content-desc') or '').strip()
+            click = n.get('clickable') == 'true'
+            x1, y1, x2, y2 = C.bounds(n)
+            if (txt or click) and x2 - x1 >= 8 and y2 - y1 >= 8 and (y2 - y1) <= 0.45 * h:
+                count[0] += 1
+                name = (txt or ' | '.join(C.texts(n)) or '<no label>')[:44]
+                key = (name, y1 // 20)
+                under_nav, under_top = max(0, y2 - nav), max(0, top - y1)
+                frac = (under_nav + under_top) / (y2 - y1)
+                if frac >= (0.25 if strict else 0.5) and key not in seen:
+                    seen.add(key)
+                    bad.append(f"{name!r} y {y1}-{y2} ({'under the Home/Back buttons' if under_nav else 'under the status bar'})")
+                at_left, at_right = x1 <= 0, x2 >= w
+                if not sideways and (at_left != at_right) and (x2 - x1) < 0.9 * w and ('side', key) not in seen:
+                    seen.add(('side', key))
+                    side.append(f"{name!r} x {x1}-{x2} (runs off the {'left' if at_left else 'right'} side)")
+        for c in list(n):
+            walk(c, sideways)
+
+    if s.root is not None:
+        for c in list(s.root):
+            walk(c, False)
+    detail = f'bars: status to {top}, buttons from {nav} of {h}; {count[0]} controls read'
+    if nav >= h:
+        V.check(f'cut-{label}', None, 'could not find where the navigation buttons start')
+    else:
+        V.check(f'cut-{label}', not bad, (detail if not bad else f'{len(bad)} cut off: ' + '; '.join(bad[:6]) + ' [' + detail + ']')[:600])
+    V.check(f'cut-{label}-sides', not side, (f'nothing runs off the left or right ({w} wide)' if not side else f'{len(side)} off the side: ' + '; '.join(side[:6]))[:600])
+
+
+def stop_page_cut_offs():
+    """On an open stop page: its pop-ups and its end, each checked for controls under the bars."""
+    def popup(name, needle, exact=False):
+        scroll_top(6)
+        f = scroll_find(needle, 12)
+        if f is None:
+            print(f'INFO cut-{name}: no {needle!r} on the stop page', flush=True); return
+        f = mid_screen(f, needle)
+        if not V.tap_text(f, needle, exact=exact):
+            print(f'INFO cut-{name}: could not tap {needle!r}', flush=True); return
+        g = C.capture(3)
+        cut_off(name, g)
+        V.back(); time.sleep(1.5)
+        if not C.app_alive() or C.focus_pkg() != V.PKG:
+            print(f'INFO cut-{name}: Back left the app', flush=True)
+    popup('stop-time-editor', 'Change time at this stop')
+    popup('camera-view', 'Tap for the full picture')
+    popup('vantage-editor', 'Edit vantages')
+    scroll_top(6)
+    for _ in range(14):
+        C.swipe_up()
+    cut_off('stop-page-end', C.capture(1.5), strict=False)
+
+
+
 def blocked_lines():
     return [l for l in V.logcat().splitlines() if 'E2E_BLOCKED' in l]
 
@@ -151,6 +249,7 @@ def ghost_accept():
     V.show('btn-ghost', a)
     seen, _ = V.texts_all(4)
     V.check('btn-accept-shown', seen_has(seen, "Accept T's plan from now on") or seen_has(seen, 'preview'), 'Accept bar in ghost mode')
+    cut_off('accept-bar', C.capture(1))
     V.check('btn-ghost-alive', C.app_alive())
 
 
@@ -163,6 +262,7 @@ def plans_tab():
         V.check('btn-planner-open', False); return
     o = C.capture(5)
     V.check('btn-planner-open', V.has(o, 'Plans'))
+    cut_off('planner', o)
     if not V.tap_text(o, 'Plans', exact=True):
         V.check('btn-plans-tab', False); return
     t = C.capture(5)
@@ -290,6 +390,8 @@ def tell_t():
         return
     sh = open_tell_sheet()
     V.check('tell-button-on-card', sh is not None, "today's card on the trip page -> sheet")
+    if sh is not None:
+        cut_off('tell-sheet', sh)
     if sh is None:
         seen, _ = V.texts_all(6)
         print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
@@ -553,6 +655,7 @@ def sun_3d():
                     drawn = True; break
                 g = C.capture(3)
             V.check('sun3d-full-drawn', drawn, f'full-screen view drawn within {time.time() - t1:.0f} s' if drawn else 'no caption in full screen')
+            cut_off('3d-full-screen', g)
             V.show('sun3d-full-drawn', g)
             V.back(); time.sleep(2)
         else:
@@ -564,6 +667,10 @@ def sun_3d():
         V.check('sun3d-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined'))
         line = next((x for x in seen if '3D terrain' in x), None)
         V.check('sun3d-saved-line', line is not None, (line or 'no "3D terrain saved for this trip" line')[:110])
+    try:
+        stop_page_cut_offs()
+    except Exception as e:
+        print(f'INFO cut-off checks on the stop page stopped: {e}', flush=True)
     V.check('sun3d-alive', C.app_alive())
 
 
