@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Linking, Alert, ActivityIndicator, ScrollView, useWindowDimensions } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
@@ -85,6 +85,14 @@ let lastIce: boolean | null = null;
 let foregroundTooHeavy = false;   // the web view died with the foreground on: it stays off until the user turns it on again
 const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
 
+// Everything under the picture. In full screen it may take at most a third of the screen and scrolls inside that:
+// with the tree note, the HD line and the walk row all showing, these lines once grew past the bottom bar and pushed
+// Close and the time slider off the screen (emulator, 12 Nov 2026).
+function Below({ full, max, children }: { full?: boolean; max: number; children: React.ReactNode }) {
+  if (!full) return <>{children}</>;
+  return <ScrollView style={{ maxHeight: max, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
+}
+
 export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
@@ -135,6 +143,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   // Full screen runs edge to edge: the lines under the picture keep a margin from the sides of the phone.
   const pad = full ? styles.fullPad : null;
+  const belowMax = Math.round(useWindowDimensions().height * 0.33);
   // HD: undefined = still asking whether it is there, null = not available
   const [hdCfg, setHdCfg] = useState<HdSetup | null | undefined>(undefined);
   const [hd, setHd] = useState<string | null>(null);      // Google's root tile set while the HD page is showing
@@ -517,6 +526,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ) : null}
       </View>
 
+      <Below full={full} max={belowMax}>
       {ready && lit ? (
         <Text style={[styles.status, pad]}>
           <Text style={lit.subjectLit ? styles.sunOn : undefined}>{subject}: {lit.subjectLit ? 'in the sun' : lit.up ? 'in shadow' : 'no sun'}</Text>
@@ -589,6 +599,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         </TouchableOpacity>
       ) : null}
       {savedLine ? <Text style={[styles.note, pad]} accessibilityLabel={savedLine}>{savedLine}</Text> : null}
+      </Below>
     </View>
   );
 }
