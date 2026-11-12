@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Image, Linking, Dimensions, Alert, ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
@@ -83,6 +83,7 @@ function PhotoThumb({ photo, count, onPress }: { photo: any; count: number; onPr
 export default function StopDetailScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
+  const insets = useSafeAreaInsets();   // the page draws under Android's Home / Back buttons: keep its end above them
   const { stopId, dayId } = route.params;
   const { currentTripData } = useTripStore();
   const [fieldPhotoIndex, setFieldPhotoIndex] = useState(0);
@@ -201,7 +202,8 @@ export default function StopDetailScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder>
+      <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder
+        contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}>
         {hero ? <StopCameraHero cams={cams} weather={stop.weather ?? null} timeLabel={stop.time_label} onClosed={reloadCams} dayDate={day?.date} /> : null}
         {IS_TEST_APP && !hero ? (
           <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
