@@ -10,6 +10,8 @@ export type TripCtx = {
   today: string; nowClock: string; sun?: Record<string, { first_light: string; sunrise: string; sunset: string }>;
   // Rental gear (skis, snowshoes), when the trip has it: the places that need it and when it is picked up / returned.
   gear?: { places: string[]; pickup?: { date: string; time: string }; ret?: { date: string; time: string } };
+  // Notes already in force (today or later), in the words Phil saw when he OK'd them.
+  inForce?: string[];
 };
 // A rule as the planner reads it (solver-replay NoteRule): stop ids, HH:MM in the trip's time zone, dates.
 export type Rule = { type: string; dates?: string[]; from_date?: string; to_date?: null; time?: string; from?: string; to?: string;
@@ -65,6 +67,8 @@ Right now (now): only when the trip is under way. These are about this very mome
 What happened (recap): when he reports how a place went, today or earlier on the trip, one item per place: result "nailed" (he got the shot he wanted: "nailed it", "got a great one", "got the shot"), "got" (he got something but wants better: "got it but flat light", "ok, would go back"), "missed" (no shot: "clouded out", "missed it", "didn't get it", "skipped it"). Only listed places, only results he reports (never a plan or a wish). A recap is not a rule: do not add a skip for a place he nailed (T stops planning it by itself). "Done with X for the rest of the trip" with no word on how it went is a skip, not a recap. Praise for the light or the day with no result ("the light was amazing at Oxbow") is not a recap: cant_use.
 
 Questions (question): when the note asks T something instead of telling it ("what if we skip Jenny Lake?", "why is Oxbow on Thursday?", "what's the best day for Mormon Row?", "when should I do the barns?"), fill question and leave now and recap empty. kind: "what_if" (what would happen if...: then rules holds the "if" as rules, exactly as if he had told T to do it, and nothing else), "why" (why a place is where it is on the plan), "best_day" (which day or time suits a place), "other" (anything else: T cannot answer it yet). places = the listed places the question is about. For why, best_day and other, rules stays empty.
+
+Notes already in force: the list (when there is one) holds what he has already told T, in the words he saw. When the new note pulls against one of them, never answer as if that note were not there, and never add a rule that fights it. Say in cant_use which note is in the way, quoting it, and that he can remove it with its x. The usual case: he wants an earlier start ("start earlier", "wake up at 5", "up early tomorrow", "leave at 6") on a day with a "Leave no earlier than ..." note: cant_use gets one sentence like: An earlier start on Thu 12 Nov: your note "Leave no earlier than 9 AM" is in the way. Remove it (tap its x) and T starts at first light again. The same goes for wanting a place a note leaves out, or a late evening on a day with a "Be back ... by" note. With no note in the way, an earlier start needs no rule (T already starts from first light when the light is worth it): say that in cant_use, as before. A new note that only repeats one in force: say it is already in force, no rule.
 
 When to ask instead of guessing: if the note could mean two different things that would change the plan (which place, which day, what time), return one short question in ask with 2-4 short answer options, and no rules. Do not ask when a sensible default above covers it.
 
@@ -132,6 +136,7 @@ export function userText(ctx: TripCtx, date: string, text: string, answer: { que
   }
   if (ctx.gear?.places.length) L.push('', `Rental gear (skis / snowshoes): picked up ${ctx.gear.pickup ? `${dayWords(ctx.gear.pickup.date)} ${ctx.gear.pickup.time}` : 'on the trip'}, returned ${ctx.gear.ret ? `${dayWords(ctx.gear.ret.date)} ${ctx.gear.ret.time}` : 'on the trip'}. Places that need it: ${ctx.gear.places.join(', ')}.`);
   else L.push('', 'This trip has no rental gear: do not use no_gear, gear_to or gear_from.');
+  if (ctx.inForce?.length) L.push('', 'Notes already in force (he can remove one with its x):', ...ctx.inForce.map(t => `- ${t}`));
   L.push('', `Note: "${text}"`);
   if (answer) L.push('', `You asked: "${answer.question}". He answered: "${answer.choice}". Do not ask again; use the answer.`);
   return L.join('\n');

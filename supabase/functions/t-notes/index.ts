@@ -147,6 +147,11 @@ Deno.serve(async (req) => {
     const asOf = body.as_of ? new Date(body.as_of) : new Date();
     const ctx = await tripCtx(db, String(body.trip_id ?? ''), asOf);
     if (!ctx) return json({ ok: false, error: 'trip not found' }, 404);
+    {   // What he has already told T for today or later, so a new note that pulls against one is answered honestly.
+      const { data: act } = await db.from('t_notes').select('rules').eq('trip_id', ctx.tripId).eq('status', 'active').limit(40);
+      const live = (act ?? []).flatMap((n: any) => ((n.rules ?? []) as any[]).filter(r => !Array.isArray(r.dates) || r.dates.some((d: string) => d >= ctx.today)));
+      ctx.inForce = sayLines(ctx, live).map(l => `${l.text} (${l.when})`).slice(0, 20);
+    }
     const date = String(body.date ?? '');
     if (!ctx.dates.includes(date)) return json({ ok: false, error: 'that date is not a day of this trip' }, 400);
     // A past day's card takes no notes (the app shows no box there; never left to Claude to pick another day).
