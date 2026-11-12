@@ -499,7 +499,49 @@ def sun_3d():
     else:
         V.check('sun3d-ready', ok, why or 'drawn: caption with the looking direction shown')
     if ok:
-        # Full screen first, while the button is on screen with the caption.
+        # HD (Google's picture, 12 Nov 2026): the button shows only while the door says it is switched on. One tap on
+        # = one counted view. No screenshots are taken while Google's picture is up (it must not be stored).
+        def peek():
+            # texts here and one screen further down, then back where we were (the HD button must stay on screen)
+            out = list(C.capture(1.2).all_texts)
+            C.adb('shell', 'input', 'swipe', '540', '1500', '540', '800', '500')
+            out += C.capture(1.2).all_texts
+            C.adb('shell', 'input', 'swipe', '540', '800', '540', '1500', '500')
+            time.sleep(1)
+            return out
+        f = C.capture(1)
+        hd_label = 'HD picture from Google'
+        if any(hd_label in c['label'] for c in f.clickables):
+            V.check('sun3d-hd-button', True, 'HD button on the 3D view')
+            V.tap_text(f, hd_label)
+            t2 = time.time(); on = False; note = ''
+            for _ in range(30):
+                time.sleep(3)
+                seen_hd = peek()
+                if seen_has(seen_hd, 'Picture: Google Maps'):
+                    on = True; break
+                bad = [x for x in seen_hd if "HD picture couldn't load" in x or "HD picture isn't available" in x]
+                if bad:
+                    note = bad[0]; break
+            V.check('sun3d-hd-on', on, f'Google picture up after {time.time() - t2:.0f} s' if on else (note or 'the HD page never took over')[:120])
+            if on:
+                time.sleep(20)   # let tiles stream in; it must still be up, not fallen back
+                seen_hd = peek()
+                still = seen_has(seen_hd, 'Picture: Google Maps') and not seen_has(seen_hd, "couldn't load")
+                V.check('sun3d-hd-stays', still, 'still on Google after 20 s' if still else 'fell back to the offline view')
+                V.check('sun3d-hd-caption', seen_has(seen_hd, 'Looking '), 'caption shown in HD')
+                print('INFO sun3d hd texts: ' + ' | '.join(x for x in seen_hd if 'HD' in x or 'Google' in x or 'Looking' in x or 'First sun' in x or 'Sun reaches' in x)[:900], flush=True)
+            web = [l for l in C.adb('logcat', '-d', '-t', '3000', timeout=90).splitlines() if 'chromium' in l and ('ERROR' in l or 'CONSOLE' in l)]
+            for line in web[-12:]:
+                print('INFO sun3d hd web ' + line[:260], flush=True)
+            f = C.capture(1)
+            off_ok = V.tap_text(f, hd_label)
+            time.sleep(6)
+            seen_off = peek()
+            V.check('sun3d-hd-off', off_ok and not seen_has(seen_off, 'Picture: Google Maps') and seen_has(seen_off, 'Looking '), 'back to the offline view')
+        else:
+            print('INFO sun3d hd: no HD button (the door says it is off or unreachable)', flush=True)
+        # Full screen, while the button is on screen with the caption.
         f = C.capture(1)
         if V.tap_text(f, 'Open the 3D view full screen'):
             g = C.capture(5)
