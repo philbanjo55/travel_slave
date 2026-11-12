@@ -57,6 +57,13 @@
   const sunVec = (az, alt) => { const a = alt * Math.PI / 180, z = az * Math.PI / 180; return { x: Math.sin(z) * Math.cos(a), y: Math.sin(a), z: -Math.cos(z) * Math.cos(a), tan: Math.tan(a), hx: Math.sin(z), hz: -Math.cos(z) }; };
   const far = () => { const a = cr(eye), b = cr(target); return Math.hypot((b.c - a.c) * FAR.dx, (b.r - a.r) * FAR.dz); };
   const subjPoint = () => { const t = pick(target), q = far() > 3000 ? snap(t, t.g === NR ? 6 : 4) : null; if (q) return q; return { g: t.g, c: t.c, r: t.r, h: gh(t.g, t.c, t.r) + 6 }; };
+  // The subject counts as lit when either that point or the pin itself is (12 Nov 2026). The nearby high point alone
+  // went wrong for a pin at the foot of a wall: Teton Point Turnout's "main" sits in the Teton Glacier bowl under the
+  // Grand, its "highest point nearby" is a spot part-way up the wall, which the wall shades all day, so the view said
+  // "never in the sun" (Phil's screenshot) although the bowl has the sun from sunrise for an hour or more. Checking
+  // both can only add lit time to what the first rule gave.
+  const pinPoint = () => { const t = pick(target); return { g: t.g, c: t.c, r: t.r, h: gh(t.g, t.c, t.r) + 6 }; };
+  const subjLit = (az, alt, s, q) => lit(s || subjPoint(), az, alt) || lit(q || pinPoint(), az, alt);
   const herePoint = () => { const e = pick(eye); return { g: e.g, c: e.c, r: e.r, h: gh(e.g, e.c, e.r) }; };
   // where the camera stands: on the fine grid the highest ground within a step, so a pin on a steep slope does not put the eye inside the hill
   const eyeH = e => { let h = gh(e.g, e.c, e.r); if (e.g === NR) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + 3; };
@@ -323,7 +330,7 @@
     R.disc.visible = R.halo.visible = sun.alt > -1;
     R.disc.material.color.setRGB(1, Math.min(1, .75 + A.sun[1] * .25), Math.min(1, .5 + A.sun[2] * .5));
     R.halo.material.color.setRGB(A.sun[0], A.sun[1], A.sun[2]);
-    post({ type: 'state', subjectLit: lit(subjPoint(), sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
+    post({ type: 'state', subjectLit: subjLit(sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
   }
   function aim() {
     const a = cr(eye), b = cr(target), dx = (b.c - a.c) * FAR.dx, dz = (b.r - a.r) * FAR.dz, dist = Math.hypot(dx, dz);
@@ -371,7 +378,7 @@
   function told() {
     const kz = 111132, kx = 111320 * Math.cos(eye.lat * Math.PI / 180);
     post({ type: 'eye', lat: eye.lat, lng: eye.lng, moved: Math.round(Math.hypot((eye.lat - eye0.lat) * kz, (eye.lng - eye0.lng) * kx)) });
-    post({ type: 'state', subjectLit: lit(subjPoint(), sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
+    post({ type: 'state', subjectLit: subjLit(sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
   }
   let drag = null;
   function wire() {
@@ -419,8 +426,8 @@
     home() { if (!R || !eye0) return; eye = eye0; aim(); dirty = true; heading(); told(); },
     path(arr) {
       if (!R) return;
-      const s = subjPoint(), h = herePoint(); let fs = null, ls = null, fh = null, lh = null;
-      for (const [m, az, alt] of arr) { if (lit(s, az, alt)) { if (fs == null) fs = m; ls = m; } if (lit(h, az, alt)) { if (fh == null) fh = m; lh = m; } }
+      const s = subjPoint(), q = pinPoint(), h = herePoint(); let fs = null, ls = null, fh = null, lh = null;
+      for (const [m, az, alt] of arr) { if (subjLit(az, alt, s, q)) { if (fs == null) fs = m; ls = m; } if (lit(h, az, alt)) { if (fh == null) fh = m; lh = m; } }
       post({ type: 'moments', firstSubject: fs, lastSubject: ls, firstHere: fh, lastHere: lh });
     },
   };
