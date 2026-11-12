@@ -10,7 +10,7 @@ import {
 } from '../../services/planner';
 import { VERDICT_COLOR, VERDICT_TEXT, countText, isBig, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
 import { TDay, TWeek, bestElsewhere, tripWeek } from '../../services/plannerWeek';
-import { DayScore } from '../../services/plannerDay';
+import { DayScore, tripToday } from '../../services/plannerDay';
 import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../../services/replanNowStore';
 import { useTripStore } from '../../store/tripStore';
 import { PlanCheckRow } from './PlanCheck';
@@ -171,16 +171,40 @@ export function useDayPlanner(tripId: string | null, date: string | null | undef
   return state;
 }
 
-// The day card on the trip page (Phil, 3 Nov 2026: readable at a glance at 5 AM). The day is
-// scored as the good shots T expects of the big subjects (GOD + S) on T's plan and on Phil's
-// own day, with the week from today; each change says where the stop went and why; a morning
-// re-plan that came after the first stop is flagged. Tapping the head opens the Plans tab;
-// tapping the changes shows them on the timeline (ghost mode).
+// The day card on the trip page (Phil, 11 Nov 2026, after his first real use: "the UI is terrible and crowded",
+// "how do I view T?", "I do like the side by side"). The card is YOUR DAY VS T'S DAY: his own stops next to T's
+// stops, each with its time and T's verdict, and the day's one number on each side (good shots of big subjects
+// expected). Under it: the plan check, Re-plan now (today), his notes, and one button that shows T's day on the
+// timeline (ghost mode, where Accept lives). Everything else (when the plan was made, why each stop moved, the
+// week) is behind Details.
+function DayCol({ title, num, rows, tz, accent, empty }: { title: string; num: string | null; rows: PlanVisit[]; tz?: string; accent?: boolean; empty: string }) {
+  const said = rows.map(v => `${v.start ? clock12(v.start, tz) : ''} ${v.name}`).join(', ');
+  return (
+    <View style={[styles.col, accent ? styles.colT : null]} accessibilityLabel={`${accent ? "T's day" : 'Your day'}${num ? `, ${num} good shots of big subjects expected` : ''}: ${said || 'nothing'}`}>
+      <View style={styles.colHead}>
+        <Text style={[styles.label, accent ? { color: colors.signalOk } : null]}>{title}</Text>
+        {num ? <Text style={styles.colNum}>{num}</Text> : null}
+      </View>
+      {rows.length ? rows.map((v, i) => {
+        const vd = v.p_good != null && v.rated !== false && !v.booked ? verdictOf(v.p_good) : null;
+        return (
+          <View key={`${v.stop_id}:${i}`} style={styles.colRow}>
+            <Text style={styles.colTime}>{v.start ? clock12(v.start, tz) : ''}</Text>
+            <Text style={styles.colName} numberOfLines={2}>{v.name}</Text>
+            {v.done ? <Text style={styles.colSub}>Done</Text>
+              : vd ? <Text style={[styles.colVerdict, { color: VERDICT_COLOR[vd] }]}>{VERDICT_TEXT[vd]}</Text> : null}
+          </View>
+        );
+      }) : <Text style={styles.colSub}>{empty}</Text>}
+    </View>
+  );
+}
+
 export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past }: {
   tripId: string; date: string; planner: DayPlanner | null; score: DayScore | null; onShowChanges: () => void; past?: boolean;
 }) {
   const navigation = useNavigation<any>();
-  const [more, setMore] = useState(false);
+  const [details, setDetails] = useState(false);
   // Tell T (worksheet g4): a plan-check flag can start a note; the places a quick button offers are the trip's rated ones.
   const [tell, setTell] = useState<string | null>(null);
   const { currentTripData: tripData } = useTripStore();
@@ -204,68 +228,61 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
   const planned = `${planner.offline ? 'offline · ' : ''}${planKindText(run)} · ${isToday(at) ? '' : format(at, 'EEE ')}${clock12(run.created_at, tz)}`;
   const real = score.changes.filter(c => c.kind !== 'skipped');
   const tierOf = (id: string) => planner.tiers.get(id) ?? null;
-  const goods = planner.best!.visits.filter(v => isBig(tierOf(v.stop_id)) && verdictOf(v.p_good) === 'good').length;
   const grey = score.bigOnDay && score.best < 0.1 && score.others < 0.1;
-  const head = (
-    <TouchableOpacity style={styles.cardHead} onPress={open} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={`T, this day, ${planned}. Open the plan`}>
-      <Text style={styles.label}>T · THIS DAY</Text>
-      <Text style={styles.planned} numberOfLines={1}>{planned} ›</Text>
-    </TouchableOpacity>
-  );
-  const f = score.first;
-  const shown = more ? score.reasons : score.reasons.slice(0, 2);
+  const mineRows = (planner.mine?.visits ?? []).filter(v => v.start);
+  const tRows = (planner.best?.visits ?? []).filter(v => v.start);
+  // Today, after the last stop on either list: nothing left to change (Phil put two notes on a finished day).
+  const ends = [...mineRows, ...tRows].map(v => Date.parse(v.end ?? v.start ?? '')).filter(Number.isFinite);
+  const today = date === tripToday(run, date);
+  const dayDone = !past && today && ends.length > 0 && Date.now() > Math.max(...ends);
+  const mineNum = !score.bigOnDay ? null : score.mine != null ? shotsText(score.mine) : '–';
+  const tNum = !score.bigOnDay ? null : shotsText(score.best);
+  const caption = grey ? 'Grey day: no big subject is a good bet.'
+    : !score.bigOnDay ? `No big subjects this day${score.others >= 0.05 ? ` · ${shotsText(score.others)} good shots of the others` : ''}.`
+    : `The numbers: good shots of big subjects expected.${score.mine != null && score.mine < 0.05
+      ? ((planner.mine?.visits ?? []).some(v => isBig(tierOf(v.stop_id))) ? ' None of your big subjects look like a good bet.' : ' Your day has no big subjects (S or GOD) on it.') : ''}`;
   return (
     <View style={styles.card}>
-      {head}
+      <View style={styles.cardHead}>
+        <Text style={styles.label}>YOUR DAY VS T'S DAY</Text>
+        <TouchableOpacity onPress={() => setDetails(d => !d)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 6 }} accessibilityRole="button"
+          accessibilityLabel={details ? 'Hide the details' : 'Show the details of this plan'}>
+          <Text style={styles.moreLink}>{details ? 'Less' : 'Details'} ›</Text>
+        </TouchableOpacity>
+      </View>
       {score.late ? (
         <Text style={styles.warn}>This morning's re-plan came at {clock12(run.created_at, tz)}, after the first stop ({clock12(score.late, tz)}). Go by your plan for that one.</Text>
       ) : null}
-      {grey ? (
-        <Text style={styles.headline}>Grey day: no big subject is a good bet.</Text>
-      ) : score.bigOnDay ? (
-        <View style={styles.bigRow}>
-          <Text style={styles.big}>{shotsText(score.best)}</Text>
-          <Text style={styles.bigSub} numberOfLines={2}>
-            good shots of big subjects expected{real.length || score.mine == null ? " on T's plan" : ''}
-            {goods ? ` · ${goods} good bet${goods === 1 ? '' : 's'}` : ''}
-          </Text>
-        </View>
-      ) : (
-        <Text style={styles.headline}>No big subjects this day{score.others >= 0.05 ? ` · ${shotsText(score.others)} good shots of the others` : ''}.</Text>
-      )}
-      {score.mine != null && real.length && score.bigOnDay ? (
-        <Text style={styles.cardSub}>Your day as planned: {score.mine >= 0.05 ? shotsText(score.mine)
-          // Never a bare 0 (emulator test, 9 Nov 2026: Teton Live Day 3 read "0.0" because its own stops are all tier A).
-          : (planner.mine?.visits ?? []).some(v => isBig(tierOf(v.stop_id))) ? 'none of its big subjects look like a good bet'
-          : 'no big subjects (S or GOD) on it'}</Text>
-      ) : score.reason && score.bigOnDay ? <Text style={styles.cardSub}>{score.reason}</Text> : null}
-      {f ? (
-        <Text style={styles.first} numberOfLines={2}>
-          First: {f.name} at {clock12(f.start, tz)} · <Text style={{ color: VERDICT_COLOR[verdictOf(f.p_good)], fontWeight: '700' }}>{VERDICT_TEXT[verdictOf(f.p_good)]}</Text> ({countText(f, run)})
-        </Text>
-      ) : null}
-      {score.lowerWhy ? <Text style={styles.cardSub}>{score.lowerWhy}</Text> : null}
+      {dayDone ? <Text style={styles.warn}>Today's stops are done. Notes for tomorrow go on tomorrow's day.</Text> : null}
+      <View style={styles.cols}>
+        <DayCol title="YOURS" num={mineNum} rows={mineRows} tz={tz} empty={planner.mine ? 'Nothing on your list' : 'Your list is not scored yet'} />
+        <DayCol title="T'S" num={tNum} rows={tRows} tz={tz} accent empty="Nothing planned" />
+      </View>
+      <Text style={styles.cardSub}>{caption}</Text>
       {!past ? <PlanCheckRow tripId={tripId} date={date} tz={tz} onTellT={setTell} /> : null}
-      {!past && date === format(new Date(), 'yyyy-MM-dd') ? <ReplanNowRow tripId={tripId} /> : null}
+      {!past && !dayDone && date === format(new Date(), 'yyyy-MM-dd') ? <ReplanNowRow tripId={tripId} /> : null}
       {!past ? <TellTRow tripId={tripId} date={date} dayLabel={format(new Date(`${date}T12:00:00`), 'EEE d MMM')} places={places} open={tell} onOpened={() => setTell(null)} /> : null}
       {past ? <Text style={styles.cardSub}>This day is over: nothing to change.</Text> : score.reasons.length ? (
-        <View style={styles.reasons}>
-          <TouchableOpacity onPress={onShowChanges} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Show T's changes on the timeline">
-            <Text style={styles.changesHead}>{real.length ? `T changes ${real.length} stop${real.length === 1 ? '' : 's'}` : "Not in T's plan"} <Text style={styles.changesGo}>· show on the day ›</Text></Text>
+        <TouchableOpacity onPress={onShowChanges} style={styles.useBtn} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Show T's changes on the timeline">
+          <Text style={styles.useText}>{real.length ? "Use T's day" : "See what T leaves out"} ›</Text>
+        </TouchableOpacity>
+      ) : score.bigOnDay ? <Text style={styles.cardSub}>Your day is T's plan: nothing to change.</Text> : null}
+      {details ? (
+        <View style={styles.details}>
+          <TouchableOpacity onPress={open} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={`T, this day, ${planned}. Open the plan`}>
+            <Text style={styles.planned}>{planned} · open the plan ›</Text>
           </TouchableOpacity>
-          {shown.map(r => <Text key={r} style={styles.reasonLine}>· {r}</Text>)}
-          {score.reasons.length > 2 ? (
-            <TouchableOpacity onPress={() => setMore(m => !m)} hitSlop={{ top: 8, bottom: 8 }} accessibilityRole="button">
-              <Text style={styles.moreLink}>{more ? 'Fewer' : `${score.reasons.length - 2} more`}</Text>
-            </TouchableOpacity>
+          {score.reason && score.bigOnDay ? <Text style={styles.cardSub}>{score.reason}</Text> : null}
+          {score.lowerWhy ? <Text style={styles.cardSub}>{score.lowerWhy}</Text> : null}
+          {score.reasons.length ? <Text style={styles.changesHead}>{real.length ? `T changes ${real.length} stop${real.length === 1 ? '' : 's'}` : "Not in T's plan"}</Text> : null}
+          {score.reasons.map(r => <Text key={r} style={styles.reasonLine}>· {r}</Text>)}
+          {score.week && score.week.days > 1 ? (
+            <Text style={styles.week}>
+              Week from today: T {shotsText(score.week.t)}{score.week.mine != null ? ` · yours ${shotsText(score.week.mine)}` : ''} good shots of big subjects
+              {score.week.bigLeft ? `. T gets at least one good shot of about ${Math.round(score.week.covered)} of the ${score.week.bigLeft} big subjects left` : ''}
+            </Text>
           ) : null}
         </View>
-      ) : score.bigOnDay ? <Text style={styles.cardSub}>This is T's plan: nothing to change.</Text> : null}
-      {score.week && score.week.days > 1 ? (
-        <Text style={styles.week}>
-          Week from today: T {shotsText(score.week.t)}{score.week.mine != null ? ` · yours ${shotsText(score.week.mine)}` : ''} good shots of big subjects
-          {score.week.bigLeft ? `. T gets at least one good shot of about ${Math.round(score.week.covered)} of the ${score.week.bigLeft} big subjects left` : ''}
-        </Text>
       ) : null}
     </View>
   );
@@ -344,20 +361,26 @@ const styles = StyleSheet.create({
     borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
   },
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 24 },
+  cols: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
+  col: { flex: 1, padding: spacing.sm, gap: 8, borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  colT: { borderColor: colors.signalOk },
+  colHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
+  colNum: { fontFamily: 'Georgia', fontSize: 24, color: colors.textPrimary },
+  colRow: { gap: 1 },
+  colTime: { fontSize: 11, color: colors.textSecondary },
+  colName: { fontSize: 13, fontWeight: '600', color: colors.textPrimary, lineHeight: 17 },
+  colVerdict: { fontSize: 11, fontWeight: '800' },
+  colSub: { fontSize: 11, color: colors.textSecondary },
+  useBtn: { minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, backgroundColor: colors.textPrimary },
+  useText: { fontSize: 14, fontWeight: '700', color: colors.textInverse },
+  details: { gap: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: 8, marginTop: 2 },
   planned: { fontSize: 11, color: colors.textSecondary },
-  bigRow: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
-  big: { fontFamily: 'Georgia', fontSize: 34, color: colors.textPrimary },
-  bigSub: { flex: 1, fontSize: 13, color: colors.textSecondary },
-  headline: { fontFamily: 'Georgia', fontSize: 18, lineHeight: 24, color: colors.textPrimary },
-  first: { fontSize: 14, color: colors.textPrimary, lineHeight: 20 },
   warn: { fontSize: 12, color: colors.textPrimary, borderLeftWidth: 2, borderLeftColor: colors.textPrimary, paddingLeft: 8 },
   cardSub: { fontSize: 12, color: colors.textSecondary, lineHeight: 17 },
-  reasons: { gap: 3, marginTop: 2 },
   changesHead: { fontSize: 12, fontWeight: '700', color: colors.textPrimary },
   reasonLine: { fontSize: 12, color: colors.textSecondary, lineHeight: 17 },
   moreLink: { fontSize: 12, fontWeight: '700', color: colors.signalOk },
   week: { fontSize: 12, color: colors.textSecondary, lineHeight: 17, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: 6 },
-  changesGo: { color: colors.signalOk, fontWeight: '700' },
   label: { ...typography.labelMedium, color: colors.textSecondary },
   chanceRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   verdict: { fontSize: 11, fontWeight: '800', borderWidth: 1, borderRadius: radius.full, paddingHorizontal: 7, paddingVertical: 1, overflow: 'hidden' },
