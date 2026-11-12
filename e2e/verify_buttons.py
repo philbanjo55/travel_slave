@@ -444,12 +444,21 @@ def sun_3d():
         act = [l.strip() for l in C.adb('shell', 'dumpsys', 'activity', 'activities').splitlines()
                if 'ResumedActivity' in l or 'mFocusedApp' in l or 'topResumedActivity' in l]
         print(f'INFO sun3d after tap +{wait}s: focus={C.focus_pkg()} pid={C.adb("shell", "pidof", V.PKG).strip()} ' + ' ¦ '.join(act)[:500], flush=True)
-    words = ('ActivityTaskManager', 'ActivityManager', 'FATAL', 'Fatal signal', 'libc    :', 'DEBUG   :', 'ReactNative', 'ReactHost',
-             'RNCWebView', 'chromium', 'WebView', 'Killing', 'has died', 'Force finishing', 'moveTaskToBack', 'START u0', 'philmframe',
-             'unknown:', 'SoLoader', 'JavascriptException', 'TurboModule', 'Displayed', 'ANR in', 'lowmemorykiller', 'OutOfMemory')
-    lines = [l for l in C.adb('logcat', '-d', '-t', '900', timeout=60).splitlines() if any(w in l for w in words)]
-    for line in lines[-70:]:
-        print('INFO sun3d log ' + line[:300], flush=True)
+    pid = C.adb('shell', 'pidof', V.PKG).strip()
+    full = C.adb('logcat', '-d', '-t', '4000', timeout=90).splitlines()
+    mine = [l for l in full if f' {pid} ' in l[:40]] if pid else full
+    # Run 4 showed React Native tearing its runtime down right after the tap; its log began mid-trace. Print the head:
+    # from 25 lines before the first ReactHost error to 40 after, then every JS error line.
+    first = next((i for i, l in enumerate(mine) if 'unknown:ReactHost' in l or 'JavascriptException' in l or 'FATAL' in l), None)
+    if first is None:
+        print('INFO sun3d log: no ReactHost error line in the app log', flush=True)
+        for line in mine[-40:]:
+            print('INFO sun3d tail ' + line[:300], flush=True)
+    else:
+        for line in mine[max(0, first - 25): first + 40]:
+            print('INFO sun3d head ' + line[:400], flush=True)
+    for line in [l for l in full if 'ReactNativeJS' in l][-30:]:
+        print('INFO sun3d js ' + line[:600], flush=True)
     for line in C.adb('logcat', '-d', '-b', 'crash', '-t', '60', timeout=60).strip().splitlines()[-40:]:
         print('INFO sun3d crash ' + line[:300], flush=True)
     t = C.capture(1)
