@@ -495,6 +495,8 @@ def sun_3d():
         V.check('sun3d-moments', seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you'), 'first / last light chips')
         V.check('sun3d-status', seen_has(seen, 'You: '), 'in the sun / in shade line')
         V.check('sun3d-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined'))
+        line = next((x for x in seen if '3D terrain' in x), None)
+        V.check('sun3d-saved-line', line is not None, (line or 'no "3D terrain saved for this trip" line')[:110])
         f = scroll_find('Looking ', 6)
         if f is not None and V.tap_text(f, 'Open the 3D view full screen'):
             g = C.capture(5)
