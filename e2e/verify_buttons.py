@@ -413,8 +413,61 @@ def side_by_side_card():
     V.check('card-alive', C.app_alive())
 
 
+def sun_3d():
+    """3D sun view on a stop page (12 Nov 2026): Sun & Moon -> 3D draws the terrain, shows first / last light, opens full screen."""
+    if open_live() is None or open_today() is None:
+        return
+    stop = None
+    for name in ('Oxbow Bend', 'Taggart & Bradley Lakes', 'Snake River Overlook', 'Cunningham Cabin', 'Teton Point Turnout'):
+        s = scroll_find(name, 6)
+        if s is not None:
+            s = mid_screen(s, name)
+            if V.tap_text(s, name):
+                stop = name; break
+        scroll_top()
+    V.check('sun3d-stop-open', stop is not None, stop or "no stop with shots on today's list")
+    if stop is None:
+        return
+    time.sleep(3)
+    s = scroll_find('SUN & MOON', 14)
+    V.check('sun3d-section', s is not None, 'Sun & Moon section on the stop page')
+    if s is None:
+        seen, _ = V.texts_all(8)
+        print('INFO stop page: ' + ' | '.join(seen)[:1500], flush=True); return
+    s = mid_screen(s, 'SUN & MOON')
+    V.check('sun3d-tab', V.tap_text(s, '3D', exact=True), 'tap the 3D tab')
+    t = C.capture(2); ok = False; why = ''
+    for _ in range(40):   # the first time it downloads the terrain (2 MB), then draws
+        if V.has(t, 'Looking '):
+            ok = True; break
+        bad = [x for x in ("couldn't start", 'too old', "Couldn't get the terrain", 'No 3D terrain', 'outside the 3D terrain') if V.has(t, x)]
+        if bad:
+            why = bad[0]; break
+        t = C.capture(3)
+    V.show('sun3d-view', t)
+    if not ok and why in ("couldn't start", 'too old'):
+        V.check('sun3d-ready', None, "the emulator's web view can't draw it: " + why)
+    else:
+        V.check('sun3d-ready', ok, why or 'drawn: caption with the looking direction shown')
+    if ok:
+        time.sleep(6)
+        seen, _ = V.texts_all(2)
+        V.check('sun3d-moments', seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you'), 'first / last light chips')
+        V.check('sun3d-status', seen_has(seen, 'You: '), 'in the sun / in shade line')
+        V.check('sun3d-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined'))
+        f = scroll_find('Looking ', 6)
+        if f is not None and V.tap_text(f, 'Open the 3D view full screen'):
+            g = C.capture(5)
+            V.show('sun3d-full', g)
+            V.check('sun3d-full-open', V.has(g, 'Close'), 'full screen with Close')
+            V.back(); time.sleep(1.5)
+        else:
+            V.check('sun3d-full-open', False, 'no full-screen button')
+    V.check('sun3d-alive', C.app_alive())
+
+
 def main():
-    for st in (today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup):
+    for st in (sun_3d, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup):
         try:
             st()
         except Exception as e:
