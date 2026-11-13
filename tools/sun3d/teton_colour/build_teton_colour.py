@@ -48,7 +48,7 @@ SCENES = [   # (id, folder, sun azimuth, sun elevation); first = main, then fill
 X0, Y0 = 499980.0, 4900020.0   # tile 12TWP's upper-left corner, EPSG:32612
 NAIP = 'https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPImagery/ImageServer/exportImage'
 FILES_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co/storage/v1/object/public/terrain/'
-WIDE_PX = int(os.environ.get('WIDE_PX', 4096))
+WIDE_PX = int(os.environ.get('WIDE_PX', 2048))   # 4096 measured: +142 MB of browser memory over 2048 for detail you cannot see on a phone
 SNOW = np.array([244, 247, 252], float) / 255   # the page's own snow (albedo .93 .95 .98) as seen
 TO_UTM = Transformer.from_crs('EPSG:4326', 'EPSG:32612', always_xy=True)
 
@@ -229,7 +229,7 @@ def wide(work, win=None):
     alb[used < 0] = SNOW ** 1.613
     seen = alb ** 0.62
     log('wide: snow %.0f %% of the area (mean), E 5/50/95 %%: %s' % (100 * fs.mean(), np.percentile(E, [5, 50, 95]).round(2)))
-    p = os.path.join(out, 'grand_teton_s2_winter.jpg'); nb = save_jpeg(p, seen, int(os.environ.get('WIDE_Q', 72)))
+    p = os.path.join(out, 'grand_teton_s2_winter.jpg'); nb = save_jpeg(p, seen, int(os.environ.get('WIDE_Q', 84)))
     log('wide file', p, nb, 'bytes')
     np.save(os.path.join(work, 'cache', 'wide_E.npy'), E.astype(np.float16))
     return win
@@ -375,7 +375,7 @@ def sql(work, out_sql=None):
     body = [
         '-- 3D sun view, Grand Teton in real winter colour (13 Nov 2026). Built by tools/sun3d/teton_colour/build_teton_colour.py;',
         '-- drawn by tools/sun3d/app_view.js (albedo files baked into the light passes where the ground is snow).',
-        '--   terrain_regions.color_path    NEW: a winter colour file of the whole wide grid, JPEG 4096 x 4096 (~13 m), north up on',
+        f'--   terrain_regions.color_path    NEW: a winter colour file of the whole wide grid, JPEG {WIDE_PX} x {WIDE_PX} (~{round(55000 / WIDE_PX)} m), north up on',
         '--                                 the grid\'s lat / lng: Copernicus Sentinel-2 L2A, tile 12TWP, 30 Dec 2025 18:32 UTC',
         '--                                 (11 Jan 2026 where 30 Dec had no data or cloud), the light of that day taken out.',
         '--   terrain_regions.color_credit  NEW: the credit line the app shows under the view when the colour is drawn.',

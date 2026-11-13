@@ -425,3 +425,50 @@ Drag, CPU 4x, level 3 (where the governor settles, as it does for the Teton fore
 detail box without colour 375-425, with photos and houses 500-600 (Teton foreground on the same bench: 326-451).
 Whole test browser peak, Saksun: plain 453 MB, detail only 484, photos + houses 523.
 Not fixed: the Faroes heights read ~3.3 m low against the agency's contours (uniform: no sun time changes).
+
+## Grand Teton in real winter colour (13 Nov 2026, branch `claude/sun3d-teton-colour`)
+
+The Teton view was all calculated colour (white snow, grey rock on steep faces, a guessed forest band, dark tree
+dots). Now its ground colour comes from a real winter day. Builder: `teton_colour/build_teton_colour.py`
+(`wide | boxes | sql | all <work dir> [out.sql]`; `TRIP_Q` = a script that runs one SQL string and prints JSON rows,
+`LIDAR_DIRS` = where the laser masks are, else the public bucket; everything downloaded is cached, a rerun is free).
+
+- Wide grid (`terrain_regions.color_path`, 2048 x 2048, ~27 m, 1.6 MB): Copernicus Sentinel-2 L2A, tile 12TWP, 30 Dec
+  2025 18:32 UTC (11:32 AM MST, sun 22 deg up; the trip's own date a year early), filled from 11 Jan 2026 where the
+  30 Dec pass had no data (the swath edge cuts the south-east corner) or its scene classes say cloud (Jackson Lake's
+  north end): 73 % / 27 %. Read straight from the COGs on AWS with HTTP range requests (no GDAL). The day's light is
+  taken out: each pixel is divided by the light it had then (sky by how much sky a slope sees, sun by its angle and a
+  march toward the sun for ridge shadows, from our own heights); snow is decided by the snow index (green vs
+  short-wave infrared, so snow in shade still counts) times how bright the green band is once the light is out, and
+  drawn as the page's own snow colour; forest, rock and water keep their own colour, a little greyed. 4096 was built
+  and measured first: +142 MB of test-browser memory over 2048 for detail a phone screen cannot show.
+- Fine boxes (8 `gt_*`, `terrain_near_regions.color_path`, at the box's own cell size, 50-530 KB) and laser boxes
+  (19 `gtd_*`, `terrain_detail_regions.color_path`, 0.5 m, 33-160 KB): USDA NAIP (USGS ImageServer, 0.6 m, 19 Jul 2022,
+  red / green / blue / near infrared) turned to winter. How snow is decided: the ground is snow wherever the 30 Dec
+  picture's snow index says snow at that spot (10-20 m), whatever the summer photo shows; that was the whole valley
+  floor and the forest floor on that day (every laser box comes out 100 % snow on open ground, Swan Lake 78 %: the lake
+  edge). Where it says bare, the photo shows through (dormant grass tan-grey, rock and gravel greyed, paved darker).
+  Snow keeps +-6 % of the photo's own brightness pattern (sage, ruts), never its colour. In a fine box the photo's dark
+  green crowns stay dark green (conifers; readier where the winter picture is dark too), other leafy green becomes a
+  grey-brown haze of bare twigs, and summer water is frozen (white) or open (dark) as the winter picture says. In a
+  laser box the survey's own trees are drawn by the page as points, so the ground under them is only a shade darker,
+  and the page keeps drawing its own water / ice and boards.
+- Page (`app_view.js`): where the ground is snow (`cfg.ground !== 'green'`) the three files are ALBEDO (`APHOTO`):
+  sampled in the light passes in place of the calculated colours, so each light map still holds colour x light and
+  everything downstream (the blend into the next mesh, water, trees, the light-only Faroes path) is untouched. A grid
+  without its own file uses the next coarser one through a uv rectangle (laser box -> fine box -> wide). Faces steeper
+  than ~50 deg turn to rock (a 10 m picture from above sees only a cliff's snowy ledges). A wide file finer than the
+  light map (4096) also gets its own detail back on the wide mesh (`WDET`); not used at 2048. All three are foreground
+  files: chunk `wcolor` (new; a foreground on its own) and the existing `ncolor` / `color`, sent after `ready`.
+- Panel / `services/terrain.ts`: `regionColor(r)`, the wide file saved ahead with the region (`saveTripTerrain`), sent
+  as `wcolor`; credit line from `terrain_regions.color_credit`. Migration `20261113020000_terrain_teton_colour.sql`
+  (28 files, 5.2 MB; NOT uploaded or applied: ship it with this app code, an older app would draw the box files the
+  Faroes way).
+
+Measured (scratchpad `teton_colour/test`: `tc.js` pictures and times, `bench_c.js` = the smoothness bench with colour,
+headless Chromium, software graphics): Teton with the foreground and no colour, Teton plain, and three Faroes views
+with photos and houses: 0 pixels differ from the page before. First / last light identical with and without colour
+(six stops, 30 Dec). No network request after load. Drag at CPU 4x, phone size (governor at level 3): Oxbow 472 ->
+478 ms a frame, Snake River Overlook 404 -> 425 (with the 4096 file and `WDET`); full light pass Oxbow 4.54 -> 4.61 s,
+Snake 3.29 -> 3.64 s on software graphics. Whole test browser peak, Oxbow with foreground: 418 MB without colour,
+636 MB with the 4096 wide file, 494 MB with 2048 (shipped).
