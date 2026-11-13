@@ -6,7 +6,7 @@ import { colors, spacing, radius, typography } from '../../theme';
 import { format, isToday } from 'date-fns';
 import {
   DayChange, GridCell, Plan, PlanRun, PlanVisit, TripSetting, fetchDayRuns, fetchPlans, fetchSubjectGrid, fetchTripSettings,
-  latestByDay, LIGHT_WORDS, mineReason, clock12,
+  latestByDay, LIGHT_WORDS, mineReason, clock12, joinRepeats,
 } from '../../services/planner';
 import { VERDICT_COLOR, VERDICT_TEXT, countText, isBig, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
 import { TDay, TWeek, bestElsewhere, tripWeek } from '../../services/plannerWeek';

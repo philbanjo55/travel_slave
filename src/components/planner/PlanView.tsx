@@ -8,7 +8,7 @@ import { colors, spacing, radius, typography } from '../../theme';
 import {
   Plan, PlanRun, PlanVisit, applyPreview, fetchDayRuns, fetchMultiRuns, fetchPlans, hhmm, ago, latestByDay,
   planDay, planDays, planTitle, runTripDates, LIGHT_WORDS, usesT, latestT, waitForT, fetchTDays,
-  canApply, applyPlan, clock12,
+  canApply, applyPlan, clock12, joinRepeats,
 } from '../../services/planner';
 import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../../services/replanNowStore';
 import { VERDICT_COLOR, VERDICT_TEXT, countText, expShots, forecastCount, isLightOnly, lateReplan, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
