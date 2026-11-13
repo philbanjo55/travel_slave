@@ -797,6 +797,16 @@ def sun_3d():
                     drawn = True; break
                 g = C.capture(3)
             V.check('sun3d-full-drawn', drawn, f'full-screen view drawn within {time.time() - t1:.0f} s' if drawn else 'no caption in full screen')
+            # Smoothness line (12 Nov 2026): a drag across the picture, then the page reports its frame time under the view.
+            # Only shown by builds with the smoothness pass; the emulator's software graphics say nothing about a phone,
+            # so the number is printed, not judged.
+            if drawn:
+                C.adb('shell', 'input', 'swipe', '300', '700', '800', '700', '1200'); time.sleep(4)
+                sm = next((t for t in C.capture(1.5).all_texts if t.startswith('Smoothness:')), None)
+                print('INFO smoothness: ' + (sm or 'no Smoothness line (build without the smoothness pass, or no frame reported)'), flush=True)
+                panel = os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'Sun3DPanel.tsx')
+                if os.path.exists(panel) and 'Smoothness:' in open(panel, encoding='utf-8').read():   # this build has it
+                    V.check('sun3d-smoothness-line', sm is not None, (sm or 'no Smoothness line after a drag')[:100])
             cut_off('3d-full-screen', g)
             # Walk mode (12 Nov 2026, branch claude/sun3d-walk): the arrows move the viewpoint. Save is never tapped here.
             g2 = C.capture(1)
