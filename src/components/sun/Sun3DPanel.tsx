@@ -87,11 +87,10 @@ let foregroundTooHeavy = false;   // the web view died with the foreground on: i
 // one for looking around / walking and one for the time slider. Handed to the next page, so it starts where this one ended.
 let lastLevels: { look: number; sun: number } | null = null;
 type Perf = { ms: number; worst: number; quality: string };
-const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
-
 // "9 ms a frame (worst 21) · quality full": the time one picture took while the view was last moved (under about
 // 17 ms is as smooth as most screens show), and the quality the page drew at while moving (it is always full when still).
 const perfLine = (p: Perf) => `${p.ms < 10 ? Math.round(p.ms * 10) / 10 : Math.round(p.ms)} ms a frame (worst ${Math.round(p.worst)}) · quality ${p.quality}`;
+const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
 
 export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd }: Props) {
   const web = useRef<any>(null);
@@ -531,9 +530,6 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ) : null}
       </View>
 
-      {ready && perf && !hd ? (
-        <Text style={[styles.perf, pad]} accessibilityLabel={`Smoothness: ${perfLine(perf)}`}>Smoothness: {perfLine(perf)}</Text>
-      ) : null}
       {ready && lit ? (
         <Text style={[styles.status, pad]}>
           <Text style={lit.subjectLit ? styles.sunOn : undefined}>{subject}: {lit.subjectLit ? 'in the sun' : lit.up ? 'in shadow' : 'no sun'}</Text>
@@ -542,6 +538,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         </Text>
       ) : phase === 'error' && problem ? (
         <Text style={[styles.status, pad]}>{problem}</Text>
+      ) : null}
+      {ready && perf && !hd ? (
+        <Text style={[styles.perf, pad]} numberOfLines={1} accessibilityLabel={`Smoothness: ${perfLine(perf)}`}>Smoothness: {perfLine(perf)}</Text>
       ) : null}
       {ready && shapes && (lit?.trees || moments?.trees) ? (
         <Text style={[styles.status, pad]}>
@@ -650,5 +649,5 @@ const styles = StyleSheet.create({
   momentLabel: { color: colors.textSecondary, fontSize: 11 },
   momentTime: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },
   note: { color: colors.textTertiary, fontSize: 11, marginTop: 8, paddingHorizontal: 2 },
-  perf: { color: colors.textTertiary, fontSize: 11, marginTop: 6, paddingHorizontal: 2 },
+  perf: { color: colors.textTertiary, fontSize: 11, marginTop: 4, paddingHorizontal: 2 },
 });
