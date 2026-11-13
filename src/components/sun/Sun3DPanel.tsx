@@ -37,7 +37,7 @@ import { compassPoint } from './sunStyle';
 // time. A fine box with a photo and no detail box still gets its photo. One
 // credit line says where it comes from.
 // Park-wide trees (Grand Teton, 13 Nov 2026): the tiles of a coarse canopy layer
-// within 7 km of the stand spot go with the foreground too (last); the page draws
+// within 12 km of the stand spot go with the foreground too (last); the page draws
 // trees from them beyond the detail box, never counts them in a sun time, and
 // leaves them out alone if they fail or are slow.
 //
@@ -219,7 +219,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       const nck = nearUsed.current ? nearColor(nearUsed.current) : null;
       const wck = r ? regionColor(r) : null;   // Tetons: the wide grid's winter colour, a foreground of its own
       const tts = r ? await treeTilesFor(r, stand) : [];   // Tetons: the park-wide tree tiles within reach of this stand spot
-      const key = `${dt0?.id ?? ''}|${nck?.id ?? ''}|${wck?.id ?? ''}|${tts.map(t => t.id).join(',')}`;
+      // (the tree tiles only by whether there are any: another shot of the same boxes keeps the page and its tiles, and
+      // the page builds its trees again around the new stand spot; a few tiles at the 12 km edge may differ, no restart)
+      const key = `${dt0?.id ?? ''}|${nck?.id ?? ''}|${wck?.id ?? ''}|${tts.length ? 'trees' : ''}`;
       if (!alive || key === loadedDetail.current || (key === '|||' && loadedDetail.current === '')) return;
       if (foreSent.current) {   // the page already holds another box's foreground: start it afresh for this one
         booted.current = false; sent.current = false; foreSent.current = false;
