@@ -786,11 +786,26 @@ def sun_3d():
         if OFFLINE:
             V.check('sun3d-hd-hidden', not any(hd_label in c['label'] for c in f.clickables), 'no HD button without a signal (it needs one)')
         # Full screen, while the button is on screen with the caption.
-        f = C.capture(1)
-        if V.tap_text(f, 'Open the 3D view full screen'):
-            g = C.capture(5)
+        # Full screen is open when the full-screen Close button is listed ("Close the 3D view"); a plain 'Close' also
+        # matched "close to you" in the note under the view, so a full screen that never opened passed (12 Nov 2026,
+        # and the Back press that followed then left the stop page). Tap up to three times and say how long it took.
+        in_full = lambda st: any('Close the 3D view' in c['label'] for c in st.clickables)
+        opened = False; t_open = time.time(); tries = 0; g = C.capture(1)
+        for tries in range(1, 4):
+            f = C.capture(1)
+            if not V.tap_text(f, 'Open the 3D view full screen'):
+                break
+            for _ in range(8):
+                g = C.capture(1.5)
+                if in_full(g):
+                    opened = True; break
+            if opened:
+                break
+        if tries:
+            print(f'INFO full screen: {"open" if opened else "not open"} after {tries} tap(s), {time.time() - t_open:.0f} s', flush=True)
+        if tries and opened:
             V.show('sun3d-full', g)
-            V.check('sun3d-full-open', V.has(g, 'Close'), 'full screen with Close')
+            V.check('sun3d-full-open', True, f'full screen with Close ({tries} tap(s), {time.time() - t_open:.0f} s)')
             t1 = time.time(); drawn = False
             for _ in range(12):
                 if V.has(g, 'Looking '):
@@ -831,9 +846,13 @@ def sun_3d():
             else:
                 print('INFO walk: no walk button in full screen (this build has no walk mode)', flush=True)
             V.show('sun3d-full-drawn', g)
-            V.back(); time.sleep(2)
+            c_ = C.capture(1)
+            if not V.tap_text(c_, 'Close the 3D view'):
+                V.back()
+            time.sleep(2)
         else:
-            V.check('sun3d-full-open', False, 'no full-screen button on screen')
+            V.show('sun3d-full', g)
+            V.check('sun3d-full-open', False, 'full screen did not open' if tries else 'no full-screen button on screen')
         time.sleep(4)
         seen, _ = V.texts_all(2)
         V.check('sun3d-moments', seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you'), 'first / last light chips')
