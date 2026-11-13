@@ -299,6 +299,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     run('window.S3D.foreDone()');
   }, [useDetail, detail, detailB64, maskB64, treesB64, waterB64, iceOn, run]);
   useEffect(() => { if (ready) sendFore(); }, [ready, sendFore]);
+  // The page answers every foreground request within its own minute (drawn, or dropped). If no answer comes at all
+  // (the request never reached the page), stop saying "loading" and say the plain view is what is shown.
+  const [foreLost, setForeLost] = useState(false);
+  useEffect(() => {
+    if (!foreBusy) return;
+    const t = setTimeout(() => { setForeBusy(false); setForeLost(true); }, 90000);
+    return () => clearTimeout(t);
+  }, [foreBusy]);
+  useEffect(() => { if (shapes || !foreground) setForeLost(false); }, [shapes, foreground]);
 
   // The web view's own process died (Android: out of memory, or killed) or its graphics context went. With the
   // foreground on, that is the likely cause: start once more WITHOUT it, switch it off for this session and say so.
@@ -481,7 +490,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
                 style={[styles.fullBtn, foreground && styles.lensOn]}
                 accessibilityRole="switch"
                 accessibilityState={{ checked: foreground }}
-                accessibilityLabel={`Foreground (trees and buildings near you): ${foreground ? 'on' : 'off'}. Tap to change.`}
+                accessibilityLabel={`Foreground (trees and buildings near you): ${foreground ? 'on' : 'off'}${foreground ? (shapes ? ', showing' : foreBusy ? ', loading' : '') : ''}. Tap to change.`}
                 hitSlop={6}
               >
                 <Ionicons name="leaf-outline" size={17} color={foreground ? '#000000' : '#ffffff'} />
@@ -542,6 +551,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         </Text>
       ) : null}
       {foreBusy && ready && !hd ? <Text style={[styles.note, pad]}>Foreground loading…</Text> : null}
+      {foreLost && foreground && !shapes && !hd ? <Text style={[styles.note, pad]}>The foreground didn't load this time. The view is the plain one; switch Foreground off and on to try again.</Text> : null}
       {heavy && !foreground && !hd ? (
         <Text style={[styles.status, pad]}>The foreground was too heavy for this phone, so it is off. The view below is the plain one.</Text>
       ) : null}
