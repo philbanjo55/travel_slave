@@ -900,8 +900,95 @@ def offline_3d():
         C.adb('shell', 'svc', 'wifi', 'enable'); C.adb('shell', 'svc', 'data', 'enable'); time.sleep(10)
 
 
+def faroes_3d():
+    """Faroes foreground in the app (13 Nov 2026): on Faroes Live, today's first shot stop -> Sun & Moon -> 3D draws, the
+    foreground (aerial photo colour, houses, water) comes in, and the Faroese agency's credit line shows."""
+    s = V.home()
+    if not V.has(s, 'Training trips') and not V.find_scroll('Training trips'):
+        V.check('fo3d-trip', False, 'no Training trips row'); return
+    s = C.capture(1)
+    if V.has(s, 'Training trips'):
+        V.tap_text(s, 'Training trips')
+    t = C.capture(3)
+    if not V.tap_text(t, 'Faroes Live'):
+        V.check('fo3d-trip', False, 'no Faroes Live row'); return
+    p = C.capture(6)
+    V.check('fo3d-trip', V.has(p, 'DAY '), 'Faroes Live open')
+    d = datetime.datetime.now(ZoneInfo('Atlantic/Faroe'))
+    short = f"{d.strftime('%b')} {d.day}"
+    for _ in range(5):
+        if V.tap_text(p, short, exact=True):
+            break
+        C.adb('shell', 'input', 'swipe', '900', '700', '200', '700', '300'); p = C.capture(0.8)
+    time.sleep(3)
+    skip = ('Cottages', 'Sleep', 'Hotel', 'Depart', 'Check', 'Return', 'Airport', 'Ferry')
+    row = re.compile(r'^\d{1,2}:\d{2} [AP]M (.+)')
+    tried = set(); opened = None
+    for _ in range(3):
+        s = C.capture(1.0); hit = None
+        for _ in range(20):
+            hit = next((c for c in s.clickables if row.match(c['label']) and not any(k in c['label'] for k in skip)
+                        and row.match(c['label']).group(1)[:30] not in tried), None)
+            if hit is not None and 0.30 * 2400 <= hit['xy'][1] <= 0.72 * 2400:
+                break
+            C.adb('shell', 'input', 'swipe', '540', '1300', '540', '950', '500'); s = C.capture(1.2); hit = None
+        if hit is None:
+            break
+        tried.add(row.match(hit['label']).group(1)[:30]); C.tap(hit['xy']); time.sleep(4)
+        st = scroll_find('SUN & MOON', 14)
+        if st is None:
+            V.back(); time.sleep(2); continue
+        opened = hit['label'][:60]; break
+    V.check('fo3d-stop', opened is not None, (opened or 'no shot stop with a Sun & Moon section today'))
+    if opened is None:
+        return
+    H = 2400
+    def text_y(st, needle):
+        for nd in (st.root.iter('node') if st.root is not None else []):
+            t = (nd.get('text') or nd.get('content-desc') or '')
+            if nd.get('package') == V.PKG and needle.lower() in t.lower():
+                x1, y1, x2, y2 = C.bounds(nd); return (y1 + y2) // 2
+        return None
+    for _ in range(5):
+        y = text_y(st, 'SUN & MOON')
+        if y is None or 0.22 * H <= y <= 0.45 * H:
+            break
+        dd = max(-600, min(600, int(y - 0.33 * H)))
+        C.adb('shell', 'input', 'swipe', '540', str(int(0.6 * H)), '540', str(int(0.6 * H) - dd), '600')
+        st = C.capture(1.2)
+    V.check('fo3d-tab', V.tap_text(st, '3D', exact=True), 'tap the 3D tab')
+    f0 = scroll_find('Open the 3D view full screen', 8)
+    if f0 is not None:
+        mid_screen(f0, 'Open the 3D view full screen')
+    t0 = time.time(); ok = False; c = C.capture(2)
+    for _ in range(40):
+        if V.has(c, 'Looking '):
+            ok = True; break
+        c = C.capture(3)
+    V.check('fo3d-ready', ok, f'drawn {time.time() - t0:.0f} s after the tab tap' if ok else 'no caption')
+    if not ok:
+        print('INFO fo3d on screen: ' + ' | '.join(x for x in c.all_texts if len(x.strip()) > 2)[:1500], flush=True); V.back(); return
+    fg_label = 'Foreground (trees and buildings near you)'
+    lab = None; t1 = time.time()
+    for _ in range(60):
+        c = C.capture(2)
+        lab = next((x['label'] for x in c.clickables if fg_label in x['label']), None)
+        if lab is None or ', showing' in lab or V.has(c, "foreground didn't load") or V.has(c, 'foreground was too heavy'):
+            break
+        time.sleep(2)
+    V.check('fo3d-fg-in', lab is not None and ', showing' in lab, f'{(lab or "no Foreground button")[:80]} after {time.time() - t1:.0f} s')
+    seen = []
+    for _ in range(3):
+        seen += C.capture(1.2).all_texts
+        C.adb('shell', 'input', 'swipe', '540', '1500', '540', '900', '500')
+    V.check('fo3d-credit', seen_has(seen, 'Umhvørvisstovan'), 'Faroese agency credit line under the view')
+    V.check('fo3d-alive', C.app_alive())
+    print('INFO fo3d texts: ' + ' | '.join(x for x in seen if any(k in x for k in ('Looking', 'Foreground', 'Umhv', 'First sun', 'Smoothness', 'saved')))[:1200], flush=True)
+    V.back(); time.sleep(2)
+
+
 def main():
-    for st in (sun_3d, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, offline_3d):
+    for st in (sun_3d, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, offline_3d):
         try:
             st()
         except Exception as e:
