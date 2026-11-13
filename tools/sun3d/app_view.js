@@ -145,9 +145,11 @@
   const pinPoint = () => { const t = pick(target); return { g: t.g, c: t.c, r: t.r, h: gh(t.g, t.c, t.r) + 6 }; };
   const subjLit = (az, alt, s, q) => lit(s || subjPoint(), az, alt) || lit(q || pinPoint(), az, alt);
   const herePoint = () => { const e = pick(eye); return { g: e.g, c: e.c, r: e.r, h: gh(e.g, e.c, e.r) }; };
-  // where the camera stands: on the fine grid the highest ground within a step, so a pin on a steep slope does not put the eye inside the hill
-  // on the detail grid the survey's ground is exact (and cleared around the stand spot): the eye is `lift` m above it
-  const eyeH = e => { if (e.g === DT) return gh(e.g, e.c, e.r) + DT.lift; let h = gh(e.g, e.c, e.r); if (e.g === NR) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + 3; };
+  // where the camera stands: eye (tripod) height EYE m (Phil, 13 Nov 2026: 5'8", "almost never above that"; was 2 m on the
+  // detail grid, 3 m elsewhere). On the near grid the highest ground within a step and a half, so a pin on a steep slope does not
+  // put the eye inside the hill; on the wide grid the ground there; on the detail grid the survey's ground is exact.
+  const EYE = 1.6;
+  const eyeH = e => { if (e.g === DT) return gh(e.g, e.c, e.r) + EYE; let h = gh(e.g, e.c, e.r); if (e.g === NR) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + EYE; };
   // First / last direct light. Measured 12 Nov 2026 against 102 webcam pictures (27 events, tools/sun3d/README.md): with
   // the first rule (whole disc clear of a soft skyline, never below the flat horizon) ridge-blocked events were right to
   // a few minutes but sunrise / sunset on high points were 5-13 min off. Now: the sun's CENTRE against a hard skyline
@@ -865,7 +867,7 @@
     }
     const scene = new THREE.Scene(), terrain = new THREE.Mesh(geo, [terrMat]); terrain.frustumCulled = false; scene.add(terrain);
     if (near) scene.add(near.mesh);
-    const cam = new THREE.PerspectiveCamera(27, 1.5, det ? 1 : near ? 2 : 4, 260000); cam.rotation.order = 'YXZ';
+    const cam = new THREE.PerspectiveCamera(27, 1.5, det ? 1 : near ? 1 : 2, 260000); cam.rotation.order = 'YXZ';
     const skyGeo = new THREE.SphereGeometry(200000, 48, 24), skyPos = skyGeo.attributes.position, skyCol = new THREE.BufferAttribute(new Float32Array(skyPos.count * 3), 3); skyGeo.setAttribute('color', skyCol);
     const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })); sky.frustumCulled = false; scene.add(sky);
     const disc = new THREE.Mesh(new THREE.CircleGeometry(2100, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }));
