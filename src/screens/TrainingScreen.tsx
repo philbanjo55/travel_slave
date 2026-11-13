@@ -76,8 +76,7 @@ export default function TrainingScreen() {
         <Text style={styles.headerTitle}>Training trips</Text>
       </View>
       <Text style={styles.intro}>
-        Copies of your trips moved to today, planned every night on the real forecast and checked against the
-        webcams and airports the next day. Each trip gets one automatically once its stops are rated.
+        Your trips replayed from today on the real forecast, checked each next day.
       </Text>
       <FlatList
         data={rows}

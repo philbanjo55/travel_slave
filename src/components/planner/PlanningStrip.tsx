@@ -40,7 +40,6 @@ export default function PlanningStrip({ tripId, onView }: { tripId: string; onVi
           <Text style={styles.link}>View ›</Text>
         </View>
         <View style={styles.track}><View style={[styles.fill, { width: `${Math.max(frac * 100, 4)}%` }]} /></View>
-        <Text style={styles.hint}>You can leave this screen.</Text>
       </View>
     </TouchableOpacity>
   );

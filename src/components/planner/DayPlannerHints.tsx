@@ -267,10 +267,11 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
   const dayWords = format(new Date(`${date}T12:00:00`), 'EEE d MMM');
   const mineNum = !score.bigOnDay ? null : score.mine != null ? shotsText(score.mine) : '–';
   const tNum = !score.bigOnDay ? null : shotsText(score.best);
+  // One short line under the columns (Phil, 13 Nov 2026: "look at all walls through the app").
   const caption = grey ? 'Grey day: no big subject is a good bet.'
     : !score.bigOnDay ? `No big subjects this day${score.others >= 0.05 ? ` · ${shotsText(score.others)} good shots of the others` : ''}.`
-    : `The numbers: good shots of big subjects expected.${score.mine != null && score.mine < 0.05
-      ? ((planner.mine?.visits ?? []).some(v => isBig(tierOf(v.stop_id))) ? ' None of your big subjects look like a good bet.' : ' Your day has no big subjects (S or GOD) on it.') : ''}`;
+    : `Numbers: good shots of big subjects expected.${score.mine != null && score.mine < 0.05
+      ? ((planner.mine?.visits ?? []).some(v => isBig(tierOf(v.stop_id))) ? ' None of yours look good.' : ' No S or GOD on yours.') : ''}`;
   return (
     <View style={styles.card}>
       <View style={styles.cardHead}>
@@ -282,7 +283,7 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
         </TouchableOpacity>
       </View>
       {score.late ? (
-        <Text style={styles.warn}>This morning's re-plan came at {clock12(run.created_at, tz)}, after the first stop ({clock12(score.late, tz)}). Go by your plan for that one.</Text>
+        <Text style={styles.warn}>Re-plan came at {clock12(run.created_at, tz)}, after the first stop ({clock12(score.late, tz)}): go by your plan for it.</Text>
       ) : null}
       {dayDone ? <Text style={styles.warn}>Today's stops are done. Notes for tomorrow go on tomorrow's day.</Text> : null}
       <View style={styles.cols}>
@@ -314,7 +315,7 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
           {score.week && score.week.days > 1 ? (
             <Text style={styles.week}>
               Week from today: T {shotsText(score.week.t)}{score.week.mine != null ? ` · yours ${shotsText(score.week.mine)}` : ''} good shots of big subjects
-              {score.week.bigLeft ? `. T gets at least one good shot of about ${Math.round(score.week.covered)} of the ${score.week.bigLeft} big subjects left` : ''}
+              {score.week.bigLeft ? ` · T covers ~${Math.round(score.week.covered)} of ${score.week.bigLeft} left` : ''}
             </Text>
           ) : null}
         </View>
@@ -375,7 +376,7 @@ export function ReplanNowStatus({ tripId }: { tripId: string }) {
   const v = useReplanNow(tripId);
   const { currentTripData } = useTripStore();
   if (v.phase === 'running') {
-    return <Text style={styles.cardSub}>Re-planning the rest of today with fresh camera pictures (about 1 minute). The new plan shows here.</Text>;
+    return <Text style={styles.cardSub}>Re-planning the rest of today with fresh camera pictures (about 1 min)…</Text>;
   }
   if (v.phase === 'done') return <Text style={styles.warn}>{v.status.done_at ? `${clock12(v.status.done_at, currentTripData?.trip?.timezone ?? undefined)}: ` : ''}{v.message}</Text>;
   if (v.phase === 'error') return <Text style={[styles.cardSub, { color: '#e74c3c' }]}>{v.message}</Text>;

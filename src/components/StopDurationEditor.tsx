@@ -94,7 +94,7 @@ export default function StopDurationEditor({ visible, onClose, stop, dayStops }:
           {clash ? (
             <Text style={styles.warn}>Runs into {clash}, which has a fixed time. It stays put, so check the day.</Text>
           ) : null}
-          <Text style={styles.hint}>Stops right after this one move with it; a stop after a gap only moves if this runs into it. The planner uses the new length from its next run.</Text>
+          <Text style={styles.hint}>Stops right after this move with it; later ones only if it runs into them.</Text>
 
           {!!error && <Text style={styles.warn}>{error}</Text>}
           <TouchableOpacity style={[styles.primary, (!changed || saving) && { opacity: 0.4 }]} onPress={save} disabled={!changed || saving}>

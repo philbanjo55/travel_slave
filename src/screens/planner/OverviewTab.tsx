@@ -151,7 +151,7 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
       </View>
       {ahead.length > 1 ? (
         <Text style={styles.hint}>
-          From today: T {weekT.toFixed(1)}{weekMine != null ? ` · your days ${weekMine.toFixed(1)}` : ''}. Each big subject adds its chance (a 2-in-3 Good bet adds 0.7). T may lower one day to win the week.
+          From today: T {weekT.toFixed(1)}{weekMine != null ? ` · your days ${weekMine.toFixed(1)}` : ''} good shots of big subjects.
         </Text>
       ) : null}
       {rows.map(r => {
@@ -198,7 +198,7 @@ export default function OverviewTab({ tripId, days, goPlans, goTab, extra }: {
       ) : null}
 
       <Text style={[styles.label, { marginTop: spacing.xl }]}>CAMERAS NOW</Text>
-      <Text style={styles.hint}>Tap one, check it, and say what you see. Your taps are the scoreboard's ground truth.</Text>
+      <Text style={styles.hint}>Tap one and say what you see.</Text>
       {cams == null ? <ActivityIndicator color={colors.textTertiary} style={{ marginVertical: spacing.md }} />
         : cams.length === 0 ? <Text style={styles.hint}>No cameras near this trip's stops yet.</Text> : (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.md, paddingVertical: spacing.sm }}>

@@ -92,6 +92,9 @@ export default function StopDetailScreen() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editingLocation, setEditingLocation] = useState(false);
   const [editingDuration, setEditingDuration] = useState(false);
+  // TEST: the stop's info note shows its first lines; the rest behind More (Phil, 13 Nov 2026: "look at all walls
+  // through the app"). Its notes run long (parking, the CAMERAS TO CHECK block).
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const day = currentTripData?.days.find((d: any) => d.id === dayId);
   const stops = day?.stops || [];
@@ -123,7 +126,7 @@ export default function StopDetailScreen() {
 
   const handlePhotoLongPress = (photoId: string, type: string, after?: () => void) => {
     if (allPhotos.find((p: any) => p.id === photoId)?.borrowed) {
-      Alert.alert('From your real trip', 'This photo belongs to the real trip, so it can only be removed there. Photos you add here stay on the practice trip.');
+      Alert.alert('From your real trip', 'This photo can only be removed on the real trip.');
       return;
     }
     Alert.alert('Delete Photo', `Remove this ${type} photo?`, [
@@ -364,11 +367,20 @@ export default function StopDetailScreen() {
           </View>
         )}
 
-        {IS_TEST_APP && stop.info && (
-          <View style={styles.infoCard}>
-            <Text style={styles.infoText}>{stop.info}</Text>
-          </View>
-        )}
+        {IS_TEST_APP && stop.info && (() => {
+          const long = stop.info.length > 280 || stop.info.split('\n').length > 6;
+          return (
+            <View style={styles.infoCard}>
+              <Text style={styles.infoText} numberOfLines={long && !infoOpen ? 6 : undefined}>{stop.info}</Text>
+              {long ? (
+                <TouchableOpacity onPress={() => setInfoOpen(o => !o)} hitSlop={{ top: 8, bottom: 8 }} accessibilityRole="button"
+                  accessibilityLabel={infoOpen ? 'Show less of the note' : 'Show the whole note'}>
+                  <Text style={styles.infoMore}>{infoOpen ? 'Less' : 'More ›'}</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          );
+        })()}
 
         {/* Log */}
         {stop.log && (
@@ -590,6 +602,7 @@ const styles = StyleSheet.create({
     borderLeftColor: colors.border,
   },
   infoText: { ...typography.bodyLarge, lineHeight: 22 },
+  infoMore: { marginTop: spacing.sm, fontSize: 13, fontWeight: '700', color: colors.signalOk },
 
   actions: {
     paddingHorizontal: spacing.xl,

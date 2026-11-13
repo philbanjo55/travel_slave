@@ -29,9 +29,8 @@ export default function NightlyToggle({ tripId, tripTitle, tripTz }: { tripId: s
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Daily plan alert</Text>
           <Text style={styles.hint}>
-            A notification once a day when T's new plans are in: {mine} your time{there && there !== mine ? ` (${there} trip time)` : ''}.
-            T plans again early each morning; open the trip to see that one.
-            {state && !on ? ' (Now set for another trip; turning it on moves it here.)' : ''}
+            Daily at {mine} your time{there && there !== mine ? ` (${there} trip time)` : ''}, when T's plans are in.
+            {state && !on ? ' On for another trip: switching on moves it here.' : ''}
           </Text>
         </View>
         <Switch value={on} onValueChange={toggle} disabled={busy}

@@ -138,6 +138,8 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather, fo
   // The analysis blocks below the table. Off by default: the dropdown exists
   // to compare sources, and this used to sit in front of that.
   const [showDetail, setShowDetail] = useState(false);
+  // The sources table's long footnote, behind one link (Phil, 13 Nov 2026: "look at all walls through the app").
+  const [showKey, setShowKey] = useState(false);
 
   useEffect(() => {
     if (weather !== undefined) { setRow(weather ?? null); setLoaded(true); return; }
@@ -597,6 +599,11 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather, fo
             </View>
           ) : null}
 
+          <TouchableOpacity onPress={() => setShowKey(k => !k)} hitSlop={{ top: 8, bottom: 8 }} accessibilityRole="button"
+            accessibilityLabel={showKey ? 'Hide what the columns mean' : 'What the columns mean'}>
+            <Text style={styles.cmpKeyLink}>{showKey ? 'Hide' : 'What the columns mean ›'}{cmp.fromContract ? '' : ' · cached, pull to refresh'}</Text>
+          </TouchableOpacity>
+          {showKey ? (
           <Text style={styles.cmpFootnote}>
             Units are in the header. Everything is imperial except GRID, which stays
             in km because that is how every forecast centre names its models — the
@@ -612,6 +619,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather, fo
             and pressure. * gust estimated from mean wind.
             {cmp.fromContract ? '' : ' (Cached before source detail existed — pull to refresh.)'}
           </Text>
+          ) : null}
         </View>
       ) : null}
 
@@ -673,7 +681,7 @@ export default function StopWeatherCard({ stopId, shotType, dayDate, weather, fo
                   </View>
                 ))}
                 {!verify.ok ? (
-                  <Text style={styles.verifyMuted}>Location & hour reconstructed correctly; values differ only because Open-Meteo refreshed its forecast since the pull. Refresh the day to sync.</Text>
+                  <Text style={styles.verifyMuted}>Open-Meteo has a newer forecast than the pull. Refresh the day to sync.</Text>
                 ) : null}
               </>
             )
@@ -861,4 +869,5 @@ const styles = StyleSheet.create({
   },
   truthText: { fontSize: 10, color: colors.signalOk, flex: 1 },
   cmpFootnote: { fontSize: 9, color: colors.textTertiary, fontStyle: 'italic', marginTop: 6 },
+  cmpKeyLink: { fontSize: 11, color: colors.textSecondary, fontWeight: '600', marginTop: 6 },
 });

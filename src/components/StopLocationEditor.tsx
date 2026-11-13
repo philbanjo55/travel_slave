@@ -121,8 +121,7 @@ export default function StopLocationEditor({ visible, onClose, stop, fallback }:
                   </Text>
                 ))}
                 <Text style={styles.hint}>
-                  Weather and elevation follow the new point within the hour. Stop times are not shifted automatically:
-                  if a drive got longer or shorter, adjust the times you care about.
+                  Weather follows within the hour. Stop times don't shift: adjust them if needed.
                 </Text>
                 <TouchableOpacity style={styles.primary} onPress={onClose}>
                   <Text style={styles.primaryText}>Done</Text>
@@ -178,7 +177,7 @@ export default function StopLocationEditor({ visible, onClose, stop, fallback }:
                     {movedM > 20000 ? '. That is a long way: check the coordinates.' : '.'}
                   </Text>
                 )}
-                <Text style={styles.hint}>This is the point used for navigation, the route map, drive times and the weather.</Text>
+                <Text style={styles.hint}>Used for navigation, the route map, drive times and weather.</Text>
 
                 {!!error && <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View>}
                 <TouchableOpacity style={[styles.primary, (!changed || saving) && { opacity: 0.4 }]} onPress={save} disabled={!changed || saving}>

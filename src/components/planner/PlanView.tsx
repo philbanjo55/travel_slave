@@ -23,9 +23,9 @@ import { errText } from '../../utils/errText';
 const MODE_TEXT: Record<string, string> = {
   forecast: 'Forecast for this day',
   tforecast: "T's plan from the forecast for this day",
-  tlight: "T's week draft: real sun for this date and typical weather (no forecast reaches it yet)",
-  light: 'Light only: real sun for this date, typical (mostly cloudy) weather',
-  preview: "Preview: this week's forecast played as this day (today's sun, not the trip's)",
+  tlight: "T's week draft: no forecast yet, typical weather",
+  light: 'Light only: real sun, typical (mostly cloudy) weather',
+  preview: "Preview: this week's forecast played as this day",
 };
 
 // Opens a plan's stop on whichever trip day holds it now.
@@ -56,10 +56,10 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
       let r: PlanRun | null = null;
       if (replan) {
         const since = await startReplan(tripId);
-        setBusy('T is planning the trip again (about 2–4 minutes). Progress is in the bar at the top; you can leave this screen.');
+        setBusy('T is planning the trip again (2–4 min). You can leave this screen.');
         r = await waitForT(tripId, tripDate, since, () => mounted.current);
         if (!mounted.current) return;
-        if (!r) throw new Error("T is still planning, or doesn't re-plan this day (today is re-planned each morning). Check back in a few minutes.");
+        if (!r) throw new Error("T is still planning, or doesn't re-plan this day. Check back in a few minutes.");
       } else r = await latestT(tripId, tripDate);
       if (replan) ack(tripId);
       setRun(r); setPlans(r ? await fetchPlans(r.id) : []);
@@ -163,7 +163,7 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
     try {
       if (replan) {
         const since = await startReplan(tripId);
-        setBusy('T is planning the trip again (about 2–4 minutes). Progress is in the bar at the top; you can leave this screen.');
+        setBusy('T is planning the trip again (2–4 min). You can leave this screen.');
         await waitForT(tripId, tripDates[tripDates.length - 1], since, () => mounted.current);
         if (!mounted.current) return;
       }
@@ -196,8 +196,8 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
     <View style={{ gap: spacing.sm }}>
       <View style={styles.modeRow}>
         <Text style={[styles.hint, { flex: 1, paddingHorizontal: spacing.sm }]}>
-          {t ? "T's plan for each day: the forecast plan where there is one, else the week draft."
-             : 'A subject counts once, on its best day, with 6 h between back at night and out again.'}
+          {t ? "T's plan for each day (forecast, else week draft)."
+             : 'Each subject counts once, on its best day.'}
         </Text>
         <TouchableOpacity onPress={() => load(true)} style={styles.replan} disabled={!!busy} accessibilityLabel="Plan again">
           <Ionicons name="refresh" size={16} color={colors.textSecondary} />
@@ -262,7 +262,7 @@ export function PlanBody({ tripId, run, plans, byDay, initialRank, onRank }: {
           {mine && bestPlan && plan.rank !== 0 && shotsText(big(mine)) !== shotsText(big(plan)) ? (
             <Text style={styles.hint}>
               Your day {shotsText(big(mine))} → {planTitle(plan).toLowerCase()} {shotsText(big(plan))}
-              {big(plan) < big(mine) ? ". T's day is lower here because it saves a big subject for a better day of the week." : ''}
+              {big(plan) < big(mine) ? ': lower to save a big subject for a better day.' : ''}
             </Text>
           ) : null}
           {(plan.rank === 0 ? plan.visits : joinRepeats(plan.visits)).map((v, i) => {
@@ -282,8 +282,8 @@ export function PlanBody({ tripId, run, plans, byDay, initialRank, onRank }: {
           ) : null}
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <Text style={styles.hint}>
-            {isLightOnly(run) ? 'No forecast reaches this day yet: chances are for typical weather on this date, with its real sun.'
-              : `Good bet = a good shot in at least half of T's ${forecastCount(run) ?? 6} forecasts; Long shot = in some; Skip = in none.`}
+            {isLightOnly(run) ? 'No forecast yet: chances are for typical weather, real sun.'
+              : `Good bet: good in at least half of ${forecastCount(run) ?? 6} forecasts · Long shot: some · Skip: none`}
           </Text>
         </>
       ) : <Text style={styles.hint}>No plan.</Text>}
@@ -345,8 +345,8 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, onAccepted
             </View>
           ) : null}
           <Text style={styles.hint}>
-            {testTrip ? "Preview of this day only. To accept, tap the T card's changes line on the trip page: it applies T's plan for the rest of the trip at once (past days don't change)."
-              : 'Preview only on real trips: nothing is moved until the solver is signed off.'}
+            {testTrip ? "Preview only. To accept, use T's day on the trip page (rest of the trip at once)."
+              : 'Preview only on real trips.'}
             {apply?.stops_changed != null ? ` ${apply.stops_changed} stops would change.` : ''}
           </Text>
           <ScrollView style={{ maxHeight: 420 }}>
