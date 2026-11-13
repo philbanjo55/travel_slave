@@ -144,6 +144,34 @@ def capture(settle=2.0):
     return State(root)
 
 
+_ANR_DUMPED = [0]
+
+
+def anr_report():
+    """13 Nov 2026: our app stopped answering on the emulator. The first two times, print why: the system's ANR reason and
+    the app's main-thread stack (from /data/anr, readable after adb root on the emulator image)."""
+    if _ANR_DUMPED[0] >= 2:
+        return
+    _ANR_DUMPED[0] += 1
+    try:
+        lines = adb('logcat', '-d', '-t', '8000', timeout=90).splitlines()
+        hits = [i for i, l in enumerate(lines) if 'ANR in' in l]
+        for i in hits[-1:]:
+            for l in lines[i:i + 14]:
+                print('ANRLOG ' + l[:260], flush=True)
+        adb('root', timeout=30); time.sleep(3)
+        names = adb('shell', 'ls -t /data/anr', timeout=30).split()
+        if names:
+            txt = adb('shell', f'cat /data/anr/{names[0]}', timeout=60)
+            m = re.search(r'"main" prio=.*?(?:\n\n|$)', txt, re.S)
+            for l in (m.group(0) if m else txt[:4000]).splitlines()[:60]:
+                print('ANRSTACK ' + l[:260], flush=True)
+        else:
+            print('ANRSTACK no files in /data/anr', flush=True)
+    except Exception as e:
+        print('ANRSTACK could not read: ' + str(e)[:200], flush=True)
+
+
 def dismiss_system_dialogs():
     """Close an emulator 'X isn't responding' box. Our own app: press Wait (13 Nov 2026: pressing Close app killed the app
     mid-test and the run read a slow moment on the emulator's software graphics as a crash; a real crash still shows as one).
@@ -159,6 +187,8 @@ def dismiss_system_dialogs():
             if "isn't responding" in t:
                 title = t
         ours = 'Philm' in title or 'philmframe' in title.lower()
+        if ours:
+            anr_report()
         want = 'Wait' if ours else 'Close app'
         hit = None
         for n in root.iter('node'):
