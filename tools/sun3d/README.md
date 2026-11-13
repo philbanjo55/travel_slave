@@ -225,6 +225,84 @@ slowing does not slow it here.
 - With 90,000 points the trees are coarser than in round 2's pictures of 250,000; far ones thin to scattered dots.
   No trunks (airborne laser hardly sees them; not added). Buildings are plain blocks.
 
+## Smoothness of the app's view (12-13 Nov 2026, branch `claude/sun3d-butter`)
+
+What the page (`app_view.js`) now does, in the order it mattered in the measurements:
+
+1. **Only what can be seen is drawn.** Each mesh's triangles are kept in 16 x 16 blocks; a frame draws the blocks
+   whose box touches the view (three.js geometry groups, runs of neighbouring blocks = one draw call). Same picture.
+   Oxbow Bend with the foreground: 3.53 M triangles a frame before, 1.22 M now (135 mm lens); plain view 2.36 M -> 0.68 M (Cunningham Cabin 0.37 M).
+2. **One frame at a time on the graphics card.** After each frame a WebGL fence is set; no new frame is sent until
+   it has signalled. A slow phone so shows the newest heading / sun / spot instead of working through a queue. The
+   time from a frame's start to its fence is the frame time the page reports and steers by (if a driver never
+   signals, after 12 s the page stops asking and times frames by the next frame callback: `timed: 'frame'`).
+3. **Lighter while moving, sharp when still.** A drag, sun positions (the slider) and walk steps are a movement,
+   drawn at a level; 150 ms after the last drag move (at once on finger-up), 260 ms after the last sun position,
+   280 ms after the last walk step (steps come 130 ms apart), ONE full-quality frame is drawn, with the full
+   light pass in that same frame (it used to run on its own timer, also in the middle of a slow drag of the slider).
+
+   | level | canvas | tree points | quick light pass (far map) | meshes |
+   |---|---|---|---|---|
+   | 0 full | as when still | all | 1024 | all points |
+   | 1 high | 0.75 each way | all | 512 | all points |
+   | 2 medium | 0.6 | half, drawn larger | 512 | near + detail: every other point |
+   | 3 low | 0.5 | 30% | 256 | far mesh too (the skyline moves a few pixels until the sharp frame) |
+
+4. **Governor.** Six moving frames averaging over 24 ms (or two in a row over 60 ms): one level down; under 12 ms:
+   one up; a level that was too slow right after a step up is not tried again. Two levels are kept, `look` (drag,
+   walk) and `sun` (the slider also pays for a light pass). The page posts them in `perf`; `Sun3DPanel` keeps them
+   and hands them to the next page (`cfg.level`), so the next stop starts where this one ended.
+5. **Canvas size.** When still: 2 device pixels a point at most (as before) and at most 1.4 M pixels in all, so a
+   phone's full screen (412 x 800 at 2 = 1.32 M) is unchanged and a tablet is capped. Resolution turned out to be
+   the small lever on software graphics (a quarter of the pixels: ~15% off a frame), so the still picture was not cut.
+6. Small things: the frame box's style is written only when it changes (it was written every frame); a failed
+   foreground no longer lets go of the shared triangle list (the no-near-box case would have broken the plain view).
+
+`perf` (at most once a second, when a movement ends): `{kind, ms (median frame), worst, frames, level, quality,
+levels: {look, sun}, px, pts, timed}`. The TEST panel shows it as one grey line, "Smoothness: 9 ms a frame
+(worst 21) · quality full" (`accessibilityLabel` starts with `Smoothness:`).
+
+**Measured** (scratchpad `butter/`: `bench.js`, `free.js`, `still.js` + `cmp.py`, `offline.js`, `table.py`; headless
+Chromium, software graphics, CPU slowed 4x and 20x; 412 x 520 and 412 x 800 CSS px at device pixel ratio 2.6).
+Software graphics is hundreds of times slower than a phone's chip and weighs the work differently (triangles and
+anti-aliasing cost most here, pixels little): the numbers are before / after ratios, NOT phone predictions. Median
+ms a frame, small view, CPU 4x (full screen and CPU 20x are within ~10% of these: the page's own JS is not the
+bottleneck anywhere):
+
+| | drag: before -> level 0 -> governed | slider | walk |
+|---|---|---|---|
+| Oxbow Bend, foreground | 2695 -> 1717 -> 451 | 8511 (*) -> 3233 -> 601 | 2705 -> 1700 -> 432 |
+| Cunningham Cabin, foreground | 2119 -> 1389 -> 326 | 7349 (*) -> 2965 -> 446 | 2172 -> 1351 -> 317 |
+| Oxbow Bend, plain | 1245 -> ~600 (**) -> 226 | 3585 (*) -> 310 | 1297 -> 198 |
+| Cunningham Cabin, plain | 1146 -> ~350 (**) -> 124 | 3772 (*) -> 227 | 1059 -> 117 |
+
+"Level 0" = quality held at full while moving (what a phone that keeps up gets: blocks in view + one frame at a
+time); "governed" = the level the governor settled on here (3, low). (*) Before, every slider frame here also ran
+the FULL light pass (its 260 ms timer fired between frames that took seconds); without that the old figure would be
+about 4.0 s (foreground) / 2.0 s (plain). (**) From the first frames of the warm-up, CPU not slowed; the level-0
+run was made for the two foreground cases only. Worst frames while moving: 1.0-1.6x the median after the change.
+- One light pass (Oxbow, foreground): full 4.1 s, quick (1024) 1.35-1.45 s, level 3 (256) 0.11 s. Light passes run
+  never exceed frames drawn: the newest sun replaces a waiting one.
+- Nothing waiting for the graphics (as on a phone), Oxbow with the foreground: slider dragged 5 s (a sun every
+  50 ms): before, 19 frames + 20 light passes were queued and the picture was 86 s behind when the thumb stopped;
+  now 7 frames, each with its light pass, 0.01 s behind. View dragged 3 s: before 21 frames queued, 55 s behind;
+  now 6 frames, 0.2 s behind (at level 0: 2 frames, 1 s = one frame behind).
+- Idle: 0 frames drawn in 2 s, before and after. Draw calls a frame: 5 -> 33-36 (one per run of blocks).
+- Still picture, before vs after (three views each: aimed, low sun at 75 mm, turned + walked 30 m; 856,960 pixels):
+  plain view 0 pixels differ; with the foreground 35 / 12 / 1 (Oxbow) and 0 / 0 / 1 (Cunningham), all on tree
+  points, largest step 12 of 255 (the points are now stored in mixed order so a share of them thins every tree
+  evenly); full screen at Oxbow (1,318,400 pixels) 36 / 11 / 10, eight of those ten by more than 8 of 255. First / last light, `state`, `eye`, `look` messages identical; one `state` fewer at start-up where two
+  light changes waiting for the graphics became one frame.
+- Offline: set offline with every request refused BEFORE `done()`, then foreground build, drag, slider, walk, lens,
+  ice, home: 0 requests, 0 fetch / XHR / WebSocket / beacon / image loads from the page, 0 errors, 44 frames drawn.
+  The page source has no network call and no outside script, style or font.
+
+**Only a phone can tell:** the real frame times and which level it settles on (the Smoothness line); whether the
+fence is timed finer than a screen refresh in Android's web view (if not, a healthy phone reads ~17 ms and the
+governor never steps back up after a hitch); whether the change of canvas size when a movement starts and ends
+shows as a flicker; what 4x anti-aliasing costs there (60% of a frame on software graphics, cannot be switched while
+moving without drawing to an own target: not done); heat after minutes of use. Not touched: the HD (Google) page.
+
 ## How accurate the sun times are (measured 12 Nov 2026)
 
 Checked against 102 real webcam pictures on 5 clear December / January days in Grand Teton (27 events; resort
