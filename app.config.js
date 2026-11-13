@@ -12,6 +12,10 @@ module.exports = {
     extra: {
       ...base.extra,
       googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || '',
+      // TEST build tag: changing it changes the build fingerprint, so the next push builds a fresh TEST APK
+      // (13 Nov 2026: Phil's TEST app stopped taking instant updates; bumping version / versionCode does not
+      // change the fingerprint). The real app is not affected.
+      ...(isTest ? { testBuild: '2026-11-13' } : {}),
     },
     android: {
       ...base.android,
