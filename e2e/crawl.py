@@ -145,25 +145,33 @@ def capture(settle=2.0):
 
 
 def dismiss_system_dialogs():
-    """Close an emulator 'X isn't responding' box (the launcher often hangs on CI)."""
+    """Close an emulator 'X isn't responding' box. Our own app: press Wait (13 Nov 2026: pressing Close app killed the app
+    mid-test and the run read a slow moment on the emulator's software graphics as a crash; a real crash still shows as one).
+    Any other app (the launcher / System UI often hang on CI): press Close app, since Wait left that box up for the whole run
+    (13 Nov 2026, two runs lost)."""
     for _ in range(3):
         root = dump()
         if root is None:
             return
+        title = ''
+        for n in root.iter('node'):
+            t = (n.get('text') or '').strip()
+            if "isn't responding" in t:
+                title = t
+        ours = 'Philm' in title or 'philmframe' in title.lower()
+        want = 'Wait' if ours else 'Close app'
         hit = None
         for n in root.iter('node'):
             t = (n.get('text') or '').strip()
             if n.get('package') == 'android' and t in ('Close app', 'Wait', 'OK', 'Close'):
-                # "App isn't responding": press Wait (13 Nov 2026). Pressing Close app killed the app mid-test and the run
-                # read a slow moment on the emulator's software graphics as a crash. A real crash still shows as one.
-                if hit is None or t == 'Wait':
+                if hit is None or t == want:
                     hit = n
-                if t == 'Wait':
+                if t == want:
                     break
         if hit is None:
             return
         x1, y1, x2, y2 = bounds(hit)
-        log('  dismissed system dialog:', hit.get('text'))
+        log('  dismissed system dialog:', hit.get('text'), '|', title or '(no title)')
         tap(((x1 + x2) // 2, (y1 + y2) // 2))
         time.sleep(2)
 
