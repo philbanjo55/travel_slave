@@ -100,6 +100,7 @@ type Perf = { ms: number; worst: number; quality: string };
 // 17 ms is as smooth as most screens show), and the quality the page drew at while moving (it is always full when still).
 const perfLine = (p: Perf) => `${p.ms < 10 ? Math.round(p.ms * 10) / 10 : Math.round(p.ms)} ms a frame (worst ${Math.round(p.worst)}) · quality ${p.quality}`;
 const CHUNK = 240000;
+const TREE_CHUNK = 60000;   // the park-wide tree tiles' pieces (a multiple of 4)
 // Wherever the Faroes photos / buildings are drawn (the agency's terms ask for the credit; ArcticDEM is CC-BY-4.0).
 // Grand Teton winter colour (13 Nov 2026), when the region row has no credit text of its own.
 const TETON_CREDIT = 'Ground colour: Copernicus Sentinel-2 (ESA), 30 Dec 2025. Aerial photos: USDA NAIP via USGS, July 2022, snow added.';
@@ -199,7 +200,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       if (!alive) return;
       if (!(r && loaded.current === `${r.id}|${nr?.id ?? ''}`)) {   // (same files: the page only gets the new view)
         loaded.current = null; loadedDetail.current = ''; nearUsed.current = null; booted.current = false; sent.current = false; foreSent.current = false;
-        setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null); setWideColorB64(null); setShapes(false); setLaser(false); setPhotoFore(false); setForeBusy(false); setLit(null); setMoments(null);
+        setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null); setWideColorB64(null); setShapes(false); setWideTrees(0); setLaser(false); setPhotoFore(false); setForeBusy(false); setLit(null); setMoments(null);
         if (!r) { setPhase('none'); return; }
         setPhase('loading');
         // The fine file is an extra: with a weak signal it gets 10 s, then the wide grid draws alone (the download carries on).
@@ -222,7 +223,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       if (!alive || key === loadedDetail.current || (key === '|||' && loadedDetail.current === '')) return;
       if (foreSent.current) {   // the page already holds another box's foreground: start it afresh for this one
         booted.current = false; sent.current = false; foreSent.current = false;
-        setLit(null); setMoments(null); setLook(null); setShapes(false); setPhotoFore(false); setForeBusy(false); setWideTrees(0); setPhase(p => (p === 'ready' ? 'starting' : p)); setGen(g => g + 1);
+        setLit(null); setMoments(null); setLook(null); setShapes(false); setWideTrees(0); setPhotoFore(false); setForeBusy(false); setPhase(p => (p === 'ready' ? 'starting' : p)); setGen(g => g + 1);
       }
       loadedDetail.current = key;
       setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null); setWideColorB64(null); setTreeTiles(null);
@@ -261,7 +262,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // Change between the offline page and the HD page: the web view is made anew, so everything it reported is cleared.
   const swap = useCallback((root: string | null) => {
     booted.current = false; sent.current = false;
-    setLit(null); setMoments(null); setLook(null); setHdLoading(false); setProblem(null); setShapes(false); setPhotoFore(false);
+    setLit(null); setMoments(null); setLook(null); setHdLoading(false); setProblem(null); setShapes(false); setWideTrees(0); setPhotoFore(false);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p));
     setHd(root);
   }, []);
@@ -283,7 +284,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     if (hdRef.current) return;   // the HD page has no detail box: nothing to restart
     // off: the page is started afresh without it, so it draws exactly the plain view
     booted.current = false; sent.current = false; foreSent.current = false;
-    setLit(null); setMoments(null); setLook(null); setShapes(false); setPhotoFore(false); setForeBusy(false); setProblem(null);
+    setLit(null); setMoments(null); setLook(null); setShapes(false); setWideTrees(0); setPhotoFore(false); setForeBusy(false); setProblem(null);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p)); setGen(g => g + 1);
   }, []);
   const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64 || !!treeTiles;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour or the park-wide trees
@@ -337,13 +338,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       } : undefined,
       water: det && waterB64 ? { n: det.water_n, north: det.water_north, south: det.water_south, west: det.water_west, east: det.water_east } : undefined,
       ice: iceOn,
-      canopy: treeTiles ? { tiles: treeTiles.tiles.map(t => ({ n: t.n, north: t.north, south: t.south, west: t.west, east: t.east, step: t.step_m })) } : undefined,
+      canopy: treeTiles ? { tiles: treeTiles.tiles.map(t => ({ n: t.n, north: t.north, south: t.south, west: t.west, east: t.east, step: t.step_m, lod: t.lod ? 1 : 0 })) } : undefined,
     };
     run(`window.S3D.fore(${JSON.stringify(fore)})`);
     const feed = (data: string | null, kind: string) => { if (data) for (let i = 0; i < data.length; i += CHUNK) run(`window.S3D.chunk("${data.slice(i, i + CHUNK)}","${kind}")`); };
     if (det) { feed(detailB64, 'detail'); feed(maskB64, 'mask'); feed(treesB64, 'trees'); feed(waterB64, 'water'); feed(colorB64, 'color'); feed(bldB64, 'bld'); }
     feed(nc, 'ncolor'); feed(wideColorB64, 'wcolor');
-    if (treeTiles) treeTiles.data.forEach((d, i) => feed(d, `canopy:${i}`));   // last: the page builds them after everything else
+    // last: the page builds them after everything else. Smaller pieces: the page's engine frees pieces under ~128 KB
+    // soon after use (young objects), bigger ones only at a full clean-up, and a trip's tiles are a few MB of text
+    if (treeTiles) treeTiles.data.forEach((d, i) => { for (let k = 0; k < d.length; k += TREE_CHUNK) run(`window.S3D.chunk("${d.slice(k, k + TREE_CHUNK)}","canopy:${i}")`); });
     run('window.S3D.foreDone()');
   }, [useDetail, detail, detailB64, maskB64, treesB64, waterB64, colorB64, bldB64, nearColorB64, wideColorB64, treeTiles, near, nearB64, iceOn, run]);
   useEffect(() => { if (ready) sendFore(); }, [ready, sendFore]);
@@ -364,7 +367,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const onGone = useCallback(() => {
     if (hdRef.current) { hdForget(); setHdNote("The HD picture couldn't load. Showing the offline view."); setWant(false); return; }
     booted.current = false; sent.current = false; foreSent.current = false;
-    setLit(null); setMoments(null); setLook(null); setShapes(false); setPhotoFore(false); setForeBusy(false);
+    setLit(null); setMoments(null); setLook(null); setShapes(false); setWideTrees(0); setPhotoFore(false); setForeBusy(false);
     if (useDetailRef.current) {
       lastForeground = false; foregroundTooHeavy = true;
       setForegroundState(false); setHeavy(true); setProblem(null); setPhase('starting'); setGen(g => g + 1);
@@ -671,6 +674,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
               ? 'Terrain shape and calculated sun. Buildings and trees close to you, and water within about 3 km, come from a 2022 summer laser survey: buildings as blocks, trees as dots, none farther off; no clouds. With the snowflake on, lakes and slow water are drawn frozen and rivers open (a guess from the slope of the water). Sun times count the ground and buildings, not the trees. Times are within a few minutes. Elevation data: USGS 3DEP lidar, ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'
               : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes. Elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'}
         </Text>
+          {wideTrees > 0 && !hd ? (
+            <Text style={styles.note}>Forest out to 12 km: the same 2022 laser survey on a 7 m grid, a tree a cell near you, clumps farther off. Not in the sun times.</Text>
+          ) : null}
           {shapes && photoFore && !hd ? (
             <Text style={styles.note}>{region?.color_credit || (region?.ground === 'green' ? FAROES_CREDIT : TETON_CREDIT)}</Text>
           ) : null}

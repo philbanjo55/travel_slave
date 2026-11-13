@@ -18,7 +18,7 @@ The grid: the wide Teton grid's box (43.45-43.95 N, 110.92-110.24 W) cut into 10
             least a quarter of the high returns came from pulses that went on to give more returns (a crown lets the
             laser through, a roof or a vehicle does not). Outside the survey (Wilson, the east of the grid) there is
             nothing: the layer is empty there, not guessed.
-Tile file: 8-bit greyscale PNG, filter 0, row 0 = north: 0 = no tree, v = canopy height v x 0.5 m (1 .. 255 = 0.5 .. 127 m).
+Tile file: 8-bit greyscale PNG, filter 0, row 0 = north: 0 = no tree, v = canopy height v x STEP_M (2 m) over the ground.
 A tile with no tree cell is not written. The page reads a tile a line at a time (tools/sun3d/app_view.js, wide trees).
 """
 import argparse, concurrent.futures as cf, json, math, os, struct, sys, time, zlib
@@ -31,7 +31,7 @@ import build_detail as bd   # noqa: E402  (Survey, merc, fill, chunk)
 
 NORTH, SOUTH, WEST, EAST = 43.95, 43.45, -110.92, -110.24
 TR = TC = 10                 # tiles each way
-STEP_M = 0.5                 # metres per value in the tile files
+STEP_M = 2.0                 # metres per value in the tile files (2 m: drawn heights are jittered 10 % anyway; a quarter less to send than 0.5 m)
 MIN_H, MIN_PTS, MIN_MULTI = 3.0, 2, 0.25
 PROJECT = 'WY_GrandTetonNP_1_D22'
 
@@ -123,8 +123,10 @@ def load_can(a):
 
 
 def check(a):
-    """The coarse layer against the 0.5 m laser boxes (their class mask: 8 + canopy / 0.2 m = tree)."""
+    """The coarse layer against the 0.5 m laser boxes (their class mask: 8 + canopy / 0.2 m = tree). Heights as the tile
+    files hold them (STEP_M steps)."""
     can, n = load_can(a); N, M = can.shape; MIN_H = a.min_h
+    can = np.where(can > 0, np.maximum(1, np.round(can / STEP_M)) * STEP_M, 0)
     rows = [r for r in json.load(open(a.details)) if r.get('parent') == 'grand_teton']
     tot = dict(both=0, coarse_only=0, fine_only=0, neither=0, herr=[], cells=0); why = {'tree edge (under 15% of the cell)': 0, 'building': 0, 'water': 0, 'nothing': 0}
     per = []
@@ -175,35 +177,45 @@ def check(a):
 
 
 def tiles(a):
-    can, n = load_can(a)
+    """Two files a tile: lod 0 = every cell (~7 m), for the few km round a stand spot; lod 1 = 2 x 2 cells in one
+    (~14 m), for farther off, where a drawn tree stands for many cells anyway: value = (tree cells of the four - 1) x 64
+    + the tallest one's height / STEP_M (1..63). About a third of the bytes to send to the phone."""
+    can, n = load_can(a); N, M = can.shape
     os.makedirs(a.out, exist_ok=True)
-    v = np.clip(np.round(can / STEP_M), 0, 255).astype(np.uint8)
+    v = np.clip(np.round(can / STEP_M), 0, 255).astype(np.uint8); v[(can > 0) & (v == 0)] = 1   # a tree never rounds to 'none'
+    tr_ = can > 0; cnt4 = tr_.reshape(N // 2, 2, M // 2, 2).sum((1, 3)); hmax = can.reshape(N // 2, 2, M // 2, 2).max((1, 3))
+    v1 = np.where(cnt4 > 0, (cnt4 - 1) * 64 + np.clip(np.round(hmax / STEP_M), 1, 63), 0).astype(np.uint8)
     rows = []; up = []
     for tr in range(TR):
         for tc in range(TC):
             t = v[tr * n:(tr + 1) * n, tc * n:(tc + 1) * n]
             cnt = int((t > 0).sum())
             if cnt == 0: continue
-            name = f'gtc_{tr}_{tc}.png'; path = os.path.join(a.out, name)
-            bd.write_bytes(path, t)
-            b = os.path.getsize(path); north, south, west, east = tile_box(tr, tc)
-            rows.append(dict(id=f'gtc_{tr}_{tc}', parent='grand_teton', north=north, south=south, west=west, east=east, n=n, step_m=STEP_M, path=name, bytes=b, trees=cnt))
-            up.append(f'{path}\t{name}\t{b}')
+            north, south, west, east = tile_box(tr, tc)
+            for lod, arr, nn, pre in ((0, t, n, 'gtc'), (1, v1[tr * n // 2:(tr + 1) * n // 2, tc * n // 2:(tc + 1) * n // 2], n // 2, 'gtcc')):
+                name = f'{pre}_{tr}_{tc}.png'; path = os.path.join(a.out, name)
+                bd.write_bytes(path, arr)
+                b = os.path.getsize(path)
+                rows.append(dict(id=f'{pre}_{tr}_{tc}', parent='grand_teton', north=north, south=south, west=west, east=east, n=nn, lod=lod, step_m=STEP_M, path=name, bytes=b, trees=cnt))
+                up.append(f'{path}\t{name}\t{b}')
     open(os.path.join(a.out, 'upload.txt'), 'w').write('# local path\tpublished name (bucket terrain)\tbytes\n' + '\n'.join(up) + '\n')
     json.dump(rows, open(os.path.join(a.work, 'tiles.json'), 'w'), indent=1)
-    cell = round((NORTH - SOUTH) / TR / n * 111132, 2)
-    vals = ',\n'.join(f"  ('{r['id']}', 'grand_teton', {r['north']}, {r['south']}, {r['west']}, {r['east']}, {r['n']}, {r['step_m']}, {cell}, '{r['path']}', {r['bytes']}, {r['trees']})" for r in rows)
+    vals = ',\n'.join(f"  ('{r['id']}', 'grand_teton', {r['north']}, {r['south']}, {r['west']}, {r['east']}, {r['n']}, {r['lod']}, {r['step_m']}, {round((NORTH - SOUTH) / TR / r['n'] * 111132, 2)}, '{r['path']}', {r['bytes']}, {r['trees']})" for r in rows)
     open(os.path.join(a.work, 'rows.sql'), 'w').write(vals + '\n')
     if a.sql: open(a.sql, 'w').write(SQL_HEAD + vals + SQL_TAIL)
-    print(len(rows), 'tiles,', round(sum(r['bytes'] for r in rows) / 1e6, 2), 'MB,', sum(r['trees'] for r in rows), 'tree cells')
+    for lod in (0, 1): print('lod', lod, sum(1 for r in rows if r['lod'] == lod), 'files,', round(sum(r['bytes'] for r in rows if r['lod'] == lod) / 1e6, 2), 'MB')
+    print(len(rows) // 2, 'tiles with trees,', sum(r['trees'] for r in rows if r['lod'] == 0), 'tree cells')
 
 
 SQL_HEAD = """-- 3D sun view, park-wide trees (Grand Teton): a coarse canopy layer from the 2022 laser survey (USGS 3DEP lidar,
 -- WY_GrandTetonNP_1_D22, public domain), written by tools/sun3d/lidar/build_canopy.py. The wide Teton grid is cut into
--- 10 x 10 tiles of 0.05 deg x 0.068 deg (~5.6 x 5.5 km), each n x n cells (~7 m); a tile with no tree is not listed.
--- Each row is one file in bucket `terrain`: an 8-bit greyscale PNG, row 0 = north, 0 = no tree, else the canopy's top
--- over the ground = value x step_m. The page (tools/sun3d/app_view.js, park-wide trees) draws one tree a cell close by
--- and clumps farther off, beyond the laser detail box, within 12 km of the stand spot; never in the sun times.
+-- 10 x 10 tiles of 0.05 deg x 0.068 deg (~5.6 x 5.5 km); a tile with no tree is not listed. Each tile has two rows,
+-- each one file in bucket `terrain` (8-bit greyscale PNG, row 0 = north, 0 = no tree):
+--   lod 0: n = 800 (~7 m cells), value = the canopy's top over the ground / step_m (used within 3 km of a stand spot);
+--   lod 1: n = 400 (~14 m, 2 x 2 cells in one), value = (tree cells of the four - 1) x 64 + tallest height / step_m
+--          (used farther off: a third of the bytes).
+-- The page (tools/sun3d/app_view.js, park-wide trees) draws one tree a cell close by and clumps farther off, beyond
+-- the laser detail box, within 12 km of the stand spot; never in the sun times.
 -- Outside the survey (Wilson, the east of the grid) there are no rows: no trees are drawn there.
 -- A table of its own: older app builds read the other terrain tables whole and never see these rows.
 -- Idempotent: the table is made if missing and the rows are written over.
@@ -215,7 +227,8 @@ create table if not exists public.terrain_tree_tiles (
   north double precision not null, south double precision not null,
   west double precision not null, east double precision not null,
   n integer not null,                 -- n x n cells, row 0 at the north edge
-  step_m double precision not null default 0.5,   -- canopy height = value x step_m (0 = no tree)
+  lod integer not null default 0,     -- 0 every cell; 1 two by two cells in one (see above)
+  step_m double precision not null default 2,     -- canopy height = value (lod 1: value & 63) x step_m (0 = no tree)
   cell_m double precision,            -- metres a cell (north-south)
   path text not null,                 -- object path in bucket terrain
   bytes integer,
@@ -223,6 +236,7 @@ create table if not exists public.terrain_tree_tiles (
   note text,
   created_at timestamptz not null default now()
 );
+alter table public.terrain_tree_tiles add column if not exists lod integer not null default 0;
 alter table public.terrain_tree_tiles enable row level security;
 do $$ begin
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'terrain_tree_tiles' and policyname = 'app_read') then
@@ -230,11 +244,11 @@ do $$ begin
   end if;
 end $$;
 
-insert into public.terrain_tree_tiles (id, parent, north, south, west, east, n, step_m, cell_m, path, bytes, trees) values
+insert into public.terrain_tree_tiles (id, parent, north, south, west, east, n, lod, step_m, cell_m, path, bytes, trees) values
 """
 SQL_TAIL = """
 on conflict (id) do update set parent = excluded.parent, north = excluded.north, south = excluded.south, west = excluded.west,
-  east = excluded.east, n = excluded.n, step_m = excluded.step_m, cell_m = excluded.cell_m, path = excluded.path,
+  east = excluded.east, n = excluded.n, lod = excluded.lod, step_m = excluded.step_m, cell_m = excluded.cell_m, path = excluded.path,
   bytes = excluded.bytes, trees = excluded.trees;
 """
 

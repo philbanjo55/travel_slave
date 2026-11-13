@@ -66,6 +66,7 @@ export type TerrainTreeTile = {
   id: string; parent: string;
   north: number; south: number; west: number; east: number;
   n: number; step_m: number;          // n x n cells; a cell's value x step_m = the canopy's height over the ground (0 = no tree)
+  lod?: number | null;                 // 0 every cell (~7 m); 1 two by two cells in one (~14 m: value = (trees - 1) x 64 + height / step_m)
   path: string; bytes: number | null;
 };
 type Point = { lat: number; lng: number };
@@ -77,8 +78,11 @@ const LIST_FILE = `${DIR}terrain_regions.json`;
 const NEAR_FILE = `${DIR}terrain_near_regions.json`;
 const DETAIL_FILE = `${DIR}terrain_detail_regions.json`;
 const TREES_FILE = `${DIR}terrain_tree_tiles.json`;
-// How far the park-wide trees reach from the stand spot: the page's own range (tools/sun3d/app_view.js WIDE_RANGE)
+// How far the park-wide trees reach from the stand spot: the page's own range (tools/sun3d/app_view.js WIDE_RANGE).
+// Within TREE_NEAR_M a tile comes at every cell (lod 0), farther off at two by two cells in one (lod 1): the page draws
+// one tree for many cells out there anyway, and it is a third of the bytes to carry into the web view.
 export const TREE_RANGE_M = 12000;
+const TREE_NEAR_M = 3000;
 const CALL_TIMEOUT_MS = 12000;
 
 let regions: TerrainRegion[] | null = null;
@@ -251,18 +255,24 @@ function pickDetail(all: TerrainDetail[], region: TerrainRegion, near: TerrainNe
   }
   return best;
 }
-// The park-wide tree tiles a shot needs: those of its region within TREE_RANGE_M of the stand spot, nearest first.
+// The park-wide tree tiles a shot needs: those of its region within TREE_RANGE_M of the stand spot, nearest first, one
+// file a tile (the every-cell one within TREE_NEAR_M, else the coarse one; the other when only one is listed).
 export async function treeTilesFor(region: TerrainRegion, stand: Point): Promise<TerrainTreeTile[]> {
   return pickTreeTiles(await loadTreeTiles(), region, stand);
 }
 function pickTreeTiles(all: TerrainTreeTile[], region: TerrainRegion, stand: Point): TerrainTreeTile[] {
   const kx = 111320 * Math.cos(stand.lat * Math.PI / 180), kz = 111132;
-  return all
-    .filter(t => t.parent === region.id && t.n > 0 && !!t.path)
-    .map(t => ({ t, d: Math.hypot(Math.max(t.west - stand.lng, 0, stand.lng - t.east) * kx, Math.max(t.south - stand.lat, 0, stand.lat - t.north) * kz) }))
-    .filter(x => x.d <= TREE_RANGE_M)
+  const boxes = new Map<string, { d: number; byLod: Record<number, TerrainTreeTile> }>();
+  for (const t of all) {
+    if (t.parent !== region.id || !(t.n > 0) || !t.path) continue;
+    const d = Math.hypot(Math.max(t.west - stand.lng, 0, stand.lng - t.east) * kx, Math.max(t.south - stand.lat, 0, stand.lat - t.north) * kz);
+    if (d > TREE_RANGE_M) continue;
+    const key = `${t.north}|${t.west}`, b = boxes.get(key) ?? { d, byLod: {} };
+    b.byLod[t.lod ? 1 : 0] = t; boxes.set(key, b);
+  }
+  return [...boxes.values()]
     .sort((a, b) => a.d - b.d)
-    .map(x => x.t);
+    .map(b => (b.d <= TREE_NEAR_M ? b.byLod[0] ?? b.byLod[1] : b.byLod[1] ?? b.byLod[0]));
 }
 export function treeTileFile(t: TerrainTreeTile): TerrainFile {
   return { id: t.id, path: t.path, bytes: t.bytes };

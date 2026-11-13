@@ -32,7 +32,8 @@
 //   survey's water and buildings keep their own drawing. The Faroes way (photo times light, in the mesh) is unchanged.
 //   Park-wide trees (Grand Teton, 13 Nov 2026): fore({..., canopy: { tiles: [{ n, north, south, west, east, step }],
 //   range?, max?, light? } }) and each tile's file as S3D.chunk(b64, 'canopy:<index>'): 8-bit PNGs, 0 = no tree, else the
-//   canopy's height = value x step m (tools/sun3d/lidar/build_canopy.py, 7 m cells). Built last, on their own, after the
+//   canopy's height = value x step m (tools/sun3d/lidar/build_canopy.py, 7 m cells); a tile with lod: 1 has 2 x 2 cells
+//   in one, value = (tree cells - 1) x 64 + height / step (the panel sends those beyond 3 km). Built last, on their own, after the
 //   rest of the foreground; `wideTrees` {ok, trees, tiles, d0, range, light, ms} says they are in, or {ok: false, msg}
 //   that they were left out (the rest stays). Drawn as one point a tree, never in lit() / the sun times. A view() more
 //   than 300 m from where they were built builds them again around the new spot.
@@ -72,7 +73,8 @@
 
   let cfg = null, parts = [], nparts = [], dparts = [], mparts = [], tparts = [], wparts = [], cparts = [], ncparts = [], bparts = [], wcparts = [], FAR = null, NR = null, DT = null, ice = true, maxH = 4250, minH = 0, baseH = 0;
   let foreState = 0, frames = 0, lastPath = null, touched = false;
-  let cnparts = {}, wideTiles = null, wideState = 0, wideRun = 0;   // park-wide trees: tile pieces by index, their packed files, 0 none 1 building 2 in -1 dropped   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
+  let cnparts = {}, cnbytes = {}, cnlast = -1, wideTiles = null, wideState = 0, wideRun = 0;   // park-wide trees: tile pieces by index, each tile's packed bytes once its pieces are in, the tile coming in, the packed files, 0 none 1 building 2 in -1 dropped
+  const cnAny = () => Object.keys(cnparts).length > 0 || Object.keys(cnbytes).length > 0;   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
   let R = null;   // everything three.js, once built
   let eye = null, eye0 = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true;
   const G = 768;  // mesh points per side
@@ -265,9 +267,7 @@
       }
     #endif
       float d = 0.;
-    #ifdef SHADOWA
-      float sa = 0.;   // the ground's sun visibility (hills only), for the park-wide trees: alpha only, the colour is unchanged
-    #endif
+      float sa = 0.;   // the ground's sun visibility (hills only), for the park-wide trees: in alpha, which nothing else reads
       if (sunDir.y > -sin(radians(.95) * sqrt(max(0., h - baseH) / 1000.))) {   // a high point still sees a sun just under the flat horizon
         float lam = dot(n, sunDir);
     #ifdef PHOTO
@@ -351,9 +351,7 @@
     #endif
     #else
           d = lamE * v;
-    #ifdef SHADOWA
           sa = v;
-    #endif
     #endif
         }
       }
@@ -364,10 +362,8 @@
     #endif
     #ifdef DETAIL
       gl_FragColor = vec4(pow(min(c * .9, vec3(1.)), vec3(.62)), va);
-    #elif defined(SHADOWA)
-      gl_FragColor = vec4(pow(min(c * .9, vec3(1.)), vec3(.62)), sa);
     #else
-      gl_FragColor = vec4(pow(min(c * .9, vec3(1.)), vec3(.62)), 1.);
+      gl_FragColor = vec4(pow(min(c * .9, vec3(1.)), vec3(.62)), sa);   // (the colour as before; alpha was 1 and nothing read it)
     #endif
     }`;
   // The far mesh. With a near grid (HOLE) it is cut out inside the near box: untouched for the first `keep` metres inside the
@@ -730,10 +726,23 @@
     const blob = new Blob(idat); free(buf); buf = null;   // the blob has its own copy
     return blob;
   }
+  // The same, as one array of the packed bytes (the park-wide tree tiles: kept for a rebuild, read from memory)
+  function packBytes(list) {
+    let len = 0; for (const t of list) len += Math.floor(t.length * 3 / 4) - (t.endsWith('==') ? 2 : t.endsWith('=') ? 1 : 0);
+    const buf = new Uint8Array(len); let o = 0;
+    for (let k = 0; k < list.length; k++) { const b = atob(list[k]); list[k] = null; for (let i = 0; i < b.length; i++) buf[o + i] = b.charCodeAt(i); o += b.length; }
+    const dv = new DataView(buf.buffer); let q = 8, n = 0; const parts = [];
+    while (q < o) { const l = dv.getUint32(q), type = String.fromCharCode(buf[q + 4], buf[q + 5], buf[q + 6], buf[q + 7]); if (type === 'IDAT') { parts.push([q + 8, l]); n += l; } q += 12 + l; }
+    const out = new Uint8Array(n); let w = 0; for (const [a, l] of parts) { out.set(buf.subarray(a, a + l), w); w += l; }
+    free(buf);
+    return out;
+  }
   // Unpacks a file a line at a time (`len` bytes each, the PNG filter byte first) and hands each line to fn(line, row):
   // the whole unpacked file (8 MB for a wide grid or a tree file) is never in memory. Returns the number of lines.
+  // (blob may also be the packed bytes themselves, a Uint8Array: unpacked from memory, no Blob or stream pipe behind it)
   async function lines(blob, len, fn) {
-    const rd = blob.stream().pipeThrough(new DecompressionStream('deflate')).getReader(), line = new Uint8Array(len); let have = 0, row = 0;
+    const src = blob instanceof Uint8Array ? new ReadableStream({ start(c) { c.enqueue(blob); c.close(); } }) : blob.stream();
+    const rd = src.pipeThrough(new DecompressionStream('deflate')).getReader(), line = new Uint8Array(len); let have = 0, row = 0;
     for (;;) {
       const { done, value } = await rd.read(); if (done) break;
       for (let o = 0; o < value.length;) {
@@ -896,7 +905,7 @@
   const pause = () => new Promise(r => setTimeout(r, 0));
   function queueFore() {
     if (foreState !== 0 || !cfg) return;
-    const main = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length), wide = !!(cfg.canopy && Object.keys(cnparts).length);
+    const main = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length), wide = !!(cfg.canopy && cnAny());
     if (!main && !wide) return;
     foreState = main ? 1 : 0;
     const go = () => { if (!R) return; if (frames >= 2) { if (main) addFore(); else queueWide(); } else setTimeout(go, 60); };
@@ -1086,7 +1095,7 @@
       dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = -1;
       post({ type: 'foreground', ok: false, msg: String(e && e.message || e), at: where });
     }
-    if (cfg === my) queueWide();   // the park-wide trees last, on their own: whatever happened above, they may still come
+    if (cfg === my) setTimeout(queueWide, WIDE_WAIT);   // the park-wide trees last, on their own: whatever happened above, they may still come. A short wait first: the foreground's leftovers are let go before more is unpacked (a lower top of the page's memory)
   }
   // base64 pieces -> bytes (each piece let go as it is used)
   function bytesOf(list) {
@@ -1187,9 +1196,9 @@
   // tree a cell close by, fewer and wider ones (a clump) farther off, so a forest keeps its cover at any distance
   // without millions of points. Each is a single point drawn as a spruce outline (a clump: a few tips side by side),
   // standing on the ground the meshes draw, lit by the sun the ground under it gets from the hills (the far and fine
-  // light passes' alpha, SHADOWA). None inside the laser box (its own trees are there). Never in lit() / the sun times.
+  // light passes' alpha). None inside the laser box (its own trees are there). Never in lit() / the sun times.
   // Built after the rest of the foreground, in steps; a failure or a slow phone only leaves these trees out.
-  const WIDE_MS = 30000, WIDE_D0 = 600, WIDE_RANGE = 12000, WIDE_MAX = 60000, WIDE_LIGHT = 20000, WB = 16;
+  const WIDE_WAIT = 1500, WIDE_MS = 30000, WIDE_D0 = 600, WIDE_RANGE = 12000, WIDE_MAX = 60000, WIDE_LIGHT = 20000, WB = 16;
   const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   // The ground as drawn at x, z (the far grid's metres): the fine mesh inside its box (blending into the wide grid's
   // heights toward its edge), else the wide mesh, whose G x G points take the wide grid's heights and join them in two
@@ -1216,47 +1225,61 @@
     for (const { t, blob } of tiles) {
       const x0 = (t.west - my.west) * kx, z0 = (my.north - t.north) * kz, w = (t.east - t.west) * kx, d = (t.north - t.south) * kz;
       if (Math.hypot(Math.max(x0 - ex, 0, ex - x0 - w), Math.max(z0 - ez, 0, ez - z0 - d)) > range) continue;
-      T.push({ t, blob, x0, z0, dx: w / t.n, dz: d / t.n, n: t.n, step: t.step || 0.5 });
+      T.push({ t, blob, x0, z0, dx: w / t.n, dz: d / t.n, n: t.n, step: t.step || 2, lod: t.lod ? 1 : 0 });
     }
     if (!T.length) return null;
     const R2 = range * range;
-    // each(fn): fn(x, z, h, d2) for every tree cell in range and outside the laser box, a line of a file at a time
-    const each = async fn => {
-      for (const s of T) {
-        const n = s.n; let k = 0;
-        const got = await lines(s.blob, n + 1, (ln, r) => {
-          if (r >= n) return;
-          const z = s.z0 + (r + 0.5) * s.dz, dz2 = (z - ez) * (z - ez); if (dz2 > R2) return;
-          const inZ = inner && z > inner[2] && z < inner[3];
-          for (let c = 0; c < n; c++) {
-            const v = ln[c + 1]; if (!v) continue;
-            const x = s.x0 + (c + 0.5) * s.dx, d2 = (x - ex) * (x - ex) + dz2; if (d2 > R2) continue;
-            if (inZ && x > inner[0] && x < inner[1]) continue;
-            fn(x, z, v * s.step, d2, s);
-          }
-        });
-        if (got !== n) throw new Error('tree tile has the wrong size');
-        if (breathe && !(++k & 1)) await breathe();
-      }
-    };
-    let d0 = WIDE_D0, sum = 0;
-    await each((x, z, h, d2) => { sum += d2 < d0 * d0 ? 1 : d0 * d0 / d2; });
-    if (!sum) return null;
-    d0 = Math.max(250, Math.min(1200, d0 * Math.sqrt(cap / sum) * 0.97));   // fill the budget, no more: the part beyond d0 grows as d0 squared, the part inside it less (a little under the cap)
-    if (d0 > WIDE_D0) { sum = 0; await each((x, z, h, d2) => { sum += d2 < d0 * d0 ? 1 : d0 * d0 / d2; }); if (sum > cap) d0 *= Math.sqrt(cap / sum) * 0.97; }
-    const room = Math.min(cap, Math.ceil(sum) + 64), pos = new Float32Array(room * 3), tw = new Float32Array(room * 4), blk = new Uint16Array(room);
-    let s = 20261113, m = 0; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
-    const bx = (2 * range) / WB, cell0 = Math.max(T[0].dx, T[0].dz), D02 = d0 * d0;
-    await each((x, z, h, d2, t) => {
-      if (m >= room) return;
-      const p = d2 < D02 ? 1 : D02 / d2; if (p < 1 && rnd() >= p) return;
-      const hh = h * (0.9 + 0.2 * rnd()), wide = p < 1 ? Math.min(5 * hh, Math.max(0.45 * hh, 1.1 * cell0 * Math.sqrt(1 / p))) : Math.max(1.2, Math.min(0.5 * hh, 1.2 * cell0));
-      const px = x + (rnd() - 0.5) * t.dx * 0.8, pz = z + (rnd() - 0.5) * t.dz * 0.8;
+    // One pass over the files, each unpacked once, a line at a time: the cells kept with the most generous d0 (DMAX) are
+    // noted, d0 is then set from them to fill the budget, and each noted cell is kept again with chance p(d0) / p(DMAX):
+    // the same as drawing with p(d0) in the first place. The line loop allocates nothing (no call, no object a cell):
+    // a few million tree cells must not grow the page's memory.
+    const DMAX = 1200, DM2 = DMAX * DMAX;
+    let s = 20261113; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+    // A lod 1 file (farther off) holds 2 x 2 cells in one: the tallest one's height and how many of the four are trees
+    // (w), which weighs the cell's chance; a kept one stands for w / p cells like any other.
+    let cn = 0, CX = new Float32Array(131072), CZ = new Float32Array(131072), CH = new Float32Array(131072), CD = new Float32Array(131072), CW = new Uint8Array(131072);
+    const grow = a => { const b = new a.constructor(a.length * 2); b.set(a); free(a); return b; };
+    let k = 0, fineDx = 0, fineDz = 0;
+    for (const t of T) {
+      const n = t.n, x0 = t.x0, z0 = t.z0, dx = t.dx, dz = t.dz, step = t.step, lod = t.lod, i0 = inner ? inner[0] : 0, i1 = inner ? inner[1] : 0;
+      if (!fineDx) { fineDx = lod ? dx / 2 : dx; fineDz = lod ? dz / 2 : dz; }
+      const got = await lines(t.blob, n + 1, (ln, r) => {
+        if (r >= n) return;
+        const z = z0 + (r + 0.5) * dz, dz2 = (z - ez) * (z - ez); if (dz2 > R2) return;
+        const inZ = !!inner && z > inner[2] && z < inner[3];
+        for (let c = 0; c < n; c++) {
+          const v = ln[c + 1]; if (!v) continue;
+          const x = x0 + (c + 0.5) * dx, d2 = (x - ex) * (x - ex) + dz2; if (d2 > R2) continue;
+          if (inZ && x > i0 && x < i1) continue;   // the laser box's own trees are there
+          const w = lod ? (v >> 6) + 1 : 1;
+          if (d2 >= w * DM2) { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; if (s / 4294967296 >= w * DM2 / d2) continue; }
+          if (cn === CX.length) { CX = grow(CX); CZ = grow(CZ); CH = grow(CH); CD = grow(CD); CW = grow(CW); }
+          CX[cn] = x; CZ[cn] = z; CH[cn] = (lod ? v & 63 : v) * step; CD[cn] = d2; CW[cn] = lod ? w + 8 : 1; cn++;   // (8+: from a lod 1 file)
+        }
+      });
+      if (got !== n) throw new Error('tree tile has the wrong size');
+      if (breathe && !(++k & 1)) await breathe();
+    }
+    if (!cn) return null;
+    const sumAt = d => { const q = d * d; let t = 0; for (let i = 0; i < cn; i++) { const c = CD[i], w = CW[i] & 7; t += Math.min(1, w * q / c) / Math.min(1, w * DM2 / c); } return t; };
+    let d0 = Math.max(250, Math.min(DMAX, WIDE_D0 * Math.sqrt(cap / Math.max(1, sumAt(WIDE_D0))) * 0.97));   // fill the budget, no more: the part beyond d0 grows as d0 squared, the part inside it less
+    for (let k = 0; k < 3; k++) { const t = sumAt(d0); if (t <= cap) break; d0 = Math.max(250, d0 * Math.sqrt(cap / t) * 0.97); }
+    const D02 = d0 * d0, room = Math.min(cap, Math.ceil(sumAt(d0)) + 64), pos = new Float32Array(room * 3), tw = new Float32Array(room * 4), blk = new Uint16Array(room);
+    const bx = (2 * range) / WB, cell0 = Math.max(fineDx, fineDz);
+    let m = 0;
+    for (let i = 0; i < cn && m < room; i++) {
+      if (breathe && i && !(i & 32767)) await breathe();
+      const x = CX[i], z = CZ[i], h = CH[i], d2 = CD[i], w = CW[i] & 7, big = CW[i] > 8 ? 2 : 1;
+      const p = Math.min(1, w * D02 / d2), pc = Math.min(1, w * DM2 / d2); if (p < pc && rnd() >= p / pc) continue;
+      const cells = w / p;   // the tree cells this one drawn tree stands for
+      const hh = h * (0.9 + 0.2 * rnd()), wide = cells > 1.01 ? Math.min(5 * hh, Math.max(0.45 * hh, 1.1 * cell0 * Math.sqrt(cells))) : Math.max(1.2, Math.min(0.5 * hh, 1.2 * cell0));
+      const px = x + (rnd() - 0.5) * fineDx * big * 0.8, pz = z + (rnd() - 0.5) * fineDz * big * 0.8;
       pos[m * 3] = px; pos[m * 3 + 1] = groundAt(px, pz); pos[m * 3 + 2] = pz;
       tw[m * 4] = hh; tw[m * 4 + 1] = wide; tw[m * 4 + 2] = rnd(); tw[m * 4 + 3] = rnd();
       blk[m] = Math.max(0, Math.min(WB - 1, Math.floor((pz - ez + range) / bx))) * WB + Math.max(0, Math.min(WB - 1, Math.floor((px - ex + range) / bx)));
       m++;
-    });
+    }
+    free(CX); free(CZ); free(CH); free(CD); free(CW);
     // block by block (a counting sort), each block's span on the ground kept for the frustum test
     const start = new Uint32Array(WB * WB + 1); for (let i = 0; i < m; i++) start[blk[i] + 1]++;
     for (let b = 0; b < WB * WB; b++) start[b + 1] += start[b];
@@ -1279,8 +1302,10 @@
       float S = max(tw.x, tw.y);
       vec4 mv = modelViewMatrix * vec4(position.x, position.y + S * .5, position.z, 1.); float dist = length(mv.xyz);
       float px = S * pscale / max(dist, 1.);
-      if (tw.z >= share || px < .8 || distance(position.xz, cameraPosition.xz) < clearR) { gl_Position = vec4(2., 2., 2., 1.); gl_PointSize = 1.; return; }
-      gl_Position = projectionMatrix * mv; gl_PointSize = min(px, psMax);
+      // not drawn: past the level's share, under a pixel, too close, or bigger than the phone draws a point (a smaller one
+      // would float over the ground: its middle is pinned, not its foot)
+      if (tw.z >= share || px < .8 || px > psMax || distance(position.xz, cameraPosition.xz) < clearR) { gl_Position = vec4(2., 2., 2., 1.); gl_PointSize = 1.; return; }
+      gl_Position = projectionMatrix * mv; gl_PointSize = px;
       float k = max(1., floor(tw.y / max(.55 * tw.x, 1.) + .5));   // a clump: a few tips side by side
       vS = vec4(tw.x / S, tw.y / S, k, tw.w);
       vec2 nu = (position.xz - nrect.xy) / nrect.zw;
@@ -1310,7 +1335,7 @@
       gl_FragColor = vec4(mix(c, vFogC, vFog), 1.);
     }`;
   function queueWide() {
-    if (wideState !== 0 || !cfg || !cfg.canopy || !R || !(wideTiles || Object.keys(cnparts).length)) return;
+    if (wideState !== 0 || !cfg || !cfg.canopy || !R || !(wideTiles || cnAny())) return;
     wideState = 1; setTimeout(() => addWide(), 0);
   }
   async function addWide() {
@@ -1319,8 +1344,9 @@
     try {
       if (!wideTiles) {   // the files are kept packed (a few MB): a new viewpoint is built again from them
         where = 'files';
-        wideTiles = (cc.tiles || []).map((t, i) => ({ t, blob: cnparts[i] && cnparts[i].length ? pack(cnparts[i]) : null })).filter(x => x.blob && x.t && x.t.n > 0);
-        cnparts = {};
+        for (const i in cnparts) { try { cnbytes[i] = packBytes(cnparts[i]); } catch (e) { /* a bad tile: left out */ } }
+        wideTiles = (cc.tiles || []).map((t, i) => ({ t, blob: cnbytes[i] || null })).filter(x => x.blob && x.t && x.t.n > 0);
+        cnparts = {}; cnbytes = {}; cnlast = -1;
         await breathe();
       }
       if (!wideTiles.length) throw new Error('no tree files');
@@ -1340,12 +1366,8 @@
       made.push(mat);
       const pts = new THREE.Points(wp.geo, [mat]); pts.frustumCulled = false;
       const drop = function () { free(this.array); this.array = null; }; wp.geo.attributes.position.onUpload(drop); wp.geo.attributes.tw.onUpload(drop);
-      // in, all at once: the light passes put the ground's sun visibility in alpha (their colours do not change)
+      // in, all at once (the far and fine light passes already hold the ground's sun visibility in alpha)
       if (R.wide) { R.scene.remove(R.wide.points); R.wide.geo.dispose(); R.wide.mat.dispose(); }   // a new viewpoint: the old set goes
-      else {
-        R.lightMat.defines.SHADOWA = 1; R.lightMat.needsUpdate = true;
-        if (R.near) { R.near.lightMat.defines.SHADOWA = 1; R.near.lightMat.needsUpdate = true; }
-      }
       R.wide = { points: pts, mat, geo: wp.geo, count: wp.count, start: wp.start, ex: wp.ex, ez: wp.ez, at: wp.at };
       R.scene.add(pts);
       wideState = 2; relight = dirty = true;
@@ -1584,20 +1606,25 @@
   }
 
   window.S3D = {
-    init(c) { cnparts = {}; wideTiles = null; wideState = 0; wideRun++; cfg = c; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
-    chunk(s, which) { if (typeof which === 'string' && which.startsWith('canopy:')) { const i = +which.slice(7); (cnparts[i] || (cnparts[i] = [])).push(s); return; } (which === 'near' ? nparts : which === 'detail' ? dparts : which === 'mask' ? mparts : which === 'trees' ? tparts : which === 'water' ? wparts : which === 'color' ? cparts : which === 'ncolor' ? ncparts : which === 'bld' ? bparts : which === 'wcolor' ? wcparts : parts).push(s); },
+    init(c) { cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    chunk(s, which) {
+      if (typeof which === 'string' && which.startsWith('canopy:')) {   // a tree tile: packed as soon as the next one starts, so its text is let go at once
+        const i = +which.slice(7);
+        if (i !== cnlast) { if (cnlast >= 0 && cnparts[cnlast]) { try { cnbytes[cnlast] = packBytes(cnparts[cnlast]); } catch (e) { /* a bad tile: left out */ } delete cnparts[cnlast]; } cnlast = i; }
+        (cnparts[i] || (cnparts[i] = [])).push(s); return;
+      } (which === 'near' ? nparts : which === 'detail' ? dparts : which === 'mask' ? mparts : which === 'trees' ? tparts : which === 'water' ? wparts : which === 'color' ? cparts : which === 'ncolor' ? ncparts : which === 'bld' ? bparts : which === 'wcolor' ? wcparts : parts).push(s); },
     async done() {
       try {
         if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");
         if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.');
         await load(); build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
-        const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length || (cfg.canopy && Object.keys(cnparts).length));
+        const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length || (cfg.canopy && cnAny()));
         post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: 0, fore }); heading();
         if (fore) queueFore();
       } catch (e) { fail("The 3D view couldn't start on this phone."); post({ type: 'error', msg: String(e && e.message || e) }); }
     },
     // fore({ detail, water, ice }): the foreground for the view that is up; its chunks follow, then foreDone()
-    fore(c) { if (!cfg || foreState === 1) return; cfg.detail = c && c.detail; cfg.water = c && c.water; if (wideState !== 1 && wideState !== 2) { cfg.canopy = c && c.canopy; cnparts = {}; wideTiles = null; wideState = 0; } if (c && c.ice != null) ice = !!c.ice; if (R) R.iceU.value = ice ? 1 : 0; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; if (foreState < 0) foreState = 0; },
+    fore(c) { if (!cfg || foreState === 1) return; cfg.detail = c && c.detail; cfg.water = c && c.water; if (wideState !== 1 && wideState !== 2) { cfg.canopy = c && c.canopy; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; } if (c && c.ice != null) ice = !!c.ice; if (R) R.iceU.value = ice ? 1 : 0; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; if (foreState < 0) foreState = 0; },
     foreDone() { if (R) queueFore(); },
     sun(az, alt) { sun = { az, alt }; relight = true; touch('sun'); },
     // ice(true): still water (lakes, ponds, backwaters) is drawn frozen under snow, only moving water stays open

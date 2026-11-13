@@ -479,3 +479,39 @@ light map read back from the page). Still wrong: the stand pins at Oxbow Bend an
 trees (known pin issue), Jackson Lake's north end is from 11 Jan (cloud on 30 Dec) and shows patchy open water, the
 laser boxes gain little (all snow that day: only a faint texture), roads read white (the 30 Dec picture shows them
 snow-packed; Teton Park Road is closed), no snow on the conifers' crowns beyond 10 %.
+
+## Park-wide trees, Grand Teton (13 Nov 2026, branch `claude/sun3d-trees-wide`; NOT uploaded or applied)
+
+Phil: forests should show at any distance and around any spot, not only in the 500 m laser boxes, without slowing the
+view down or breaking it.
+
+- Data (`lidar/build_canopy.py grid | check | tiles`): the same 2022 survey (USGS 3DEP lidar `WY_GrandTetonNP_1_D22`,
+  public domain), read only down to octree depth 7 (one point per ~4 m voxel: 165 M points, 6,467 nodes, ~1.9 GB of
+  LAZ, cached in the laser build's cache dir). Grid = the wide Teton grid's box cut into 10 x 10 tiles of 0.05 x 0.068
+  deg (~5.6 x 5.5 km), 800 x 800 cells each (6.95 x 6.84 m). Per cell: the ground (mean of class 2, holes filled), and
+  the highest non-ground / building / water return's height over the ground AT ITS OWN SPOT (bilinear ground: the cell
+  mean put every steep slope 'up'). A tree = at least 4 m, at least two high returns, at least half of them from
+  pulses that went on to more returns (crowns let the laser through, rock faces and roofs mostly do not), ground at
+  most 3,300 m (tree line) and at most 55 deg steep (cliffs: the survey's ground class is thin there). File: 8-bit PNG,
+  0 = no tree, else canopy height in 0.5 m steps. 51 tiles with trees, 6.5 MB in all; the Teton trip needs 48 (12 km
+  around every stand pin, 7.0 MB), one stop 8-26 tiles (0.8-3.7 MB). Outside the survey (Wilson: Emily's Pond Levee,
+  Teton Pines; the east of the grid) there is nothing: no other source was used.
+- Data check against the 19 laser boxes (0.5 m class masks, 97,779 coarse cells inside them; a coarse cell is 'tree'
+  on the fine side when 15 % of it is tree cells at >= 4 m): agree 96.1 %; of the fine trees the coarse layer has
+  95.5 %, of its trees 88.4 % are the fine side's (the rest: 2,399 cells at a crown's edge, 237 by a building, 159
+  nothing); canopy height (coarse - fine 95th percentile) median +0.2 m, mean |error| 1.1 m, 90 % within 2.4 m.
+- Page (`app_view.js`, 'park-wide trees'): `fore({ canopy: { tiles } })` + chunks `canopy:<i>`; built LAST, after the
+  rest of the foreground has posted `foreground`, on its own (`wideTrees` {ok, trees, ...}; a failure, or 30 s, leaves
+  them out and nothing else). One pass over the files: every tree cell within 12 km, kept with chance (d0 / distance)^2
+  (all within d0), each kept one drawn wider for the cells it stands for (up to 5 x its height: a clump of spruce
+  tips), ~60,000 in all (d0 is set to fill that: 250 m in thick forest to 1.2 km over open flats; 20,000 and 5 km on a
+  phone with 2 GB or less). None inside the laser box (its own trees are there; the box's blend strip gets these). Each
+  tree is ONE point: the square's foot on the ground the meshes draw (the wide mesh's own triangles, the fine mesh's
+  blend), a spruce outline cut out in the fragment shader, the sun its ground gets from the hills (the far and fine
+  light passes now write that visibility into alpha, which nothing else read: colours unchanged), the same winter
+  colours as the laser trees. Sorted into 16 x 16 blocks of 1.5 km: a frame draws the blocks in view; quality levels
+  draw 100 / 75 / 40 / 0 % of them while moving. Never in `lit()` / first and last light.
+- Panel / `services/terrain.ts`: table `terrain_tree_tiles` (migration `20261113050000_terrain_trees_wide.sql`, NOT
+  applied; files NOT uploaded), `treeTilesFor(region, stand)` (tiles within `TREE_RANGE_M` = 12 km), sent with the
+  foreground (last), each tile one area in the trip's "3D terrain saved" count, saved ahead with the trip. Foreground
+  off = no trees (the page restarts without the foreground); light phones as above; About gets one line.
