@@ -337,6 +337,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // The page answers every foreground request within its own minute (drawn, or dropped). If no answer comes at all
   // (the request never reached the page), stop saying "loading" and say the plain view is what is shown.
   const [foreLost, setForeLost] = useState(false);
+  const [about, setAbout] = useState(false);   // the long notes and credits, behind one link (Phil, 13 Nov 2026: "too much explanation text")
   useEffect(() => {
     if (!foreBusy) return;
     const t = setTimeout(() => { setForeBusy(false); setForeLost(true); }, 90000);
@@ -584,20 +585,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       ) : phase === 'error' && problem ? (
         <Text style={[styles.status, pad]}>{problem}</Text>
       ) : null}
-      {ready && perf && !hd ? (
-        <Text style={[styles.perf, pad]} numberOfLines={1} accessibilityLabel={`Smoothness: ${perfLine(perf)}`}>Smoothness: {perfLine(perf)}</Text>
-      ) : null}
-      {ready && shapes && (lit?.trees || moments?.trees) ? (
-        <Text style={[styles.status, pad]}>
-          {lit?.trees ? 'Trees near you may block the sun here right now' : 'Trees near you may block the sun here at times today'} (summer survey; bare in winter if they are cottonwoods). The times don't count them.
-        </Text>
-      ) : null}
-      {foreBusy && ready && !hd ? <Text style={[styles.note, pad]}>Foreground loading…</Text> : null}
-      {foreLost && foreground && !shapes && !hd ? <Text style={[styles.note, pad]}>The foreground didn't load this time. The view is the plain one; switch Foreground off and on to try again.</Text> : null}
-      {heavy && !foreground && !hd ? (
-        <Text style={[styles.status, pad]}>The foreground was too heavy for this phone, so it is off. The view below is the plain one.</Text>
-      ) : null}
-      {hdNote && !hd ? <Text style={[styles.status, pad]}>{hdNote}</Text> : null}
+      {foreLost && foreground && !shapes && !hd ? <Text style={[styles.note, pad]}>Foreground didn't load. Tap Foreground twice to retry.</Text> : null}
+      {heavy && !foreground && !hd ? <Text style={[styles.note, pad]}>Foreground too heavy for this phone: off.</Text> : null}
+      {hdNote && !hd ? <Text style={[styles.note, pad]}>{hdNote}</Text> : null}
       {walking && full && !hd ? (
         <View style={[styles.walkRow, pad]}>
           <Text style={styles.walkText}>
@@ -632,7 +622,31 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         </View>
       )}
       {ready ? (
-        <Text style={[styles.note, pad]}>
+        <View style={[styles.aboutRow, pad]}>
+          {perf && !hd ? (
+            <Text style={styles.perf} numberOfLines={1} accessibilityLabel={`Smoothness: ${perfLine(perf)}`}>Smoothness: {perfLine(perf)}</Text>
+          ) : null}
+          {foreBusy && !hd ? <Text style={styles.perf}>Foreground loading…</Text> : null}
+          {hd && left != null ? <Text style={styles.perf}>HD views left: {leftToday != null ? `${leftToday} today, ` : ''}{left} this month</Text> : null}
+          <TouchableOpacity
+            onPress={() => Linking.openURL(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${pair.v.lat},${pair.v.lng}&heading=${look ?? 0}`).catch(() => {})}
+            accessibilityRole="link"
+            accessibilityLabel="Open Street View at this stand spot, facing the same way"
+            hitSlop={{ top: 6, bottom: 6 }}
+          >
+            <Text style={[styles.streetLink, { marginTop: 0 }]}>Street View ›</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setAbout(!about)} accessibilityRole="button" accessibilityLabel={about ? 'Hide about this view' : 'About this view: sources and notes'} hitSlop={{ top: 6, bottom: 6 }}>
+            <Text style={[styles.streetLink, { marginTop: 0 }]}>{about ? 'Less' : 'About ›'}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      {ready && about ? (
+        <View style={pad}>
+          {shapes && (lit?.trees || moments?.trees) ? (
+            <Text style={styles.note}>{lit?.trees ? 'Trees near you may block the sun right now' : 'Trees near you may block the sun at times today'} (summer survey; bare in winter if cottonwoods). The times don't count them.</Text>
+          ) : null}
+          <Text style={styles.note}>
           {hd
             ? `Picture: Google Maps. ${region?.ground === 'green' ? 'Light and shadows' : 'Light, shadows and snow'} are calculated from elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles. No clouds. Needs a signal; times are within a few minutes.${left != null ? ` HD views left: ${leftToday != null ? `${leftToday} today, ` : ''}${left} this month.` : ''}`
             : shapes && photoFore && region?.ground !== 'green'
@@ -643,21 +657,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
               ? 'Terrain shape and calculated sun. Buildings and trees close to you, and water within about 3 km, come from a 2022 summer laser survey: buildings as blocks, trees as dots, none farther off; no clouds. With the snowflake on, lakes and slow water are drawn frozen and rivers open (a guess from the slope of the water). Sun times count the ground and buildings, not the trees. Times are within a few minutes. Elevation data: USGS 3DEP lidar, ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'
               : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes. Elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'}
         </Text>
+          {shapes && photoFore && !hd ? (
+            <Text style={styles.note}>{region?.color_credit || (region?.ground === 'green' ? FAROES_CREDIT : TETON_CREDIT)}</Text>
+          ) : null}
+          {savedLine ? <Text style={styles.note} accessibilityLabel={savedLine}>{savedLine}</Text> : null}
+        </View>
       ) : null}
-      {ready && shapes && photoFore && !hd ? (
-        <Text style={[styles.note, pad]}>{region?.color_credit || (region?.ground === 'green' ? FAROES_CREDIT : TETON_CREDIT)}</Text>
-      ) : null}
-      {ready ? (
-        <TouchableOpacity
-          onPress={() => Linking.openURL(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${pair.v.lat},${pair.v.lng}&heading=${look ?? 0}`).catch(() => {})}
-          accessibilityRole="link"
-          accessibilityLabel="Open Street View at this stand spot, facing the same way"
-          hitSlop={{ top: 6, bottom: 6 }}
-        >
-          <Text style={[styles.streetLink, pad]}>Street View from this spot ›</Text>
-        </TouchableOpacity>
-      ) : null}
-      {savedLine ? <Text style={[styles.note, pad]} accessibilityLabel={savedLine}>{savedLine}</Text> : null}
       </Below>
     </View>
   );
@@ -678,6 +683,7 @@ const styles = StyleSheet.create({
   lensOn: { backgroundColor: '#ffffff' },
   lensText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   lensTextOn: { color: '#000000' },
+  aboutRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4, marginTop: 6 },
   rightBtns: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 1, marginLeft: 'auto' },
   hdBtn: { minWidth: 40, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   fullBtn: { width: 36, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },

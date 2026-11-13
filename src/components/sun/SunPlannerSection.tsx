@@ -18,6 +18,23 @@ import type { Pair } from '../../utils/sunEngine';
 import { LABELS, PHASE_COLORS, compassPoint, shotName, shotTitle } from './sunStyle';
 import Sun3DPanel from './Sun3DPanel';
 import { IS_TEST_APP } from '../../utils/variant';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { fetchStopSettings } from '../../services/planner';
+
+// The stop's starred shot, so Sun & Moon (and its 3D view) open on it rather than on the first shot in the list,
+// which for most stops is the automatic "main" shot standing on the stop's own pin (often the parking spot):
+// the barns opened looking away from the barn (Phil, 13 Nov 2026). Kept on the phone for no signal.
+const starKey = (stopId: string) => `pf_star_${stopId}`;
+async function starredShot(stopId: string): Promise<string | null> {
+  try {
+    const r = await fetchStopSettings(stopId);
+    const id = r?.setting?.star_vantage_id ?? null;
+    if (id) AsyncStorage.setItem(starKey(stopId), id).catch(() => {});
+    return id;
+  } catch {
+    try { return await AsyncStorage.getItem(starKey(stopId)); } catch { return null; }
+  }
+}
 
 // Sun & Moon for one stop, under Weather. A stop with no vantage -> subject
 // pairs shows only a small "add" button. Hidden entirely when the planner is
@@ -88,6 +105,17 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit }: { stop: SunStop; t
   const stopMinute = parseTimeLabel(timeLabel);
   const day0 = dayStartMs(stop.date, stop.utc_offset_min);
   const [pairIdx, setPairIdx] = useState(0);
+  const chosen = useRef(false);   // Phil picked a shot himself: never jump away from it
+  useEffect(() => {
+    if (!IS_TEST_APP || !stopId || stop.pairs.length < 2) return;
+    let alive = true;
+    starredShot(stopId).then(id => {
+      if (!alive || chosen.current || !id) return;
+      const i = stop.pairs.findIndex(p => p.vantage_id === id);
+      if (i > 0) setPairIdx(i);
+    });
+    return () => { alive = false; };
+  }, [stopId, stop.pairs.length]);
   // Full screen draws edge to edge: keep the picture below the status bar and the controls above Android's own buttons.
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('map');
@@ -202,7 +230,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit }: { stop: SunStop; t
             return (
               <TouchableOpacity
                 key={p.vantage_id}
-                onPress={() => setPairIdx(i)}
+                onPress={() => { chosen.current = true; setPairIdx(i); }}
                 style={[styles.pairChip, on && styles.pairChipOn]}
                 accessibilityState={{ selected: on }}
               >
