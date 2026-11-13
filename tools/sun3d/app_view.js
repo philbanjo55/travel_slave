@@ -1260,7 +1260,7 @@
   function rest() {
     clearTimeout(restTimer); restTimer = null; resting = false;
     const a = act, t = performance.now(); act = null;
-    if (a && a.ms.length >= 3 && t - lastPerf >= 1000) {   // a number for the phone test: how the movement that just ended went
+    if (a && a.ms.length >= 1 && t - lastPerf >= 1000) {   // a number for the phone test: how the movement that just ended went (one frame is enough: a slow phone may draw only one or two while a finger moves)
       const m = a.ms.slice().sort((x, y) => x - y); lastPerf = t;
       post({ type: 'perf', kind: a.kind, ms: Math.round(m[m.length >> 1] * 10) / 10, worst: Math.round(m[m.length - 1]), frames: m.length, level: lv[a.kind], quality: QN[lv[a.kind]], levels: { look: lv.look, sun: lv.sun }, px: a.px, pts: a.pts, timed: gate.off ? 'frame' : 'fence' });
     }
