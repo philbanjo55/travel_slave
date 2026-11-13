@@ -145,10 +145,10 @@
   const pinPoint = () => { const t = pick(target); return { g: t.g, c: t.c, r: t.r, h: gh(t.g, t.c, t.r) + 6 }; };
   const subjLit = (az, alt, s, q) => lit(s || subjPoint(), az, alt) || lit(q || pinPoint(), az, alt);
   const herePoint = () => { const e = pick(eye); return { g: e.g, c: e.c, r: e.r, h: gh(e.g, e.c, e.r) }; };
-  // where the camera stands: eye (tripod) height EYE m (Phil, 13 Nov 2026: 5'8", "almost never above that"; was 2 m on the
+  // where the camera stands: eye height EYE m (Phil, 13 Nov 2026: "Do 5,8" = 1.73 m, the height his own photos are taken from; was 2 m on the
   // detail grid, 3 m elsewhere). On the near grid the highest ground within a step and a half, so a pin on a steep slope does not
   // put the eye inside the hill; on the wide grid the ground there; on the detail grid the survey's ground is exact.
-  const EYE = 1.6;
+  const EYE = 1.73;
   const eyeH = e => { if (e.g === DT) return gh(e.g, e.c, e.r) + EYE; let h = gh(e.g, e.c, e.r); if (e.g === NR) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + EYE; };
   // First / last direct light. Measured 12 Nov 2026 against 102 webcam pictures (27 events, tools/sun3d/README.md): with
   // the first rule (whole disc clear of a soft skyline, never below the flat horizon) ridge-blocked events were right to
