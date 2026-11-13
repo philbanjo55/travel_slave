@@ -687,51 +687,58 @@ def sun_3d():
         # foreground arrives behind it. Either it comes in (the note under the view then names the laser survey) or the
         # view says it was too heavy and stays plain: both are fine for the app, only a dead view is not.
         fg_label = 'Foreground (trees and buildings near you)'
-        def look2():
-            out = list(C.capture(1.2).all_texts)
-            C.adb('shell', 'input', 'swipe', '540', '1500', '540', '800', '500')
-            out += C.capture(1.2).all_texts
-            C.adb('shell', 'input', 'swipe', '540', '800', '540', '1500', '500')
-            time.sleep(1)
-            return out
-        f = C.capture(1)
-        lab0 = next((x['label'] for x in f.clickables if fg_label in x['label']), None)
+        # The button's own label carries the state ("on, showing" / "on, loading" / "off"), so nothing is scrolled
+        # here: the earlier version swiped down for the note each time and could drift the page or miss a tap.
+        def fg_now():
+            c = C.capture(1.5)
+            return c, next((x['label'] for x in c.clickables if fg_label in x['label']), None)
+        def fg_wait(ok, secs):
+            t0 = time.time(); c, lab = fg_now()
+            while time.time() - t0 < secs:
+                if ok(c, lab):
+                    break
+                time.sleep(3); c, lab = fg_now()
+            return c, lab, time.time() - t0
+        def fg_tap(expect):   # tap until the label says so: a tap can miss while the page is still settling
+            for _ in range(3):
+                c, lab = fg_now()
+                if lab is None:
+                    return False
+                if expect in lab:
+                    return True
+                V.tap_text(c, fg_label); time.sleep(2.5)
+            c, lab = fg_now()
+            return lab is not None and expect in lab
+        def fg_say(c):
+            print('INFO foreground, on screen: ' + ' | '.join(x for x in c.all_texts if len(x.strip()) > 2)[:1500], flush=True)
+            for line in [l for l in C.adb('logcat', '-d', '-t', '4000', timeout=90).splitlines() if 'chromium' in l and ('ERROR' in l or 'CONSOLE' in l or 'Renderer' in l)][-10:]:
+                print('INFO foreground web ' + line[:260], flush=True)
+        gave_up = lambda c: V.has(c, 'foreground was too heavy') or V.has(c, "foreground didn't load")
+        f, lab0 = fg_now()
         if lab0 is not None:
-            V.check('fg-button', ': on' in lab0, lab0[:90])
-            t3 = time.time(); came = None; seen_fg = []
-            for _ in range(30):
-                seen_fg = look2()
-                if seen_has(seen_fg, 'laser survey'):
-                    came = 'in'; break
-                if seen_has(seen_fg, 'foreground was too heavy'):
-                    came = 'heavy'; break
-                time.sleep(3)
-            took = time.time() - t3
-            if came == 'in':
+            V.check('fg-button', ': on' in lab0, lab0[:100])
+            c, lab, took = fg_wait(lambda c, lab: (lab is not None and ', showing' in lab) or gave_up(c), 170)
+            if lab is not None and ', showing' in lab:
                 V.check('fg-in', True, f'foreground drawn {took:.0f} s after the plain view')
-            elif came == 'heavy':
-                V.check('fg-in', None, f'too heavy for the emulator after {took:.0f} s: the view fell back to the plain one and said so')
+            elif gave_up(c):
+                V.check('fg-in', None, f'the view fell back to the plain one after {took:.0f} s and said so')
             else:
-                V.check('fg-in', False, f'no foreground and no fallback line after {took:.0f} s' + (' (still "Foreground loading")' if seen_has(seen_fg, 'Foreground loading') else ''))
-            V.check('fg-view-alive', seen_has(seen_fg, 'Looking '), 'the picture is still up')
-            if came == 'in':
-                f = C.capture(1)
-                V.tap_text(f, fg_label); time.sleep(4)
-                off = look2(); c1 = C.capture(1)
-                lab1 = next((x['label'] for x in c1.clickables if fg_label in x['label']), None)
-                V.check('fg-off', lab1 is not None and ': off' in lab1 and seen_has(off, 'Looking ') and not seen_has(off, 'laser survey'), (lab1 or 'button gone')[:80])
-                V.tap_text(c1, fg_label)
-                back = []
-                for _ in range(30):
-                    back = look2()
-                    if seen_has(back, 'laser survey') or seen_has(back, 'foreground was too heavy'):
-                        break
-                    time.sleep(3)
-                V.check('fg-on-again', seen_has(back, 'laser survey') and seen_has(back, 'Looking '), 'foreground back after switching it on again')
+                V.check('fg-in', False, f'no foreground and no fallback line after {took:.0f} s: {(lab or "button gone")[:90]}'); fg_say(c)
+            V.check('fg-view-alive', V.has(c, 'Looking '), 'the picture is still up')
+            if lab is not None and ', showing' in lab:
+                tapped = fg_tap(': off')
+                c, lab, took = fg_wait(lambda c, lab: lab is not None and ': off' in lab and V.has(c, 'Looking '), 90)
+                ok_off = tapped and lab is not None and ': off' in lab and V.has(c, 'Looking ')
+                V.check('fg-off', ok_off, f'{(lab or "button gone")[:70]} / plain picture back after {took:.0f} s')
+                if not ok_off:
+                    fg_say(c)
+                tapped = fg_tap(': on')
+                c, lab, took = fg_wait(lambda c, lab: (lab is not None and ', showing' in lab) or gave_up(c), 170)
+                ok_on = tapped and lab is not None and ', showing' in lab and V.has(c, 'Looking ')
+                V.check('fg-on-again', ok_on, f'{(lab or "button gone")[:70]} after {took:.0f} s')
+                if not ok_on:
+                    fg_say(c)
             V.check('fg-alive', C.app_alive())
-            web = [l for l in C.adb('logcat', '-d', '-t', '4000', timeout=90).splitlines() if 'chromium' in l and ('ERROR' in l or 'CONSOLE' in l or 'Renderer' in l)]
-            for line in web[-8:]:
-                print('INFO sun3d foreground web ' + line[:260], flush=True)
         else:
             print('INFO foreground: no Foreground button on screen (no detail box for this spot, or this build has none)', flush=True)
         # HD (Google's picture, 12 Nov 2026): the button shows only while the door says it is switched on. One tap on
