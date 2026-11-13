@@ -12,6 +12,7 @@ import { colors, typography, spacing, radius } from '../theme';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import * as Updates from 'expo-updates';
 import { migratePhotosToStorage } from '../services/migratePhotos';
+import { logLaunch, checkAndFetch, restartNow } from '../services/updateInfo';
 import { IS_TEST_APP } from '../utils/variant';
 import { isTrainingRunning } from './TrainingScreen';
 
@@ -22,6 +23,17 @@ export default function TripsScreen() {
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // TEST app: which code is running, and fetch a new instant update now.
+  const [updState, setUpdState] = useState<'idle' | 'checking' | 'none' | 'ready' | 'error'>('idle');
+  const [updError, setUpdError] = useState('');
+  const checkUpdate = async () => {
+    setUpdState('checking');
+    const r = await checkAndFetch();
+    setUpdState(r.kind);
+    if (r.kind === 'error') setUpdError(r.message);
+  };
+  useEffect(() => { logLaunch(); }, []);
 
   useEffect(() => {
     try {
@@ -145,6 +157,25 @@ export default function TripsScreen() {
       <Text style={styles.sectionLabel}>TRIPS</Text>
       {lastUpdate && (
         <Text style={styles.lastUpdate}>SYNCED {lastUpdate}</Text>
+      )}
+      {IS_TEST_APP && (
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={updState === 'ready' ? 'Restart to use the new update' : 'Check for an app update now'}
+          onPress={() => (updState === 'ready' ? restartNow() : checkUpdate())}
+          disabled={updState === 'checking'}
+          style={{ paddingHorizontal: spacing.xl, paddingBottom: spacing.md, marginTop: -spacing.sm }}
+        >
+          <Text style={[styles.lastUpdate, { paddingHorizontal: 0, marginTop: 0, paddingBottom: 0 }]}>
+            {Updates.isEmbeddedLaunch ? 'App code: built in. ' : `App code: ${Updates.updateId?.slice(0, 8) ?? '?'}. `}
+            {Updates.isEmergencyLaunch ? 'An update failed to start, back on the built-in code. ' : ''}
+            {updState === 'idle' ? 'Check for update' : ''}
+            {updState === 'checking' ? 'Checking...' : ''}
+            {updState === 'none' ? 'Up to date. Check again' : ''}
+            {updState === 'ready' ? 'New update downloaded. Tap to restart' : ''}
+            {updState === 'error' ? `Check failed: ${updError.slice(0, 120)}. Try again` : ''}
+          </Text>
+        </TouchableOpacity>
       )}
 
       {activeTrips.length === 0 && !showArchived && loading ? (
