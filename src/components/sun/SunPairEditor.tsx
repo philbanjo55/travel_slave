@@ -256,8 +256,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                   </TouchableOpacity>
                 )}
                 <Text style={styles.tip}>
-                  A vantage is where you stand; the subject is what you photograph. Put the subject pin on the face you want lit:
-                  shade is worked out at that exact point. Terrain is calculated automatically when you save.
+                  Vantage = where you stand. Put the subject pin on the face you want lit.
                 </Text>
               </>
             )}
@@ -317,7 +316,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                 <Field label="Height in metres (optional)" value={form.sHeight} onChange={t => set({ sHeight: t })}
                   placeholder="Only for thin sea stacks or towers" keyboardType="decimal-pad" />
                 {!heightOk && <Text style={styles.bad}>Height must be a number from 0 to 3000.</Text>}
-                <Text style={styles.hint}>The map data misses thin rock towers. A real height lets the top of a stack catch light after the sea below is in shade. Leave empty for hills and mountains.</Text>
+                <Text style={styles.hint}>For thin rock stacks the map misses. Leave empty for hills.</Text>
 
                 <Text style={[styles.section, { marginTop: 22 }]}>REFERENCE PHOTO</Text>
                 <View style={styles.refRow}>
@@ -361,7 +360,7 @@ export default function SunPairEditor({ visible, onClose, tripId, stopId, stopNa
                       </View>
                     )
                 )}
-                <Text style={styles.hint}>The shot you're going for from this spot. It shows on the Sun & Moon chips and Photo tab, and is saved on the phone for offline.</Text>
+                <Text style={styles.hint}>The shot you're going for from here (Sun & Moon chips, Photo tab).</Text>
 
                 {!!saveError && <View style={styles.errorBox}><Text style={styles.errorText}>{saveError}</Text></View>}
                 <TouchableOpacity style={[styles.primary, !canSave && { opacity: 0.4 }]} onPress={save} disabled={!canSave}>

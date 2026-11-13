@@ -154,8 +154,11 @@ def dismiss_system_dialogs():
         for n in root.iter('node'):
             t = (n.get('text') or '').strip()
             if n.get('package') == 'android' and t in ('Close app', 'Wait', 'OK', 'Close'):
-                hit = n
-                if t == 'Close app':
+                # "App isn't responding": press Wait (13 Nov 2026). Pressing Close app killed the app mid-test and the run
+                # read a slow moment on the emulator's software graphics as a crash. A real crash still shows as one.
+                if hit is None or t == 'Wait':
+                    hit = n
+                if t == 'Wait':
                     break
         if hit is None:
             return

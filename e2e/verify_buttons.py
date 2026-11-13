@@ -94,7 +94,7 @@ def bars(s):
     return top, nav, w, h
 
 
-def cut_off(label, s=None, strict=True):
+def cut_off(label, s=None, strict=True, within=None):
     """strict (a fixed screen or pop-up): a quarter of a control under a bar is a miss. Not strict (a scrolling page read at
     its end): only a control more than half under a bar. Sides (Phil: "and sides"): a control that touches the left or
     right edge of the screen without being a full-width row is running off the side (the screen read clips positions at
@@ -128,9 +128,24 @@ def cut_off(label, s=None, strict=True):
         for c in list(n):
             walk(c, sideways)
 
-    if s.root is not None:
-        for c in list(s.root):
-            walk(c, False)
+    roots = list(s.root) if s.root is not None else []
+    if within and s.root is not None:
+        # Only the fixed bar holding `within` (13 Nov 2026): rows of the list scrolled behind an opaque bottom bar are
+        # still in the screen read, though hidden, and were reported as cut off.
+        parent = {c: p for p in s.root.iter() for c in p}
+        hit = next((n for n in s.root.iter('node') if within.lower() in ((n.get('text') or n.get('content-desc') or '').lower())), None)
+        box = hit
+        while box is not None and box in parent:
+            up = parent[box]
+            if up.tag != 'node':
+                break
+            ux1, uy1, ux2, uy2 = C.bounds(up)
+            if (uy2 - uy1) > 0.45 * h:
+                break
+            box = up
+        roots = [box] if box is not None else roots
+    for c in roots:
+        walk(c, False)
     # A control at one edge whose row has a twin of the same size at the other edge is a row of equal boxes filling the
     # width (a tab bar, two chips side by side): flush by design, with its text inside. Anything else is reported.
     for name, x1, y1, x2, y2, at_left in edge:
@@ -265,7 +280,7 @@ def ghost_accept():
     V.show('btn-ghost', a)
     seen, _ = V.texts_all(4)
     V.check('btn-accept-shown', seen_has(seen, "Accept T's plan from now on") or seen_has(seen, 'preview'), 'Accept bar in ghost mode')
-    cut_off('accept-bar', C.capture(1))
+    cut_off('accept-bar', C.capture(1), within="Accept T's plan" if seen_has(seen, "Accept T's plan from now on") else 'preview')
     V.check('btn-ghost-alive', C.app_alive())
 
 

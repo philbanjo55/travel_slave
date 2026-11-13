@@ -64,7 +64,6 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
 
   // The Today chart is the raw forecast's shape (timing only): when the light peaks.
   const slots = curve?.slots ?? [];
-  const peak = slots.length ? slots.reduce((b, x) => (x.p_good > b.p_good || (x.p_good === b.p_good && x.mean > b.mean) ? x : b), slots[0]) : null;
   // When each part was last updated.
   const updated = [
     run ? `${planKindText(run)} ${ago(run.created_at)}` : null,
@@ -103,7 +102,7 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
               {tPlan.why ? <Text style={styles.whySmall}>{tPlan.why}</Text> : null}
             </View>
           ) : null}
-          {peak && peak.p_good > 0 ? <Text style={styles.whySmall}>Light and weather peak around {clock12(peak.slot_at, tz)} (chart below)</Text> : null}
+          {/* The peak time is on the Today chart below (its "peak" tag): no second line here (Phil, 13 Nov 2026: less text). */}
           {updated ? <Text style={styles.updated}>{updated}</Text> : null}
         </View>
         {tier ? <Text style={styles.tierPill}>{tier}</Text> : null}
@@ -148,7 +147,7 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
                 </TouchableOpacity>
               );
             })}
-          <Text style={styles.hint}>T's chance on each day T plans this stop (and on your own day). Beyond 3 days there is no forecast yet: T plays typical weather for the date. Tap a day for its plan.</Text>
+          <Text style={styles.hint}>After 3 days: typical weather, no forecast yet. Tap a day for its plan.</Text>
         </View>
       ) : (
         <View style={{ gap: spacing.sm }}>
@@ -204,8 +203,8 @@ function TodayChart({ slots, error, tz, timeLabel, duration }: {
         ))}
       </View>
       <Text style={styles.hint}>
-        When this stop's light and weather peak, every 15 min{slots[0].source === 'light' ? ' (sun angle and typical weather: no forecast yet)' : ' (raw ECMWF forecast)'}. For timing only: T's verdict above is the chance to go by.
-        {hasWin ? ' Box: your planned time.' : start == null ? '' : ' Your planned time is outside daylight.'}
+        Timing only{slots[0].source === 'light' ? ' (no forecast yet)' : ' (raw ECMWF)'}: go by T's verdict above.
+        {hasWin ? ' Box: your time.' : start == null ? '' : ' Your time is outside daylight.'}
       </Text>
     </View>
   );

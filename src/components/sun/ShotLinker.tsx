@@ -54,8 +54,7 @@ export default function ShotLinker({ tripId, stopId, onDone }: {
     <View style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={styles.body}>
         <Text style={styles.tip}>
-          Tick shots to show them here too. They stay the same shots, not copies: fixing a pin or photo changes it everywhere,
-          and the sun is worked out for this stop's day and time.
+          Tick shots to show here too. Same shots, not copies: edits change them everywhere.
         </Text>
         {shots === null && !error && <ActivityIndicator color={colors.textSecondary} style={{ marginVertical: 24 }} />}
         {!!error && (

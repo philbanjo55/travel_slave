@@ -134,7 +134,7 @@ export default function SubjectsTab({ tripId, days, tz, goPlans }: {
         );
       })}
       {!loading && !rows.length ? <Text style={styles.hint}>No rated subjects here yet. Rate stops in Setup.</Text> : null}
-      <Text style={styles.hint}>Chances are T's: its forecasts for the next 3 days, then the real sun with typical weather for the date, so later days look alike until the forecast reaches them.</Text>
+      <Text style={styles.hint}>T's chances: forecast for 3 days, then typical weather for the date.</Text>
     </ScrollView>
   );
 }

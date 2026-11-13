@@ -111,7 +111,7 @@ export function TellTSheet({ visible, onClose, tripId, date, dayLabel, places, s
       refreshNotes(tripId);
       const lines: string[] = [];
       for (const m of r.marks ?? []) lines.push(m.set ? `${m.place}: marked ${m.result === 'nailed' ? 'Nailed it' : 'Go back for better'}.` : `${m.place}: your ticks stay as they are.`);
-      if (r.now) lines.push(r.now.ok === false ? `T could not re-plan the rest of today: ${r.now.error ?? 'no answer'}` : 'T is re-planning the rest of today (about a minute). The new plan shows on the day card.');
+      if (r.now) lines.push(r.now.ok === false ? `T could not re-plan the rest of today: ${r.now.error ?? 'no answer'}` : 'T is re-planning the rest of today (about a minute).');
       if ((note.rules ?? []).length) lines.push('T is re-planning the days this touches.');
       if (!lines.length) lines.push('Saved.');
       if (alive.current) setPhase({ k: 'saved', lines });
@@ -151,7 +151,7 @@ export function TellTSheet({ visible, onClose, tripId, date, dayLabel, places, s
                     </TouchableOpacity>
                   ))}
                 </View>
-                <Text style={styles.small}>T shows you what it understood before anything changes. A note never edits your stops.</Text>
+                <Text style={styles.small}>T shows what it understood first. Notes never edit your stops.</Text>
               </>
             ) : null}
             {phase.k === 'busy' ? <View style={styles.busy}><ActivityIndicator color={colors.textPrimary} /><Text style={styles.small}>{phase.what}</Text></View> : null}
@@ -318,7 +318,7 @@ export function TripRules({ tripId }: { tripId: string }) {
             <Text style={styles.x}>✕</Text>
           </TouchableOpacity>
         </View>
-      )) : <Text style={styles.small}>None. A note like “always back by 6” or “never before 6:30” shows here.</Text>}
+      )) : <Text style={styles.small}>None yet (e.g. “always back by 6”).</Text>}
     </View>
   );
 }

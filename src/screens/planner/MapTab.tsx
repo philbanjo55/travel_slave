@@ -85,7 +85,7 @@ export default function MapTab({ tripId, days, date, setDate, goPlans }: {
           ))}
         </MapView>
       </View>
-      <Text style={styles.hint}>White = this plan in order · grey = rated, not in the plan. Lines are straight, not the road.</Text>
+      <Text style={styles.hint}>White: this plan, in order · grey: not in it · straight lines, not roads</Text>
 
       {/* Only the list scrolls: a map inside a scrolling page fights it for the finger. */}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.list}>

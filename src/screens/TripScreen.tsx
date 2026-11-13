@@ -193,7 +193,7 @@ export default function TripScreen() {
   const recalcDriveTimes = useCallback(async () => {
     Alert.alert(
       'Recalculate Schedule',
-      'This will update all drive times using real Google Maps data, then rewrite each stop\'s time so the day cadence reflects the new drive times. Flights and other anchor stops keep their existing times. Continue?',
+      'Update drive times from Google Maps, then re-time each stop to match. Flights and other fixed stops keep their times.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -223,7 +223,7 @@ export default function TripScreen() {
   const updateTripWeather = useCallback(async () => {
     Alert.alert(
       'Update Trip Weather',
-      'Pull the latest forecast for every stop across all days. Days within ~16 days use their real date; days further out use a near-date preview. Continue?',
+      'Pull the latest forecast for every stop. Days over ~16 days out get a near-date preview.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -290,7 +290,7 @@ export default function TripScreen() {
       Alert.alert(
         'Can’t delete this day yet',
         `Day ${d.day_number} has ${chk.photos} photo${chk.photos === 1 ? '' : 's'} on its stops. `
-        + 'Deleting the day would delete those photos too. Move the stops with photos to another day first.'
+        + 'Move those stops to another day first.'
       );
       return;
     }
@@ -484,7 +484,7 @@ export default function TripScreen() {
                 <Text style={styles.popText}>
                   {(() => { const c = changes.find(x => x.stop_id === item.id); return c && planner && day?.date ? `${moveReasons([c], planner, day.date)[0]}. ` : ''; })()}
                   Part of T's plan: {realChanges.length} change{realChanges.length === 1 ? '' : 's'} on this day
-                  {score.mine != null && score.bigOnDay ? ` (big-subject good shots ${shotsText(score.mine)} → ${shotsText(score.best)})` : ''}.
+                  {score.mine != null && score.bigOnDay ? ` (good shots ${shotsText(score.mine)} → ${shotsText(score.best)})` : ''}.
                 </Text>
                 <View style={styles.popBtns}>
                   <TouchableOpacity style={styles.popGo} onPress={() => { setPop(null); setGhost(true); }} accessibilityRole="button">
