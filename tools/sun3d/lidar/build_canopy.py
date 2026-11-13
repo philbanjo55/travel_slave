@@ -50,15 +50,15 @@ def grid(a):
     top = np.full(N * M, -1e9, np.float32); gsum = np.zeros(N * M, np.float32); gcnt = np.zeros(N * M, np.uint16)
     hv = np.zeros(N * M, np.uint16); hm = np.zeros(N * M, np.uint16); anyp = np.zeros(N * M, bool)
     # high points need the ground: kept per point (cell, z, multi) and counted once the ground is known
-    vc, vz, vm = [], [], []
+    vr, vcol, vz, vm = [], [], [], []
     t0 = time.time(); total = 0
     def read(k):
         x, y, z, c, many = sv.points(k, x0, x1, y0, y1)
         lat = np.degrees(np.arctan(np.sinh(y / bd.R))); lng = np.degrees(x / bd.R)
-        r = ((NORTH - lat) / (NORTH - SOUTH) * N).astype(np.int64).clip(0, N - 1); cc = ((lng - WEST) / (EAST - WEST) * M).astype(np.int64).clip(0, M - 1)
-        return r * M + cc, z, c, many
+        rf = ((NORTH - lat) / (NORTH - SOUTH) * N).clip(0, N - 1e-3); cf_ = ((lng - WEST) / (EAST - WEST) * M).clip(0, M - 1e-3)
+        return rf.astype(np.int64) * M + cf_.astype(np.int64), z, c, many, rf.astype(np.float32), cf_.astype(np.float32)
     with cf.ThreadPoolExecutor(4) as ex:
-        for i, (idx, z, c, many) in enumerate(ex.map(read, keys)):
+        for i, (idx, z, c, many, rf, cf_) in enumerate(ex.map(read, keys)):
             if not len(idx): continue
             total += len(idx); anyp[idx] = True
             g = c == 2
@@ -66,7 +66,7 @@ def grid(a):
             v = (c != 2) & (c != 6) & (c != 9)
             if v.any():
                 np.maximum.at(top, idx[v], z[v])
-                vc.append(idx[v].astype(np.int32)); vz.append(z[v].astype(np.float32)); vm.append(many[v])
+                vr.append(rf[v]); vcol.append(cf_[v]); vz.append(z[v].astype(np.float32)); vm.append(many[v])
             if i % 500 == 0: print(i, total, round(time.time() - t0), 's', flush=True)
     print('points', total, round(time.time() - t0), 's', flush=True)
     has_g = gcnt > 0
@@ -78,16 +78,24 @@ def grid(a):
             ra, rb, ca, cb = max(0, r0 - P), min(N, r0 + n + P), max(0, c0 - P), min(M, c0 + n + P)
             blk = bd.fill(ground[ra:rb, ca:cb].astype(np.float64), hg[ra:rb, ca:cb])
             gf[r0:r0 + n, c0:c0 + n] = blk[r0 - ra:r0 - ra + n, c0 - ca:c0 - ca + n]
+    # Each return's height over the ground AT ITS OWN SPOT (the ground grid between cell centres): the cell's mean
+    # ground would put the top of a 7 m cell on a 45 deg slope 3.5 m 'up' (every steep slope and cliff a forest).
+    def gat(rf, cf_):
+        r = np.clip(rf - 0.5, 0, N - 1.001); c = np.clip(cf_ - 0.5, 0, M - 1.001); r0 = r.astype(np.int64); c0 = c.astype(np.int64); fr = r - r0; fc = c - c0
+        return (gf[r0, c0] * (1 - fc) + gf[r0, c0 + 1] * fc) * (1 - fr) + (gf[r0 + 1, c0] * (1 - fc) + gf[r0 + 1, c0 + 1] * fc) * fr
+    hag = np.full(N * M, -1e9, np.float32)
+    for r_, c_, z_, m_ in zip(vr, vcol, vz, vm):
+        a_ = (z_ - gat(r_, c_)).astype(np.float32); i_ = r_.astype(np.int64) * M + c_.astype(np.int64)
+        np.maximum.at(hag, i_, a_)
+        high = a_ >= 2.0
+        np.add.at(hv, i_[high], 1); np.add.at(hm, i_[high & m_], 1)
+    del vr, vcol, vz, vm
     gf = gf.reshape(-1)
-    for c_, z_, m_ in zip(vc, vz, vm):
-        high = z_ - gf[c_] >= 2.0
-        np.add.at(hv, c_[high], 1); np.add.at(hm, c_[high & m_], 1)
-    del vc, vz, vm
-    h = np.where(top > -1e8, top - gf, 0)
+    h = np.where(hag > -1e8, hag, 0)
     tree = (h >= MIN_H) & (hv >= MIN_PTS) & (hm >= np.ceil(MIN_MULTI * hv)) & anyp
     can = np.where(tree, h, 0).astype(np.float32).reshape(N, M)
     np.savez_compressed(os.path.join(a.work, 'canopy.npz'), can=can, n=n, has=anyp.reshape(N, M),
-                        raw=np.where(anyp & (top > -1e8), h, 0).astype(np.float16).reshape(N, M), hv=hv.reshape(N, M), hm=hm.reshape(N, M),
+                        raw=np.where(anyp & (hag > -1e8), h, 0).astype(np.float16).reshape(N, M), hv=hv.reshape(N, M), hm=hm.reshape(N, M),
                         ground=gf.reshape(N, M).astype(np.float32))
     print('tree cells', int(tree.sum()), 'of', int(anyp.sum()), 'surveyed; cell', round((NORTH - SOUTH) / N * 111132, 2), 'x', round((EAST - WEST) / M * 111320 * math.cos(math.radians(43.7)), 2), 'm', flush=True)
 
@@ -103,15 +111,22 @@ def read_bytes_png(path):
 
 
 def load_can(a):
-    z = np.load(os.path.join(a.work, 'canopy.npz')); can = z['can']
-    return np.where(can >= a.min_h, can, 0), int(z['n'])
+    """The grid's trees with the final rules: at least --min-h m, at least --min-multi of the high returns from pulses
+    that went on (a crown lets the laser through; rock faces and roofs mostly do not), no tree above --max-elev m
+    (the Teton tree line is ~3,050-3,200 m) or on ground steeper than --max-slope degrees (cliffs: the survey's ground
+    class is thin there, so a rock face stands 'over' a ground filled in from below)."""
+    z = np.load(os.path.join(a.work, 'canopy.npz')); can = z['can']; g = z['ground']; hv = z['hv'].astype(np.float32); hm = z['hm'].astype(np.float32)
+    dz = (NORTH - SOUTH) / can.shape[0] * 111132; dx = (EAST - WEST) / can.shape[1] * 111320 * math.cos(math.radians((NORTH + SOUTH) / 2))
+    gy, gx = np.gradient(g, dz, dx); slope = np.degrees(np.arctan(np.hypot(gx, gy)))
+    ok = (can >= a.min_h) & (hm >= a.min_multi * hv) & (g <= a.max_elev) & (slope <= a.max_slope)
+    return np.where(ok, can, 0), int(z['n'])
 
 
 def check(a):
     """The coarse layer against the 0.5 m laser boxes (their class mask: 8 + canopy / 0.2 m = tree)."""
     can, n = load_can(a); N, M = can.shape; MIN_H = a.min_h
     rows = [r for r in json.load(open(a.details)) if r.get('parent') == 'grand_teton']
-    tot = dict(both=0, coarse_only=0, fine_only=0, neither=0, herr=[], cells=0)
+    tot = dict(both=0, coarse_only=0, fine_only=0, neither=0, herr=[], cells=0); why = {'tree edge (under 15% of the cell)': 0, 'building': 0, 'water': 0, 'nothing': 0}
     per = []
     for r in rows:
         mp = r.get('mask_path')
@@ -139,6 +154,8 @@ def check(a):
                 ch = float(can[R_, C_]); coarse = ch > 0
                 k = 'both' if fine and coarse else 'coarse_only' if coarse else 'fine_only' if fine else 'neither'
                 st[k] += 1
+                if k == 'coarse_only':
+                    why['tree edge (under 15% of the cell)' if t.any() and not (blk == 2).any() else 'building' if (blk == 2).any() else 'water' if (blk == 3).mean() > .3 else 'nothing'] += 1
                 if fine and coarse: st['herr'].append(ch - float(np.percentile(fh, 95)))
         cells = st['both'] + st['coarse_only'] + st['fine_only'] + st['neither']
         e = np.array(st['herr']) if st['herr'] else np.zeros(1)
@@ -152,7 +169,7 @@ def check(a):
     trees_f = tot['both'] + tot['fine_only']; trees_c = tot['both'] + tot['coarse_only']
     out = dict(cells=tot['cells'], agree=round(agree, 4), both=tot['both'], coarse_only=tot['coarse_only'], fine_only=tot['fine_only'], neither=tot['neither'],
                fine_trees_found=round(tot['both'] / max(1, trees_f), 4), coarse_trees_real=round(tot['both'] / max(1, trees_c), 4),
-               height_err_median=round(float(np.median(e)), 2), height_err_mean_abs=round(float(np.mean(np.abs(e))), 2), height_err_p90_abs=round(float(np.percentile(np.abs(e), 90)), 2))
+               coarse_only_why=why, height_err_median=round(float(np.median(e)), 2), height_err_mean_abs=round(float(np.mean(np.abs(e))), 2), height_err_p90_abs=round(float(np.percentile(np.abs(e), 90)), 2))
     print(json.dumps(out))
     json.dump(dict(total=out, boxes=per), open(os.path.join(a.work, 'check.json'), 'w'), indent=1)
 
@@ -174,15 +191,59 @@ def tiles(a):
             up.append(f'{path}\t{name}\t{b}')
     open(os.path.join(a.out, 'upload.txt'), 'w').write('# local path\tpublished name (bucket terrain)\tbytes\n' + '\n'.join(up) + '\n')
     json.dump(rows, open(os.path.join(a.work, 'tiles.json'), 'w'), indent=1)
-    vals = ',\n'.join(f"  ('{r['id']}', 'grand_teton', {r['north']}, {r['south']}, {r['west']}, {r['east']}, {r['n']}, {r['step_m']}, '{r['path']}', {r['bytes']}, {r['trees']})" for r in rows)
+    cell = round((NORTH - SOUTH) / TR / n * 111132, 2)
+    vals = ',\n'.join(f"  ('{r['id']}', 'grand_teton', {r['north']}, {r['south']}, {r['west']}, {r['east']}, {r['n']}, {r['step_m']}, {cell}, '{r['path']}', {r['bytes']}, {r['trees']})" for r in rows)
     open(os.path.join(a.work, 'rows.sql'), 'w').write(vals + '\n')
+    if a.sql: open(a.sql, 'w').write(SQL_HEAD + vals + SQL_TAIL)
     print(len(rows), 'tiles,', round(sum(r['bytes'] for r in rows) / 1e6, 2), 'MB,', sum(r['trees'] for r in rows), 'tree cells')
+
+
+SQL_HEAD = """-- 3D sun view, park-wide trees (Grand Teton): a coarse canopy layer from the 2022 laser survey (USGS 3DEP lidar,
+-- WY_GrandTetonNP_1_D22, public domain), written by tools/sun3d/lidar/build_canopy.py. The wide Teton grid is cut into
+-- 10 x 10 tiles of 0.05 deg x 0.068 deg (~5.6 x 5.5 km), each n x n cells (~7 m); a tile with no tree is not listed.
+-- Each row is one file in bucket `terrain`: an 8-bit greyscale PNG, row 0 = north, 0 = no tree, else the canopy's top
+-- over the ground = value x step_m. The page (tools/sun3d/app_view.js, park-wide trees) draws one tree a cell close by
+-- and clumps farther off, beyond the laser detail box, within 12 km of the stand spot; never in the sun times.
+-- Outside the survey (Wilson, the east of the grid) there are no rows: no trees are drawn there.
+-- A table of its own: older app builds read the other terrain tables whole and never see these rows.
+-- Idempotent: the table is made if missing and the rows are written over.
+--
+-- Before applying: upload the files listed in upload.txt to bucket `terrain`.
+create table if not exists public.terrain_tree_tiles (
+  id text primary key,
+  parent text not null references public.terrain_regions(id),   -- the wide region the tile sits in
+  north double precision not null, south double precision not null,
+  west double precision not null, east double precision not null,
+  n integer not null,                 -- n x n cells, row 0 at the north edge
+  step_m double precision not null default 0.5,   -- canopy height = value x step_m (0 = no tree)
+  cell_m double precision,            -- metres a cell (north-south)
+  path text not null,                 -- object path in bucket terrain
+  bytes integer,
+  trees integer,                      -- cells with a tree
+  note text,
+  created_at timestamptz not null default now()
+);
+alter table public.terrain_tree_tiles enable row level security;
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'terrain_tree_tiles' and policyname = 'app_read') then
+    create policy app_read on public.terrain_tree_tiles for select using (true);
+  end if;
+end $$;
+
+insert into public.terrain_tree_tiles (id, parent, north, south, west, east, n, step_m, cell_m, path, bytes, trees) values
+"""
+SQL_TAIL = """
+on conflict (id) do update set parent = excluded.parent, north = excluded.north, south = excluded.south, west = excluded.west,
+  east = excluded.east, n = excluded.n, step_m = excluded.step_m, cell_m = excluded.cell_m, path = excluded.path,
+  bytes = excluded.bytes, trees = excluded.trees;
+"""
 
 
 def main():
     p = argparse.ArgumentParser(); p.add_argument('cmd'); p.add_argument('work')
     p.add_argument('--depth', type=int, default=7); p.add_argument('--tile-n', type=int, default=800); p.add_argument('--min-h', type=float, default=4.0)
-    p.add_argument('--cache', default=None); p.add_argument('--details'); p.add_argument('--files'); p.add_argument('--out')
+    p.add_argument('--min-multi', type=float, default=0.5); p.add_argument('--max-elev', type=float, default=3300); p.add_argument('--max-slope', type=float, default=55)
+    p.add_argument('--cache', default=None); p.add_argument('--details'); p.add_argument('--files'); p.add_argument('--out'); p.add_argument('--sql')
     a = p.parse_args(); os.makedirs(a.work, exist_ok=True)
     a.cache = a.cache or os.path.join(a.work, 'cache'); a.out = a.out or os.path.join(a.work, 'files')
     {'grid': grid, 'check': check, 'tiles': tiles}[a.cmd](a)

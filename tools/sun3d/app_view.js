@@ -1207,8 +1207,8 @@
     const e = H(i + 1, j + 1); return e + (1 - fu) * (d - e) + (1 - fv) * (b - e);
   }
   // The trees for a viewpoint: every tree cell within `range` m of it, kept with chance p = (d0 / distance)^2 (all of
-  // them within d0), each kept one standing for 1 / p cells (wider, as a clump), at most `cap` in all (d0 shrinks to
-  // fit). Sorted into WB x WB blocks around the viewpoint, so a frame draws only the blocks in view.
+  // them within d0), each kept one standing for 1 / p cells (wider, as a clump, up to 5 times its height), about `cap`
+  // in all (d0 is set to fill it: 250 m in thick forest to 1.2 km over open flats). Sorted into WB x WB blocks around the viewpoint, so a frame draws only the blocks in view.
   async function widePoints(tiles, at, cap, range, breathe) {
     const my = cfg, kx = my.W / (my.east - my.west), kz = my.D / (my.north - my.south), q = cr(at), ex = (q.c + 0.5) * FAR.dx, ez = (q.r + 0.5) * FAR.dz;
     const inner = DT ? [DT.x0 + DT.band, DT.x0 + DT.w - DT.band, DT.z0 + DT.band, DT.z0 + DT.d - DT.band] : null;   // the laser box's own trees
@@ -1242,14 +1242,15 @@
     let d0 = WIDE_D0, sum = 0;
     await each((x, z, h, d2) => { sum += d2 < d0 * d0 ? 1 : d0 * d0 / d2; });
     if (!sum) return null;
-    if (sum > cap) d0 *= Math.sqrt(cap / sum) * 0.97;   // the part beyond d0 grows as d0 squared, the part inside it less: a little under the cap
+    d0 = Math.max(250, Math.min(1200, d0 * Math.sqrt(cap / sum) * 0.97));   // fill the budget, no more: the part beyond d0 grows as d0 squared, the part inside it less (a little under the cap)
+    if (d0 > WIDE_D0) { sum = 0; await each((x, z, h, d2) => { sum += d2 < d0 * d0 ? 1 : d0 * d0 / d2; }); if (sum > cap) d0 *= Math.sqrt(cap / sum) * 0.97; }
     const room = Math.min(cap, Math.ceil(sum) + 64), pos = new Float32Array(room * 3), tw = new Float32Array(room * 4), blk = new Uint16Array(room);
     let s = 20261113, m = 0; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
     const bx = (2 * range) / WB, cell0 = Math.max(T[0].dx, T[0].dz), D02 = d0 * d0;
     await each((x, z, h, d2, t) => {
       if (m >= room) return;
       const p = d2 < D02 ? 1 : D02 / d2; if (p < 1 && rnd() >= p) return;
-      const hh = h * (0.9 + 0.2 * rnd()), wide = p < 1 ? Math.min(8 * hh, Math.max(0.45 * hh, 1.1 * cell0 * Math.sqrt(1 / p))) : Math.max(1.2, Math.min(0.5 * hh, 1.2 * cell0));
+      const hh = h * (0.9 + 0.2 * rnd()), wide = p < 1 ? Math.min(5 * hh, Math.max(0.45 * hh, 1.1 * cell0 * Math.sqrt(1 / p))) : Math.max(1.2, Math.min(0.5 * hh, 1.2 * cell0));
       const px = x + (rnd() - 0.5) * t.dx * 0.8, pz = z + (rnd() - 0.5) * t.dz * 0.8;
       pos[m * 3] = px; pos[m * 3 + 1] = groundAt(px, pz); pos[m * 3 + 2] = pz;
       tw[m * 4] = hh; tw[m * 4 + 1] = wide; tw[m * 4 + 2] = rnd(); tw[m * 4 + 3] = rnd();
