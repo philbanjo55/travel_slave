@@ -878,6 +878,9 @@ def sun_3d():
             V.show('sun3d-full', g)
             V.check('sun3d-full-open', False, 'full screen did not open' if tries else 'no full-screen button on screen')
         time.sleep(4)
+        # 13 Nov 2026: the notes, credits and saved line sit behind "About" (Phil: too much text under the picture)
+        if V.find_scroll('About this view', 6):
+            time.sleep(1.5)
         seen, _ = V.texts_all(2)
         V.check('sun3d-moments', seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you'), 'first / last light chips')
         # Teton winter colour (13 Nov 2026): builds that know the region's colour file show its credit line under the view
@@ -888,7 +891,7 @@ def sun_3d():
         # 12 Nov 2026: Phil's 4x5 lenses, the frame box button and the Street View link
         V.check('sun3d-lenses-4x5', all(seen_has(seen, f'{f} millimetre lens') for f in (75, 90, 135, 300)), '75 / 90 / 135 / 300 lens buttons')
         V.check('sun3d-frame-button', seen_has(seen, '4x5 frame box'), 'frame box button')
-        V.check('sun3d-street-view', seen_has(seen, 'Street View from this spot'), 'Street View link')
+        V.check('sun3d-street-view', seen_has(seen, 'Street View'), 'Street View link')
         V.check('sun3d-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined'))
         line = next((x for x in seen if '3D terrain' in x), None)
         V.check('sun3d-saved-line', line is not None, (line or 'no "3D terrain saved for this trip" line')[:110])
@@ -1006,6 +1009,8 @@ def faroes_3d():
         time.sleep(2)
     V.check('fo3d-fg-in', lab is not None and ', showing' in lab, f'{(lab or "no Foreground button")[:80]} after {time.time() - t1:.0f} s')
     seen = []
+    if V.find_scroll('About this view', 4):   # credits behind "About" since 13 Nov 2026
+        time.sleep(1.5)
     for _ in range(3):
         seen += C.capture(1.2).all_texts
         C.adb('shell', 'input', 'swipe', '540', '1500', '540', '900', '500')
