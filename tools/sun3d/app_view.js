@@ -16,8 +16,26 @@
 //   posts `detail` {stage: 'decode' | 'mask' | 'textures' | 'trees' | 'light' | 'done', ms} so a log shows where a slow
 //   phone is. The app sends the foreground after `ready`:
 //   S3D.fore({ detail, water, ice })   then its chunks ('detail', 'mask', 'trees', 'water')   then S3D.foreDone().
+//   Faroes (13 Nov 2026): also 'color' (the detail box's aerial photo, a JPEG), 'bld' (its building file, JSON) and
+//   'ncolor' (the fine box's aerial photo); detail.width / detail.depth = the box's size in the files' own metres. A
+//   fine-box photo alone (no detail box) is a foreground too. `foreground` then also says {colour, photos, buildings}.
+//   The photos colour the ground (rock on faces steeper than ~50 deg, the mask's water as water, a stream over a cliff
+//   as a white fall), the wide grid's grass is tinted toward the photo's mean colour, and the houses (heights guessed)
+//   are drawn and throw a drawn shadow; NONE of it reaches lit() / first and last light, which read the ground only.
 //   Foreground chunks sent before done() (the test harness) are treated the same way. `lost` = the graphics context went.
+//   Grand Teton (13 Nov 2026): 'wcolor' = a winter colour file of the whole wide grid (Sentinel-2, JPEG, north up on
+//   its lat / lng grid), a foreground on its own too. Where the ground is snow (cfg.ground !== 'green') 'ncolor' and
+//   'color' are winter colour files as well (summer aerial photos turned to winter by the builder,
+//   tools/sun3d/teton_colour): all three are ALBEDO, baked into the light passes in place of the calculated colours
+//   (forest guess, rock on steep faces, snow), so everything that reads a light map (the next mesh's edge, the water,
+//   the trees) carries on as before; the wide mesh gets back the file's own 13 m detail where it is near. The
+//   survey's water and buildings keep their own drawing. The Faroes way (photo times light, in the mesh) is unchanged.
 //   S3D.sun(az, alt)  degrees, from the app's own sun engine      S3D.focal(mm)
+//   Smoothness (12 Nov 2026, see "Smooth by construction" below): while the view is being moved (a drag, the time slider,
+//   walk mode) frames may be drawn lighter and one full-quality frame follows when it stops. When a movement ends the
+//   page posts `perf` {kind: 'look' | 'sun', ms: median frame time, worst, frames, level: 0 full .. 3 low, quality: its
+//   name, levels: {look, sun}, px: canvas pixels while moving, pts: tree points drawn, timed: 'fence' | 'frame'}, at
+//   most once a second. cfg.level = {look, sun} (the `levels` of an earlier page) starts a new page at those levels.
 //   S3D.view(eyeLat, eyeLng, targetLat, targetLng)                S3D.path([[minute, az, alt], ...]) -> 'moments'
 // Two levels (Faroes close-ups): the wide grid (far) draws everything; where a near grid is given, the far mesh is cut
 // out inside it and a second, finer mesh is drawn there (denser around the shot), lit from its own heights, with
@@ -46,11 +64,36 @@
   const free = a => { try { const b = a && (a.buffer || a); if (b && typeof b.transfer === 'function' && b.byteLength) b.transfer(0); } catch (e) { /* left to the collector */ } };
   window.onerror = msg => { post({ type: 'error', msg: String(msg) }); };
 
-  let cfg = null, parts = [], nparts = [], dparts = [], mparts = [], tparts = [], wparts = [], FAR = null, NR = null, DT = null, ice = true, maxH = 4250, baseH = 0;
+  let cfg = null, parts = [], nparts = [], dparts = [], mparts = [], tparts = [], wparts = [], cparts = [], ncparts = [], bparts = [], wcparts = [], FAR = null, NR = null, DT = null, ice = true, maxH = 4250, minH = 0, baseH = 0;
   let foreState = 0, frames = 0, lastPath = null, touched = false;   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
   let R = null;   // everything three.js, once built
-  let eye = null, eye0 = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true, hiTimer = null;
+  let eye = null, eye0 = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true;
   const G = 768;  // mesh points per side
+
+  // ---- Smooth by construction (12 Nov 2026; measured in tools/sun3d/README.md, "Smoothness") ----
+  // 1. Nothing is drawn that cannot be seen. Each mesh's triangles are kept in NB x NB blocks and a frame draws only
+  //    the blocks whose box touches the view: the same picture from a fraction of the triangles.
+  // 2. Never more than one frame on the graphics card. A new frame is not sent until the last one is done (a fence),
+  //    so a slow phone shows the newest heading / sun / spot, not a queue of old ones. The time from a frame's start
+  //    to its fence is the frame time the page reports ('perf') and steers by.
+  // 3. Sharp when still, lighter while moving. While a drag, a run of sun positions (the time slider) or a run of
+  //    walk steps is going on, frames are drawn at the level the phone has shown it keeps up with (QL: canvas
+  //    resolution, share of the tree points, size of the light pass, and at the two lowest levels every other point
+  //    of the meshes: first the near and detail ones, whose triangles are smaller than a pixel anyway, last the far
+  //    one, which is the skyline). When it stops, one frame is drawn at full quality, with the full light pass if
+  //    the sun moved.
+  // 4. The governor. Average frame time while moving over SLOW_MS: one level down; under FAST_MS: one level up (a
+  //    level that proved too slow right after a step up is not tried again). Two levels are kept, one for looking
+  //    around / walking and one for the sun (which also pays for a light pass); the app hands them back at the next
+  //    start (cfg.level), so the next stop begins where this one ended.
+  const NB = 16, BS = Math.ceil((G - 1) / NB), bedge = k => Math.min(G - 1, k * BS), BSTART = new Uint32Array(NB * NB + 1), BSTART2 = new Uint32Array(NB * NB + 1);
+  const QL = [{ res: 1, trees: 1, lt: 0, geo: 0 }, { res: 0.75, trees: 1, lt: 1, geo: 0 }, { res: 0.6, trees: 0.5, lt: 1, geo: 1 }, { res: 0.5, trees: 0.3, lt: 2, geo: 2 }];
+  const QN = ['full', 'high', 'medium', 'low'];
+  const SLOW_MS = 24, FAST_MS = 12, REST = { look: 150, sun: 260, walk: 280 };   // ms after the last change before the sharp frame (walk steps come 130 ms apart; the full light pass is heavy, so the sun waits as long as it always did)
+  const PX_MAX = 1400000;   // canvas pixels at most: 2 device pixels a point on a phone screen (412 x 800 at 2 = 1.32 M), less on a bigger one
+  const lv = { look: 0, sun: 0 }, noUp = { look: [], sun: [] }, tried = { look: false, sun: false };
+  let act = null, owe = false, quick = false, sharp = false, restTimer = null, resting = false, lastPerf = -1e9, lensKey = '';
+  const gate = { sync: null, t0: 0, act: null, gov: false, off: false, wait: false, poll: null };
 
   // A grid: n x n heights (HF, row 0 = north) over a lat/lng box; x0, z0, w, d place it in the far grid's metres.
   const gh = (g, c, r) => {
@@ -135,6 +178,15 @@
     #ifdef NEAR
     uniform sampler2D fmap; uniform vec4 rect; uniform vec2 fsize; uniform float step0; uniform float fcells;
     #endif
+    #ifdef FTINT
+    uniform vec3 tintK;   // the wide grid's grass toward the mean colour of the area's aerial photo (Faroes): no stamp edge round the photo
+    #endif
+    #ifdef APHOTO
+    uniform sampler2D aphoto; uniform vec4 arect;   // a winter colour file (albedo, as seen): this grid's uv -> the file's
+    #endif
+    #ifdef BSHADOW
+    uniform sampler2D bmap;   // house heights above the ground / 51 m (assumed heights): a drawn shadow only, never in the sun times
+    #endif
     #ifdef DETAIL
     uniform sampler2D kmap; uniform float lift; uniform float ice;
     #ifdef MID
@@ -160,14 +212,24 @@
       float fine = hash(floor(g)), pch = vnoise(gp / 9.) * .6 + vnoise(gp / 2.5) * .4;
       vec3 alb;
       if (snowMode > .5) {
+    #ifdef APHOTO
+        alb = pow(texture2D(aphoto, arect.xy + vUv * arect.zw).rgb, vec3(1.613));   // what was there on a winter day, not a guess
+        // a 10 m picture from above sees a cliff only as its ledges (snow): snow does not hold past ~55 deg, so the steepest
+        // faces are the rock they are (the Grand's summit block, the canyon walls)
+        alb = mix(alb, vec3(.27, .26, .26) + fine * .06, smoothstep(44., 60., slope + fine * 6.) * .85);
+    #else
         float rock = smoothstep(37., 53., slope + fine * 7.);
         float forest = smoothstep(2040., 2110., h) * (1. - smoothstep(2600., 2950., h + pch * 260.)) * smoothstep(3., 8., slope + pch * 4.) * (1. - rock) * smoothstep(.25, .6, pch + fine * .25);
         alb = vec3(.93, .95, .98);
         alb = mix(alb, vec3(.24, .31, .29) + fine * .08, forest * .9);
         alb = mix(alb, vec3(.38, .36, .37) + fine * .06, rock);
+    #endif
       } else {
         float rock = smoothstep(33., 50., slope + fine * 7.);
         vec3 grass = mix(vec3(.25, .36, .16), vec3(.37, .38, .22), smoothstep(120., 620., h + pch * 160.));
+    #ifdef FTINT
+        grass *= tintK;
+    #endif
         alb = mix(grass + fine * .05, vec3(.34, .32, .31) + fine * .06, rock);
         if (h < .6) alb = vec3(.07, .16, .24);
       }
@@ -180,7 +242,11 @@
         vec3 wood = vec3(.41, .31, .23) * (.72 + fine * .26 + .34 * vnoise(g * vec2(.8, .22))), water;   // weathered boards, no two alike
         float roof = 1. - smoothstep(48., 62., slope);
         if (snowMode > .5) {
+    #ifdef APHOTO
+          alb = pow(texture2D(aphoto, arect.xy + vUv * arect.zw).rgb, vec3(1.613));   // the winter colour file; water and boards below as before
+    #else
           alb = mix(vec3(.93, .95, .98), vec3(.38, .36, .37) + fine * .06, smoothstep(37., 53., slope + fine * 7.) * open);
+    #endif
           water = vec3(.11, .17, .22);
           wood = mix(wood, vec3(.90, .92, .95), roof * (.3 + .35 * (1. - smoothstep(20., 36., slope))));   // a roof is a touch lighter under snow, more so where it is flat
         } else {
@@ -194,18 +260,25 @@
       float d = 0.;
       if (sunDir.y > -sin(radians(.95) * sqrt(max(0., h - baseH) / 1000.))) {   // a high point still sees a sun just under the flat horizon
         float lam = dot(n, sunDir);
+    #ifdef PHOTO
+        // ground under an aerial photo (Faroes): this pass gives the light only (the photo is the colour, in the mesh);
+        // an upright face in a 1-4 m grid is a row of facets, so its light is evened out
+        float lamE = max(lam, 0.); lamE = mix(lamE, .5 * lamE + .22, smoothstep(55., 75., slope));
+    #else
+        float lamE = lam;
+    #endif
     #ifdef DETAIL
         {   // worked out for every cell, facing the sun or not: the tree points above it read the result (alpha)
     #else
-        if (lam > 0.) {
+        if (lamE > 0.) {
     #endif
           vec2 dir = normalize(sunDir.xz) / size; float tanA = sunDir.y / length(sunDir.xz);
     #ifdef DETAIL
-          float L = step0, dist = 0., v = 1., ts = 0.;
+          float L = step0, dist = 0., v = 1., ts = 0., vg = 1.;
           for (int k = 0; k < 300; k++) {   // short steps among the roofs, longer ones once past the box
             dist += L; vec2 p = vUv + dir * dist; float hh = h + lift + tanA * dist;
             if (hh > maxH) break;
-            float gr;
+            float gr, bh = 0.;
             if (p.x < 0. || p.y < 0. || p.x > 1. || p.y > 1.) {
               vec2 w = rect.xy + p * rect.zw, q = w / fsize;
               if (q.x < 0. || q.y < 0. || q.x > 1. || q.y > 1.) break;
@@ -215,11 +288,25 @@
               if (u.x > 0. && u.y > 0. && u.x < 1. && u.y < 1.) { vec2 m = texture2D(mmap, u).rg; gr = m.r + m.g; }
     #endif
               L *= 1.06;
-            } else { gr = H(p); if (hh - gr < texture2D(kmap, p).a * 51.) ts += L * .2; L = min(L * 1.025, 3.); }   // under a tree's canopy: a soft shadow that grows with the way through it
+            } else {
+              gr = H(p); if (hh - gr < texture2D(kmap, p).a * 51.) ts += L * .2; L = min(L * 1.025, 3.);   // under a tree's canopy: a soft shadow that grows with the way through it
+    #ifdef BSHADOW
+              bh = texture2D(bmap, p).r * 51.;
+    #endif
+            }
             float cl = hh - gr;
+    #ifdef BSHADOW
+            // v: ground and houses (the picture's shadows); vg: ground only (alpha: what the houses' own walls and the water read)
+            if (cl <= 0.) { v = 0.; vg = 0.; break; }
+            vg = min(vg, cl / (dist * .02)); v = min(v, (cl - bh) / (dist * .02));
+    #else
             if (cl <= 0.) { v = 0.; break; }
             v = min(v, cl / (dist * .02));
+    #endif
           }
+    #ifdef BSHADOW
+          v = max(v, 0.);
+    #endif
     #else
     #ifdef NEAR
           float L = step0, dist = 0., v = 1.;
@@ -248,13 +335,20 @@
     #endif
     #endif
     #ifdef DETAIL
-          d = max(lam, 0.) * v * (1. - .5 * min(ts, 1.)); va = v;   // tree shade is lighter than a hill's or a barn's
+          d = max(lamE, 0.) * v * (1. - .5 * min(ts, 1.)); va = v;   // tree shade is lighter than a hill's or a barn's
+    #ifdef BSHADOW
+          va = vg;
+    #endif
     #else
-          d = lam * v;
+          d = lamE * v;
     #endif
         }
       }
+    #ifdef PHOTO
+      vec3 c = amb * (.72 + .28 * n.y) + sunCol * d;
+    #else
       vec3 c = alb * (amb * (.72 + .28 * n.y) + sunCol * d);
+    #endif
     #ifdef DETAIL
       gl_FragColor = vec4(pow(min(c * .9, vec3(1.)), vec3(.62)), va);
     #else
@@ -323,6 +417,9 @@
     varying vec3 vP;
     ` + WATER_GLSL + `
     #endif
+    #ifdef WDET
+    uniform sampler2D wphoto; uniform float wlod;   // the winter colour file, finer than the light map: its detail back on top
+    #endif
     void main() {
     #ifdef HOLE
       vec2 w = vUv * size; if (min(min(w.x - hole.x, hole.z - w.x), min(w.y - hole.y, hole.w - w.y)) > band) discard;
@@ -331,6 +428,9 @@
       { vec2 w2 = vUv * dsize; if (min(min(w2.x - dhole.x, dhole.z - w2.x), min(w2.y - dhole.y, dhole.w - w2.y)) > dband) discard; }
     #endif
       vec3 c = texture2D(lmap, vUv).rgb;
+    #ifdef WDET
+      { vec3 pf = texture2D(wphoto, vUv).rgb, pc = textureLod(wphoto, vUv, wlod).rgb; c *= clamp((pf + .03) / (pc + .03), .55, 1.6); }
+    #endif
     #ifdef WATER
       c = wideWater(c, vP);
     #endif
@@ -349,7 +449,7 @@
     uniform vec4 dhole; uniform float dkeep; uniform float dband; varying vec2 vW;
     #endif
     varying vec2 vUv; varying vec2 vF; varying float vT; varying float vDist;
-    #if defined(BLD) || defined(WATER)
+    #if defined(BLD) || defined(WATER) || defined(NPHOTO)
     varying vec3 vP;
     #endif
     #ifdef BLD
@@ -388,7 +488,7 @@
     #ifdef DHOLE
       vW = w; { float d2 = min(min(w.x - dhole.x, dhole.z - w.x), min(w.y - dhole.y, dhole.w - w.y)); y -= clamp(d2 - dkeep, 0., dband - dkeep) * 1.5; }
     #endif
-    #if defined(BLD) || defined(WATER)
+    #if defined(BLD) || defined(WATER) || defined(NPHOTO)
       vP = vec3(w.x, y, w.y);
     #endif
       vec4 mv = viewMatrix * vec4(w.x, y, w.y, 1.); vDist = length(mv.xyz); gl_Position = projectionMatrix * mv;
@@ -401,12 +501,36 @@
     #ifdef DHOLE
     uniform vec4 dhole; uniform float dband; varying vec2 vW;
     #endif
-    #if defined(BLD) || defined(WATER)
+    #if defined(BLD) || defined(WATER) || defined(NPHOTO)
     varying vec3 vP;
     ` + WATER_GLSL + `
     #endif
     #ifdef BLD
     uniform sampler2D kmap;
+    #endif
+    #if defined(NPHOTO) || defined(DPHOTO)
+    #define PH_ANY 1
+    #endif
+    #ifdef PH_ANY
+    // Ground under an aerial photo (Faroes, 13 Nov 2026): the photo is the colour (north up on the box's own lat / lng
+    // grid), the light map gives the light. Faces steeper than about 50 degrees show nothing in a photo from above and
+    // are drawn as rock in beds; the sea, lakes and streams of the mask as water; a stream on steep ground as a white fall.
+    uniform sampler2D hmap; uniform vec4 rect; uniform float pcells; uniform vec3 rockC; uniform vec3 tintC;
+    #if defined(NPHOTO) || defined(NPH)
+    uniform sampler2D nphoto;
+    #endif
+    #ifdef DPHOTO
+    uniform sampler2D dphoto;
+    #endif
+    float phash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float pnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(phash(i), phash(i + vec2(1., 0.)), f.x), mix(phash(i + vec2(0., 1.)), phash(i + vec2(1.)), f.x), f.y); }
+    float Hp(vec2 uv) { vec2 t = texture2D(hmap, uv).rg; return t.r + t.g; }
+    vec3 cliff(vec3 P, float slope) {   // basalt in beds: flat-lying bands by height, darker joints, a little grass on the ledges
+      float bed = pnoise(vec2(P.y * .30, (P.x + P.z) * .012)), fn = pnoise(vec2(P.y * 1.7, (P.x - P.z) * .05)), jt = pnoise(vec2((P.x - P.z) * .16, P.y * .03));
+      vec3 c = rockC * (.74 + .34 * bed + .14 * fn - .07 * smoothstep(.6, .8, jt));
+      float ledge = smoothstep(.62, .8, pnoise(vec2(P.y * .22 + 3., (P.x + P.z) * .02))) * (1. - smoothstep(60., 80., slope));
+      return mix(c, tintC * .8, ledge * .5);
+    }
     #endif
     void main() {
     #ifdef DHOLE
@@ -417,6 +541,56 @@
       under = mix(under, texture2D(mlmap, vM).rgb, vMT);
     #endif
       vec3 c = mix(under, texture2D(lmap, vUv).rgb, vT);
+    #ifdef PH_ANY
+      {
+        float tx = 1. / pcells, h = Hp(vUv);
+        float hx = (Hp(vUv + vec2(tx, 0.)) - Hp(vUv - vec2(tx, 0.))) / (2. * tx * rect.z), hz = (Hp(vUv + vec2(0., tx)) - Hp(vUv - vec2(0., tx))) / (2. * tx * rect.w);
+        vec3 n = normalize(vec3(-hx, 1., -hz)); float slope = degrees(acos(clamp(n.y, -1., 1.)));
+        vec4 L = texture2D(lmap, vUv); vec3 lf = L.rgb;
+        vec2 upv = length(n.xz) > .01 ? -normalize(n.xz) * tx : vec2(0.);
+        if (slope > 50.) lf = max(lf, texture2D(lmap, vUv + upv * 1.6).rgb * .85);   // a wall has no cell of its own: the light its top gets
+    #ifdef DPHOTO
+        float e = min(min(vUv.x, 1. - vUv.x) * rect.z, min(vUv.y, 1. - vUv.y) * rect.w);
+    #ifdef NPH
+        vec3 ph = mix(texture2D(nphoto, vM).rgb, texture2D(dphoto, vUv).rgb, smoothstep(4., 44., e));   // the sharper photo eased in at the box edge
+    #else
+        vec3 ph = texture2D(dphoto, vUv).rgb;
+    #endif
+        {   // close to the eye a 0.5-1 m photo is a blur: grass tufts of our own on top of it
+          float wn = 1. - smoothstep(7., 30., distance(cameraPosition, vP));
+          if (wn > 0.) ph *= 1. + wn * .5 * (pnoise(vP.xz * 7.) * .45 + pnoise(vP.xz * 23.) * .35 + pnoise(vP.xz * 2.1) * .2 - .5);
+        }
+        float sv = L.a;
+    #else
+        vec3 ph = texture2D(nphoto, vUv).rgb;
+        float sv = smoothstep(-.02, .06, sunDir.y);
+    #endif
+        vec3 own = ph;
+        if (slope > 44.) own = mix(ph, cliff(vP, slope), smoothstep(44., 56., slope));   // (the noise only where it shows)
+        own *= lf;
+    #ifdef DPHOTO
+        ivec2 lim = ivec2(int(pcells) - 1);
+        float kb = texelFetch(kmap, clamp(ivec2(vUv * pcells), ivec2(0), lim), 0).b;
+        bool stream = kb > .15 && kb < .4, fall = false;
+        if (slope > 40.) {   // a stream over a cliff (here, or just above: a wall has no cell of its own): a white fall
+          float ku = texelFetch(kmap, clamp(ivec2((vUv + upv * 1.2) * pcells), ivec2(0), lim), 0).b, ku2 = texelFetch(kmap, clamp(ivec2((vUv + upv * 2.4) * pcells), ivec2(0), lim), 0).b;
+          fall = stream || (ku > .15 && ku < .4) || (ku2 > .15 && ku2 < .4);
+        }
+        if (fall)
+          own = mix(vec3(.84, .88, .92), vec3(.98), pnoise(vec2(vP.x * 3. + vP.z * 3., vP.y * .35))) * (.35 + .65 * lf);
+        else if (kb > .4 && slope < 25.) own = h < .6 ? waterCol(vP, sv) : mix(own, waterCol(vP, sv), .92);
+        else if (stream && slope < 40.) own = mix(own, waterCol(vP, sv), .3);
+        else if (h < .6 && slope < 25.) own = waterCol(vP, sv);
+        c = mix(under, own, vT);
+    #ifdef NPH
+        c = own;   // the fine box under it has the same photo: no blend needed, and none wanted (its light is coarser)
+    #endif
+    #else
+        if (h < .6 && slope < 25.) own = waterCol(vP, sv);
+        c = mix(under, own, vT);
+    #endif
+      }
+    #else
     #ifdef WATER
     #ifdef BLD
       c = mix(wideWater(c, vP), c, vT);   // only in the strip where the box blends into its surroundings: inside, its own mask says where water is
@@ -429,6 +603,7 @@
         float b = texture2D(kmap, vUv).b, open = clamp(b * 2., 0., 1.) * (ice > .5 ? smoothstep(.6, .9, b) : 1.) * vT;
         if (open > .01) c = mix(c, waterCol(vP, texture2D(lmap, vUv).a), open);
       }
+    #endif
     #endif
       float f = 1. - exp(-pow(fogD * vDist, 2.)); gl_FragColor = vec4(mix(c, fogCol, f), 1.);
     }`;
@@ -519,6 +694,12 @@
         }
       }
     });
+    // in no order, so a share of the points (drawn while the view moves on a slow phone) is a thinner copy of every tree, not a part of the box
+    for (let i = m - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1)); if (j === i) continue;
+      for (let q = 0; q < 3; q++) { const t = pos[i * 3 + q]; pos[i * 3 + q] = pos[j * 3 + q]; pos[j * 3 + q] = t; }
+      for (let q = 0; q < 4; q++) { const t = seed[i * 4 + q]; seed[i * 4 + q] = seed[j * 4 + q]; seed[j * 4 + q] = t; }
+    }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos.slice(0, m * 3), 3)); geo.setAttribute('seed', new THREE.BufferAttribute(seed.slice(0, m * 4), 4));
     free(pos); free(seed);
@@ -552,19 +733,19 @@
   }
   // skip = 2 keeps every other cell each way (the light foreground of a small phone): a quarter of the memory
   async function decode(list, n, base, step, skip) {
-    const two = skip === 2, m = two ? n >> 1 : n, HF = new Float32Array(m * m); let up = new Uint16Array(n), cur = new Uint16Array(n), hi = -1e9;   // only two lines of the 16-bit values are kept
+    const two = skip === 2, m = two ? n >> 1 : n, HF = new Float32Array(m * m); let up = new Uint16Array(n), cur = new Uint16Array(n), hi = -1e9, lo = 1e9;   // only two lines of the 16-bit values are kept
     const rows = await lines(pack(list), 2 * n + 1, (raw, r) => {
       if (r >= n) return;
       for (let c = 0, p = 1; c < n; c++, p += 2) {
         const res = (raw[p] << 8) | raw[p + 1], v = (res + (c ? cur[c - 1] : 0) + (r ? up[c] : 0) - (r && c ? up[c - 1] : 0)) & 65535;
         cur[c] = v;
-        if (!two) { const h = base + v * step; HF[r * n + c] = h; if (h > hi) hi = h; }
-        else if (!(r & 1) && !(c & 1) && (r >> 1) < m && (c >> 1) < m) { const h = base + v * step; HF[(r >> 1) * m + (c >> 1)] = h; if (h > hi) hi = h; }
+        if (!two) { const h = base + v * step; HF[r * n + c] = h; if (h > hi) hi = h; if (h < lo) lo = h; }
+        else if (!(r & 1) && !(c & 1) && (r >> 1) < m && (c >> 1) < m) { const h = base + v * step; HF[(r >> 1) * m + (c >> 1)] = h; if (h > hi) hi = h; if (h < lo) lo = h; }
       }
       const t = up; up = cur; cur = t;
     });
     if (rows !== n) throw new Error('terrain file has the wrong size');
-    return { HF, hi };
+    return { HF, hi, lo };
   }
   // any 8-bit file of ours: h lines of w bytes
   async function decodeBytes(list, w, h) {
@@ -577,7 +758,7 @@
   async function load() {
     const f = await decode(parts, cfg.n, cfg.base, cfg.step); parts = [];
     FAR = { n: cfg.n, HF: f.HF, north: cfg.north, south: cfg.south, west: cfg.west, east: cfg.east, x0: 0, z0: 0, w: cfg.W, d: cfg.D, dx: cfg.W / cfg.n, dz: cfg.D / cfg.n };
-    maxH = f.hi + 60; NR = null; DT = null;
+    maxH = f.hi + 60; minH = f.lo; NR = null; DT = null;
     { const s = []; for (let i = 0; i < f.HF.length; i += 37) s.push(f.HF[i]); s.sort((a, b) => a - b); baseH = s[Math.floor(s.length * 0.1)] || 0; }   // the area's low ground: valley floor, or the sea
     const nc = cfg.near, list = nparts; nparts = [];
     if (nc && list.length) try {   // the fine grid is an extra: if its file is bad the wide one still draws
@@ -585,7 +766,7 @@
       const w = (nc.east - nc.west) * kx, d = (nc.north - nc.south) * kz, cell = Math.max(cfg.W, cfg.D) / (G - 1);
       if (!(nc.west >= cfg.west && nc.east <= cfg.east && nc.south >= cfg.south && nc.north <= cfg.north) || Math.min(w, d) < 12 * cell) throw new Error('near grid does not fit');
       NR = { n: nc.n, HF: m.HF, north: nc.north, south: nc.south, west: nc.west, east: nc.east, x0: (nc.west - cfg.west) * kx, z0: (cfg.north - nc.north) * kz, w, d, dx: w / nc.n, dz: d / nc.n, keep: 1.6 * cell, band: 4.2 * cell, up: FAR };
-      maxH = Math.max(maxH, m.hi + 60);
+      maxH = Math.max(maxH, m.hi + 60); minH = Math.min(minH, m.lo);
     } catch (e) { NR = null; post({ type: 'near', ok: false, msg: String(e && e.message || e) }); }
   }
 
@@ -614,7 +795,7 @@
      for (let c = 0; c < n; c++) {
       const i = r * n + c, v = k[i], bl = v === 2; let by = bl;
       if (!by) for (let b = Math.max(0, r - 1); b <= Math.min(n - 1, r + 1) && !by; b++) for (let a = Math.max(0, c - 1); a <= Math.min(n - 1, c + 1); a++) if (k[b * n + a] === 2) { by = true; break; }
-      px[i * 4] = bl ? 255 : 0; px[i * 4 + 1] = by ? 255 : 0; px[i * 4 + 2] = v === 3 && !by ? (still(r, c) ? 127 : 255) : 0; px[i * 4 + 3] = v >= 8 ? v - 8 : 0;
+      px[i * 4] = bl ? 255 : 0; px[i * 4 + 1] = by ? 255 : 0; px[i * 4 + 2] = v === 3 && !by ? (still(r, c) ? 127 : 255) : v === 4 ? 64 : 0; px[i * 4 + 3] = v >= 8 ? v - 8 : 0;
      }
     }
     const t = new THREE.DataTexture(px, n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -625,7 +806,7 @@
     const canvas = document.getElementById('view');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     if (!renderer.capabilities.isWebGL2) throw new Error('no WebGL2');
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.setPixelRatio(1);   // the canvas is sized in device pixels by draw(): sharp when still, the level's share while moving
     const N = FAR.n, hmap = heightTex(FAR);
     const size = new THREE.Vector2(FAR.w, FAR.d);
     const rt = n => { const t = new THREE.WebGLRenderTarget(n, n, { minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true, depthBuffer: false }); t.texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); return t; };
@@ -638,8 +819,22 @@
 
     const pos = new Float32Array(G * G * 3);
     for (let j = 0, k = 0; j < G; j++) for (let i = 0; i < G; i++) { pos[k++] = i / (G - 1); pos[k++] = 0; pos[k++] = j / (G - 1); }
-    const idx = new Uint32Array((G - 1) * (G - 1) * 6); let m = 0;
-    for (let j = 0; j < G - 1; j++) for (let i = 0; i < G - 1; i++) { const a = j * G + i, b = a + 1, d = a + G, e = d + 1; idx[m++] = a; idx[m++] = d; idx[m++] = b; idx[m++] = b; idx[m++] = d; idx[m++] = e; }
+    // A second, coarser set of triangles after the first, in the same blocks: every other point each way (the two rings
+    // at a mesh's edge, its rim and its skirt, are all kept). Drawn in place of the full set while the view moves on a slow phone.
+    const LS = []; let nc = 0;
+    for (let k = 0; k < NB; k++) { const a = bedge(k), b = bedge(k + 1), v = [a]; for (let i = a + 1; i < b; i++) if (!(i & 1) || i === 1) v.push(i); v.push(b); LS.push(v); nc += v.length - 1; }
+    const idx = new Uint32Array((G - 1) * (G - 1) * 6 + nc * nc * 6); let m = 0;
+    // the triangles block by block (NB x NB blocks, BSTART = where each begins), so a frame can draw only the blocks in view
+    for (let bj = 0; bj < NB; bj++) for (let bi = 0; bi < NB; bi++) {
+      BSTART[bj * NB + bi] = m;
+      for (let j = bedge(bj); j < bedge(bj + 1); j++) for (let i = bedge(bi); i < bedge(bi + 1); i++) { const a = j * G + i, b = a + 1, d = a + G, e = d + 1; idx[m++] = a; idx[m++] = d; idx[m++] = b; idx[m++] = b; idx[m++] = d; idx[m++] = e; }
+    }
+    BSTART[NB * NB] = m;
+    for (let bj = 0; bj < NB; bj++) for (let bi = 0; bi < NB; bi++) {
+      BSTART2[bj * NB + bi] = m; const rj = LS[bj], ri = LS[bi];
+      for (let j = 0; j < rj.length - 1; j++) for (let i = 0; i < ri.length - 1; i++) { const a = rj[j] * G + ri[i], b = rj[j] * G + ri[i + 1], d = rj[j + 1] * G + ri[i], e = rj[j + 1] * G + ri[i + 1]; idx[m++] = a; idx[m++] = d; idx[m++] = b; idx[m++] = b; idx[m++] = d; idx[m++] = e; }
+    }
+    BSTART2[NB * NB] = m;
     const index = new THREE.BufferAttribute(idx, 1);
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(index);
     const fog = { fogCol: { value: new THREE.Vector3() }, fogD: { value: 0.000011 } };
@@ -658,8 +853,8 @@
       const nLight = new THREE.ShaderMaterial({ defines: { NEAR: 1 }, uniforms: { hmap: { value: nmap }, fmap: { value: hmap }, rect: { value: rect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(NR.dx, NR.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(NR.w, NR.d) }, texel: { value: 1 / NR.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
       const nlo = rt(Math.min(1024, NR.n)), nhi = rt(NR.n);
       const mat = new THREE.ShaderMaterial({ defines: DT ? { DHOLE: 1 } : {}, uniforms: Object.assign({ hmap: { value: nmap }, fmap: { value: hmap }, lmap: { value: nlo.texture }, flmap: { value: lo.texture }, rect: { value: rect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: NR.keep }, band: { value: NR.band }, fogCol: fog.fogCol, fogD: fog.fogD }, dholeU), vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
-      const mesh = new THREE.Mesh(ngeo, mat); mesh.frustumCulled = false;
-      near = { lightMat: nLight, lo: nlo, hi: nhi, mat, mesh };
+      const mesh = new THREE.Mesh(ngeo, [mat]); mesh.frustumCulled = false;   // a list of one material: the mesh is drawn by its geometry's groups (the blocks in view)
+      near = { lightMat: nLight, lo: nlo, hi: nhi, lite: [], mat, mesh };
       terrU.hole = { value: new THREE.Vector4(NR.x0, NR.z0, NR.x0 + NR.w, NR.z0 + NR.d) }; terrU.keep = { value: NR.keep }; terrU.band = { value: NR.band };
     }
     const tdef = {}; if (near) tdef.HOLE = 1; if (det) tdef.DHOLE = 1;
@@ -668,7 +863,7 @@
       const drop = function () { free(this.array); this.array = null; }; index.onUpload(drop); geo.attributes.position.onUpload(drop); if (ngeo) ngeo.attributes.position.onUpload(drop);
       for (const t of [hmap, nmap]) if (t) t.onUpdate = () => { free(t.image.data); t.image = { data: null, width: t.image.width, height: t.image.height }; t.onUpdate = null; };
     }
-    const scene = new THREE.Scene(), terrain = new THREE.Mesh(geo, terrMat); terrain.frustumCulled = false; scene.add(terrain);
+    const scene = new THREE.Scene(), terrain = new THREE.Mesh(geo, [terrMat]); terrain.frustumCulled = false; scene.add(terrain);
     if (near) scene.add(near.mesh);
     const cam = new THREE.PerspectiveCamera(27, 1.5, det ? 1 : near ? 2 : 4, 260000); cam.rotation.order = 'YXZ';
     const skyGeo = new THREE.SphereGeometry(200000, 48, 24), skyPos = skyGeo.attributes.position, skyCol = new THREE.BufferAttribute(new Float32Array(skyPos.count * 3), 3); skyGeo.setAttribute('color', skyCol);
@@ -676,7 +871,8 @@
     const disc = new THREE.Mesh(new THREE.CircleGeometry(2100, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }));
     const halo = new THREE.Mesh(new THREE.CircleGeometry(9000, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, transparent: true, opacity: 0.22, depthWrite: false }));
     scene.add(halo); scene.add(disc);
-    R = { renderer, canvas, lo, hi, lightMat, quad, lightScene, lightCam, terrMat, near, det, skyU, iceU, lost: false,
+    const fx = new Float64Array(NB + 1), fz = new Float64Array(NB + 1); for (let k = 0; k <= NB; k++) { fx[k] = bedge(k) / (G - 1) * FAR.w; fz[k] = bedge(k) / (G - 1) * FAR.d; }
+    R = { renderer, canvas, gl: renderer.getContext(), cw: 0, ch: 0, thin: 1, fx, fz, lite: [], lo, hi, lightMat, quad, lightScene, lightCam, terrMat, near, det, skyU, iceU, lost: false,
       ctx: { hmap, nmap, nrect, size, rt, sunU, lightVS, fog, terrU, index, ngeo, terrain }, scene, cam, sky, skyPos, skyCol, disc, halo, sv: sunVec(180, 20) };
   }
 
@@ -684,7 +880,7 @@
   const FORE_MS = 60000;   // a slow phone gets a minute; past that the box is dropped and the plain view stays
   const pause = () => new Promise(r => setTimeout(r, 0));
   function queueFore() {
-    if (foreState !== 0 || !cfg || !cfg.detail || !dparts.length) return;
+    if (foreState !== 0 || !cfg || !((cfg.detail && dparts.length) || ncparts.length || wcparts.length)) return;
     foreState = 1;
     const go = () => { if (!R) return; if (frames >= 2) addFore(); else setTimeout(go, 60); };
     setTimeout(go, 320);   // the plain view has had its first frames and its full light pass
@@ -700,17 +896,19 @@
       const pm = performance.memory; if (pm && pm.jsHeapSizeLimit && pm.usedJSHeapSize > 0.8 * pm.jsHeapSizeLimit) throw new Error('not enough memory');
     };
     try {
-      const dc = my.detail, C = R.ctx, kx = my.W / (my.east - my.west), kz = my.D / (my.north - my.south);
+      const dc = my.detail, hasDet = !!(dc && dparts.length), C = R.ctx, kx = my.W / (my.east - my.west), kz = my.D / (my.north - my.south);
       // A small phone (2 GB or less, or detail.light) gets the light foreground: every other cell of the box each way
       // (1 m, a quarter of the memory) and fewer tree points. Enough for barns, trees and water to be there.
-      const light = dc.light != null ? !!dc.light : (navigator.deviceMemory || 8) <= 2, fine = light && !(dc.n & 1) ? 2 : 1, dn = dc.n / fine;
+      const light = dc && dc.light != null ? !!dc.light : (navigator.deviceMemory || 8) <= 2, fine = hasDet && light && !(dc.n & 1) ? 2 : 1, dn = hasDet ? dc.n / fine : 0;
+      let D = null, m = null, W = null, wmap = null, kmap = null, dmap = null, tp = null, list = null;
+      if (hasDet) {
       // 1. the heights: inside the near box when there is one, else inside the wide grid
-      let list = dparts; dparts = [];
-      const m = await decode(list, dc.n, dc.base || 0, dc.step || 0.02, fine); list = null;
+      list = dparts; dparts = [];
+      m = await decode(list, dc.n, dc.base || 0, dc.step || 0.02, fine); list = null;
       const w = (dc.east - dc.west) * kx, d = (dc.north - dc.south) * kz, P = NR || my, pcell = NR ? Math.max(NR.w, NR.d) / (G - 1) : Math.max(my.W, my.D) / (G - 1);
       const keep = Math.max(4, Math.min(25, 0.5 * pcell)), band = keep + Math.max(16, Math.min(45, 2 * pcell));
       if (!(dc.west >= P.west && dc.east <= P.east && dc.south >= P.south && dc.north <= P.north) || Math.min(w, d) < 4 * band) throw new Error('detail grid does not fit');
-      const D = { n: dn, HF: m.HF, north: dc.north, south: dc.south, west: dc.west, east: dc.east, x0: (dc.west - my.west) * kx, z0: (my.north - dc.north) * kz, w, d, dx: w / dn, dz: d / dn, keep, band, up: NR || FAR, lift: 2, kind: null };
+      D = { n: dn, HF: m.HF, north: dc.north, south: dc.south, west: dc.west, east: dc.east, x0: (dc.west - my.west) * kx, z0: (my.north - dc.north) * kz, w, d, dx: w / dn, dz: d / dn, keep, band, up: NR || FAR, lift: 2, kind: null };
       await step('decode');
       // 2. the class mask (without it: bare shapes), and the water of the 6 km around (0 none, 1 moving, 2 still)
       if (mparts.length) {
@@ -721,7 +919,7 @@
             const q = new Uint8Array(dn * dn), n2 = dc.n;
             for (let r = 0; r < dn; r++) for (let c = 0; c < dn; c++) {
               let best = 0, o = r * 2 * n2 + c * 2;
-              for (const v of [k[o], k[o + 1], k[o + n2], k[o + n2 + 1]]) { const rank = v === 2 ? 1000 : v >= 8 ? v : v === 3 ? 4 : 0, br = best === 2 ? 1000 : best >= 8 ? best : best === 3 ? 4 : 0; if (rank > br) best = v; }
+              for (const v of [k[o], k[o + 1], k[o + n2], k[o + n2 + 1]]) { const rank = v === 2 ? 1000 : v >= 8 ? v : v === 3 ? 4 : v === 4 ? 3 : 0, br = best === 2 ? 1000 : best >= 8 ? best : best === 3 ? 4 : best === 4 ? 3 : 0; if (rank > br) best = v; }
               q[r * dn + c] = best;
             }
             free(k); k = q;
@@ -730,7 +928,7 @@
         } catch (e) { D.kind = null; }
         list = null;
       }
-      let W = null; const wc = my.water;
+      const wc = my.water;
       if (wc && wparts.length) {
         list = wparts; wparts = [];
         try { W = { n: wc.n, cls: await decodeBytes(list, wc.n, wc.n), x0: (wc.west - my.west) * kx, z0: (my.north - wc.north) * kz, w: (wc.east - wc.west) * kx, d: (wc.north - wc.south) * kz }; } catch (e) { W = null; }
@@ -740,9 +938,8 @@
       // 3. textures, one at a time: each goes to the graphics card and its copy here is given back before the next is
       //    made, so the three never sit in memory twice together
       const send = t => { made.push(t); R.renderer.initTexture(t); free(t.image.data); t.image = { data: null, width: t.image.width, height: t.image.height }; };
-      const dmap = heightTex(D, 4); send(dmap); await breathe();
-      const kmap = await kindTex(D, W, breathe); send(kmap); await breathe();
-      let wmap = null;
+      dmap = heightTex(D, 4); send(dmap); await breathe();
+      kmap = await kindTex(D, W, breathe); send(kmap); await breathe();
       if (W) {
         const px = W.cls; for (let i = 0; i < px.length; i++) px[i] = px[i] === 1 ? 255 : px[i] === 2 ? 127 : 0;
         wmap = new THREE.DataTexture(px, W.n, W.n, THREE.LuminanceFormat, THREE.UnsignedByteType); W.cls = null;
@@ -750,7 +947,6 @@
       }
       await step('textures');
       // 4. the trees: their own returns when the file came, read a line at a time
-      let tp = null;
       if (D.kind) {
         const tc = dc.trees || {}, cap = Math.max(1000, Math.min(520000, dc.maxTrees || (light ? TREE_LIGHT : TREE_MAX))); let blob = null;
         if (dc.trees && tparts.length) { list = tparts; tparts = []; blob = pack(list); list = null; }
@@ -759,8 +955,38 @@
       }
       tparts = [];
       await step('trees');
-      // 5. its light pass, its mesh, and the coarser meshes' new materials (the hole under it, the water on them)
+      }
+      // 4b. aerial photos (Faroes: the fine box's and the detail box's) and the houses. Colour and shapes only: the sun
+      //     times never read them (the houses' heights are guessed). Each is an extra: a bad file is simply left out.
+      let nph = null, dph = null, hs = null, wph = null;
+      const ALB = my.ground !== 'green';   // snow regions (Grand Teton): the colour files are albedo for the light passes
+      if (wcparts.length) { list = wcparts; wcparts = []; try { wph = await photoOf(list, light ? 2048 : 0, () => false); made.push(wph.tex); } catch (e) { wph = null; } list = null; await step('wide colour'); }
+      if (NR && ncparts.length) { list = ncparts; ncparts = []; try { nph = await photoOf(list, light ? 1024 : 0, (fx, fy) => gh(NR, fx * NR.n - 0.5, fy * NR.n - 0.5) < 1); made.push(nph.tex); } catch (e) { nph = null; } list = null; }
+      if (D && cparts.length) { list = cparts; cparts = []; try { dph = await photoOf(list, light ? 1024 : 0, (fx, fy) => { const c = Math.min(D.n - 1, Math.floor(fx * D.n)), r = Math.min(D.n - 1, Math.floor(fy * D.n)); return D.kind ? D.kind[r * D.n + c] === 3 : D.HF[r * D.n + c] < 0.6; }); made.push(dph.tex); } catch (e) { dph = null; } list = null; }
+      ncparts = []; cparts = [];
+      if (nph || dph) await step('photos');
+      if (D && bparts.length) {
+        list = bparts; bparts = [];
+        try { hs = houses(list, D, dc.width || D.w, dc.depth || D.d); if (hs) made.push(hs.geo, hs.mat, hs.bmap); } catch (e) { hs = null; }
+        list = null;
+        await step('houses');
+      }
+      bparts = [];
+      if (!hasDet && !nph && !wph) throw new Error('nothing to add');
+      const mean = ALB ? null : (nph && nph.mean) || (dph && dph.mean);
+      const pu = mean ? {   // what the photo meshes share: the mean land colour, rock from it
+        rockC: { value: new THREE.Vector3().fromArray(mean.map(v => v * 0.35 + (mean[0] * 0.3 + mean[1] * 0.59 + mean[2] * 0.11) * 0.65).map(v => v * 0.82)) },
+        tintC: { value: new THREE.Vector3().fromArray(mean) },
+      } : { rockC: { value: new THREE.Vector3(0.4, 0.4, 0.38) }, tintC: { value: new THREE.Vector3(0.45, 0.5, 0.35) } };
       const sunU = C.sunU, fog = C.fog, size = C.size, hmap = C.hmap, near = R.near, lo = R.lo;
+      const wcolU = { sunDir: sunU.sunDir, sunCol: sunU.sunCol, skyZen: R.skyU.zen, skyHor: R.skyU.hor, ice: R.iceU };
+      if (nph && near && !ALB) Object.assign(near.mat.uniforms, pu, wcolU, { nphoto: { value: nph.tex }, pcells: { value: NR.n } });
+      // where each grid finds its winter colour: its own file, else the next coarser one (uv rect inside that file)
+      const inRect = (g, P) => new THREE.Vector4((g.x0 - P.x0) / P.w, (g.z0 - P.z0) / P.d, g.w / P.w, g.d / P.d);
+      const albOf = g => !ALB ? null : g === D && dph ? { tex: dph.tex, rect: new THREE.Vector4(0, 0, 1, 1) } : g !== FAR && NR && nph && (g === NR || g === D) ? { tex: nph.tex, rect: g === NR ? new THREE.Vector4(0, 0, 1, 1) : inRect(g, NR) } : wph ? { tex: wph.tex, rect: g === FAR ? new THREE.Vector4(0, 0, 1, 1) : inRect(g, FAR) } : null;
+      let det = null, terrMat = null, nearMat = null;
+      if (hasDet) {
+      // 5. its light pass, its mesh, and the coarser meshes' new materials (the hole under it, the water on them)
       const drect = new THREE.Vector4(D.x0, D.z0, D.w, D.d);
       const dholeU = { dhole: { value: new THREE.Vector4(D.x0, D.z0, D.x0 + D.w, D.z0 + D.d) }, dkeep: { value: D.keep }, dband: { value: D.band } };
       const waterU = wmap ? { wmap: { value: wmap }, wrect: { value: new THREE.Vector4(W.x0, W.z0, W.w, W.d) }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, skyZen: R.skyU.zen, skyHor: R.skyU.hor, ice: R.iceU } : {};
@@ -768,77 +994,202 @@
       if (!ngeo) {   // no near mesh to share the points of: the same grid with a skirt ring
         const np = new Float32Array(G * G * 3), sk = i => (i === 0 || i === G - 1 ? 1 : 0), at = i => Math.max(0, Math.min(1, (i - 1) / (G - 3)));
         for (let j = 0, k = 0; j < G; j++) for (let i = 0; i < G; i++) { np[k++] = at(i); np[k++] = sk(i) || sk(j); np[k++] = at(j); }
-        ngeo = new THREE.BufferGeometry(); ngeo.setAttribute('position', new THREE.BufferAttribute(np, 3)); ngeo.setIndex(C.index); made.push(ngeo);
+        ngeo = new THREE.BufferGeometry(); ngeo.setAttribute('position', new THREE.BufferAttribute(np, 3)); ngeo.setIndex(C.index);   // not in `made`: letting it go would take the shared triangle list with it
         ngeo.attributes.position.onUpload(function () { free(this.array); this.array = null; });
       }
       const lu = { hmap: { value: dmap }, fmap: { value: hmap }, kmap: { value: kmap }, lift: { value: 0.3 }, ice: R.iceU, rect: { value: drect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(D.dx, D.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(D.w, D.d) }, texel: { value: 1 / D.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH };
       const mu = Object.assign({ hmap: { value: dmap }, kmap: { value: kmap }, cells: { value: D.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, skyZen: R.skyU.zen, skyHor: R.skyU.hor, ice: R.iceU, fmap: { value: hmap }, lmap: { value: null }, flmap: { value: lo.texture }, rect: { value: drect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: D.keep }, band: { value: D.band }, fogCol: fog.fogCol, fogD: fog.fogD }, waterU);
       if (NR) { lu.mmap = { value: C.nmap }; lu.mrect = { value: C.nrect }; Object.assign(mu, { mmap: { value: C.nmap }, mrect: { value: C.nrect }, mkeep: { value: NR.keep }, mband: { value: NR.band }, skirt: { value: 14 }, mlmap: { value: near.lo.texture } }); }
-      const dLight = new THREE.ShaderMaterial({ defines: NR ? { NEAR: 1, DETAIL: 1, MID: 1 } : { NEAR: 1, DETAIL: 1 }, uniforms: lu, vertexShader: C.lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
+      const ldef = NR ? { NEAR: 1, DETAIL: 1, MID: 1 } : { NEAR: 1, DETAIL: 1 };
+      if (dph && !ALB) ldef.PHOTO = 1;
+      { const a = albOf(D); if (a) { ldef.APHOTO = 1; lu.aphoto = { value: a.tex }; lu.arect = { value: a.rect }; } }
+      if (hs) { ldef.BSHADOW = 1; lu.bmap = { value: hs.bmap }; }
+      const dLight = new THREE.ShaderMaterial({ defines: ldef, uniforms: lu, vertexShader: C.lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
       const dlo = C.rt(Math.min(512, D.n)), dhi = C.rt(D.n); mu.lmap.value = dlo.texture;
       const ddef = { BLD: 1 }; if (NR) ddef.MID = 1; if (wmap) ddef.WATER = 1;
+      if (dph && !ALB) { ddef.DPHOTO = 1; Object.assign(mu, pu, { dphoto: { value: dph.tex }, pcells: { value: D.n } }); if (nph && NR) { ddef.NPH = 1; mu.nphoto = { value: nph.tex }; } }
       const mat = new THREE.ShaderMaterial({ defines: ddef, uniforms: mu, vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
-      const mesh = new THREE.Mesh(ngeo, mat); mesh.frustumCulled = false; made.push(dLight, dlo, dhi, mat);
-      const det = { lightMat: dLight, lo: dlo, hi: dhi, mat, mesh, dmap, kmap, points: null, count: 0 };
+      // its own geometry over the same points and triangles: each mesh keeps its own list of blocks in view
+      const dgeo = new THREE.BufferGeometry(); dgeo.setAttribute('position', ngeo.attributes.position); dgeo.setIndex(ngeo.index);
+      const mesh = new THREE.Mesh(dgeo, [mat]); mesh.frustumCulled = false; made.push(dLight, dlo, dhi, mat);
+      det = { lightMat: dLight, lo: dlo, hi: dhi, lite: [], mat, mesh, dmap, kmap, points: null, count: 0, houses: null };
       if (tp) {
         const pmat = new THREE.ShaderMaterial({ uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, clearR: { value: 12 } }, vertexShader: TREE_VS, fragmentShader: TREE_FS });
         det.points = new THREE.Points(tp.geo, pmat); det.points.frustumCulled = false; det.count = tp.count; made.push(tp.geo, pmat);
         const drop = function () { free(this.array); this.array = null; }; tp.geo.attributes.position.onUpload(drop); tp.geo.attributes.seed.onUpload(drop);
       }
+      if (hs) {   // the houses read the sun their ground gets from the hills (the detail light map's alpha), not their own shadow
+        Object.assign(hs.mat.uniforms, { lmap: { value: dlo.texture }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD });
+        det.houses = new THREE.Mesh(hs.geo, hs.mat); det.houseCount = hs.count;
+      }
       Object.assign(C.terrU, dholeU, { dsize: { value: size } }, waterU);
       const tdef = { DHOLE: 1 }; if (near) tdef.HOLE = 1; if (wmap) tdef.WATER = 1;
-      const terrMat = new THREE.ShaderMaterial({ defines: tdef, uniforms: C.terrU, vertexShader: TERRAIN_VS, fragmentShader: TERRAIN_FS }); made.push(terrMat);
-      let nearMat = null;
+      terrMat = new THREE.ShaderMaterial({ defines: tdef, uniforms: C.terrU, vertexShader: TERRAIN_VS, fragmentShader: TERRAIN_FS }); made.push(terrMat);
       if (near) {
         Object.assign(near.mat.uniforms, dholeU, waterU);
-        const nd = { DHOLE: 1 }; if (wmap) nd.WATER = 1;
+        const nd = { DHOLE: 1 }; if (wmap) nd.WATER = 1; if (nph && !ALB) nd.NPHOTO = 1;
         nearMat = new THREE.ShaderMaterial({ defines: nd, uniforms: near.mat.uniforms, vertexShader: NEAR_VS, fragmentShader: NEAR_FS }); made.push(nearMat);
+      }
+      } else if (nph && near && !ALB) {   // a fine box with a photo and no detail box: only the fine mesh changes
+        nearMat = new THREE.ShaderMaterial({ defines: Object.assign({}, near.mat.defines, { NPHOTO: 1 }), uniforms: near.mat.uniforms, vertexShader: NEAR_VS, fragmentShader: NEAR_FS }); made.push(nearMat);
       }
       await step('light');
       // 6. in, all at once
-      const oldT = R.terrMat, oldN = near && near.mat;
-      DT = D; maxH = Math.max(maxH, m.hi + 60); sunU.maxH.value = maxH;
-      C.terrain.material = terrMat; R.terrMat = terrMat;
-      if (near) { near.mesh.material = nearMat; near.mat = nearMat; }
-      R.det = det; R.scene.add(det.mesh); if (det.points) R.scene.add(det.points);
-      R.cam.near = 1; oldT.dispose(); if (oldN) oldN.dispose();
+      const oldT = terrMat && R.terrMat, oldN = nearMat && near && near.mat;
+      if (hasDet) { DT = D; maxH = Math.max(maxH, m.hi + 60); minH = Math.min(minH, m.lo); sunU.maxH.value = maxH; }
+      if (terrMat) { C.terrain.material = [terrMat]; R.terrMat = terrMat; }
+      if (nearMat) { near.mesh.material = [nearMat]; near.mat = nearMat; }
+      if (nph && near && !ALB) { near.lightMat.defines.PHOTO = 1; near.lightMat.needsUpdate = true; }
+      if (ALB) {   // the winter colour files into the wide and fine light passes; the wide mesh gets the file's own detail back
+        const af = albOf(FAR), an = near && albOf(NR);
+        if (af) { Object.assign(R.lightMat.uniforms, { aphoto: { value: af.tex }, arect: { value: af.rect } }); R.lightMat.defines.APHOTO = 1; R.lightMat.needsUpdate = true; }
+        if (an) { Object.assign(near.lightMat.uniforms, { aphoto: { value: an.tex }, arect: { value: an.rect } }); near.lightMat.defines.APHOTO = 1; near.lightMat.needsUpdate = true; }
+        const lod = wph ? Math.log2((wph.tex.image.width || 0) / R.hi.width) : 0;
+        if (lod >= 0.5) {
+          const tm = R.terrMat; Object.assign(C.terrU, { wphoto: { value: wph.tex }, wlod: { value: lod } });
+          tm.uniforms = C.terrU; tm.defines.WDET = 1; tm.needsUpdate = true;
+        }
+      }
+      if (mean) {   // the wide grid's grass toward the photo's mean colour (as albedo), so the photo has no stamp edge
+        const k = mean.map((v, i) => Math.max(0.6, Math.min(1.6, Math.pow(v, 1 / 0.62) / [0.31, 0.37, 0.19][i])));
+        R.lightMat.uniforms.tintK = { value: new THREE.Vector3().fromArray(k) }; R.lightMat.defines.FTINT = 1; R.lightMat.needsUpdate = true;
+      }
+      if (det) {
+        R.det = det; R.scene.add(det.mesh); if (det.points) R.scene.add(det.points); if (det.houses) R.scene.add(det.houses);
+        R.cam.near = 1;
+      }
+      if (oldT) oldT.dispose(); if (oldN) oldN.dispose();
       if (touched) focus(); else { aim(); heading(); }
       foreState = 2; relight = dirty = true;
       post({ type: 'detail', stage: 'done', ms: Math.round(performance.now() - t0) });
-      post({ type: 'foreground', ok: true, light, detail: D.n, trees: det.count, real: !!(tp && tp.real), water: wmap ? W.n : 0, ice, ms: Math.round(performance.now() - t0) });
-      if (lastPath) window.S3D.path(lastPath);   // the day's first / last light again, now from the survey's ground and buildings
+      post({ type: 'foreground', ok: true, light, detail: D ? D.n : 0, trees: det ? det.count : 0, real: !!(tp && tp.real), water: wmap ? W.n : 0, ice, colour: !!(nph || dph || wph), photos: (nph ? 1 : 0) + (dph ? 1 : 0) + (wph ? 1 : 0), buildings: hs ? hs.count : 0, ms: Math.round(performance.now() - t0) });
+      if (lastPath && hasDet) window.S3D.path(lastPath);   // the day's first / last light again, now from the survey's ground and buildings
     } catch (e) {
       for (const t of made) { try { t.dispose(); } catch (x) { /* nothing to let go */ } }
-      dparts = []; mparts = []; tparts = []; wparts = []; foreState = -1;
+      dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = -1;
       post({ type: 'foreground', ok: false, msg: String(e && e.message || e), at: where });
     }
   }
+  // base64 pieces -> bytes (each piece let go as it is used)
+  function bytesOf(list) {
+    let len = 0; for (const t of list) len += Math.floor(t.length * 3 / 4) - (t.endsWith('==') ? 2 : t.endsWith('=') ? 1 : 0);
+    const buf = new Uint8Array(len); let o = 0;
+    for (let k = 0; k < list.length; k++) { const b = atob(list[k]); list[k] = null; for (let i = 0; i < b.length; i++) buf[o + i] = b.charCodeAt(i); o += b.length; }
+    return buf;
+  }
+  // An aerial photo (JPEG, north up on its box's own lat / lng grid) as a texture, decoded by the web view itself (no
+  // address, so no network), `px` pixels a side at most (0 = as it is). Also its mean colour over land: sea(fx, fy)
+  // says where not to look. The photo's own copy is given back once the graphics card has it.
+  async function photoOf(list, px, sea) {
+    let buf = bytesOf(list);
+    const bmp = await createImageBitmap(new Blob([buf], { type: 'image/jpeg' }), px ? { resizeWidth: px, resizeHeight: px, resizeQuality: 'medium' } : {});
+    free(buf); buf = null;
+    let mean = null;
+    try {
+      const S = 48, cv = document.createElement('canvas'); cv.width = cv.height = S; const g2 = cv.getContext('2d'); g2.drawImage(bmp, 0, 0, S, S);
+      const d = g2.getImageData(0, 0, S, S).data, s = [0, 0, 0]; let k = 0;
+      for (let r = 0; r < S; r++) for (let c = 0; c < S; c++) { if (sea((c + 0.5) / S, (r + 0.5) / S)) continue; const i = (r * S + c) * 4; s[0] += d[i]; s[1] += d[i + 1]; s[2] += d[i + 2]; k++; }
+      if (k >= 40) mean = s.map(v => v / k / 255);
+    } catch (e) { mean = null; }
+    const t = new THREE.Texture(bmp);
+    t.flipY = false; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.anisotropy = Math.min(4, R.renderer.capabilities.getMaxAnisotropy()); t.needsUpdate = true;   // 4, not 8: the photo is soft anyway and 8 cost ~10% of a frame on software graphics
+    R.renderer.initTexture(t);
+    try { if (bmp.close) bmp.close(); } catch (e) { /* the collector has it */ }
+    t.image = { width: bmp.width || px, height: bmp.height || px };
+    return { tex: t, mean };
+  }
+  // The houses of a detail box (Faroes, from the building outlines): each outline stood up from a little under its foot
+  // to its eave, with a pitched roof along its long side (or flat), in one mesh; and their heights over the ground per
+  // cell (bmap), for the drawn shadows only. Heights are guessed, so nothing here ever reaches lit() / the sun times.
+  // w, d: the box's size in the file's own metres (the outlines are in those, from its north-west corner).
+  const HOUSE_VS = `attribute vec3 bcol; attribute vec2 luv; varying vec3 vC; varying vec2 vL; varying vec3 vN; varying float vDist;
+    void main() { vC = bcol; vL = luv; vN = normal; vec4 mv = modelViewMatrix * vec4(position, 1.); vDist = length(mv.xyz); gl_Position = projectionMatrix * mv; }`;
+  const HOUSE_FS = `precision highp float; uniform sampler2D lmap; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec3 fogCol; uniform float fogD;
+    varying vec3 vC; varying vec2 vL; varying vec3 vN; varying float vDist;
+    void main() {
+      vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
+      if (abs(n.y) > .2) n.y = abs(n.y);   // a roof faces up whichever way its triangles were wound
+      float vis = max(texture2D(lmap, vL).a, .1), lam = max(dot(n, sunDir), 0.);
+      vec3 alb = pow(vC, vec3(1.613));   // the file's colours are as seen: the same albedo scale as the photo under them
+      vec3 c = alb * (amb * (.72 + .28 * max(n.y, 0.)) + sunCol * lam * vis);
+      c = pow(min(c * .9, vec3(1.)), vec3(.62));
+      float f = 1. - exp(-pow(fogD * vDist, 2.)); gl_FragColor = vec4(mix(c, fogCol, f), 1.);
+    }`;
+  function houses(list, D, w, d) {
+    const raw = bytesOf(list), J = JSON.parse(new TextDecoder().decode(raw)), all = (J && J.b) || [];
+    const sx = D.w / w, sz = D.d / d, n = D.n, cw = w / n, ch = d / n, bm = new Uint8Array(n * n);
+    const P = [], Cc = [], LU = []; let count = 0;
+    const tri = (a, b, c, col, lu) => { for (const v of [a, b, c]) { P.push(D.x0 + v[0] * sx, v[2], D.z0 + v[1] * sz); Cc.push(col[0] / 255, col[1] / 255, col[2] / 255); LU.push(lu[0], lu[1]); } };
+    const clip = (pts, nx, nz, cx, cz, sign) => { const out = [], dd = p => sign * ((p[0] - cx) * nx + (p[1] - cz) * nz);   // the half of an outline on one side of the ridge line
+      for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length], da = dd(a), db = dd(b);
+        if (da >= 0) out.push(a); if ((da >= 0) !== (db >= 0)) { const t = da / (da - db); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); } }
+      return out; };
+    const inside = (pts, x, z) => { let k = false; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) { const a = pts[i], b = pts[j]; if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) k = !k; } return k; };
+    for (const b of all) {
+      if (b.skip || !b.p || b.p.length < 6) continue;
+      const pts = []; for (let i = 0; i + 1 < b.p.length; i += 2) pts.push([b.p[i], b.p[i + 1]]);
+      const cx = b.c ? b.c[0] : pts.reduce((s, p) => s + p[0], 0) / pts.length, cz = b.c ? b.c[1] : pts.reduce((s, p) => s + p[1], 0) / pts.length;
+      const gable = b.roof === 'gable' && b.r > b.e, ar = (b.a || 0) * Math.PI / 180, nx = -Math.sin(ar), nz = Math.cos(ar), hw = Math.max(b.hw || 0, 0.5);
+      const dist = p => (p[0] - cx) * nx + (p[1] - cz) * nz, top = p => gable ? b.e + (b.r - b.e) * Math.max(0, 1 - Math.abs(dist(p)) / hw) : Math.max(b.e, b.r || b.e);
+      const lu = [cx / w, cz / d], rc = b.rc || [120, 110, 100], wc = b.wc || [200, 200, 195], foot = b.f - 1;
+      count++;
+      for (const part of gable ? [clip(pts, nx, nz, cx, cz, 1), clip(pts, nx, nz, cx, cz, -1)] : [pts]) {
+        if (part.length < 3) continue;
+        for (const f of THREE.ShapeUtils.triangulateShape(part.map(p => new THREE.Vector2(p[0], p[1])), [])) tri(...f.map(i => [part[i][0], part[i][1], top(part[i])]), rc, lu);
+        for (let i = 0; i < part.length; i++) {
+          const a = part[i], c = part[(i + 1) % part.length];
+          if (gable && Math.abs(dist(a)) < 1e-6 && Math.abs(dist(c)) < 1e-6) continue;   // the cut along the ridge is not a wall
+          const a0 = [a[0], a[1], foot], c0 = [c[0], c[1], foot], a1 = [a[0], a[1], top(a)], c1 = [c[0], c[1], top(c)];
+          tri(a0, c0, c1, wc, lu); tri(a0, c1, a1, wc, lu);
+        }
+      }
+      // its height over the ground, cell by cell (0.2 m steps, at most 51 m), for the shadow it throws in the picture
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity; for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }
+      for (let r = Math.max(0, Math.floor(z0 / ch)); r <= Math.min(n - 1, Math.floor(z1 / ch)); r++) for (let c = Math.max(0, Math.floor(x0 / cw)); c <= Math.min(n - 1, Math.floor(x1 / cw)); c++) {
+        const x = (c + 0.5) * cw, z = (r + 0.5) * ch; if (!inside(pts, x, z)) continue;
+        const v = Math.max(0, Math.min(255, Math.round((top([x, z]) - D.HF[r * n + c]) / 0.2))); if (v > bm[r * n + c]) bm[r * n + c] = v;
+      }
+    }
+    if (!count) return null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.setAttribute('bcol', new THREE.Float32BufferAttribute(Cc, 3)); geo.setAttribute('luv', new THREE.Float32BufferAttribute(LU, 2));
+    geo.computeVertexNormals();
+    const drop = function () { free(this.array); this.array = null; }; for (const k of ['position', 'bcol', 'luv', 'normal']) geo.attributes[k].onUpload(drop);
+    const mat = new THREE.ShaderMaterial({ side: THREE.DoubleSide, uniforms: { lmap: { value: null }, sunDir: { value: null }, sunCol: { value: null }, amb: { value: null }, fogCol: { value: null }, fogD: { value: 0 } }, vertexShader: HOUSE_VS, fragmentShader: HOUSE_FS });
+    const bmap = new THREE.DataTexture(bm, n, n, THREE.LuminanceFormat, THREE.UnsignedByteType);
+    bmap.magFilter = bmap.minFilter = THREE.LinearFilter; bmap.wrapS = bmap.wrapT = THREE.ClampToEdgeWrapping; bmap.needsUpdate = true;
+    R.renderer.initTexture(bmap); bmap.image = { data: null, width: n, height: n };
+    return { geo, mat, bmap, count };
+  }
 
-  function lightPass(full) {
-    const r = R.renderer, t = full ? R.hi : R.lo;
+  // the light pass's size: k = -1 full (when the sun rests), 0 quick (as the time moves), 1 and 2 smaller still (a half
+  // and a quarter of the quick one each way, made when a slow phone first needs them)
+  const tgt = (o, k) => k < 0 ? o.hi : k === 0 ? o.lo : (o.lite[k] || (o.lite[k] = R.ctx.rt(Math.max(64, o.lo.width >> k))));
+  function lightPass(k) {
+    const r = R.renderer, t = tgt(R, k);
     R.quad.material = R.lightMat; r.setRenderTarget(t); r.render(R.lightScene, R.lightCam);
     R.terrMat.uniforms.lmap.value = t.texture;
     if (R.near) {
-      const nt = full ? R.near.hi : R.near.lo;
+      const nt = tgt(R.near, k);
       R.quad.material = R.near.lightMat; r.setRenderTarget(nt); r.render(R.lightScene, R.lightCam);
       R.near.mat.uniforms.lmap.value = nt.texture; R.near.mat.uniforms.flmap.value = t.texture;
     }
     if (R.det) {
-      const dt = full ? R.det.hi : R.det.lo, u = R.det.mat.uniforms;
+      const dt = tgt(R.det, k), u = R.det.mat.uniforms;
       R.quad.material = R.det.lightMat; r.setRenderTarget(dt); r.render(R.lightScene, R.lightCam);
-      u.lmap.value = dt.texture; u.flmap.value = t.texture; if (R.near) u.mlmap.value = (full ? R.near.hi : R.near.lo).texture;
+      u.lmap.value = dt.texture; u.flmap.value = t.texture; if (R.near) u.mlmap.value = tgt(R.near, k).texture;
       if (R.det.points) R.det.points.material.uniforms.lmap.value = dt.texture;
     }
     r.setRenderTarget(null);
   }
-  function light() {
+  function light(k) {
     const v = sunVec(sun.az, sun.alt), A = atmo(sun.alt); R.sv = v;
     R.lightMat.uniforms.sunDir.value.set(v.x, v.y, v.z);
     R.lightMat.uniforms.sunCol.value.set(A.sun[0] * A.sunI, A.sun[1] * A.sunI, A.sun[2] * A.sunI);
     R.lightMat.uniforms.amb.value.set(A.amb[0], A.amb[1], A.amb[2]);
     R.skyU.zen.value.set(A.zen[0], A.zen[1], A.zen[2]); R.skyU.hor.value.set(A.hor[0], A.hor[1], A.hor[2]);
-    lightPass(false);   // quick pass while the time is moving, the full one once it rests
-    clearTimeout(hiTimer); hiTimer = setTimeout(() => { if (R) { lightPass(true); dirty = true; } }, 260);
+    lightPass(k);   // a quick pass while the time is moving; draw() runs the full one once it rests
     const glow = sun.alt > -10 ? Math.max(0, 1 - Math.abs(sun.alt - 2) / 16) : 0, sp = R.skyPos;
     for (let j = 0; j < sp.count; j++) {
       const x = sp.getX(j) / 200000, y = sp.getY(j) / 200000, z = sp.getZ(j) / 200000;
@@ -881,24 +1232,120 @@
     const a = (R && R.cam.aspect) || ((window.innerWidth || 1) / (window.innerHeight || 1));
     const th = lens.fw / (2 * lens.f), tv = lens.fh / (2 * lens.f), k = Math.max(th / (a * 0.9), tv / 0.9);
     const el = document.getElementById('frame');
-    if (el) { el.style.display = lens.box ? 'block' : 'none'; el.style.width = (th / (k * a) * 100) + '%'; el.style.height = (tv / k * 100) + '%'; }
+    if (el) {   // written only when it changes: this runs every frame, and a style write makes the web view lay the page out again
+      const disp = lens.box ? 'block' : 'none', wd = (th / (k * a) * 100) + '%', ht = (tv / k * 100) + '%', key = disp + wd + ht;
+      if (key !== lensKey) { lensKey = key; el.style.display = disp; el.style.width = wd; el.style.height = ht; }
+    }
     return 2 * Math.atan(k);
   }
   function place() {
     const q = cr(eye), e = pick(eye), cam = R.cam;
     cam.position.set((q.c + 0.5) * FAR.dx, eyeH(e), (q.r + 0.5) * FAR.dz); cam.rotation.set(pitch, -yaw, 0);
     cam.fov = lensFov() * 180 / Math.PI; cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
-    if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360));   // a point's metres -> pixels at 1 m
+    if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360)) / Math.sqrt(R.thin);   // a point's metres -> pixels at 1 m
   }
-  function resize() { const w = window.innerWidth, h = window.innerHeight; if (!R || !w || !h) return; R.renderer.setSize(w, h, false); R.cam.aspect = w / h; dirty = true; }
-  function tick() {
-    if (R && dirty) {
-      if (relight) { light(); relight = false; }
-      place();
-      const cam = R.cam, v = R.sv;
-      for (const o of [R.disc, R.halo]) { o.position.set(cam.position.x + v.x * 190000, cam.position.y + v.y * 190000, cam.position.z + v.z * 190000); o.lookAt(cam.position); }
-      R.renderer.render(R.scene, cam); dirty = false; frames++;
+  function resize() { const w = window.innerWidth, h = window.innerHeight; if (!R || !w || !h) return; R.cam.aspect = w / h; dirty = true; }   // draw() sizes the canvas
+
+  // A change from outside (the view dragged, a sun position, a walk step): a movement begins or goes on, drawn at the
+  // phone's level. The first change cannot be told from a single tap, so a tap is drawn the same way; on a phone that
+  // keeps up (level 0) that is full quality anyway. The sharp frame (full light pass, full resolution, every tree
+  // point, every triangle) comes REST ms after the last change.
+  function touch(kind) {
+    if (!act) act = { kind: kind === 'sun' ? 'sun' : 'look', ms: [], sum: 0, n: 0, slow: 0, px: 0, pts: 0 };
+    clearTimeout(restTimer); restTimer = setTimeout(rested, REST[kind]); resting = false; dirty = true;
+  }
+  // The timer only says "nothing for REST ms": the movement is taken as over at the next frame callback, if still nothing
+  // has come. A page that was held up (and its timers with it) so first hears the changes that were waiting.
+  function rested() { restTimer = null; resting = true; }
+  function rest() {
+    clearTimeout(restTimer); restTimer = null; resting = false;
+    const a = act, t = performance.now(); act = null;
+    if (a && a.ms.length >= 1 && t - lastPerf >= 1000) {   // a number for the phone test: how the movement that just ended went (one frame is enough: a slow phone may draw only one or two while a finger moves)
+      const m = a.ms.slice().sort((x, y) => x - y); lastPerf = t;
+      post({ type: 'perf', kind: a.kind, ms: Math.round(m[m.length >> 1] * 10) / 10, worst: Math.round(m[m.length - 1]), frames: m.length, level: lv[a.kind], quality: QN[lv[a.kind]], levels: { look: lv.look, sun: lv.sun }, px: a.px, pts: a.pts, timed: gate.off ? 'frame' : 'fence' });
     }
+    if (owe) sharp = dirty = true;
+  }
+  // The last frame's time, once the graphics card is done with it. Only frames of the movement still going on count,
+  // and not one that paid for a new canvas size or was drawn while the foreground was being built.
+  function frameDone(ms) {
+    const a = gate.act, gov = gate.gov; gate.act = null;
+    if (!a || a !== act) return;
+    a.ms.push(ms); if (!gov) return;
+    a.sum += ms; a.n++; a.slow = ms > 2.5 * SLOW_MS ? a.slow + 1 : 0;
+    if (a.n < 6 && a.slow < 2) return;   // six frames' average, or at once after two very slow ones in a row
+    const k = a.kind, L = lv[k], avg = a.slow >= 2 ? ms : a.sum / a.n;
+    if (avg > SLOW_MS && L < QL.length - 1) { if (tried[k]) noUp[k][L] = true; lv[k] = L + 1; tried[k] = false; }
+    else if (avg < FAST_MS && L > 0 && !noUp[k][L - 1]) { lv[k] = L - 1; tried[k] = true; }
+    else tried[k] = false;
+    a.sum = a.n = a.slow = 0;
+  }
+  // Is the graphics card done with the last frame? Until it is, no new frame is sent.
+  function gpuFree(now) {
+    if (gate.sync) {
+      const gl = R.gl; let done = true;
+      try { done = R.lost || gl.isContextLost() || gl.getSyncParameter(gate.sync, gl.SYNC_STATUS) === gl.SIGNALED; } catch (e) { gate.off = true; }
+      if (!done && now - gate.t0 > 12000) { done = true; gate.off = true; }   // a driver that never says: stop asking, time frames by the next frame callback
+      if (!done) return false;
+      try { gl.deleteSync(gate.sync); } catch (e) { /* gone with the context */ }
+      gate.sync = null; clearTimeout(gate.poll); gate.poll = null; frameDone(now - gate.t0);
+    } else if (gate.wait) { gate.wait = false; frameDone(now - gate.t0); }
+    return true;
+  }
+  function poll() { gate.poll = null; if (R && gate.sync && !gpuFree(performance.now())) gate.poll = setTimeout(poll, 3); }
+  // The blocks of a mesh that can be in view, as the geometry's groups (runs of blocks side by side are one draw call).
+  // A block's box: its span on the ground (ex, ez: NB + 1 edges) plus a metre, from under the lowest ground (the cut
+  // under a finer mesh and the skirts hang below it) to above the highest. Never too small, so the picture is the same.
+  const _fr = new THREE.Frustum(), _pm = new THREE.Matrix4(), _iv = new THREE.Matrix4(), _box = new THREE.Box3(), EX = new Float64Array(NB + 1), EZ = new Float64Array(NB + 1);
+  function cull(mesh, ex, ez, S) {
+    const g = mesh.geometry.groups, y0 = minH - 1000, y1 = maxH + 10; let n = 0, open = false;
+    for (let bj = 0; bj < NB; bj++) for (let bi = 0; bi < NB; bi++) {
+      _box.min.set(ex[bi] - 1, y0, ez[bj] - 1); _box.max.set(ex[bi + 1] + 1, y1, ez[bj + 1] + 1);
+      if (!_fr.intersectsBox(_box)) { open = false; continue; }
+      const b = bj * NB + bi;
+      if (open) g[n - 1].count = S[b + 1] - g[n - 1].start;
+      else { const o = g[n] || (g[n] = { start: 0, count: 0, materialIndex: 0 }); o.start = S[b]; o.count = S[b + 1] - S[b]; n++; open = true; }
+    }
+    g.length = n;
+  }
+  // the near and detail meshes bunch their points around `focus` (wp in NEAR_VS): the same sum here gives their blocks' edges
+  const wpj = (s, f) => { const d = s - f, m = d < 0 ? f : 1 - f; if (m < 0.0005) return f; const x = Math.abs(d) / m; return f + Math.sign(d) * m * x * (0.35 + 0.65 * x * x); };
+  function cullWarped(o, g, S) {
+    const f = o.mat.uniforms.focus.value;
+    for (let k = 0; k <= NB; k++) { const t = Math.max(0, Math.min(1, (bedge(k) - 1) / (G - 3))); EX[k] = g.x0 + wpj(t, f.x) * g.w; EZ[k] = g.z0 + wpj(t, f.y) * g.d; }
+    cull(o.mesh, EX, EZ, S);
+  }
+  function draw(t0) {
+    const a = act, q = QL[a ? lv[a.kind] : 0], w = window.innerWidth || 1, h = window.innerHeight || 1;
+    // the canvas: when still 2 device pixels a point at most (as before) and PX_MAX pixels in all; while moving the level's share
+    const ratio = Math.min(2, window.devicePixelRatio || 1, Math.sqrt(PX_MAX / (w * h))) * q.res, cw = Math.max(1, Math.floor(w * ratio)), ch = Math.max(1, Math.floor(h * ratio));
+    let fresh = false;
+    if (cw !== R.cw || ch !== R.ch) { R.renderer.setSize(cw, ch, false); R.cw = cw; R.ch = ch; fresh = true; }
+    if (relight) { light(q.lt); relight = false; quick = true; }
+    else if (!a && sharp && quick) { lightPass(-1); quick = false; }   // the sun has rested: the full light pass, in the same frame as the sharp picture
+    const P = R.det && R.det.points; let pts = 0;
+    if (P) { pts = Math.max(1, Math.floor(R.det.count * q.trees)); if (P.geometry.drawRange.count !== pts) P.geometry.setDrawRange(0, pts); R.thin = q.trees; }   // fewer points are drawn larger (place)
+    place();
+    const cam = R.cam, v = R.sv;
+    cam.updateMatrixWorld(); _fr.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, _iv.copy(cam.matrixWorld).invert()));
+    cull(R.ctx.terrain, R.fx, R.fz, q.geo > 1 ? BSTART2 : BSTART); if (R.near) cullWarped(R.near, NR, q.geo ? BSTART2 : BSTART); if (R.det) cullWarped(R.det, DT, q.geo ? BSTART2 : BSTART);
+    R.disc.position.set(cam.position.x + v.x * 190000, cam.position.y + v.y * 190000, cam.position.z + v.z * 190000); R.disc.lookAt(cam.position);
+    R.halo.position.copy(R.disc.position); R.halo.lookAt(cam.position);
+    R.renderer.render(R.scene, cam); dirty = false; frames++;
+    owe = quick || q !== QL[0]; sharp = false;
+    if (owe && restTimer == null && !resting) restTimer = setTimeout(rested, REST.sun);   // a light change nobody touched for (the foreground coming in, ice on / off)
+    if (a) { a.px = cw * ch; a.pts = pts; }
+    gate.t0 = t0; gate.act = a; gate.gov = !fresh && foreState !== 1;
+    if (!gate.off && !R.lost) {
+      const gl = R.gl; let sy = null;
+      try { sy = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); } catch (e) { sy = null; }
+      if (sy) { gate.sync = sy; if (a) gate.poll = setTimeout(poll, 3); } else gate.off = true;   // while moving the fence is asked every few ms, so the time is finer than a screen refresh
+    }
+    if (gate.off) gate.wait = true;
+  }
+  function tick() {
+    if (resting) rest();
+    if (R) { const t = performance.now(), free = gpuFree(t); if (dirty && free) draw(t); }
     requestAnimationFrame(tick);
   }
   function inside(p) { return p && p.lat <= cfg.north && p.lat >= cfg.south && p.lng >= cfg.west && p.lng <= cfg.east; }
@@ -915,29 +1362,29 @@
     const c = R.canvas;
     c.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
     c.addEventListener('webglcontextlost', e => { e.preventDefault(); if (R) R.lost = true; post({ type: 'lost', fore: foreState > 0 }); });
-    c.addEventListener('pointermove', e => { if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; dirty = true; });
-    const drop = () => { if (drag) { drag = null; heading(); } };
+    c.addEventListener('pointermove', e => { if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; touch('look'); });
+    const drop = () => { if (drag) { drag = null; heading(); if (act && act.kind === 'look') rest(); } };   // finger up: the sharp frame now
     c.addEventListener('pointerup', drop); c.addEventListener('pointercancel', drop);
     window.addEventListener('resize', resize);
   }
 
   window.S3D = {
-    init(c) { cfg = c; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
-    chunk(s, which) { (which === 'near' ? nparts : which === 'detail' ? dparts : which === 'mask' ? mparts : which === 'trees' ? tparts : which === 'water' ? wparts : parts).push(s); },
+    init(c) { cfg = c; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    chunk(s, which) { (which === 'near' ? nparts : which === 'detail' ? dparts : which === 'mask' ? mparts : which === 'trees' ? tparts : which === 'water' ? wparts : which === 'color' ? cparts : which === 'ncolor' ? ncparts : which === 'bld' ? bparts : which === 'wcolor' ? wcparts : parts).push(s); },
     async done() {
       try {
         if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");
         if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.');
         await load(); build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
-        const fore = !!(cfg.detail && dparts.length);
+        const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length);
         post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: 0, fore }); heading();
         if (fore) queueFore();
       } catch (e) { fail("The 3D view couldn't start on this phone."); post({ type: 'error', msg: String(e && e.message || e) }); }
     },
     // fore({ detail, water, ice }): the foreground for the view that is up; its chunks follow, then foreDone()
-    fore(c) { if (!cfg || foreState === 1) return; cfg.detail = c && c.detail; cfg.water = c && c.water; if (c && c.ice != null) ice = !!c.ice; if (R) R.iceU.value = ice ? 1 : 0; dparts = []; mparts = []; tparts = []; wparts = []; if (foreState < 0) foreState = 0; },
+    fore(c) { if (!cfg || foreState === 1) return; cfg.detail = c && c.detail; cfg.water = c && c.water; if (c && c.ice != null) ice = !!c.ice; if (R) R.iceU.value = ice ? 1 : 0; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; if (foreState < 0) foreState = 0; },
     foreDone() { if (R) queueFore(); },
-    sun(az, alt) { sun = { az, alt }; relight = dirty = true; },
+    sun(az, alt) { sun = { az, alt }; relight = true; touch('sun'); },
     // ice(true): still water (lakes, ponds, backwaters) is drawn frozen under snow, only moving water stays open
     ice(v) { ice = !!v; if (R) { R.iceU.value = ice ? 1 : 0; relight = dirty = true; } },
     focal(f) { lens = Object.assign({}, lens, { f }); dirty = true; },
@@ -959,7 +1406,7 @@
       const next = { lat: eye.lat + dn / kz, lng: eye.lng + de / kx };
       const off = Math.hypot((next.lat - eye0.lat) * kz, (next.lng - eye0.lng) * kx);
       if (!inside(next) || off > WALK_MAX) { post({ type: 'walk', stopped: inside(next) ? 'far' : 'edge', max: WALK_MAX }); return; }
-      eye = next; dirty = true; told();
+      eye = next; touch('walk'); told();
     },
     home() { if (!R || !eye0) return; eye = eye0; aim(); dirty = true; heading(); told(); },
     path(arr) {

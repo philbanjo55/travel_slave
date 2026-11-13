@@ -225,6 +225,84 @@ slowing does not slow it here.
 - With 90,000 points the trees are coarser than in round 2's pictures of 250,000; far ones thin to scattered dots.
   No trunks (airborne laser hardly sees them; not added). Buildings are plain blocks.
 
+## Smoothness of the app's view (12-13 Nov 2026, branch `claude/sun3d-butter`)
+
+What the page (`app_view.js`) now does, in the order it mattered in the measurements:
+
+1. **Only what can be seen is drawn.** Each mesh's triangles are kept in 16 x 16 blocks; a frame draws the blocks
+   whose box touches the view (three.js geometry groups, runs of neighbouring blocks = one draw call). Same picture.
+   Oxbow Bend with the foreground: 3.53 M triangles a frame before, 1.22 M now (135 mm lens); plain view 2.36 M -> 0.68 M (Cunningham Cabin 0.37 M).
+2. **One frame at a time on the graphics card.** After each frame a WebGL fence is set; no new frame is sent until
+   it has signalled. A slow phone so shows the newest heading / sun / spot instead of working through a queue. The
+   time from a frame's start to its fence is the frame time the page reports and steers by (if a driver never
+   signals, after 12 s the page stops asking and times frames by the next frame callback: `timed: 'frame'`).
+3. **Lighter while moving, sharp when still.** A drag, sun positions (the slider) and walk steps are a movement,
+   drawn at a level; 150 ms after the last drag move (at once on finger-up), 260 ms after the last sun position,
+   280 ms after the last walk step (steps come 130 ms apart), ONE full-quality frame is drawn, with the full
+   light pass in that same frame (it used to run on its own timer, also in the middle of a slow drag of the slider).
+
+   | level | canvas | tree points | quick light pass (far map) | meshes |
+   |---|---|---|---|---|
+   | 0 full | as when still | all | 1024 | all points |
+   | 1 high | 0.75 each way | all | 512 | all points |
+   | 2 medium | 0.6 | half, drawn larger | 512 | near + detail: every other point |
+   | 3 low | 0.5 | 30% | 256 | far mesh too (the skyline moves a few pixels until the sharp frame) |
+
+4. **Governor.** Six moving frames averaging over 24 ms (or two in a row over 60 ms): one level down; under 12 ms:
+   one up; a level that was too slow right after a step up is not tried again. Two levels are kept, `look` (drag,
+   walk) and `sun` (the slider also pays for a light pass). The page posts them in `perf`; `Sun3DPanel` keeps them
+   and hands them to the next page (`cfg.level`), so the next stop starts where this one ended.
+5. **Canvas size.** When still: 2 device pixels a point at most (as before) and at most 1.4 M pixels in all, so a
+   phone's full screen (412 x 800 at 2 = 1.32 M) is unchanged and a tablet is capped. Resolution turned out to be
+   the small lever on software graphics (a quarter of the pixels: ~15% off a frame), so the still picture was not cut.
+6. Small things: the frame box's style is written only when it changes (it was written every frame); a failed
+   foreground no longer lets go of the shared triangle list (the no-near-box case would have broken the plain view).
+
+`perf` (at most once a second, when a movement ends): `{kind, ms (median frame), worst, frames, level, quality,
+levels: {look, sun}, px, pts, timed}`. The TEST panel shows it as one grey line, "Smoothness: 9 ms a frame
+(worst 21) · quality full" (`accessibilityLabel` starts with `Smoothness:`).
+
+**Measured** (scratchpad `butter/`: `bench.js`, `free.js`, `still.js` + `cmp.py`, `offline.js`, `table.py`; headless
+Chromium, software graphics, CPU slowed 4x and 20x; 412 x 520 and 412 x 800 CSS px at device pixel ratio 2.6).
+Software graphics is hundreds of times slower than a phone's chip and weighs the work differently (triangles and
+anti-aliasing cost most here, pixels little): the numbers are before / after ratios, NOT phone predictions. Median
+ms a frame, small view, CPU 4x (full screen and CPU 20x are within ~10% of these: the page's own JS is not the
+bottleneck anywhere):
+
+| | drag: before -> level 0 -> governed | slider | walk |
+|---|---|---|---|
+| Oxbow Bend, foreground | 2695 -> 1717 -> 451 | 8511 (*) -> 3233 -> 601 | 2705 -> 1700 -> 432 |
+| Cunningham Cabin, foreground | 2119 -> 1389 -> 326 | 7349 (*) -> 2965 -> 446 | 2172 -> 1351 -> 317 |
+| Oxbow Bend, plain | 1245 -> ~600 (**) -> 226 | 3585 (*) -> 310 | 1297 -> 198 |
+| Cunningham Cabin, plain | 1146 -> ~350 (**) -> 124 | 3772 (*) -> 227 | 1059 -> 117 |
+
+"Level 0" = quality held at full while moving (what a phone that keeps up gets: blocks in view + one frame at a
+time); "governed" = the level the governor settled on here (3, low). (*) Before, every slider frame here also ran
+the FULL light pass (its 260 ms timer fired between frames that took seconds); without that the old figure would be
+about 4.0 s (foreground) / 2.0 s (plain). (**) From the first frames of the warm-up, CPU not slowed; the level-0
+run was made for the two foreground cases only. Worst frames while moving: 1.0-1.6x the median after the change.
+- One light pass (Oxbow, foreground): full 4.1 s, quick (1024) 1.35-1.45 s, level 3 (256) 0.11 s. Light passes run
+  never exceed frames drawn: the newest sun replaces a waiting one.
+- Nothing waiting for the graphics (as on a phone), Oxbow with the foreground: slider dragged 5 s (a sun every
+  50 ms): before, 19 frames + 20 light passes were queued and the picture was 86 s behind when the thumb stopped;
+  now 7 frames, each with its light pass, 0.01 s behind. View dragged 3 s: before 21 frames queued, 55 s behind;
+  now 6 frames, 0.2 s behind (at level 0: 2 frames, 1 s = one frame behind).
+- Idle: 0 frames drawn in 2 s, before and after. Draw calls a frame: 5 -> 33-36 (one per run of blocks).
+- Still picture, before vs after (three views each: aimed, low sun at 75 mm, turned + walked 30 m; 856,960 pixels):
+  plain view 0 pixels differ; with the foreground 35 / 12 / 1 (Oxbow) and 0 / 0 / 1 (Cunningham), all on tree
+  points, largest step 12 of 255 (the points are now stored in mixed order so a share of them thins every tree
+  evenly); full screen at Oxbow (1,318,400 pixels) 36 / 11 / 10, eight of those ten by more than 8 of 255. First / last light, `state`, `eye`, `look` messages identical; one `state` fewer at start-up where two
+  light changes waiting for the graphics became one frame.
+- Offline: set offline with every request refused BEFORE `done()`, then foreground build, drag, slider, walk, lens,
+  ice, home: 0 requests, 0 fetch / XHR / WebSocket / beacon / image loads from the page, 0 errors, 44 frames drawn.
+  The page source has no network call and no outside script, style or font.
+
+**Only a phone can tell:** the real frame times and which level it settles on (the Smoothness line); whether the
+fence is timed finer than a screen refresh in Android's web view (if not, a healthy phone reads ~17 ms and the
+governor never steps back up after a hitch); whether the change of canvas size when a movement starts and ends
+shows as a flicker; what 4x anti-aliasing costs there (60% of a frame on software graphics, cannot be switched while
+moving without drawing to an own target: not done); heat after minutes of use. Not touched: the HD (Google) page.
+
 ## How accurate the sun times are (measured 12 Nov 2026)
 
 Checked against 102 real webcam pictures on 5 clear December / January days in Grand Teton (27 events; resort
@@ -317,3 +395,87 @@ page headless like the app does):
   `PAGE=<page.html> DEM=<teton-dem.png> OUT=<dir> node tools/sun3d/google/app_run.js '{"base":"https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/tiles-proxy","headers":{"x-tiles-test":"<token>"},"handRoot":true,"probe":true,"noStats":true,"tiles":{"draco":"<draco folder>"},"jobs":[{"name":"deployed","az":145.6,"alt":15.35}]}'`
   (the test header makes the browser send one extra preflight call per tile: fine for a test). Each run
   is one billable root request.
+
+## Faroes foreground in the app page (13 Nov 2026, branch `claude/sun3d-faroes-page`)
+
+The round 2 Faroes data (`build_detail_faroes.py`) drawn by `app_view.js` itself. Data per detail box: heights (ground
+and flat water only), mask (0 ground, 3 sea / lake, 4 stream), an aerial photo (`color_path`, JPEG, north up on the
+box's lat / lng grid) and building outlines (`buildings_path`, JSON, heights assumed); per 4 m fine box a photo
+(`terrain_near_regions.color_path`). Rows and columns: migration `20261113010000_terrain_faroes_colour.sql` (144 files
+in bucket `terrain`, 31 MB).
+
+- Panel / `services/terrain.ts`: the photos and the building file are foreground files like the others (saved ahead by
+  `saveTripTerrain`, counted in "N of M areas", sent after `ready` as chunks `color`, `bld`, `ncolor`; `detail.width` /
+  `depth` = the box's metres). A fine box with a photo and no detail box still gets its photo. Credit line under the
+  view whenever the page says `foreground {colour: true}`.
+- Page: the light passes of the photo meshes (`PHOTO`) give light only; the mesh multiplies it with the photo (photo
+  colours count as seen, albedo = photo^1.613, the same scale as the plain grass). Faces over ~44-56 deg are rock in
+  beds (colour from the photo's mean over land), sea / lakes are water, a stream (mask 4) over steep ground or just
+  under a stream cell uphill is a white fall, grass tufts within 30 m of the eye. The detail photo eases into the fine
+  box's photo over 4-44 m from its edge. The wide grid's grass is tinted toward the photo's mean colour (`FTINT`).
+  Houses: one mesh, outlines stood up from 1 m under the foot, gable roofs along `a`; their heights over the ground
+  (`bmap`, 0.2 m steps) cast the drawn shadows (`BSHADOW`) while the light map's alpha stays ground-only (what the
+  houses and the water read). `lit()` / first and last light never see photos or houses.
+- Without the new files (every Teton view; a Faroes view whose rows have no photo) the page draws exactly as before.
+
+Measured (scratchpad `faroes_page/`: `fr.js`, `fbench.js`, `cgm.sh`, `sheet.py`; headless Chromium, software graphics):
+Teton Oxbow Bend plain and round 3 foreground, 135 and 75 mm: 0 pixels differ from the page before, same sun times.
+Faroes, 8 proof views: first / last light identical with and without photos / houses, 0 network requests after load.
+Drag, CPU 4x, level 3 (where the governor settles, as it does for the Teton foreground): plain 130-145 ms a frame,
+detail box without colour 375-425, with photos and houses 500-600 (Teton foreground on the same bench: 326-451).
+Whole test browser peak, Saksun: plain 453 MB, detail only 484, photos + houses 523.
+Not fixed: the Faroes heights read ~3.3 m low against the agency's contours (uniform: no sun time changes).
+
+## Grand Teton in real winter colour (13 Nov 2026, branch `claude/sun3d-teton-colour`)
+
+The Teton view was all calculated colour (white snow, grey rock on steep faces, a guessed forest band, dark tree
+dots). Now its ground colour comes from a real winter day. Builder: `teton_colour/build_teton_colour.py`
+(`wide | boxes | sql | all <work dir> [out.sql]`; `TRIP_Q` = a script that runs one SQL string and prints JSON rows,
+`LIDAR_DIRS` = where the laser masks are, else the public bucket; everything downloaded is cached, a rerun is free).
+
+- Wide grid (`terrain_regions.color_path`, 2048 x 2048, ~27 m, 1.6 MB): Copernicus Sentinel-2 L2A, tile 12TWP, 30 Dec
+  2025 18:32 UTC (11:32 AM MST, sun 22 deg up; the trip's own date a year early), filled from 11 Jan 2026 where the
+  30 Dec pass had no data (the swath edge cuts the south-east corner) or its scene classes say cloud (Jackson Lake's
+  north end): 73 % / 27 %. Read straight from the COGs on AWS with HTTP range requests (no GDAL). The day's light is
+  taken out: each pixel is divided by the light it had then (sky by how much sky a slope sees, sun by its angle and a
+  march toward the sun for ridge shadows, from our own heights); snow is decided by the snow index (green vs
+  short-wave infrared, so snow in shade still counts) times how bright the green band is once the light is out, and
+  drawn as the page's own snow colour; forest, rock and water keep their own colour, a little greyed. 4096 was built
+  and measured first: +142 MB of test-browser memory over 2048 for detail a phone screen cannot show.
+- Fine boxes (8 `gt_*`, `terrain_near_regions.color_path`, at the box's own cell size, 50-530 KB) and laser boxes
+  (19 `gtd_*`, `terrain_detail_regions.color_path`, 0.5 m, 33-160 KB): USDA NAIP (USGS ImageServer, 0.6 m, 19 Jul 2022,
+  red / green / blue / near infrared) turned to winter. How snow is decided: the ground is snow wherever the 30 Dec
+  picture's snow index says snow at that spot (10-20 m), whatever the summer photo shows; that was the whole valley
+  floor and the forest floor on that day (every laser box comes out 100 % snow on open ground, Swan Lake 78 %: the lake
+  edge). Where it says bare, the photo shows through (dormant grass tan-grey, rock and gravel greyed, paved darker).
+  Snow keeps +-6 % of the photo's own brightness pattern (sage, ruts), never its colour. In a fine box the photo's dark
+  green crowns stay dark green (conifers; readier where the winter picture is dark too), other leafy green becomes a
+  grey-brown haze of bare twigs, and summer water is frozen (white) or open (dark) as the winter picture says. In a
+  laser box the survey's own trees are drawn by the page as points, so the ground under them is only a shade darker,
+  and the page keeps drawing its own water / ice and boards.
+- Page (`app_view.js`): where the ground is snow (`cfg.ground !== 'green'`) the three files are ALBEDO (`APHOTO`):
+  sampled in the light passes in place of the calculated colours, so each light map still holds colour x light and
+  everything downstream (the blend into the next mesh, water, trees, the light-only Faroes path) is untouched. A grid
+  without its own file uses the next coarser one through a uv rectangle (laser box -> fine box -> wide). Faces steeper
+  than ~50 deg turn to rock (a 10 m picture from above sees only a cliff's snowy ledges). A wide file finer than the
+  light map (4096) also gets its own detail back on the wide mesh (`WDET`); not used at 2048. All three are foreground
+  files: chunk `wcolor` (new; a foreground on its own) and the existing `ncolor` / `color`, sent after `ready`.
+- Panel / `services/terrain.ts`: `regionColor(r)`, the wide file saved ahead with the region (`saveTripTerrain`), sent
+  as `wcolor`; credit line from `terrain_regions.color_credit`. Migration `20261113020000_terrain_teton_colour.sql`
+  (28 files, 5.2 MB; NOT uploaded or applied: ship it with this app code, an older app would draw the box files the
+  Faroes way).
+
+Measured (scratchpad `teton_colour/test`: `tc.js` pictures and times, `bench_c.js` = the smoothness bench with colour,
+headless Chromium, software graphics): Teton with the foreground and no colour, Teton plain, and three Faroes views
+with photos and houses: 0 pixels differ from the page before. First / last light identical with and without colour
+(six stops, 30 Dec). No network request after load. Smoothness at CPU 4x, phone size (governor at level 3), Oxbow
+with the foreground, the shipped 2048 file: drag 480 -> 481 ms a frame, time slider 609 -> 605, walk 439 -> 453, the
+sharp frame after each the same (the colour is in the light map, the meshes draw as before); with the 4096 file and
+`WDET`: Oxbow drag 472 -> 478, Snake River Overlook 404 -> 425, full light pass Snake 3.29 -> 3.64 s (software
+graphics). Whole test browser peak, Oxbow with the foreground: 418 MB without colour, 477 MB with the shipped files
+(2048 wide), 636 MB with the 4096 wide file. Foreground in ~3 s instead of ~0.3 s on software graphics (decoding three
+JPEGs). Picture sheet: scratchpad `teton_colour/_teton_colour.png` (`test/sheet.py`; the view from above is the wide
+light map read back from the page). Still wrong: the stand pins at Oxbow Bend and Snake River Overlook look through
+trees (known pin issue), Jackson Lake's north end is from 11 Jan (cloud on 30 Dec) and shows patchy open water, the
+laser boxes gain little (all snow that day: only a faint texture), roads read white (the 30 Dec picture shows them
+snow-packed; Teton Park Road is closed), no snow on the conifers' crowns beyond 10 %.
