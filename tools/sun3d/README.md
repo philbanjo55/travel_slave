@@ -395,3 +395,87 @@ page headless like the app does):
   `PAGE=<page.html> DEM=<teton-dem.png> OUT=<dir> node tools/sun3d/google/app_run.js '{"base":"https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/tiles-proxy","headers":{"x-tiles-test":"<token>"},"handRoot":true,"probe":true,"noStats":true,"tiles":{"draco":"<draco folder>"},"jobs":[{"name":"deployed","az":145.6,"alt":15.35}]}'`
   (the test header makes the browser send one extra preflight call per tile: fine for a test). Each run
   is one billable root request.
+
+## Faroes foreground in the app page (13 Nov 2026, branch `claude/sun3d-faroes-page`)
+
+The round 2 Faroes data (`build_detail_faroes.py`) drawn by `app_view.js` itself. Data per detail box: heights (ground
+and flat water only), mask (0 ground, 3 sea / lake, 4 stream), an aerial photo (`color_path`, JPEG, north up on the
+box's lat / lng grid) and building outlines (`buildings_path`, JSON, heights assumed); per 4 m fine box a photo
+(`terrain_near_regions.color_path`). Rows and columns: migration `20261113010000_terrain_faroes_colour.sql` (144 files
+in bucket `terrain`, 31 MB).
+
+- Panel / `services/terrain.ts`: the photos and the building file are foreground files like the others (saved ahead by
+  `saveTripTerrain`, counted in "N of M areas", sent after `ready` as chunks `color`, `bld`, `ncolor`; `detail.width` /
+  `depth` = the box's metres). A fine box with a photo and no detail box still gets its photo. Credit line under the
+  view whenever the page says `foreground {colour: true}`.
+- Page: the light passes of the photo meshes (`PHOTO`) give light only; the mesh multiplies it with the photo (photo
+  colours count as seen, albedo = photo^1.613, the same scale as the plain grass). Faces over ~44-56 deg are rock in
+  beds (colour from the photo's mean over land), sea / lakes are water, a stream (mask 4) over steep ground or just
+  under a stream cell uphill is a white fall, grass tufts within 30 m of the eye. The detail photo eases into the fine
+  box's photo over 4-44 m from its edge. The wide grid's grass is tinted toward the photo's mean colour (`FTINT`).
+  Houses: one mesh, outlines stood up from 1 m under the foot, gable roofs along `a`; their heights over the ground
+  (`bmap`, 0.2 m steps) cast the drawn shadows (`BSHADOW`) while the light map's alpha stays ground-only (what the
+  houses and the water read). `lit()` / first and last light never see photos or houses.
+- Without the new files (every Teton view; a Faroes view whose rows have no photo) the page draws exactly as before.
+
+Measured (scratchpad `faroes_page/`: `fr.js`, `fbench.js`, `cgm.sh`, `sheet.py`; headless Chromium, software graphics):
+Teton Oxbow Bend plain and round 3 foreground, 135 and 75 mm: 0 pixels differ from the page before, same sun times.
+Faroes, 8 proof views: first / last light identical with and without photos / houses, 0 network requests after load.
+Drag, CPU 4x, level 3 (where the governor settles, as it does for the Teton foreground): plain 130-145 ms a frame,
+detail box without colour 375-425, with photos and houses 500-600 (Teton foreground on the same bench: 326-451).
+Whole test browser peak, Saksun: plain 453 MB, detail only 484, photos + houses 523.
+Not fixed: the Faroes heights read ~3.3 m low against the agency's contours (uniform: no sun time changes).
+
+## Grand Teton in real winter colour (13 Nov 2026, branch `claude/sun3d-teton-colour`)
+
+The Teton view was all calculated colour (white snow, grey rock on steep faces, a guessed forest band, dark tree
+dots). Now its ground colour comes from a real winter day. Builder: `teton_colour/build_teton_colour.py`
+(`wide | boxes | sql | all <work dir> [out.sql]`; `TRIP_Q` = a script that runs one SQL string and prints JSON rows,
+`LIDAR_DIRS` = where the laser masks are, else the public bucket; everything downloaded is cached, a rerun is free).
+
+- Wide grid (`terrain_regions.color_path`, 2048 x 2048, ~27 m, 1.6 MB): Copernicus Sentinel-2 L2A, tile 12TWP, 30 Dec
+  2025 18:32 UTC (11:32 AM MST, sun 22 deg up; the trip's own date a year early), filled from 11 Jan 2026 where the
+  30 Dec pass had no data (the swath edge cuts the south-east corner) or its scene classes say cloud (Jackson Lake's
+  north end): 73 % / 27 %. Read straight from the COGs on AWS with HTTP range requests (no GDAL). The day's light is
+  taken out: each pixel is divided by the light it had then (sky by how much sky a slope sees, sun by its angle and a
+  march toward the sun for ridge shadows, from our own heights); snow is decided by the snow index (green vs
+  short-wave infrared, so snow in shade still counts) times how bright the green band is once the light is out, and
+  drawn as the page's own snow colour; forest, rock and water keep their own colour, a little greyed. 4096 was built
+  and measured first: +142 MB of test-browser memory over 2048 for detail a phone screen cannot show.
+- Fine boxes (8 `gt_*`, `terrain_near_regions.color_path`, at the box's own cell size, 50-530 KB) and laser boxes
+  (19 `gtd_*`, `terrain_detail_regions.color_path`, 0.5 m, 33-160 KB): USDA NAIP (USGS ImageServer, 0.6 m, 19 Jul 2022,
+  red / green / blue / near infrared) turned to winter. How snow is decided: the ground is snow wherever the 30 Dec
+  picture's snow index says snow at that spot (10-20 m), whatever the summer photo shows; that was the whole valley
+  floor and the forest floor on that day (every laser box comes out 100 % snow on open ground, Swan Lake 78 %: the lake
+  edge). Where it says bare, the photo shows through (dormant grass tan-grey, rock and gravel greyed, paved darker).
+  Snow keeps +-6 % of the photo's own brightness pattern (sage, ruts), never its colour. In a fine box the photo's dark
+  green crowns stay dark green (conifers; readier where the winter picture is dark too), other leafy green becomes a
+  grey-brown haze of bare twigs, and summer water is frozen (white) or open (dark) as the winter picture says. In a
+  laser box the survey's own trees are drawn by the page as points, so the ground under them is only a shade darker,
+  and the page keeps drawing its own water / ice and boards.
+- Page (`app_view.js`): where the ground is snow (`cfg.ground !== 'green'`) the three files are ALBEDO (`APHOTO`):
+  sampled in the light passes in place of the calculated colours, so each light map still holds colour x light and
+  everything downstream (the blend into the next mesh, water, trees, the light-only Faroes path) is untouched. A grid
+  without its own file uses the next coarser one through a uv rectangle (laser box -> fine box -> wide). Faces steeper
+  than ~50 deg turn to rock (a 10 m picture from above sees only a cliff's snowy ledges). A wide file finer than the
+  light map (4096) also gets its own detail back on the wide mesh (`WDET`); not used at 2048. All three are foreground
+  files: chunk `wcolor` (new; a foreground on its own) and the existing `ncolor` / `color`, sent after `ready`.
+- Panel / `services/terrain.ts`: `regionColor(r)`, the wide file saved ahead with the region (`saveTripTerrain`), sent
+  as `wcolor`; credit line from `terrain_regions.color_credit`. Migration `20261113020000_terrain_teton_colour.sql`
+  (28 files, 5.2 MB; NOT uploaded or applied: ship it with this app code, an older app would draw the box files the
+  Faroes way).
+
+Measured (scratchpad `teton_colour/test`: `tc.js` pictures and times, `bench_c.js` = the smoothness bench with colour,
+headless Chromium, software graphics): Teton with the foreground and no colour, Teton plain, and three Faroes views
+with photos and houses: 0 pixels differ from the page before. First / last light identical with and without colour
+(six stops, 30 Dec). No network request after load. Smoothness at CPU 4x, phone size (governor at level 3), Oxbow
+with the foreground, the shipped 2048 file: drag 480 -> 481 ms a frame, time slider 609 -> 605, walk 439 -> 453, the
+sharp frame after each the same (the colour is in the light map, the meshes draw as before); with the 4096 file and
+`WDET`: Oxbow drag 472 -> 478, Snake River Overlook 404 -> 425, full light pass Snake 3.29 -> 3.64 s (software
+graphics). Whole test browser peak, Oxbow with the foreground: 418 MB without colour, 477 MB with the shipped files
+(2048 wide), 636 MB with the 4096 wide file. Foreground in ~3 s instead of ~0.3 s on software graphics (decoding three
+JPEGs). Picture sheet: scratchpad `teton_colour/_teton_colour.png` (`test/sheet.py`; the view from above is the wide
+light map read back from the page). Still wrong: the stand pins at Oxbow Bend and Snake River Overlook look through
+trees (known pin issue), Jackson Lake's north end is from 11 Jan (cloud on 30 Dec) and shows patchy open water, the
+laser boxes gain little (all snow that day: only a faint texture), roads read white (the 30 Dec picture shows them
+snow-packed; Teton Park Road is closed), no snow on the conifers' crowns beyond 10 %.

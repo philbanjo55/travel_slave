@@ -880,6 +880,10 @@ def sun_3d():
         time.sleep(4)
         seen, _ = V.texts_all(2)
         V.check('sun3d-moments', seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you'), 'first / last light chips')
+        # Teton winter colour (13 Nov 2026): builds that know the region's colour file show its credit line under the view
+        tsrc = os.path.join(os.path.dirname(__file__), '..', 'src', 'services', 'terrain.ts')
+        if os.path.exists(tsrc) and 'color_credit' in open(tsrc, encoding='utf-8').read():
+            V.check('sun3d-colour-credit', seen_has(seen, 'Ground colour: Copernicus'), 'Sentinel-2 / NAIP credit line under the view')
         V.check('sun3d-status', seen_has(seen, 'You: '), 'in the sun / in shade line')
         # 12 Nov 2026: Phil's 4x5 lenses, the frame box button and the Street View link
         V.check('sun3d-lenses-4x5', all(seen_has(seen, f'{f} millimetre lens') for f in (75, 90, 135, 300)), '75 / 90 / 135 / 300 lens buttons')
