@@ -468,7 +468,14 @@ dots). Now its ground colour comes from a real winter day. Builder: `teton_colou
 Measured (scratchpad `teton_colour/test`: `tc.js` pictures and times, `bench_c.js` = the smoothness bench with colour,
 headless Chromium, software graphics): Teton with the foreground and no colour, Teton plain, and three Faroes views
 with photos and houses: 0 pixels differ from the page before. First / last light identical with and without colour
-(six stops, 30 Dec). No network request after load. Drag at CPU 4x, phone size (governor at level 3): Oxbow 472 ->
-478 ms a frame, Snake River Overlook 404 -> 425 (with the 4096 file and `WDET`); full light pass Oxbow 4.54 -> 4.61 s,
-Snake 3.29 -> 3.64 s on software graphics. Whole test browser peak, Oxbow with foreground: 418 MB without colour,
-636 MB with the 4096 wide file, 494 MB with 2048 (shipped).
+(six stops, 30 Dec). No network request after load. Smoothness at CPU 4x, phone size (governor at level 3), Oxbow
+with the foreground, the shipped 2048 file: drag 480 -> 481 ms a frame, time slider 609 -> 605, walk 439 -> 453, the
+sharp frame after each the same (the colour is in the light map, the meshes draw as before); with the 4096 file and
+`WDET`: Oxbow drag 472 -> 478, Snake River Overlook 404 -> 425, full light pass Snake 3.29 -> 3.64 s (software
+graphics). Whole test browser peak, Oxbow with the foreground: 418 MB without colour, 477 MB with the shipped files
+(2048 wide), 636 MB with the 4096 wide file. Foreground in ~3 s instead of ~0.3 s on software graphics (decoding three
+JPEGs). Picture sheet: scratchpad `teton_colour/_teton_colour.png` (`test/sheet.py`; the view from above is the wide
+light map read back from the page). Still wrong: the stand pins at Oxbow Bend and Snake River Overlook look through
+trees (known pin issue), Jackson Lake's north end is from 11 Jan (cloud on 30 Dec) and shows patchy open water, the
+laser boxes gain little (all snow that day: only a faint texture), roads read white (the 30 Dec picture shows them
+snow-packed; Teton Park Road is closed), no snow on the conifers' crowns beyond 10 %.
