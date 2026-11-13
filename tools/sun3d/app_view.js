@@ -529,6 +529,10 @@
     #else
         vec3 ph = texture2D(dphoto, vUv).rgb;
     #endif
+        {   // close to the eye a 0.5-1 m photo is a blur: grass tufts of our own on top of it
+          float wn = 1. - smoothstep(7., 30., distance(cameraPosition, vP));
+          if (wn > 0.) ph *= 1. + wn * .5 * (pnoise(vP.xz * 7.) * .45 + pnoise(vP.xz * 23.) * .35 + pnoise(vP.xz * 2.1) * .2 - .5);
+        }
         float sv = L.a;
     #else
         vec3 ph = texture2D(nphoto, vUv).rgb;
