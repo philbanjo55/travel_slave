@@ -23,6 +23,13 @@
 //   as a white fall), the wide grid's grass is tinted toward the photo's mean colour, and the houses (heights guessed)
 //   are drawn and throw a drawn shadow; NONE of it reaches lit() / first and last light, which read the ground only.
 //   Foreground chunks sent before done() (the test harness) are treated the same way. `lost` = the graphics context went.
+//   Grand Teton (13 Nov 2026): 'wcolor' = a winter colour file of the whole wide grid (Sentinel-2, JPEG, north up on
+//   its lat / lng grid), a foreground on its own too. Where the ground is snow (cfg.ground !== 'green') 'ncolor' and
+//   'color' are winter colour files as well (summer aerial photos turned to winter by the builder,
+//   tools/sun3d/teton_colour): all three are ALBEDO, baked into the light passes in place of the calculated colours
+//   (forest guess, rock on steep faces, snow), so everything that reads a light map (the next mesh's edge, the water,
+//   the trees) carries on as before; the wide mesh gets back the file's own 13 m detail where it is near. The
+//   survey's water and buildings keep their own drawing. The Faroes way (photo times light, in the mesh) is unchanged.
 //   S3D.sun(az, alt)  degrees, from the app's own sun engine      S3D.focal(mm)
 //   Smoothness (12 Nov 2026, see "Smooth by construction" below): while the view is being moved (a drag, the time slider,
 //   walk mode) frames may be drawn lighter and one full-quality frame follows when it stops. When a movement ends the
@@ -57,7 +64,7 @@
   const free = a => { try { const b = a && (a.buffer || a); if (b && typeof b.transfer === 'function' && b.byteLength) b.transfer(0); } catch (e) { /* left to the collector */ } };
   window.onerror = msg => { post({ type: 'error', msg: String(msg) }); };
 
-  let cfg = null, parts = [], nparts = [], dparts = [], mparts = [], tparts = [], wparts = [], cparts = [], ncparts = [], bparts = [], FAR = null, NR = null, DT = null, ice = true, maxH = 4250, minH = 0, baseH = 0;
+  let cfg = null, parts = [], nparts = [], dparts = [], mparts = [], tparts = [], wparts = [], cparts = [], ncparts = [], bparts = [], wcparts = [], FAR = null, NR = null, DT = null, ice = true, maxH = 4250, minH = 0, baseH = 0;
   let foreState = 0, frames = 0, lastPath = null, touched = false;   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
   let R = null;   // everything three.js, once built
   let eye = null, eye0 = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true;
@@ -174,6 +181,9 @@
     #ifdef FTINT
     uniform vec3 tintK;   // the wide grid's grass toward the mean colour of the area's aerial photo (Faroes): no stamp edge round the photo
     #endif
+    #ifdef APHOTO
+    uniform sampler2D aphoto; uniform vec4 arect;   // a winter colour file (albedo, as seen): this grid's uv -> the file's
+    #endif
     #ifdef BSHADOW
     uniform sampler2D bmap;   // house heights above the ground / 51 m (assumed heights): a drawn shadow only, never in the sun times
     #endif
@@ -202,11 +212,18 @@
       float fine = hash(floor(g)), pch = vnoise(gp / 9.) * .6 + vnoise(gp / 2.5) * .4;
       vec3 alb;
       if (snowMode > .5) {
+    #ifdef APHOTO
+        alb = pow(texture2D(aphoto, arect.xy + vUv * arect.zw).rgb, vec3(1.613));   // what was there on a winter day, not a guess
+        // a 10 m picture from above sees a cliff only as its ledges (snow): snow does not hold past ~55 deg, so the steepest
+        // faces are the rock they are (the Grand's summit block, the canyon walls)
+        alb = mix(alb, vec3(.27, .26, .26) + fine * .06, smoothstep(44., 60., slope + fine * 6.) * .85);
+    #else
         float rock = smoothstep(37., 53., slope + fine * 7.);
         float forest = smoothstep(2040., 2110., h) * (1. - smoothstep(2600., 2950., h + pch * 260.)) * smoothstep(3., 8., slope + pch * 4.) * (1. - rock) * smoothstep(.25, .6, pch + fine * .25);
         alb = vec3(.93, .95, .98);
         alb = mix(alb, vec3(.24, .31, .29) + fine * .08, forest * .9);
         alb = mix(alb, vec3(.38, .36, .37) + fine * .06, rock);
+    #endif
       } else {
         float rock = smoothstep(33., 50., slope + fine * 7.);
         vec3 grass = mix(vec3(.25, .36, .16), vec3(.37, .38, .22), smoothstep(120., 620., h + pch * 160.));
@@ -225,7 +242,11 @@
         vec3 wood = vec3(.41, .31, .23) * (.72 + fine * .26 + .34 * vnoise(g * vec2(.8, .22))), water;   // weathered boards, no two alike
         float roof = 1. - smoothstep(48., 62., slope);
         if (snowMode > .5) {
+    #ifdef APHOTO
+          alb = pow(texture2D(aphoto, arect.xy + vUv * arect.zw).rgb, vec3(1.613));   // the winter colour file; water and boards below as before
+    #else
           alb = mix(vec3(.93, .95, .98), vec3(.38, .36, .37) + fine * .06, smoothstep(37., 53., slope + fine * 7.) * open);
+    #endif
           water = vec3(.11, .17, .22);
           wood = mix(wood, vec3(.90, .92, .95), roof * (.3 + .35 * (1. - smoothstep(20., 36., slope))));   // a roof is a touch lighter under snow, more so where it is flat
         } else {
@@ -396,6 +417,9 @@
     varying vec3 vP;
     ` + WATER_GLSL + `
     #endif
+    #ifdef WDET
+    uniform sampler2D wphoto; uniform float wlod;   // the winter colour file, finer than the light map: its detail back on top
+    #endif
     void main() {
     #ifdef HOLE
       vec2 w = vUv * size; if (min(min(w.x - hole.x, hole.z - w.x), min(w.y - hole.y, hole.w - w.y)) > band) discard;
@@ -404,6 +428,9 @@
       { vec2 w2 = vUv * dsize; if (min(min(w2.x - dhole.x, dhole.z - w2.x), min(w2.y - dhole.y, dhole.w - w2.y)) > dband) discard; }
     #endif
       vec3 c = texture2D(lmap, vUv).rgb;
+    #ifdef WDET
+      { vec3 pf = texture2D(wphoto, vUv).rgb, pc = textureLod(wphoto, vUv, wlod).rgb; c *= clamp((pf + .03) / (pc + .03), .55, 1.6); }
+    #endif
     #ifdef WATER
       c = wideWater(c, vP);
     #endif
@@ -853,7 +880,7 @@
   const FORE_MS = 60000;   // a slow phone gets a minute; past that the box is dropped and the plain view stays
   const pause = () => new Promise(r => setTimeout(r, 0));
   function queueFore() {
-    if (foreState !== 0 || !cfg || !((cfg.detail && dparts.length) || ncparts.length)) return;
+    if (foreState !== 0 || !cfg || !((cfg.detail && dparts.length) || ncparts.length || wcparts.length)) return;
     foreState = 1;
     const go = () => { if (!R) return; if (frames >= 2) addFore(); else setTimeout(go, 60); };
     setTimeout(go, 320);   // the plain view has had its first frames and its full light pass
@@ -931,7 +958,9 @@
       }
       // 4b. aerial photos (Faroes: the fine box's and the detail box's) and the houses. Colour and shapes only: the sun
       //     times never read them (the houses' heights are guessed). Each is an extra: a bad file is simply left out.
-      let nph = null, dph = null, hs = null;
+      let nph = null, dph = null, hs = null, wph = null;
+      const ALB = my.ground !== 'green';   // snow regions (Grand Teton): the colour files are albedo for the light passes
+      if (wcparts.length) { list = wcparts; wcparts = []; try { wph = await photoOf(list, light ? 2048 : 0, () => false); made.push(wph.tex); } catch (e) { wph = null; } list = null; await step('wide colour'); }
       if (NR && ncparts.length) { list = ncparts; ncparts = []; try { nph = await photoOf(list, light ? 1024 : 0, (fx, fy) => gh(NR, fx * NR.n - 0.5, fy * NR.n - 0.5) < 1); made.push(nph.tex); } catch (e) { nph = null; } list = null; }
       if (D && cparts.length) { list = cparts; cparts = []; try { dph = await photoOf(list, light ? 1024 : 0, (fx, fy) => { const c = Math.min(D.n - 1, Math.floor(fx * D.n)), r = Math.min(D.n - 1, Math.floor(fy * D.n)); return D.kind ? D.kind[r * D.n + c] === 3 : D.HF[r * D.n + c] < 0.6; }); made.push(dph.tex); } catch (e) { dph = null; } list = null; }
       ncparts = []; cparts = [];
@@ -943,15 +972,18 @@
         await step('houses');
       }
       bparts = [];
-      if (!hasDet && !nph) throw new Error('nothing to add');
-      const mean = (nph && nph.mean) || (dph && dph.mean);
+      if (!hasDet && !nph && !wph) throw new Error('nothing to add');
+      const mean = ALB ? null : (nph && nph.mean) || (dph && dph.mean);
       const pu = mean ? {   // what the photo meshes share: the mean land colour, rock from it
         rockC: { value: new THREE.Vector3().fromArray(mean.map(v => v * 0.35 + (mean[0] * 0.3 + mean[1] * 0.59 + mean[2] * 0.11) * 0.65).map(v => v * 0.82)) },
         tintC: { value: new THREE.Vector3().fromArray(mean) },
       } : { rockC: { value: new THREE.Vector3(0.4, 0.4, 0.38) }, tintC: { value: new THREE.Vector3(0.45, 0.5, 0.35) } };
       const sunU = C.sunU, fog = C.fog, size = C.size, hmap = C.hmap, near = R.near, lo = R.lo;
       const wcolU = { sunDir: sunU.sunDir, sunCol: sunU.sunCol, skyZen: R.skyU.zen, skyHor: R.skyU.hor, ice: R.iceU };
-      if (nph && near) Object.assign(near.mat.uniforms, pu, wcolU, { nphoto: { value: nph.tex }, pcells: { value: NR.n } });
+      if (nph && near && !ALB) Object.assign(near.mat.uniforms, pu, wcolU, { nphoto: { value: nph.tex }, pcells: { value: NR.n } });
+      // where each grid finds its winter colour: its own file, else the next coarser one (uv rect inside that file)
+      const inRect = (g, P) => new THREE.Vector4((g.x0 - P.x0) / P.w, (g.z0 - P.z0) / P.d, g.w / P.w, g.d / P.d);
+      const albOf = g => !ALB ? null : g === D && dph ? { tex: dph.tex, rect: new THREE.Vector4(0, 0, 1, 1) } : g !== FAR && NR && nph && (g === NR || g === D) ? { tex: nph.tex, rect: g === NR ? new THREE.Vector4(0, 0, 1, 1) : inRect(g, NR) } : wph ? { tex: wph.tex, rect: g === FAR ? new THREE.Vector4(0, 0, 1, 1) : inRect(g, FAR) } : null;
       let det = null, terrMat = null, nearMat = null;
       if (hasDet) {
       // 5. its light pass, its mesh, and the coarser meshes' new materials (the hole under it, the water on them)
@@ -969,12 +1001,13 @@
       const mu = Object.assign({ hmap: { value: dmap }, kmap: { value: kmap }, cells: { value: D.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, skyZen: R.skyU.zen, skyHor: R.skyU.hor, ice: R.iceU, fmap: { value: hmap }, lmap: { value: null }, flmap: { value: lo.texture }, rect: { value: drect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: D.keep }, band: { value: D.band }, fogCol: fog.fogCol, fogD: fog.fogD }, waterU);
       if (NR) { lu.mmap = { value: C.nmap }; lu.mrect = { value: C.nrect }; Object.assign(mu, { mmap: { value: C.nmap }, mrect: { value: C.nrect }, mkeep: { value: NR.keep }, mband: { value: NR.band }, skirt: { value: 14 }, mlmap: { value: near.lo.texture } }); }
       const ldef = NR ? { NEAR: 1, DETAIL: 1, MID: 1 } : { NEAR: 1, DETAIL: 1 };
-      if (dph) ldef.PHOTO = 1;
+      if (dph && !ALB) ldef.PHOTO = 1;
+      { const a = albOf(D); if (a) { ldef.APHOTO = 1; lu.aphoto = { value: a.tex }; lu.arect = { value: a.rect }; } }
       if (hs) { ldef.BSHADOW = 1; lu.bmap = { value: hs.bmap }; }
       const dLight = new THREE.ShaderMaterial({ defines: ldef, uniforms: lu, vertexShader: C.lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
       const dlo = C.rt(Math.min(512, D.n)), dhi = C.rt(D.n); mu.lmap.value = dlo.texture;
       const ddef = { BLD: 1 }; if (NR) ddef.MID = 1; if (wmap) ddef.WATER = 1;
-      if (dph) { ddef.DPHOTO = 1; Object.assign(mu, pu, { dphoto: { value: dph.tex }, pcells: { value: D.n } }); if (nph && NR) { ddef.NPH = 1; mu.nphoto = { value: nph.tex }; } }
+      if (dph && !ALB) { ddef.DPHOTO = 1; Object.assign(mu, pu, { dphoto: { value: dph.tex }, pcells: { value: D.n } }); if (nph && NR) { ddef.NPH = 1; mu.nphoto = { value: nph.tex }; } }
       const mat = new THREE.ShaderMaterial({ defines: ddef, uniforms: mu, vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
       // its own geometry over the same points and triangles: each mesh keeps its own list of blocks in view
       const dgeo = new THREE.BufferGeometry(); dgeo.setAttribute('position', ngeo.attributes.position); dgeo.setIndex(ngeo.index);
@@ -994,10 +1027,10 @@
       terrMat = new THREE.ShaderMaterial({ defines: tdef, uniforms: C.terrU, vertexShader: TERRAIN_VS, fragmentShader: TERRAIN_FS }); made.push(terrMat);
       if (near) {
         Object.assign(near.mat.uniforms, dholeU, waterU);
-        const nd = { DHOLE: 1 }; if (wmap) nd.WATER = 1; if (nph) nd.NPHOTO = 1;
+        const nd = { DHOLE: 1 }; if (wmap) nd.WATER = 1; if (nph && !ALB) nd.NPHOTO = 1;
         nearMat = new THREE.ShaderMaterial({ defines: nd, uniforms: near.mat.uniforms, vertexShader: NEAR_VS, fragmentShader: NEAR_FS }); made.push(nearMat);
       }
-      } else if (nph && near) {   // a fine box with a photo and no detail box: only the fine mesh changes
+      } else if (nph && near && !ALB) {   // a fine box with a photo and no detail box: only the fine mesh changes
         nearMat = new THREE.ShaderMaterial({ defines: Object.assign({}, near.mat.defines, { NPHOTO: 1 }), uniforms: near.mat.uniforms, vertexShader: NEAR_VS, fragmentShader: NEAR_FS }); made.push(nearMat);
       }
       await step('light');
@@ -1006,7 +1039,17 @@
       if (hasDet) { DT = D; maxH = Math.max(maxH, m.hi + 60); minH = Math.min(minH, m.lo); sunU.maxH.value = maxH; }
       if (terrMat) { C.terrain.material = [terrMat]; R.terrMat = terrMat; }
       if (nearMat) { near.mesh.material = [nearMat]; near.mat = nearMat; }
-      if (nph && near) { near.lightMat.defines.PHOTO = 1; near.lightMat.needsUpdate = true; }
+      if (nph && near && !ALB) { near.lightMat.defines.PHOTO = 1; near.lightMat.needsUpdate = true; }
+      if (ALB) {   // the winter colour files into the wide and fine light passes; the wide mesh gets the file's own detail back
+        const af = albOf(FAR), an = near && albOf(NR);
+        if (af) { Object.assign(R.lightMat.uniforms, { aphoto: { value: af.tex }, arect: { value: af.rect } }); R.lightMat.defines.APHOTO = 1; R.lightMat.needsUpdate = true; }
+        if (an) { Object.assign(near.lightMat.uniforms, { aphoto: { value: an.tex }, arect: { value: an.rect } }); near.lightMat.defines.APHOTO = 1; near.lightMat.needsUpdate = true; }
+        const lod = wph ? Math.log2((wph.tex.image.width || 0) / R.hi.width) : 0;
+        if (lod >= 0.5) {
+          const tm = R.terrMat; Object.assign(C.terrU, { wphoto: { value: wph.tex }, wlod: { value: lod } });
+          tm.uniforms = C.terrU; tm.defines.WDET = 1; tm.needsUpdate = true;
+        }
+      }
       if (mean) {   // the wide grid's grass toward the photo's mean colour (as albedo), so the photo has no stamp edge
         const k = mean.map((v, i) => Math.max(0.6, Math.min(1.6, Math.pow(v, 1 / 0.62) / [0.31, 0.37, 0.19][i])));
         R.lightMat.uniforms.tintK = { value: new THREE.Vector3().fromArray(k) }; R.lightMat.defines.FTINT = 1; R.lightMat.needsUpdate = true;
@@ -1019,11 +1062,11 @@
       if (touched) focus(); else { aim(); heading(); }
       foreState = 2; relight = dirty = true;
       post({ type: 'detail', stage: 'done', ms: Math.round(performance.now() - t0) });
-      post({ type: 'foreground', ok: true, light, detail: D ? D.n : 0, trees: det ? det.count : 0, real: !!(tp && tp.real), water: wmap ? W.n : 0, ice, colour: !!(nph || dph), photos: (nph ? 1 : 0) + (dph ? 1 : 0), buildings: hs ? hs.count : 0, ms: Math.round(performance.now() - t0) });
+      post({ type: 'foreground', ok: true, light, detail: D ? D.n : 0, trees: det ? det.count : 0, real: !!(tp && tp.real), water: wmap ? W.n : 0, ice, colour: !!(nph || dph || wph), photos: (nph ? 1 : 0) + (dph ? 1 : 0) + (wph ? 1 : 0), buildings: hs ? hs.count : 0, ms: Math.round(performance.now() - t0) });
       if (lastPath && hasDet) window.S3D.path(lastPath);   // the day's first / last light again, now from the survey's ground and buildings
     } catch (e) {
       for (const t of made) { try { t.dispose(); } catch (x) { /* nothing to let go */ } }
-      dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; foreState = -1;
+      dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = -1;
       post({ type: 'foreground', ok: false, msg: String(e && e.message || e), at: where });
     }
   }
@@ -1326,20 +1369,20 @@
   }
 
   window.S3D = {
-    init(c) { cfg = c; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
-    chunk(s, which) { (which === 'near' ? nparts : which === 'detail' ? dparts : which === 'mask' ? mparts : which === 'trees' ? tparts : which === 'water' ? wparts : which === 'color' ? cparts : which === 'ncolor' ? ncparts : which === 'bld' ? bparts : parts).push(s); },
+    init(c) { cfg = c; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    chunk(s, which) { (which === 'near' ? nparts : which === 'detail' ? dparts : which === 'mask' ? mparts : which === 'trees' ? tparts : which === 'water' ? wparts : which === 'color' ? cparts : which === 'ncolor' ? ncparts : which === 'bld' ? bparts : which === 'wcolor' ? wcparts : parts).push(s); },
     async done() {
       try {
         if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");
         if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.');
         await load(); build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
-        const fore = !!((cfg.detail && dparts.length) || ncparts.length);
+        const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length);
         post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: 0, fore }); heading();
         if (fore) queueFore();
       } catch (e) { fail("The 3D view couldn't start on this phone."); post({ type: 'error', msg: String(e && e.message || e) }); }
     },
     // fore({ detail, water, ice }): the foreground for the view that is up; its chunks follow, then foreDone()
-    fore(c) { if (!cfg || foreState === 1) return; cfg.detail = c && c.detail; cfg.water = c && c.water; if (c && c.ice != null) ice = !!c.ice; if (R) R.iceU.value = ice ? 1 : 0; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; if (foreState < 0) foreState = 0; },
+    fore(c) { if (!cfg || foreState === 1) return; cfg.detail = c && c.detail; cfg.water = c && c.water; if (c && c.ice != null) ice = !!c.ice; if (R) R.iceU.value = ice ? 1 : 0; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; if (foreState < 0) foreState = 0; },
     foreDone() { if (R) queueFore(); },
     sun(az, alt) { sun = { az, alt }; relight = true; touch('sun'); },
     // ice(true): still water (lakes, ponds, backwaters) is drawn frozen under snow, only moving water stays open
