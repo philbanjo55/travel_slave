@@ -886,9 +886,12 @@ def sun_3d():
                 print('INFO walk: no walk button in full screen (this build has no walk mode)', flush=True)
             V.show('sun3d-full-drawn', g)
             c_ = C.capture(1)
-            if not V.tap_text(c_, 'Close the 3D view'):
+            closed = V.tap_text(c_, 'Close the 3D view')
+            if not closed:
                 V.back()
             time.sleep(2)
+            print(f'INFO sun3d close: {"tapped Close" if closed else "no Close button, pressed Back"}', flush=True)
+            V.show('sun3d-after-close', C.capture(1))
         else:
             V.show('sun3d-full', g)
             V.check('sun3d-full-open', False, 'full screen did not open' if tries else 'no full-screen button on screen')
@@ -898,6 +901,14 @@ def sun_3d():
             time.sleep(1.5)
         seen, _ = V.texts_all(2)
         V.check('sun3d-moments', seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you'), 'first / last light chips')
+        if not (seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you')):   # 13 Nov 2026: where did the page go?
+            V.show('sun3d-moments-screen', C.capture(1))
+            keys = ('ReactHost', 'FATAL', 'has died', 'Killing', 'lowmemorykiller', 'ANR in', 'Start proc', 'onRenderProcessGone', 'Renderer process')
+            for line in [l for l in C.adb('logcat', '-d', '-t', '6000', timeout=90).splitlines()
+                         if any(k in l for k in keys) and ('philmframe' in l or 'chromium' in l or 'ReactHost' in l or 'lowmemory' in l)][-15:]:
+                print('LOGCAT ' + line[:240], flush=True)
+            for line in C.adb('logcat', '-d', '-b', 'crash', '-t', '40', timeout=60).strip().splitlines()[-20:]:
+                print('CRASH ' + line[:240], flush=True)
         # Teton winter colour (13 Nov 2026): builds that know the region's colour file show its credit line under the view
         tsrc = os.path.join(os.path.dirname(__file__), '..', 'src', 'services', 'terrain.ts')
         if os.path.exists(tsrc) and 'color_credit' in open(tsrc, encoding='utf-8').read():
