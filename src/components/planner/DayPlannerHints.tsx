@@ -250,7 +250,7 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
   const tierOf = (id: string) => planner.tiers.get(id) ?? null;
   const grey = score.bigOnDay && score.best < 0.1 && score.others < 0.1;
   const mineRows = (planner.mine?.visits ?? []).filter(v => v.start);
-  const tRows = (planner.best?.visits ?? []).filter(v => v.start);
+  const tRows = joinRepeats((planner.best?.visits ?? []).filter(v => v.start));
   // Today, after the last stop on either list: nothing left to change (Phil put two notes on a finished day).
   const ends = [...mineRows, ...tRows].map(v => Date.parse(v.end ?? v.start ?? '')).filter(Number.isFinite);
   const tToday = tripToday(run, date);

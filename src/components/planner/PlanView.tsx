@@ -265,13 +265,13 @@ export function PlanBody({ tripId, run, plans, byDay, initialRank, onRank }: {
               {big(plan) < big(mine) ? ". T's day is lower here because it saves a big subject for a better day of the week." : ''}
             </Text>
           ) : null}
-          {plan.visits.map((v, i) => {
+          {(plan.rank === 0 ? plan.visits : joinRepeats(plan.visits)).map((v, i) => {
             const d = v.trip_date ?? v.date;
             const head = byDay && d !== lastDay ? (lastDay = d) : null;
             return (
               <View key={`${v.stop_id}-${i}`}>
                 {head ? <Text style={[styles.label, { marginTop: spacing.md }]}>{format(parseISO(head), 'EEE d MMM').toUpperCase()}</Text> : null}
-                <VisitRow v={v} tz={tz} mine={plan.rank === 0} run={run} onPress={() => openStop(v.stop_id)} />
+                <VisitRow v={v} tz={tz} mine={plan.rank === 0} run={run} dayFirst={i === 0 || !!head} onPress={() => openStop(v.stop_id)} />
               </View>
             );
           })}
@@ -410,7 +410,7 @@ export function acceptedText(r: any): string {
     + (r?.clashes?.length ? `\nCheck: ${r.clashes.length} tight connection${r.clashes.length === 1 ? '' : 's'}` : '');
 }
 
-export function VisitRow({ v, tz, mine, onPress, index, run }: { v: PlanVisit; tz?: string; mine: boolean; onPress: () => void; index?: number; run?: PlanRun | null }) {
+export function VisitRow({ v, tz, mine, onPress, index, run, dayFirst }: { v: PlanVisit; tz?: string; mine: boolean; onPress: () => void; index?: number; run?: PlanRun | null; dayFirst?: boolean }) {
   const vd = v.p_good != null ? verdictOf(v.p_good) : null;
   const light = v.light ? LIGHT_WORDS[v.light] ?? v.light : null;
   const muted = mine && !v.rated;
@@ -433,7 +433,13 @@ export function VisitRow({ v, tz, mine, onPress, index, run }: { v: PlanVisit; t
           </View>
         ) : null}
         {(v as any).move_why ? <Text style={styles.visitSub}>{(v as any).move_why}</Text> : null}
-        {!mine && (v.wait_min || v.drive_min) ? (
+        {!mine && dayFirst && v.start ? (
+          // The day's first stop: no "wait" (a note like "sleep in till 9" made the planner arrive early and wait 169 min,
+          // 12 Nov 2026); say when to leave instead: the start less the drive.
+          <Text style={styles.visitSub}>
+            {v.drive_min ? `${v.drive_min} min drive · ` : ''}leave {clock12(new Date(new Date(v.start).getTime() - (v.drive_min ?? 0) * 60000).toISOString(), tz)}
+          </Text>
+        ) : !mine && (v.wait_min || v.drive_min) ? (
           <Text style={styles.visitSub}>
             {v.drive_min ? `${v.drive_min} min drive` : ''}{v.drive_min && v.wait_min ? ' · ' : ''}{v.wait_min ? `${v.wait_min} min wait` : ''}
           </Text>

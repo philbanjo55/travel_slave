@@ -15,6 +15,27 @@ export type PlanVisit = {
   // Already over when a live re-plan was made (solver-replay v75): shown as done, not as a chance.
   done?: boolean;
 };
+// Two visits in a row to the same place on the same day are one longer stay (T uses two of a place's entries back to
+// back when it wants about two hours there: Oxbow Bend 9:00 and 10:15 on Teton Live, 12 Nov 2026). Display only:
+// the stored plan keeps both entries. The joined row keeps the first start, the last end and the better chance.
+export function joinRepeats(visits: PlanVisit[]): PlanVisit[] {
+  const out: PlanVisit[] = [];
+  for (const v of visits) {
+    const last = out[out.length - 1];
+    const sameDay = last && (last.trip_date ?? last.date) === (v.trip_date ?? v.date);
+    if (last && sameDay && last.name === v.name && !last.booked && !v.booked && !last.done && !v.done) {
+      out[out.length - 1] = {
+        ...last,
+        end: v.end ?? last.end,
+        p_good: Math.max(last.p_good ?? 0, v.p_good ?? 0) || (last.p_good ?? v.p_good),
+        value: Math.max(last.value ?? 0, v.value ?? 0) || (last.value ?? v.value),
+        peak_at: (v.p_good ?? 0) > (last.p_good ?? 0) ? v.peak_at ?? last.peak_at : last.peak_at,
+      };
+    } else out.push(v);
+  }
+  return out;
+}
+
 export type Plan = {
   rank: number; objective: number; mean: number; cvar11: number;
   drive_minutes: number | null; long_leg_minutes: number | null; note: string | null; visits: PlanVisit[];
