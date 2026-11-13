@@ -83,13 +83,6 @@ let lastFrame: FrameMode = 'land';
 let lastForeground = true;
 let lastIce: boolean | null = null;
 let foregroundTooHeavy = false;   // the web view died with the foreground on: it stays off until the user turns it on again
-// How this phone kept up the last time the view was moved: the page's quality levels while moving (0 full .. 3 low),
-// one for looking around / walking and one for the time slider. Handed to the next page, so it starts where this one ended.
-let lastLevels: { look: number; sun: number } | null = null;
-type Perf = { ms: number; worst: number; quality: string };
-// "9 ms a frame (worst 21) · quality full": the time one picture took while the view was last moved (under about
-// 17 ms is as smooth as most screens show), and the quality the page drew at while moving (it is always full when still).
-const perfLine = (p: Perf) => `${p.ms < 10 ? Math.round(p.ms * 10) / 10 : Math.round(p.ms)} ms a frame (worst ${Math.round(p.worst)}) · quality ${p.quality}`;
 const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
 
 // Everything under the picture. In full screen it may take at most a third of the screen and scrolls inside that:
@@ -133,7 +126,6 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [moments, setMoments] = useState<Moments | null>(null);
   const [look, setLook] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [perf, setPerf] = useState<Perf | null>(null);   // the last movement's frame time, as the page measured it (offline view)
   const booted = useRef(false);
   const sent = useRef(false);
   const foreSent = useRef(false);
@@ -276,7 +268,6 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ? { n: near.n, north: near.north, south: near.south, west: near.west, east: near.east, base: near.base_m, step: near.step_m }
         : undefined,
       ice: iceOn,
-      level: lastLevels ?? undefined,
       ...(hd && hdCfg ? { tiles: { base: hdCfg.base, draco: hdCfg.draco, root: hd } } : null),
     };
     run(`window.S3D.init(${JSON.stringify(cfg)})`);
@@ -335,11 +326,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     let m: any = null;
     try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
     if (!m || typeof m.type !== 'string') return;
-    if (m.type === 'boot') { booted.current = true; foreSent.current = false; setPerf(null); start(); }
-    else if (m.type === 'perf') {
-      if (m.levels && typeof m.levels.look === 'number' && typeof m.levels.sun === 'number') lastLevels = { look: m.levels.look, sun: m.levels.sun };
-      if (typeof m.ms === 'number') setPerf({ ms: m.ms, worst: typeof m.worst === 'number' ? m.worst : m.ms, quality: typeof m.quality === 'string' ? m.quality : 'full' });
-    }
+    if (m.type === 'boot') { booted.current = true; foreSent.current = false; start(); }
     else if (m.type === 'ready') setPhase('ready');
     else if (m.type === 'foreground') { setShapes(!!m.ok); setForeBusy(false); }   // not ok = the page dropped it and kept the plain view
     else if (m.type === 'lost') onGone();
@@ -558,9 +545,6 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       ) : phase === 'error' && problem ? (
         <Text style={[styles.status, pad]}>{problem}</Text>
       ) : null}
-      {ready && perf && !hd ? (
-        <Text style={[styles.perf, pad]} numberOfLines={1} accessibilityLabel={`Smoothness: ${perfLine(perf)}`}>Smoothness: {perfLine(perf)}</Text>
-      ) : null}
       {ready && shapes && (lit?.trees || moments?.trees) ? (
         <Text style={[styles.status, pad]}>
           {lit?.trees ? 'Trees near you may block the sun here right now' : 'Trees near you may block the sun here at times today'} (summer survey; bare in winter if they are cottonwoods). The times don't count them.
@@ -670,5 +654,4 @@ const styles = StyleSheet.create({
   momentLabel: { color: colors.textSecondary, fontSize: 11 },
   momentTime: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },
   note: { color: colors.textTertiary, fontSize: 11, marginTop: 8, paddingHorizontal: 2 },
-  perf: { color: colors.textTertiary, fontSize: 11, marginTop: 4, paddingHorizontal: 2 },
 });

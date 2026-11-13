@@ -793,6 +793,8 @@ def sun_3d():
         opened = False; t_open = time.time(); tries = 0; g = C.capture(1)
         for tries in range(1, 4):
             f = C.capture(1)
+            btn = next((c for c in f.clickables if 'Open the 3D view full screen' in c['label']), None)
+            print(f'INFO full screen tap {tries}: button at {btn["xy"] if btn else None}', flush=True)
             if not V.tap_text(f, 'Open the 3D view full screen'):
                 break
             for _ in range(8):
@@ -801,6 +803,11 @@ def sun_3d():
                     opened = True; break
             if opened:
                 break
+            # Not open: what is on screen, is the app answering, what did it log (13 Nov 2026 diagnosis)
+            print('INFO full screen not open, clickables: ' + ' | '.join(f"{c['label'][:40]}@{c['xy']}" for c in g.clickables[:25]), flush=True)
+            print('INFO full screen not open, focus: ' + ' '.join(l.strip() for l in C.adb('shell', 'dumpsys', 'window', timeout=30).splitlines() if 'mCurrentFocus' in l or 'mFocusedApp' in l)[:300], flush=True)
+            for line in [l for l in C.adb('logcat', '-d', '-t', '400', timeout=60).splitlines() if 'ReactNativeJS' in l or 'ANR' in l or 'chromium' in l][-10:]:
+                print('INFO full screen log ' + line[:240], flush=True)
         if tries:
             print(f'INFO full screen: {"open" if opened else "not open"} after {tries} tap(s), {time.time() - t_open:.0f} s', flush=True)
         if tries and opened:
@@ -816,8 +823,12 @@ def sun_3d():
             # Only shown by builds with the smoothness pass; the emulator's software graphics say nothing about a phone,
             # so the number is printed, not judged.
             if drawn:
-                C.adb('shell', 'input', 'swipe', '300', '700', '800', '700', '1200'); time.sleep(4)
-                sm = next((t for t in C.capture(1.5).all_texts if t.startswith('Smoothness:')), None)
+                sm = None
+                for k in range(5):   # the page reports after a moving burst; give the full-screen page time to finish loading
+                    C.adb('shell', 'input', 'swipe', '300', '700', '800', '700', '1200'); time.sleep(4)
+                    sm = next((t for t in C.capture(1.5).all_texts if t.startswith('Smoothness:')), None)
+                    if sm:
+                        break
                 print('INFO smoothness: ' + (sm or 'no Smoothness line (build without the smoothness pass, or no frame reported)'), flush=True)
                 panel = os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'Sun3DPanel.tsx')
                 if os.path.exists(panel) and 'Smoothness:' in open(panel, encoding='utf-8').read():   # this build has it
