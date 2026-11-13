@@ -4,7 +4,7 @@
   python3 build_teton_colour.py wide   <work dir>          the wide file: a Sentinel-2 winter picture of the whole grid
   python3 build_teton_colour.py boxes  <work dir>          the 8 fine (near) boxes and the 19 laser (detail) boxes:
                                                            summer aerial photos (NAIP) turned to winter
-  python3 build_teton_colour.py sql    <work dir>          upload.txt + the migration's rows
+  python3 build_teton_colour.py sql    <work dir> [out.sql] upload.txt + the migration (default <work dir>/terrain_teton_colour.sql)
   python3 build_teton_colour.py all    <work dir>
 
 Needs: pip install pyproj tifffile imagecodecs numpy scipy pillow requests. Everything downloaded is cached under
@@ -359,9 +359,60 @@ def boxes(work, win=None):
     return win
 
 
+# ---------------------------------------------------------------- upload list + the migration's rows
+CREDIT = 'Ground colour: Copernicus Sentinel-2 (ESA), 30 Dec 2025. Aerial photos: USDA NAIP via USGS, July 2022, snow added.'
+
+
+def sql(work, out_sql=None):
+    files = os.path.join(work, 'files'); made = json.load(open(os.path.join(work, 'boxes.json')))
+    wide_name = 'grand_teton_s2_winter.jpg'; wb = os.path.getsize(os.path.join(files, wide_name))
+    names = [wide_name] + [m['path'] for m in made['near']] + [m['path'] for m in made['detail']]
+    total = sum(os.path.getsize(os.path.join(files, n)) for n in names)
+    with open(os.path.join(work, 'upload.txt'), 'w') as f:
+        f.write(f'# {len(names)} files, {total} bytes, to the public bucket terrain (content type image/jpeg)\n')
+        for n in names: f.write(f'{os.path.abspath(os.path.join(files, n))}\t{n}\t{os.path.getsize(os.path.join(files, n))}\n')
+    q = lambda v: "'" + str(v).replace("'", "''") + "'"
+    body = [
+        '-- 3D sun view, Grand Teton in real winter colour (13 Nov 2026). Built by tools/sun3d/teton_colour/build_teton_colour.py;',
+        '-- drawn by tools/sun3d/app_view.js (albedo files baked into the light passes where the ground is snow).',
+        '--   terrain_regions.color_path    NEW: a winter colour file of the whole wide grid, JPEG 4096 x 4096 (~13 m), north up on',
+        '--                                 the grid\'s lat / lng: Copernicus Sentinel-2 L2A, tile 12TWP, 30 Dec 2025 18:32 UTC',
+        '--                                 (11 Jan 2026 where 30 Dec had no data or cloud), the light of that day taken out.',
+        '--   terrain_regions.color_credit  NEW: the credit line the app shows under the view when the colour is drawn.',
+        '--   terrain_near_regions.color_path   the 8 gt_* fine boxes: USDA NAIP (July 2022, 0.6 m) at the box\'s own cell size,',
+        '--                                 turned to winter (snow where the 30 Dec 2025 picture says snow, conifers kept dark,',
+        '--                                 broadleaf crowns as bare twigs, water frozen or open as on 30 Dec).',
+        '--   terrain_detail_regions.color_path the 19 gtd_* laser boxes: NAIP at 0.5 m turned to winter the same way (water, buildings',
+        '--                                 and trees keep the page\'s own drawing).',
+        '-- Colour only: no sun time reads these files. Ship together with the app code that knows them (branch',
+        '-- claude/sun3d-teton-colour): an app from before would draw the box files the Faroes way.',
+        f'-- Before applying: upload the {len(names)} files listed below to the public bucket `terrain` ({total} bytes).',
+        '-- Files: ' + ' '.join(names),
+        'alter table public.terrain_regions add column if not exists color_path text, add column if not exists color_bytes integer,',
+        '  add column if not exists color_credit text;',
+        'alter table public.terrain_near_regions add column if not exists color_path text, add column if not exists color_bytes integer;',
+        'alter table public.terrain_detail_regions add column if not exists color_path text, add column if not exists color_bytes integer;',
+        '',
+        f"update public.terrain_regions set color_path = {q(wide_name)}, color_bytes = {wb}, color_credit = {q(CREDIT)} where id = 'grand_teton';",
+        '',
+        'update public.terrain_near_regions t set color_path = v.p, color_bytes = v.b from (values',
+        ',\n'.join(f"  ({q(m['id'])}, {q(m['path'])}, {m['bytes']})" for m in made['near']),
+        ') as v(id, p, b) where t.id = v.id;',
+        '',
+        'update public.terrain_detail_regions t set color_path = v.p, color_bytes = v.b from (values',
+        ',\n'.join(f"  ({q(m['id'])}, {q(m['path'])}, {m['bytes']})" for m in made['detail']),
+        ') as v(id, p, b) where t.id = v.id;',
+        '',
+    ]
+    out_sql = out_sql or os.path.join(work, 'terrain_teton_colour.sql')
+    open(out_sql, 'w').write('\n'.join(body))
+    log('wrote', out_sql, 'and upload.txt:', len(names), 'files', total, 'bytes')
+
+
 if __name__ == '__main__':
     cmd, work = sys.argv[1], sys.argv[2]
     os.makedirs(work, exist_ok=True)
     W = None
     if cmd in ('wide', 'all'): W = wide(work)
     if cmd in ('boxes', 'all'): W = boxes(work, W)
+    if cmd in ('sql', 'all'): sql(work, sys.argv[3] if len(sys.argv) > 3 else None)

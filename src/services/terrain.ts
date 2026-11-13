@@ -28,6 +28,9 @@ export type TerrainRegion = {
   north: number; south: number; west: number; east: number;
   n: number; width_m: number; depth_m: number; base_m: number; step_m: number;
   path: string; bytes: number | null; ground: 'snow' | 'green';
+  // Grand Teton (13 Nov 2026, absent until its migration is applied): a winter colour file of the whole grid (JPEG,
+  // a foreground file: sent after the plain view) and the credit line to show with it
+  color_path?: string | null; color_bytes?: number | null; color_credit?: string | null;
 };
 
 export type TerrainNear = {
@@ -101,7 +104,7 @@ async function askList<T>(table: string, columns: string, file: string): Promise
   }
 }
 
-const REGION_COLS = 'id, north, south, west, east, n, width_m, depth_m, base_m, step_m, path, bytes, ground';
+const REGION_COLS = '*';   // every column there is: naming one the table does not have yet (color_path) would fail the whole list
 const NEAR_COLS = '*';   // every column there is: naming one the table does not have yet (color_path) would fail the whole list
 let regionsAsk: Promise<TerrainRegion[] | null> | null = null;
 let nearsAsk: Promise<TerrainNear[] | null> | null = null;
@@ -240,6 +243,10 @@ export function detailColor(d: TerrainDetail): TerrainFile | null {
 export function detailBuildings(d: TerrainDetail): TerrainFile | null {
   return d.buildings_path ? { id: `${d.id}_bld`, path: d.buildings_path, bytes: d.buildings_bytes ?? null } : null;
 }
+// The wide grid's winter colour (Grand Teton), null when the region has none.
+export function regionColor(r: TerrainRegion): TerrainFile | null {
+  return r.color_path ? { id: `${r.id}_color`, path: r.color_path, bytes: r.color_bytes ?? null } : null;
+}
 export function nearColor(n: TerrainNear): TerrainFile | null {
   return n.color_path ? { id: `${n.id}_color`, path: n.color_path, bytes: n.color_bytes ?? null } : null;
 }
@@ -302,7 +309,8 @@ export function terrainData(r: TerrainFile): Promise<string | null> {
 
 // areas = what the trip's stand spots need (wide regions, fine boxes, detail boxes); saved = how many are on the phone.
 // A detail box is one area with up to six files (heights, class mask, tree returns, wide water; Faroes: photo,
-// buildings), a fine box up to two (heights; Faroes: photo): an area counts as saved when all its files are there.
+// buildings), a fine box up to two (heights; Faroes: photo; Tetons: winter colour), a region up to two (heights;
+// Tetons: winter colour): an area counts as saved when all its files are there.
 export type TripTerrain = { areas: number; saved: number; bytes: number; busy: boolean };
 const tripState: Record<string, TripTerrain | undefined> = {};
 const tripRun: Record<string, { again: Shot[] | null } | undefined> = {};
@@ -322,7 +330,7 @@ async function tripAreas(shots: Shot[]): Promise<TerrainFile[][]> {
   for (const sh of shots) {
     const r = all.find(x => inRegion(x, sh.v));
     if (!r) continue;
-    out.set(`r:${r.id}`, [r]);
+    out.set(`r:${r.id}`, [r, regionColor(r)].filter((f): f is TerrainFile => !!f));
     const nr = pickNear(allNear, r, sh.v, sh.s);
     if (nr) out.set(`n:${nr.id}`, [nr, nearColor(nr)].filter((f): f is TerrainFile => !!f));
     const dt = pickDetail(allDetail, r, nr, sh.v, sh.s);
