@@ -670,13 +670,15 @@ const styles = StyleSheet.create({
   web: { flex: 1, backgroundColor: colors.surface },
   cover: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', padding: 16, backgroundColor: colors.surface },
   coverText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
-  topRow: { position: 'absolute', top: 8, left: 8, right: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  // The buttons wrap onto a second line when they don't fit: with HD, frame, foreground and frozen lakes the row ran past
+  // the right edge of a 1080-px-wide phone and the full-screen button was off screen (emulator, 13 Nov 2026).
+  topRow: { position: 'absolute', top: 8, left: 8, right: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', rowGap: 6, columnGap: 6 },
   lens: { flexDirection: 'row', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   lensBtn: { minWidth: 36, minHeight: 32, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   lensOn: { backgroundColor: '#ffffff' },
   lensText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   lensTextOn: { color: '#000000' },
-  rightBtns: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rightBtns: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 1, marginLeft: 'auto' },
   hdBtn: { minWidth: 40, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   fullBtn: { width: 36, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   caption: { position: 'absolute', left: 10, right: 10, bottom: 8, color: '#ffffff', fontSize: 11, textShadowColor: 'rgba(0,0,0,0.9)', textShadowRadius: 3, textShadowOffset: { width: 0, height: 1 } },
