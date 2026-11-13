@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
 import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
-import { detailBuildings, detailColor, detailFor, detailMask, detailTrees, detailWater, nearColor, nearFor, regionColor, regionFor, terrainData, TerrainDetail, TerrainNear, TerrainRegion, tripTerrainLine, useTripTerrain } from '../../services/terrain';
+import { detailBuildings, detailColor, detailFor, detailMask, detailTrees, detailWater, nearColor, nearFor, regionColor, regionFor, terrainData, TerrainDetail, TerrainNear, TerrainRegion, TerrainTreeTile, treeTileFile, treeTilesFor, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { moveVantage } from '../../services/sunPlan';
@@ -36,6 +36,10 @@ import { compassPoint } from './sunStyle';
 // its water; they colour the ground and draw the houses but never change a sun
 // time. A fine box with a photo and no detail box still gets its photo. One
 // credit line says where it comes from.
+// Park-wide trees (Grand Teton, 13 Nov 2026): the tiles of a coarse canopy layer
+// within 7 km of the stand spot go with the foreground too (last); the page draws
+// trees from them beyond the detail box, never counts them in a sun time, and
+// leaves them out alone if they fail or are slow.
 //
 // HD (optional, off until tapped): the same view drawn on Google's 3D picture
 // (tools/sun3d/app_view_google.js -> sun3dGoogleHtml.ts), lit by the same
@@ -125,6 +129,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [bldB64, setBldB64] = useState<string | null>(null);           // Faroes: its building outlines
   const [nearColorB64, setNearColorB64] = useState<string | null>(null);   // Faroes: the fine box's aerial photo (Tetons: its winter colour)
   const [wideColorB64, setWideColorB64] = useState<string | null>(null);   // Tetons: the wide grid's winter colour (Sentinel-2)
+  const [treeTiles, setTreeTiles] = useState<{ tiles: TerrainTreeTile[]; data: string[] } | null>(null);   // Tetons: the park-wide tree tiles in range
+  const [wideTrees, setWideTrees] = useState(0);   // how many park-wide trees the page drew (0 = none)
   const [laser, setLaser] = useState(false);   // the foreground the page drew has a detail box (not only colour)
   const [photoFore, setPhotoFore] = useState(false);   // the page says it drew the Faroes photos / houses
   const [iceChoice, setIceChoice] = useState<boolean | null>(lastIce);   // null = the page's own default (frozen where the ground is snow)
@@ -211,21 +217,26 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       const dt0 = await detailFor(r, nearUsed.current, stand, { lat: sLat, lng: sLng });
       const nck = nearUsed.current ? nearColor(nearUsed.current) : null;
       const wck = r ? regionColor(r) : null;   // Tetons: the wide grid's winter colour, a foreground of its own
-      const key = `${dt0?.id ?? ''}|${nck?.id ?? ''}|${wck?.id ?? ''}`;
-      if (!alive || key === loadedDetail.current || (key === '||' && loadedDetail.current === '')) return;
+      const tts = r ? await treeTilesFor(r, stand) : [];   // Tetons: the park-wide tree tiles within reach of this stand spot
+      const key = `${dt0?.id ?? ''}|${nck?.id ?? ''}|${wck?.id ?? ''}|${tts.map(t => t.id).join(',')}`;
+      if (!alive || key === loadedDetail.current || (key === '|||' && loadedDetail.current === '')) return;
       if (foreSent.current) {   // the page already holds another box's foreground: start it afresh for this one
         booted.current = false; sent.current = false; foreSent.current = false;
-        setLit(null); setMoments(null); setLook(null); setShapes(false); setPhotoFore(false); setForeBusy(false); setPhase(p => (p === 'ready' ? 'starting' : p)); setGen(g => g + 1);
+        setLit(null); setMoments(null); setLook(null); setShapes(false); setPhotoFore(false); setForeBusy(false); setWideTrees(0); setPhase(p => (p === 'ready' ? 'starting' : p)); setGen(g => g + 1);
       }
       loadedDetail.current = key;
-      setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null); setWideColorB64(null);
-      if (!dt0 && !nck && !wck) return;
+      setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null); setWideColorB64(null); setTreeTiles(null);
+      if (!dt0 && !nck && !wck && !tts.length) return;
       const mk = dt0 && detailMask(dt0), tk = dt0 && detailTrees(dt0), wk = dt0 && detailWater(dt0), ck = dt0 && detailColor(dt0), bk = dt0 && detailBuildings(dt0);
       const [dd, md, td, wd, cd, bd, ncd, wcd] = await Promise.all([dt0 ? terrainData(dt0) : null, mk ? terrainData(mk) : null, tk ? terrainData(tk) : null, wk ? terrainData(wk) : null,
         ck ? terrainData(ck) : null, bk ? terrainData(bk) : null, nck ? terrainData(nck) : null, wck ? terrainData(wck) : null]);
+      // the tree tiles one at a time (a few hundred KB each): a tile that is not there (no signal) is simply left out
+      const tds: { t: TerrainTreeTile; d: string }[] = [];
+      for (const t of tts) { const d = await terrainData(treeTileFile(t)); if (!alive || loadedDetail.current !== key) return; if (d) tds.push({ t, d }); }
       if (!alive || loadedDetail.current !== key) return;
-      if (!dd && !ncd && !wcd) { loadedDetail.current = ''; return; }   // not on the phone and no signal: tried again with the next shot
+      if (!dd && !ncd && !wcd && !tds.length) { loadedDetail.current = ''; return; }   // not on the phone and no signal: tried again with the next shot
       setNearColorB64(ncd); setWideColorB64(wcd);
+      setTreeTiles(tds.length ? { tiles: tds.map(x => x.t), data: tds.map(x => x.d) } : null);
       if (dt0 && dd) { setMaskB64(md); setTreesB64(td); setWaterB64(wd); setColorB64(cd); setBldB64(bd); setDetailB64(dd); setDetail(dt0); }
     })();
     return () => { alive = false; };
@@ -275,7 +286,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     setLit(null); setMoments(null); setLook(null); setShapes(false); setPhotoFore(false); setForeBusy(false); setProblem(null);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p)); setGen(g => g + 1);
   }, []);
-  const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour
+  const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64 || !!treeTiles;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour or the park-wide trees
   const useDetail = foreground && !hd && hasFore;
   const useDetailRef = useRef(false);
   useDetailRef.current = useDetail;
@@ -316,7 +327,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const sendFore = useCallback(() => {
     if (foreSent.current || !useDetail) return;
     const det = detail && detailB64 ? detail : null, nc = near && nearB64 ? nearColorB64 : null;   // a fine-box photo needs the fine box in the page
-    if (!det && !nc && !wideColorB64) return;
+    if (!det && !nc && !wideColorB64 && !treeTiles) return;
     foreSent.current = true; setForeBusy(true);
     const fore = {
       detail: det ? {
@@ -326,13 +337,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       } : undefined,
       water: det && waterB64 ? { n: det.water_n, north: det.water_north, south: det.water_south, west: det.water_west, east: det.water_east } : undefined,
       ice: iceOn,
+      canopy: treeTiles ? { tiles: treeTiles.tiles.map(t => ({ n: t.n, north: t.north, south: t.south, west: t.west, east: t.east, step: t.step_m })) } : undefined,
     };
     run(`window.S3D.fore(${JSON.stringify(fore)})`);
     const feed = (data: string | null, kind: string) => { if (data) for (let i = 0; i < data.length; i += CHUNK) run(`window.S3D.chunk("${data.slice(i, i + CHUNK)}","${kind}")`); };
     if (det) { feed(detailB64, 'detail'); feed(maskB64, 'mask'); feed(treesB64, 'trees'); feed(waterB64, 'water'); feed(colorB64, 'color'); feed(bldB64, 'bld'); }
     feed(nc, 'ncolor'); feed(wideColorB64, 'wcolor');
+    if (treeTiles) treeTiles.data.forEach((d, i) => feed(d, `canopy:${i}`));   // last: the page builds them after everything else
     run('window.S3D.foreDone()');
-  }, [useDetail, detail, detailB64, maskB64, treesB64, waterB64, colorB64, bldB64, nearColorB64, wideColorB64, near, nearB64, iceOn, run]);
+  }, [useDetail, detail, detailB64, maskB64, treesB64, waterB64, colorB64, bldB64, nearColorB64, wideColorB64, treeTiles, near, nearB64, iceOn, run]);
   useEffect(() => { if (ready) sendFore(); }, [ready, sendFore]);
   // The page answers every foreground request within its own minute (drawn, or dropped). If no answer comes at all
   // (the request never reached the page), stop saying "loading" and say the plain view is what is shown.
@@ -369,6 +382,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     }
     else if (m.type === 'ready') setPhase('ready');
     else if (m.type === 'foreground') { setShapes(!!m.ok); setLaser(!!(m.ok && m.detail)); setPhotoFore(!!(m.ok && m.colour)); setForeBusy(false); }   // not ok = the page dropped it and kept the plain view
+    else if (m.type === 'wideTrees') setWideTrees(m.ok && typeof m.trees === 'number' ? m.trees : 0);   // not ok = left out, the rest stays
     else if (m.type === 'lost') onGone();
     else if (m.type === 'state') setLit({ subjectLit: !!m.subjectLit, hereLit: !!m.hereLit, up: !!m.up, trees: !!m.trees });
     else if (m.type === 'moments') setMoments({ firstSubject: m.firstSubject ?? null, lastSubject: m.lastSubject ?? null, firstHere: m.firstHere ?? null, lastHere: m.lastHere ?? null, trees: !!m.trees });

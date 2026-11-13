@@ -13,8 +13,8 @@ The grid: the wide Teton grid's box (43.45-43.95 N, 110.92-110.24 W) cut into 10
 (about 5.6 x 5.5 km), each --tile-n cells a side (800 = ~7 m cells). Per cell:
   ground  = the mean of the survey's ground returns (class 2), holes (under thick crowns, roofs, water) filled from around;
   top     = the highest return that is not ground, building (6), water (9) or noise (7, 18);
-  canopy  = top - ground, kept as a tree only where it is at least 3 m (snow covers the sagebrush and the willows in
-            winter), where at least two such returns came back (a single return is a bird, a wire, a pole) and where at
+  canopy  = top - ground, kept as a tree only where it is at least --min-h m (4: snow and bare twigs hide the sagebrush
+            and most of the willow thickets in winter; the grid step keeps everything from 3 m), where at least two such returns came back (a single return is a bird, a wire, a pole) and where at
             least a quarter of the high returns came from pulses that went on to give more returns (a crown lets the
             laser through, a roof or a vehicle does not). Outside the survey (Wilson, the east of the grid) there is
             nothing: the layer is empty there, not guessed.
@@ -87,7 +87,8 @@ def grid(a):
     tree = (h >= MIN_H) & (hv >= MIN_PTS) & (hm >= np.ceil(MIN_MULTI * hv)) & anyp
     can = np.where(tree, h, 0).astype(np.float32).reshape(N, M)
     np.savez_compressed(os.path.join(a.work, 'canopy.npz'), can=can, n=n, has=anyp.reshape(N, M),
-                        raw=np.where(anyp & (top > -1e8), h, 0).astype(np.float16).reshape(N, M), hv=hv.reshape(N, M), hm=hm.reshape(N, M))
+                        raw=np.where(anyp & (top > -1e8), h, 0).astype(np.float16).reshape(N, M), hv=hv.reshape(N, M), hm=hm.reshape(N, M),
+                        ground=gf.reshape(N, M).astype(np.float32))
     print('tree cells', int(tree.sum()), 'of', int(anyp.sum()), 'surveyed; cell', round((NORTH - SOUTH) / N * 111132, 2), 'x', round((EAST - WEST) / M * 111320 * math.cos(math.radians(43.7)), 2), 'm', flush=True)
 
 
@@ -101,9 +102,14 @@ def read_bytes_png(path):
     return np.frombuffer(zlib.decompress(idat), dtype=np.uint8).reshape(h, w + 1)[:, 1:]
 
 
+def load_can(a):
+    z = np.load(os.path.join(a.work, 'canopy.npz')); can = z['can']
+    return np.where(can >= a.min_h, can, 0), int(z['n'])
+
+
 def check(a):
     """The coarse layer against the 0.5 m laser boxes (their class mask: 8 + canopy / 0.2 m = tree)."""
-    z = np.load(os.path.join(a.work, 'canopy.npz')); can = z['can']; n = int(z['n']); N, M = can.shape
+    can, n = load_can(a); N, M = can.shape; MIN_H = a.min_h
     rows = [r for r in json.load(open(a.details)) if r.get('parent') == 'grand_teton']
     tot = dict(both=0, coarse_only=0, fine_only=0, neither=0, herr=[], cells=0)
     per = []
@@ -152,7 +158,7 @@ def check(a):
 
 
 def tiles(a):
-    z = np.load(os.path.join(a.work, 'canopy.npz')); can = z['can']; n = int(z['n'])
+    can, n = load_can(a)
     os.makedirs(a.out, exist_ok=True)
     v = np.clip(np.round(can / STEP_M), 0, 255).astype(np.uint8)
     rows = []; up = []
@@ -175,7 +181,7 @@ def tiles(a):
 
 def main():
     p = argparse.ArgumentParser(); p.add_argument('cmd'); p.add_argument('work')
-    p.add_argument('--depth', type=int, default=7); p.add_argument('--tile-n', type=int, default=800)
+    p.add_argument('--depth', type=int, default=7); p.add_argument('--tile-n', type=int, default=800); p.add_argument('--min-h', type=float, default=4.0)
     p.add_argument('--cache', default=None); p.add_argument('--details'); p.add_argument('--files'); p.add_argument('--out')
     a = p.parse_args(); os.makedirs(a.work, exist_ok=True)
     a.cache = a.cache or os.path.join(a.work, 'cache'); a.out = a.out or os.path.join(a.work, 'files')
