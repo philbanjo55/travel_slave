@@ -790,6 +790,19 @@ def sun_3d():
         # matched "close to you" in the note under the view, so a full screen that never opened passed (12 Nov 2026,
         # and the Back press that followed then left the stop page). Tap up to three times and say how long it took.
         in_full = lambda st: any('Close the 3D view' in c['label'] for c in st.clickables)
+        # Bring the full-screen button back on screen first: online, the weather card and camera picture above the
+        # section finish loading during the HD test and push the 3D view below the screen (13 Nov 2026: three taps
+        # on a button that was not on screen).
+        for _ in range(6):
+            s_ = C.capture(1)
+            if any('Open the 3D view full screen' in c['label'] for c in s_.clickables):
+                break
+            y = text_y(s_, 'SUN & MOON')
+            d = 600 if y is None else max(-600, min(600, int(y - 0.25 * H)))
+            if abs(d) < 40:
+                d = 400
+            C.adb('shell', 'input', 'swipe', '540', str(int(0.6 * H)), '540', str(int(0.6 * H) - d), '600')
+            time.sleep(1.5)
         opened = False; t_open = time.time(); tries = 0; g = C.capture(1)
         for tries in range(1, 4):
             f = C.capture(1)
