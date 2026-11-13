@@ -538,13 +538,18 @@
         vec3 ph = texture2D(nphoto, vUv).rgb;
         float sv = smoothstep(-.02, .06, sunDir.y);
     #endif
-        vec3 own = mix(ph, cliff(vP, slope), smoothstep(44., 56., slope)) * lf;
+        vec3 own = ph;
+        if (slope > 44.) own = mix(ph, cliff(vP, slope), smoothstep(44., 56., slope));   // (the noise only where it shows)
+        own *= lf;
     #ifdef DPHOTO
         ivec2 lim = ivec2(int(pcells) - 1);
         float kb = texelFetch(kmap, clamp(ivec2(vUv * pcells), ivec2(0), lim), 0).b;
-        float ku = texelFetch(kmap, clamp(ivec2((vUv + upv * 1.2) * pcells), ivec2(0), lim), 0).b, ku2 = texelFetch(kmap, clamp(ivec2((vUv + upv * 2.4) * pcells), ivec2(0), lim), 0).b;
-        bool stream = kb > .15 && kb < .4;
-        if (slope > 40. && (stream || (ku > .15 && ku < .4) || (ku2 > .15 && ku2 < .4)))   // a stream over a cliff: a white fall
+        bool stream = kb > .15 && kb < .4, fall = false;
+        if (slope > 40.) {   // a stream over a cliff (here, or just above: a wall has no cell of its own): a white fall
+          float ku = texelFetch(kmap, clamp(ivec2((vUv + upv * 1.2) * pcells), ivec2(0), lim), 0).b, ku2 = texelFetch(kmap, clamp(ivec2((vUv + upv * 2.4) * pcells), ivec2(0), lim), 0).b;
+          fall = stream || (ku > .15 && ku < .4) || (ku2 > .15 && ku2 < .4);
+        }
+        if (fall)
           own = mix(vec3(.84, .88, .92), vec3(.98), pnoise(vec2(vP.x * 3. + vP.z * 3., vP.y * .35))) * (.35 + .65 * lf);
         else if (kb > .4 && slope < 25.) own = h < .6 ? waterCol(vP, sv) : mix(own, waterCol(vP, sv), .92);
         else if (stream && slope < 40.) own = mix(own, waterCol(vP, sv), .3);
@@ -1045,7 +1050,7 @@
     } catch (e) { mean = null; }
     const t = new THREE.Texture(bmp);
     t.flipY = false; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
-    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.anisotropy = Math.min(8, R.renderer.capabilities.getMaxAnisotropy()); t.needsUpdate = true;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.anisotropy = Math.min(4, R.renderer.capabilities.getMaxAnisotropy()); t.needsUpdate = true;   // 4, not 8: the photo is soft anyway and 8 cost ~10% of a frame on software graphics
     R.renderer.initTexture(t);
     try { if (bmp.close) bmp.close(); } catch (e) { /* the collector has it */ }
     t.image = { width: bmp.width || px, height: bmp.height || px };

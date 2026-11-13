@@ -395,3 +395,33 @@ page headless like the app does):
   `PAGE=<page.html> DEM=<teton-dem.png> OUT=<dir> node tools/sun3d/google/app_run.js '{"base":"https://ohshrzlvvxyovcjmdajc.supabase.co/functions/v1/tiles-proxy","headers":{"x-tiles-test":"<token>"},"handRoot":true,"probe":true,"noStats":true,"tiles":{"draco":"<draco folder>"},"jobs":[{"name":"deployed","az":145.6,"alt":15.35}]}'`
   (the test header makes the browser send one extra preflight call per tile: fine for a test). Each run
   is one billable root request.
+
+## Faroes foreground in the app page (13 Nov 2026, branch `claude/sun3d-faroes-page`)
+
+The round 2 Faroes data (`build_detail_faroes.py`) drawn by `app_view.js` itself. Data per detail box: heights (ground
+and flat water only), mask (0 ground, 3 sea / lake, 4 stream), an aerial photo (`color_path`, JPEG, north up on the
+box's lat / lng grid) and building outlines (`buildings_path`, JSON, heights assumed); per 4 m fine box a photo
+(`terrain_near_regions.color_path`). Rows and columns: migration `20261113010000_terrain_faroes_colour.sql` (144 files
+in bucket `terrain`, 31 MB).
+
+- Panel / `services/terrain.ts`: the photos and the building file are foreground files like the others (saved ahead by
+  `saveTripTerrain`, counted in "N of M areas", sent after `ready` as chunks `color`, `bld`, `ncolor`; `detail.width` /
+  `depth` = the box's metres). A fine box with a photo and no detail box still gets its photo. Credit line under the
+  view whenever the page says `foreground {colour: true}`.
+- Page: the light passes of the photo meshes (`PHOTO`) give light only; the mesh multiplies it with the photo (photo
+  colours count as seen, albedo = photo^1.613, the same scale as the plain grass). Faces over ~44-56 deg are rock in
+  beds (colour from the photo's mean over land), sea / lakes are water, a stream (mask 4) over steep ground or just
+  under a stream cell uphill is a white fall, grass tufts within 30 m of the eye. The detail photo eases into the fine
+  box's photo over 4-44 m from its edge. The wide grid's grass is tinted toward the photo's mean colour (`FTINT`).
+  Houses: one mesh, outlines stood up from 1 m under the foot, gable roofs along `a`; their heights over the ground
+  (`bmap`, 0.2 m steps) cast the drawn shadows (`BSHADOW`) while the light map's alpha stays ground-only (what the
+  houses and the water read). `lit()` / first and last light never see photos or houses.
+- Without the new files (every Teton view; a Faroes view whose rows have no photo) the page draws exactly as before.
+
+Measured (scratchpad `faroes_page/`: `fr.js`, `fbench.js`, `cgm.sh`, `sheet.py`; headless Chromium, software graphics):
+Teton Oxbow Bend plain and round 3 foreground, 135 and 75 mm: 0 pixels differ from the page before, same sun times.
+Faroes, 8 proof views: first / last light identical with and without photos / houses, 0 network requests after load.
+Drag, CPU 4x, level 3 (where the governor settles, as it does for the Teton foreground): plain 130-145 ms a frame,
+detail box without colour 375-425, with photos and houses 500-600 (Teton foreground on the same bench: 326-451).
+Whole test browser peak, Saksun: plain 453 MB, detail only 484, photos + houses 523.
+Not fixed: the Faroes heights read ~3.3 m low against the agency's contours (uniform: no sun time changes).
