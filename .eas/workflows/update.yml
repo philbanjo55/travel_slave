@@ -19,6 +19,7 @@ on:
       - App.tsx
       - app.json
       - app.config.js
+      - fingerprint.config.js
       - package.json
       - package-lock.json
       - eas.json
