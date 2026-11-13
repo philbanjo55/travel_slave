@@ -479,3 +479,56 @@ light map read back from the page). Still wrong: the stand pins at Oxbow Bend an
 trees (known pin issue), Jackson Lake's north end is from 11 Jan (cloud on 30 Dec) and shows patchy open water, the
 laser boxes gain little (all snow that day: only a faint texture), roads read white (the 30 Dec picture shows them
 snow-packed; Teton Park Road is closed), no snow on the conifers' crowns beyond 10 %.
+
+## Park-wide trees, Grand Teton (13 Nov 2026, branch `claude/sun3d-trees-wide`; NOT uploaded or applied)
+
+Phil: forests should show at any distance and around any spot, not only in the 500 m laser boxes, without slowing the
+view down or breaking it.
+
+- Data (`lidar/build_canopy.py grid | check | tiles`): the same 2022 survey (USGS 3DEP lidar `WY_GrandTetonNP_1_D22`,
+  public domain), read only down to octree depth 7 (one point per ~4 m voxel: 165 M points, 6,467 nodes, ~1.9 GB of
+  LAZ, cached in the laser build's cache dir). Grid = the wide Teton grid's box cut into 10 x 10 tiles of 0.05 x 0.068
+  deg (~5.6 x 5.5 km), 800 x 800 cells each (6.95 x 6.84 m). Per cell: the ground (mean of class 2, holes filled), and
+  the highest non-ground / building / water return's height over the ground AT ITS OWN SPOT (bilinear ground: the cell
+  mean put every steep slope 'up'). A tree = at least 4 m, at least two high returns, at least half of them from
+  pulses that went on to more returns (crowns let the laser through, rock faces and roofs mostly do not), ground at
+  most 3,300 m (tree line) and at most 55 deg steep (cliffs: the survey's ground class is thin there). Two files a tile
+  (8-bit PNG, 0 = no tree): lod 0 every cell, canopy height in 2 m steps (51 files, 4.98 MB); lod 1 two by two cells in
+  one, (tree cells - 1) x 64 + tallest height / 2 m (51 files, 1.86 MB). A stand spot gets lod 0 for tiles within 3 km
+  and lod 1 out to 12 km. Outside the survey (Wilson: Emily's Pond Levee, Teton Pines; the east of the grid) there is
+  nothing: no other source was used.
+- Data check against the 19 laser boxes (0.5 m class masks, 97,779 coarse cells inside them; a coarse cell is 'tree'
+  on the fine side when 15 % of it is tree cells at >= 4 m): agree 96.1 %; of the fine trees the coarse layer has
+  95.5 %, of its trees 88.4 % are the fine side's (the rest: 2,399 cells at a crown's edge, 237 by a building, 159
+  nothing); canopy height (2 m steps, coarse - fine 95th percentile) median +0.2 m, mean |error| 1.2 m, 90 % within 2.6 m.
+- Page (`app_view.js`, 'park-wide trees'): `fore({ canopy: { tiles } })` + chunks `canopy:<i>` (60,000 characters a
+  piece, packed as soon as the next tile starts); built LAST, 1.5 s after the rest of the foreground has posted
+  `foreground`, on its own (`wideTrees` {ok, trees, ...}; a failure, or 30 s, leaves them out and nothing else). One
+  pass over the files: every tree cell within 12 km, kept with chance (d0 / distance)^2 (all within d0), each kept one
+  drawn wider for the cells it stands for (up to 5 x its height: a clump of spruce tips), ~60,000 in all (d0 is set to
+  fill that: 250 m in thick forest to 1.2 km over open flats; 20,000 and 5 km on a phone with 2 GB or less). None
+  inside the laser box (its own trees are there; the box's blend strip gets these). Each tree is ONE point: the
+  square's foot on the ground the meshes draw (the wide mesh's own triangles, the fine mesh's blend), a spruce outline
+  cut out in the fragment shader, the sun its ground gets from the hills (the far and fine light passes now write that
+  visibility into alpha, which nothing read before: colours unchanged), the same winter colours as the laser trees.
+  Sorted into 16 x 16 blocks of 1.5 km: a frame draws the blocks in view; quality levels draw 100 / 75 / 40 / 0 % of
+  them while moving; none bigger than the phone's largest point (they would float). Never in `lit()` / first and
+  last light.
+- Panel / `services/terrain.ts`: table `terrain_tree_tiles` (migration `20261113050000_terrain_trees_wide.sql`, NOT
+  applied; files NOT uploaded: scratchpad `trees_wide/files/upload.txt`), `treeTilesFor(region, stand)`, sent with the
+  foreground (last), each tile one area in the trip's "3D terrain saved" count, saved ahead with the trip. Foreground
+  off = no trees (the page restarts without the foreground); light phones as above; About gets one line.
+
+Measured (scratchpad `trees_wide/test`: `tw.js` pictures / times / network, `fbench.js` per-level frame cost, `bench_w.js`
+= the smoothness bench, `rbench.js` time to the first picture, `cgm2.sh` whole-browser memory; headless Chromium,
+software graphics, CPU 4x where timed; before = the page on `ccr-dba965ff-afy6cz` with today's foreground):
+first picture 495 -> 508 ms median (20 interleaved loads each, means 500 / 498); frame time at each quality level the
+trees are drawn at (0-2, one-step drags, 7 frames each, five stops) -2 % to +8.6 %, sharp frames -0.5 % to +6 %; the
+governed bench (level 3 here, trees hidden while moving) mean +0.8 %, single runs -7 % to +15 % (run-to-run noise is
+about +-10 %); whole-browser peak (median of 3) +1 / -2 / +5 / +16 / -40 MB at Oxbow / Snake River / Cunningham / Jenny
+Lake highlands bridge / Emily's Pond; first / last light and the in-the-sun line identical on all 33 Teton shots;
+without the layer every picture is pixel-identical (7 views); with every request refused, 0 requests and the trees
+drawn; a broken tile drops only the trees ("wideTrees" ok false), a phone with 2 GB gets 18,700 trees out to 5 km, a
+new shot 1.4 km away gets its trees built again (~0.15 s here). Memory was the hard part: the first build (one 12 km
+set of every-cell files, two unpacking passes) was +56 to +84 MB at the forest stops; it came down with the coarse
+far files, 2 m steps, one pass, small text pieces and the 1.5 s wait. Sheet: scratchpad `trees_wide/trees_wide_sheet.png`.
