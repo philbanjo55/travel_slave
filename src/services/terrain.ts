@@ -35,6 +35,8 @@ export type TerrainNear = {
   north: number; south: number; west: number; east: number;
   n: number; base_m: number; step_m: number;
   path: string; bytes: number | null;
+  // Faroes (absent until its migration is applied): an aerial photo of the box, for colour beyond the detail box
+  color_path?: string | null; color_bytes?: number | null;
 };
 export type TerrainDetail = {
   id: string; parent: string;
@@ -46,6 +48,11 @@ export type TerrainDetail = {
   trees_path?: string | null; trees_bytes?: number | null; trees_bins?: number | null; trees_bin_m?: number | null;
   water_path?: string | null; water_bytes?: number | null; water_n?: number | null;
   water_north?: number | null; water_south?: number | null; water_west?: number | null; water_east?: number | null;
+  // Faroes (13 Nov 2026): an aerial photo of the box (JPEG) and its building outlines (JSON, heights guessed: drawn,
+  // never in the sun times); width_m / depth_m = the box's size in the files' own metres
+  color_path?: string | null; color_bytes?: number | null;
+  buildings_path?: string | null; buildings_bytes?: number | null;
+  width_m?: number | null; depth_m?: number | null;
 };
 type Point = { lat: number; lng: number };
 type Box = { north: number; south: number; west: number; east: number };
@@ -95,7 +102,7 @@ async function askList<T>(table: string, columns: string, file: string): Promise
 }
 
 const REGION_COLS = 'id, north, south, west, east, n, width_m, depth_m, base_m, step_m, path, bytes, ground';
-const NEAR_COLS = 'id, parent, north, south, west, east, n, base_m, step_m, path, bytes';
+const NEAR_COLS = '*';   // every column there is: naming one the table does not have yet (color_path) would fail the whole list
 let regionsAsk: Promise<TerrainRegion[] | null> | null = null;
 let nearsAsk: Promise<TerrainNear[] | null> | null = null;
 
@@ -226,6 +233,17 @@ export function detailWater(d: TerrainDetail): TerrainFile | null {
     ? { id: `${d.id}_water`, path: d.water_path, bytes: d.water_bytes ?? null } : null;
 }
 
+// The Faroes extras, each null when the row has none: the detail box's photo and buildings, the fine box's photo.
+export function detailColor(d: TerrainDetail): TerrainFile | null {
+  return d.color_path ? { id: `${d.id}_color`, path: d.color_path, bytes: d.color_bytes ?? null } : null;
+}
+export function detailBuildings(d: TerrainDetail): TerrainFile | null {
+  return d.buildings_path ? { id: `${d.id}_bld`, path: d.buildings_path, bytes: d.buildings_bytes ?? null } : null;
+}
+export function nearColor(n: TerrainNear): TerrainFile | null {
+  return n.color_path ? { id: `${n.id}_color`, path: n.color_path, bytes: n.color_bytes ?? null } : null;
+}
+
 type TerrainFile = { id: string; path: string; bytes: number | null };
 const fileFor = (r: TerrainFile) => `${DIR}terrain_${r.id}_${r.bytes ?? 0}.png`;
 const fetching: Record<string, Promise<boolean> | undefined> = {};
@@ -283,7 +301,8 @@ export function terrainData(r: TerrainFile): Promise<string | null> {
 // ---- Saved ahead for a whole trip ----
 
 // areas = what the trip's stand spots need (wide regions, fine boxes, detail boxes); saved = how many are on the phone.
-// A detail box is one area with up to four files (heights, class mask, tree returns, wide water): saved when all are there.
+// A detail box is one area with up to six files (heights, class mask, tree returns, wide water; Faroes: photo,
+// buildings), a fine box up to two (heights; Faroes: photo): an area counts as saved when all its files are there.
 export type TripTerrain = { areas: number; saved: number; bytes: number; busy: boolean };
 const tripState: Record<string, TripTerrain | undefined> = {};
 const tripRun: Record<string, { again: Shot[] | null } | undefined> = {};
@@ -305,9 +324,9 @@ async function tripAreas(shots: Shot[]): Promise<TerrainFile[][]> {
     if (!r) continue;
     out.set(`r:${r.id}`, [r]);
     const nr = pickNear(allNear, r, sh.v, sh.s);
-    if (nr) out.set(`n:${nr.id}`, [nr]);
+    if (nr) out.set(`n:${nr.id}`, [nr, nearColor(nr)].filter((f): f is TerrainFile => !!f));
     const dt = pickDetail(allDetail, r, nr, sh.v, sh.s);
-    if (dt) out.set(`d:${dt.id}`, [dt, detailMask(dt), detailTrees(dt), detailWater(dt)].filter((f): f is TerrainFile => !!f));
+    if (dt) out.set(`d:${dt.id}`, [dt, detailMask(dt), detailTrees(dt), detailWater(dt), detailColor(dt), detailBuildings(dt)].filter((f): f is TerrainFile => !!f));
   }
   return [...out.values()];
 }

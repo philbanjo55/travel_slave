@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
 import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
-import { detailFor, detailMask, detailTrees, detailWater, nearFor, regionFor, terrainData, TerrainDetail, TerrainNear, TerrainRegion, tripTerrainLine, useTripTerrain } from '../../services/terrain';
+import { detailBuildings, detailColor, detailFor, detailMask, detailTrees, detailWater, nearColor, nearFor, regionFor, terrainData, TerrainDetail, TerrainNear, TerrainRegion, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { moveVantage } from '../../services/sunPlan';
@@ -31,6 +31,11 @@ import { compassPoint } from './sunStyle';
 // page only after it has said 'ready', and the page builds them in steps. If the
 // web view's process dies with the foreground on (a small phone), the view is
 // started once more without it and one line says so.
+// Faroes (13 Nov 2026): the foreground there is the agency's aerial photos (the
+// detail box's and the fine box's), its building outlines (heights guessed) and
+// its water; they colour the ground and draw the houses but never change a sun
+// time. A fine box with a photo and no detail box still gets its photo. One
+// credit line says where it comes from.
 //
 // HD (optional, off until tapped): the same view drawn on Google's 3D picture
 // (tools/sun3d/app_view_google.js -> sun3dGoogleHtml.ts), lit by the same
@@ -90,7 +95,9 @@ type Perf = { ms: number; worst: number; quality: string };
 // "9 ms a frame (worst 21) · quality full": the time one picture took while the view was last moved (under about
 // 17 ms is as smooth as most screens show), and the quality the page drew at while moving (it is always full when still).
 const perfLine = (p: Perf) => `${p.ms < 10 ? Math.round(p.ms * 10) / 10 : Math.round(p.ms)} ms a frame (worst ${Math.round(p.worst)}) · quality ${p.quality}`;
-const CHUNK = 240000;   // base64 characters per message to the page; a multiple of 4
+const CHUNK = 240000;
+// Wherever the Faroes photos / buildings are drawn (the agency's terms ask for the credit; ArcticDEM is CC-BY-4.0).
+const FAROES_CREDIT = 'Ground photos, buildings and water: Faroese Environment Agency, Umhvørvisstovan (Myndakort, Bygningar, Topo; November 2026). Heights: ArcticDEM, PGC. House heights are guessed.';   // base64 characters per message to the page; a multiple of 4
 
 // Everything under the picture. In full screen it may take at most a third of the screen and scrolls inside that:
 // with the tree note, the HD line and the walk row all showing, these lines once grew past the bottom bar and pushed
@@ -112,6 +119,10 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [maskB64, setMaskB64] = useState<string | null>(null);
   const [treesB64, setTreesB64] = useState<string | null>(null);
   const [waterB64, setWaterB64] = useState<string | null>(null);
+  const [colorB64, setColorB64] = useState<string | null>(null);       // Faroes: the detail box's aerial photo
+  const [bldB64, setBldB64] = useState<string | null>(null);           // Faroes: its building outlines
+  const [nearColorB64, setNearColorB64] = useState<string | null>(null);   // Faroes: the fine box's aerial photo
+  const [photoFore, setPhotoFore] = useState(false);   // the page says it drew the Faroes photos / houses
   const [iceChoice, setIceChoice] = useState<boolean | null>(lastIce);   // null = the page's own default (frozen where the ground is snow)
   const [shapes, setShapes] = useState(false);   // the page says it is drawing the detail box
   const [foreBusy, setForeBusy] = useState(false);   // the foreground has been sent and the page has not answered yet
@@ -178,7 +189,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       if (!alive) return;
       if (!(r && loaded.current === `${r.id}|${nr?.id ?? ''}`)) {   // (same files: the page only gets the new view)
         loaded.current = null; loadedDetail.current = ''; nearUsed.current = null; booted.current = false; sent.current = false; foreSent.current = false;
-        setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setShapes(false); setForeBusy(false); setLit(null); setMoments(null);
+        setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null); setShapes(false); setPhotoFore(false); setForeBusy(false); setLit(null); setMoments(null);
         if (!r) { setPhase('none'); return; }
         setPhase('loading');
         // The fine file is an extra: with a weak signal it gets 10 s, then the wide grid draws alone (the download carries on).
@@ -191,21 +202,26 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         setRegion(r); setNear(nearUsed.current); setB64(d); setNearB64(nr && nd ? nd : null); setPhase('starting');
       }
       // The foreground's files come behind the plain view, never before it: the detail box for this shot (it must sit
-      // inside the fine box the page really has), its mask, the tree returns and the wide water.
+      // inside the fine box the page really has), its mask, the tree returns and the wide water; in the Faroes also the
+      // detail box's photo and buildings, and the fine box's photo (which comes even without a detail box).
       const dt0 = await detailFor(r, nearUsed.current, stand, { lat: sLat, lng: sLng });
-      if (!alive || (dt0?.id ?? '') === loadedDetail.current) return;
+      const nck = nearUsed.current ? nearColor(nearUsed.current) : null;
+      const key = `${dt0?.id ?? ''}|${nck?.id ?? ''}`;
+      if (!alive || key === loadedDetail.current || (key === '|' && loadedDetail.current === '')) return;
       if (foreSent.current) {   // the page already holds another box's foreground: start it afresh for this one
         booted.current = false; sent.current = false; foreSent.current = false;
-        setLit(null); setMoments(null); setLook(null); setShapes(false); setForeBusy(false); setPhase(p => (p === 'ready' ? 'starting' : p)); setGen(g => g + 1);
+        setLit(null); setMoments(null); setLook(null); setShapes(false); setPhotoFore(false); setForeBusy(false); setPhase(p => (p === 'ready' ? 'starting' : p)); setGen(g => g + 1);
       }
-      loadedDetail.current = dt0?.id ?? '';
-      setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null);
-      if (!dt0) return;
-      const mk = detailMask(dt0), tk = detailTrees(dt0), wk = detailWater(dt0);
-      const [dd, md, td, wd] = await Promise.all([terrainData(dt0), mk ? terrainData(mk) : null, tk ? terrainData(tk) : null, wk ? terrainData(wk) : null]);
-      if (!alive || loadedDetail.current !== dt0.id) return;
-      if (!dd) { loadedDetail.current = ''; return; }   // not on the phone and no signal: tried again with the next shot
-      setMaskB64(md); setTreesB64(td); setWaterB64(wd); setDetailB64(dd); setDetail(dt0);
+      loadedDetail.current = key;
+      setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null);
+      if (!dt0 && !nck) return;
+      const mk = dt0 && detailMask(dt0), tk = dt0 && detailTrees(dt0), wk = dt0 && detailWater(dt0), ck = dt0 && detailColor(dt0), bk = dt0 && detailBuildings(dt0);
+      const [dd, md, td, wd, cd, bd, ncd] = await Promise.all([dt0 ? terrainData(dt0) : null, mk ? terrainData(mk) : null, tk ? terrainData(tk) : null, wk ? terrainData(wk) : null,
+        ck ? terrainData(ck) : null, bk ? terrainData(bk) : null, nck ? terrainData(nck) : null]);
+      if (!alive || loadedDetail.current !== key) return;
+      if (!dd && !ncd) { loadedDetail.current = ''; return; }   // not on the phone and no signal: tried again with the next shot
+      setNearColorB64(ncd);
+      if (dt0 && dd) { setMaskB64(md); setTreesB64(td); setWaterB64(wd); setColorB64(cd); setBldB64(bd); setDetailB64(dd); setDetail(dt0); }
     })();
     return () => { alive = false; };
   }, [vLat, vLng, sLat, sLng]);
@@ -229,7 +245,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // Change between the offline page and the HD page: the web view is made anew, so everything it reported is cleared.
   const swap = useCallback((root: string | null) => {
     booted.current = false; sent.current = false;
-    setLit(null); setMoments(null); setLook(null); setHdLoading(false); setProblem(null); setShapes(false);
+    setLit(null); setMoments(null); setLook(null); setHdLoading(false); setProblem(null); setShapes(false); setPhotoFore(false);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p));
     setHd(root);
   }, []);
@@ -251,10 +267,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     if (hdRef.current) return;   // the HD page has no detail box: nothing to restart
     // off: the page is started afresh without it, so it draws exactly the plain view
     booted.current = false; sent.current = false; foreSent.current = false;
-    setLit(null); setMoments(null); setLook(null); setShapes(false); setForeBusy(false); setProblem(null);
+    setLit(null); setMoments(null); setLook(null); setShapes(false); setPhotoFore(false); setForeBusy(false); setProblem(null);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p)); setGen(g => g + 1);
   }, []);
-  const useDetail = foreground && !hd && !!detail && !!detailB64;
+  const hasFore = (!!detail && !!detailB64) || !!nearColorB64;   // a detail box, or (Faroes) a fine box's photo
+  const useDetail = foreground && !hd && hasFore;
   const useDetailRef = useRef(false);
   useDetailRef.current = useDetail;
   // Frozen lakes: still water drawn as snow-covered ice, rivers open. Default from the area's ground; a tap changes it in place.
@@ -292,21 +309,25 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // MB of text that must not stand between the user and a first picture. The page builds it in steps and answers
   // 'foreground' (ok, or dropped: the plain view then simply stays).
   const sendFore = useCallback(() => {
-    if (foreSent.current || !useDetail || !detail || !detailB64) return;
+    if (foreSent.current || !useDetail) return;
+    const det = detail && detailB64 ? detail : null, nc = near && nearB64 ? nearColorB64 : null;   // a fine-box photo needs the fine box in the page
+    if (!det && !nc) return;
     foreSent.current = true; setForeBusy(true);
     const fore = {
-      detail: {
-        n: detail.n, north: detail.north, south: detail.south, west: detail.west, east: detail.east, base: detail.base_m, step: detail.step_m,
-        trees: treesB64 ? { bins: detail.trees_bins ?? 64, bin: detail.trees_bin_m ?? 0.6 } : undefined,
-      },
-      water: waterB64 ? { n: detail.water_n, north: detail.water_north, south: detail.water_south, west: detail.water_west, east: detail.water_east } : undefined,
+      detail: det ? {
+        n: det.n, north: det.north, south: det.south, west: det.west, east: det.east, base: det.base_m, step: det.step_m,
+        width: det.width_m ?? undefined, depth: det.depth_m ?? undefined,
+        trees: treesB64 ? { bins: det.trees_bins ?? 64, bin: det.trees_bin_m ?? 0.6 } : undefined,
+      } : undefined,
+      water: det && waterB64 ? { n: det.water_n, north: det.water_north, south: det.water_south, west: det.water_west, east: det.water_east } : undefined,
       ice: iceOn,
     };
     run(`window.S3D.fore(${JSON.stringify(fore)})`);
     const feed = (data: string | null, kind: string) => { if (data) for (let i = 0; i < data.length; i += CHUNK) run(`window.S3D.chunk("${data.slice(i, i + CHUNK)}","${kind}")`); };
-    feed(detailB64, 'detail'); feed(maskB64, 'mask'); feed(treesB64, 'trees'); feed(waterB64, 'water');
+    if (det) { feed(detailB64, 'detail'); feed(maskB64, 'mask'); feed(treesB64, 'trees'); feed(waterB64, 'water'); feed(colorB64, 'color'); feed(bldB64, 'bld'); }
+    feed(nc, 'ncolor');
     run('window.S3D.foreDone()');
-  }, [useDetail, detail, detailB64, maskB64, treesB64, waterB64, iceOn, run]);
+  }, [useDetail, detail, detailB64, maskB64, treesB64, waterB64, colorB64, bldB64, nearColorB64, near, nearB64, iceOn, run]);
   useEffect(() => { if (ready) sendFore(); }, [ready, sendFore]);
   // The page answers every foreground request within its own minute (drawn, or dropped). If no answer comes at all
   // (the request never reached the page), stop saying "loading" and say the plain view is what is shown.
@@ -324,7 +345,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const onGone = useCallback(() => {
     if (hdRef.current) { hdForget(); setHdNote("The HD picture couldn't load. Showing the offline view."); setWant(false); return; }
     booted.current = false; sent.current = false; foreSent.current = false;
-    setLit(null); setMoments(null); setLook(null); setShapes(false); setForeBusy(false);
+    setLit(null); setMoments(null); setLook(null); setShapes(false); setPhotoFore(false); setForeBusy(false);
     if (useDetailRef.current) {
       lastForeground = false; foregroundTooHeavy = true;
       setForegroundState(false); setHeavy(true); setProblem(null); setPhase('starting'); setGen(g => g + 1);
@@ -341,7 +362,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       if (typeof m.ms === 'number') setPerf({ ms: m.ms, worst: typeof m.worst === 'number' ? m.worst : m.ms, quality: typeof m.quality === 'string' ? m.quality : 'full' });
     }
     else if (m.type === 'ready') setPhase('ready');
-    else if (m.type === 'foreground') { setShapes(!!m.ok); setForeBusy(false); }   // not ok = the page dropped it and kept the plain view
+    else if (m.type === 'foreground') { setShapes(!!m.ok); setPhotoFore(!!(m.ok && m.colour)); setForeBusy(false); }   // not ok = the page dropped it and kept the plain view
     else if (m.type === 'lost') onGone();
     else if (m.type === 'state') setLit({ subjectLit: !!m.subjectLit, hereLit: !!m.hereLit, up: !!m.up, trees: !!m.trees });
     else if (m.type === 'moments') setMoments({ firstSubject: m.firstSubject ?? null, lastSubject: m.lastSubject ?? null, firstHere: m.firstHere ?? null, lastHere: m.lastHere ?? null, trees: !!m.trees });
@@ -497,7 +518,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             >
               <Ionicons name={frame === 'port' ? 'tablet-portrait-outline' : frame === 'land' ? 'tablet-landscape-outline' : 'scan-outline'} size={17} color={frame !== 'off' ? '#000000' : '#ffffff'} />
             </TouchableOpacity>
-            {detail && detailB64 && !hd ? (
+            {hasFore && !hd ? (
               <TouchableOpacity
                 onPress={() => setForeground(!foreground)}
                 style={[styles.fullBtn, foreground && styles.lensOn]}
@@ -609,10 +630,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         <Text style={[styles.note, pad]}>
           {hd
             ? `Picture: Google Maps. ${region?.ground === 'green' ? 'Light and shadows' : 'Light, shadows and snow'} are calculated from elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles. No clouds. Needs a signal; times are within a few minutes.${left != null ? ` HD views left: ${leftToday != null ? `${leftToday} today, ` : ''}${left} this month.` : ''}`
+            : shapes && photoFore
+              ? 'Terrain shape and calculated sun. Close to you the ground is coloured from aerial photos, with houses drawn as blocks with roofs; no clouds. Sun times count the ground only, not the houses. Times are within a few minutes.'
             : shapes
               ? 'Terrain shape and calculated sun. Buildings and trees close to you, and water within about 3 km, come from a 2022 summer laser survey: buildings as blocks, trees as dots, none farther off; no clouds. With the snowflake on, lakes and slow water are drawn frozen and rivers open (a guess from the slope of the water). Sun times count the ground and buildings, not the trees. Times are within a few minutes. Elevation data: USGS 3DEP lidar, ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'
               : 'Terrain shape and calculated sun only: no trees, buildings or clouds. Times are within a few minutes. Elevation data: ArcticDEM (Polar Geospatial Center), Mapzen terrain tiles.'}
         </Text>
+      ) : null}
+      {ready && shapes && photoFore && !hd ? (
+        <Text style={[styles.note, pad]}>{FAROES_CREDIT}</Text>
       ) : null}
       {ready ? (
         <TouchableOpacity
