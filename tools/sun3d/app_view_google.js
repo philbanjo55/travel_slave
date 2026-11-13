@@ -14,7 +14,7 @@
 // The sun rule is the offline page's (app_view.js): the sun's centre against the skyline, plus a horizon dip of
 // 0.95 deg x sqrt(km above the area's low ground) for high points, in the point checks and in the light pass, so
 // first / last light and the lit / shade line are the same in both modes. Google's mesh is the surface here, so the
-// light pass and the point checks use the wide grid alone: a `near` grid in init and "near" chunks are ignored.
+// light pass and the point checks use the wide grid alone: a `near` or `detail` grid in init and their chunks ("near", "detail", "mask") are ignored.
 // Replies: boot, ready, state, moments, look, error (as the offline page; after an error the app goes back to the
 // offline page), plus credits {text, band} and hd {shown, loading}.
 // Google's Map Tiles policy (read 12 Nov 2026) is met on the page itself, along the bottom of the picture (#attr):
@@ -367,7 +367,7 @@ function wire() {
 
 window.S3D = {
   init(c) { cfg = c; cfg.tiles = cfg.tiles || {}; parts = []; N = c.n; W = c.W; D = c.D; DXm = W / N; DZm = D / N; eye = c.eye; target = c.target; focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
-  chunk(s, which) { if (which !== 'near') parts.push(s); },   // the fine grid is not used here
+  chunk(s, which) { if (!which) parts.push(s); },   // the fine grid and the detail grid are not used here
   async done() {
     try {
       if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");
