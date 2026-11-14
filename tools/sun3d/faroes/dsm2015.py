@@ -217,6 +217,7 @@ class Bucket:
 JUMP = 30.0        # metres between two neighbouring 2 m cells: no real Faroes slope does that (sea cliffs are smoothed over cells)
 BLOB = 5000        # cells (2 ha): a piece of surface cut off by such jumps all round and at most this big may be a blunder
 MAXH = 885.0       # Slættaratindur, the highest point of the islands, is 880 m: anything above is a blunder
+ENV = 30.0         # m beyond the 2009 contours within 60 m (see 1b in clean)
 DIFF = 30.0        # ... when it stands this far above / below the ground round it, and the 2009 contours do not back it
 
 def _fill_pts(px, py, pz, qx, qy):
@@ -277,6 +278,31 @@ def clean(dsm, win, lay, con, two=True, log=None):
             bad[ys, xs] |= m
             la, lo = dsm.ll(float(cx.mean()), float(cy.mean()))
             st['blunders'].append(dict(lat=round(la, 6), lng=round(lo, 6), cells=int(m.sum()), off_m=round(d, 1), at_m=round(hm, 1), ground_m=round(hr, 1)))
+    # 1b. blunders the jump test misses: smooth 'cones' that climb from the ground in steps of under 30 m (a 933 m cone
+    #     on a 50 m shore at 62.0136,-6.9172; a 280 m one in Funningsfjørður). A cell more than ENV m above every 2009
+    #     10 m contour point within 60 m (or below every one), where there are any, is a blunder. A stack with no contour
+    #     near it is left alone; one with contours on it is backed by them.
+    if True:
+        cx0, cy0 = X[0], Y[0]; B = 4
+        hc, wc = -(-a.shape[0] // B), -(-a.shape[1] // B)
+        px, py, pz = ten.box(X[0] - 70, X[-1] + 70, Y[-1] - 70, Y[0] + 70)
+        if len(pz):
+            ci = np.floor((px - (cx0 - dsm.PX / 2)) / (dsm.PX * B)).astype(int); ri = np.floor(((cy0 + dsm.PX / 2) - py) / (dsm.PX * B)).astype(int)
+            ok = (ci >= -8) & (ri >= -8) & (ci < wc + 8) & (ri < hc + 8)
+            cmax = np.full((hc + 16, wc + 16), -1e9, np.float32); cmin = np.full((hc + 16, wc + 16), 1e9, np.float32)
+            np.maximum.at(cmax, (ri[ok] + 8, ci[ok] + 8), pz[ok]); np.minimum.at(cmin, (ri[ok] + 8, ci[ok] + 8), pz[ok])
+            cmax = ndimage.maximum_filter(cmax, size=15)[8:8 + hc, 8:8 + wc]; cmin = ndimage.minimum_filter(cmin, size=15)[8:8 + hc, 8:8 + wc]
+            up = lambda g: np.repeat(np.repeat(g, B, 0), B, 1)[:a.shape[0], :a.shape[1]]
+            CMX, CMN = up(cmax), up(cmin)
+            hi = ~nod & (CMX > -1e8) & (a > CMX + ENV); lo = ~nod & (CMN < 1e8) & (a < CMN - ENV)
+            env = ndimage.binary_dilation(hi | lo, iterations=1) & ~nod & ~bad
+            if env.any():
+                lab2, k2 = ndimage.label(env, structure=np.ones((3, 3)))
+                for sl in ndimage.find_objects(lab2):
+                    m = lab2[sl] > 0; yy, xx = np.nonzero(m)
+                    la, lo_ = dsm.ll(float(X[sl[1]][xx].mean()), float(Y[sl[0]][yy].mean()))
+                    st['blunders'].append(dict(lat=round(la, 6), lng=round(lo_, 6), cells=int(m.sum()), off_m=None, at_m=round(float(np.nanmax(a[sl][m])), 1), ground_m=None, rule='contour envelope'))
+                bad |= env
     # 2. land holes (nodata inside the coastline, not the slivers along it) and the blunders: filled from the 2009 contours
     inner = ndimage.distance_transform_edt(land) > 3.0
     hole0 = (nod & land)

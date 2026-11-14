@@ -27,7 +27,10 @@ What the file is like (measured 14 Nov 2026):
 
 1. `clean`: whole islands in 2,048-cell windows. Blunders = parts of the surface joined to the rest only across steps of
    more than 30 m between neighbouring cells (graph components), of at most 2 ha, 30 m or more off the ground round them
-   (or above 885 m), and NOT backed by the 2009 10 m contours (a stack is: its contours ring it). Land holes and blunders
+   (or above 885 m), and NOT backed by the 2009 10 m contours (a stack is: its contours ring it); and every cell more
+   than 30 m above every 2009 10 m contour point within 60 m (or below every one), where there are any: the file has
+   smooth blunder 'cones' that climb from the ground in steps of under 30 m (933 m on a 50 m shore at 62.0136,-6.9172,
+   280 m in Funningsfjørður at 62.2839,-6.9186). A stack with no contour near it is left alone. Land holes and blunders
    are filled from the agency's 2009 contour lines (`haeddarkurvar/us_haeddarkurvar_2009_2m`, layer 0 = 10 m for this
    pass, layer 4 = 2 m for the boxes) plus the hole's rim, linear between them; never ArcticDEM. A hole that fills to
    sea level (median at most 2 m) with a low rim is water and lies flat at its rim's level. Lakes (topo 120 / 119) flat.
@@ -60,3 +63,21 @@ scout_subjects for both Faroes trips), saved as JSON (`shots_all.json`).
 
 Needs: numpy, scipy, pillow, tifffile, imagecodecs, pyproj; curl; the agency's server (`gis.us.fo`, plain requests,
 answers kept in `<work>/cache`). A first run takes about 1.5 hours on 4 cores (clean ~5 min; each box ~1 min).
+
+## First build (14 Nov 2026, branch `claude/sun3d-faroes-2015`; nothing uploaded or applied)
+
+- Cleaning, whole islands: 2,685 land holes (404,155 cells = 1.6 km2; 62 of them over 1,000 cells, e.g. 10,028 cells on
+  a Kunoy cliff at 62.3555,-6.7058, filled 0-139 m from 1,485 contour points) filled from the 2009 contours; 2,995 water
+  holes (723,005 cells: Saksun's Pollurin, Tórshavn harbour, Skálafjørður shores) laid flat at their rim (0.1-1.5 m);
+  606 blunder pieces (3,047 cells; the worst 307 cells at 832 m on a 187 m slope, 62.2717,-6.9230). After cleaning the
+  islands' top is Slættaratindur 879.9 m. Report: `<work>/clean/report.json`; per box: `levels.json` `cleaned`.
+- Wide: `faroes_dsm15_wide.png` 0.86 MB (was 0.78). Range: 33 boxes, 43.1 MB. Near: the 11 boxes at 2048 cells (1.9-4.4 m)
+  + `fo_klakkur`, 22.2 MB + one new photo (0.5 MB). Detail: 36 boxes of 1,504 m at 1 m, 33.4 MB with masks and photos.
+  Houses: 93 tiles, 31,761 buildings, 6.6 MB. All 248 files 106.6 MB; one Faroes trip downloads 111 MB (was 37 MB).
+- Every one of the 57 rated shots (both trips use the same vantage rows) has a near box, a detail box (stand pin at
+  least 167 m inside) and a range box with its subject at least 1 km inside; the stand pin is inside its range box for
+  50 (the 7 others have their subject 3.5-6.8 km off); the subject is inside the detail box for 41.
+- Stacks (DSM top / drawn top on the wide, near, detail and range grids; before = ArcticDEM): Risin 67.4 m (all
+  levels 67.4-67.5; before 0, it was missing), Kellingin 56.6 (before 0), Stóri Drangur 66.4 (before 49.5-49.7, wide 25),
+  Lítli Drangur 28.1 (near / detail / range 28.1; the wide grid 10 m: it shares a cell with Stóri Drangur), Tindhólmur
+  255.2 (before 44-89), Slættaratindur 879.9 (wide 876.5). Published heights: Risin 71, Kellingin 68, Tindhólmur 262 m.
