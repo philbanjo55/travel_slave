@@ -98,6 +98,26 @@ Check: `trip_readiness` "shots".
 
 ## 4b. 3D terrain for the trip (TEST app's 3D sun view): after the shots exist
 
+**The standard (Phil, 14 Nov 2026: "I'm gonna always want it this good").** Every trip gets the best 3D the public data allows, the way Grand Teton got it on 14 Nov 2026 (branch `claude/sun3d-sharp-range` until it ships). Not a plain grid. For each layer, use the best source that exists for the place, and say in the trip's notes which layers had no source.
+
+| Layer | What it is | Grand Teton (the model) | Where no laser survey exists (e.g. Faroes) |
+|---|---|---|---|
+| 1. Wide area | the whole region, coarse, real winter / season colour | terrarium tiles 27 m + Sentinel-2 picture of a day in the trip's season (`teton_colour/build_teton_colour.py`) | ArcticDEM 32 m north of 60 N |
+| 2. Sharp range | everything the shots look at (the peaks, cliffs, stacks), <= 5 m, feeds the sun times | USGS 3DEP 1 m lidar DEM at 5 m, 10 km boxes (`build_range.py`); six summits within 3 m of published heights | ArcticDEM 2 m; national DEM / DSM (Faroes 2015 DSM 2 m) |
+| 3. Close-up boxes | 1.5 km around each stand pin, 1 m: ground, water (ice option), colour from aerial photos turned to the season | USGS laser point clouds (EPT on AWS) + NAIP photos with the snow put in (`lidar/build_detail.py`) | ArcticDEM 1-2 m + agency aerial photos (`faroes/build_detail_faroes.py`) |
+| 4. Buildings, whole area | walls and real roof heights out to 8 km, drawn only, never in sun times | found in the same laser survey (`lidar/build_buildings.py`, ~9,900 in the park) | national building outlines (Faroes `bygningar`); heights guessed, say so |
+| 5. Trees, whole area | the survey's canopy out to 12 km, drawn only, never in sun times | `lidar/build_canopy.py` | none known |
+
+Rules that go with it:
+- **Data check first** (step 2 below), for every layer: summits against published heights, stand pins against `stops.elevation_m`, sea at 0 along coasts. A source that fails is not used (terrarium in the Faroes was 58 m high).
+- **Look for a laser survey before anything else**: USGS 3DEP (US), national programmes elsewhere (names to check, not yet tried from here: Scotland's Remote Sensing Portal, Ireland's GSI / OSi lidar, Iceland's IslandsDEM, Norway's hoydedata). None found = layers 3-5 fall back as in the right-hand column.
+- **Sun times use ground only** (layers 1-3: wide, range, close-up ground); buildings and trees are drawn, never counted.
+- **Eye 1.73 m above the ground** (Phil is 5'8"). A close subject on a building is aimed at the building's height, not the bare ground.
+- **Before / after page of every shot** for Phil (as https://claude.ai/artifact/3osCiWcRYQaxgxfAUc8JTA) and an **emulator pass online and offline** before anything reaches his phone. Phone space is not a reason to cut a layer (Phil, 14 Nov: phone space is fine); speed and memory are, and the page must fall back to the plain view rather than freeze.
+- Saved for offline with the trip (`saveTripTerrain`): the whole stack must work with no signal.
+
+The steps below build layers 1 and the first close-up boxes; layers 2-5 use the scripts named in the table (one command for all of it is not written yet: until then, follow `tools/sun3d/README.md` on the sharp-range branch).
+
 One script does it: `tools/sun3d/build_trip_terrain.py` (details in `tools/sun3d/README.md`).
 
 1. Run it: `TRIP_Q=<read-only SQL helper> python3 tools/sun3d/build_trip_terrain.py build <work dir> --region <short_name> --prefix <2-3 letters> --trip <trip id> --ground snow|green`.
