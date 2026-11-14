@@ -84,3 +84,12 @@ answers kept in `<work>/cache`). A first run takes about 1.5 hours on 4 cores (c
   levels 67.4-67.5; before 0, it was missing), Kellingin 56.6 (before 0), Stóri Drangur 66.4 (before 49.5-49.7, wide 25),
   Lítli Drangur 28.1 (near / detail / range 28.1; the wide grid 10 m: it shares a cell with Stóri Drangur), Tindhólmur
   255.2 (before 44-89), Slættaratindur 879.9 (wide 876.5). Published heights: Risin 71, Kellingin 68, Tindhólmur 262 m.
+- First / last sun, 74 shot-days, today's files vs these (the page's own 4-minute path, headless): within 4 minutes for
+  55 / 42 / 67 / 67 of first-subject / last-subject / first-here / last-here; 44 shot-days change by 8 minutes or more,
+  nearly all where the old data lacked or flattened the thing that throws or catches the light (Tindhólmur 89 -> 255 m
+  lights from ~05:40 instead of ~07:15; the Drangarnir landing shots' cliff; Mýlingur; Risin og Kellingin). List:
+  scratchpad `fo2015/work/sun_changes.txt` (made by `suncmp.py`).
+- Speed and memory (headless Chromium, software graphics, CPU slowed 4x, 4 views): ready (plain view) 0.6-0.9 s both;
+  foreground in 6-9 s both; a full-quality redraw 1.4-2.6 s median both (no measurable change); JS heap 99-118 MB with
+  the range box and houses (was 54-87), 222 MB at Tórshavn / Kirkjubøur / Velbastaður where ~10,000 buildings are within
+  8 km (was 64-87): the houses are the heaviest new part (the page builds them in plain JS arrays). Not measured on a phone.
