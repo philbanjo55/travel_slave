@@ -891,7 +891,9 @@ def sun_3d():
                 V.back()
             time.sleep(2)
             print(f'INFO sun3d close: {"tapped Close" if closed else "no Close button, pressed Back"}', flush=True)
-            V.show('sun3d-after-close', C.capture(1))
+            ac = C.capture(1)
+            V.show('sun3d-after-close', ac)
+            after_close_texts = list(ac.all_texts)
         else:
             V.show('sun3d-full', g)
             V.check('sun3d-full-open', False, 'full screen did not open' if tries else 'no full-screen button on screen')
@@ -900,6 +902,12 @@ def sun_3d():
         if V.find_scroll('About this view', 6):
             time.sleep(1.5)
         seen, _ = V.texts_all(2)
+        # 14 Nov 2026: in both today's app and the new build the page was gone ~30 s after closing full screen while the
+        # test scrolled for "About this view"; the chips were on screen right after closing, so count that screen too
+        try:
+            seen = list(seen) + list(after_close_texts)
+        except NameError:
+            pass
         V.check('sun3d-moments', seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you'), 'first / last light chips')
         if not (seen_has(seen, 'First sun on') and seen_has(seen, 'Sun reaches you')):   # 13 Nov 2026: where did the page go?
             V.show('sun3d-moments-screen', C.capture(1))
