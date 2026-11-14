@@ -611,6 +611,25 @@ so they come from the laser survey alone, inside the survey (none in Wilson / Te
   1192 / 1124 -> 1261 / (2301, one noisy run), Moulton barns 1263 / 1345 -> 1472 / 1606 ms: about +10-20 % a frame at
   full quality, before the governor steps down. The range's mesh at all 768 points had doubled it (1885 vs 965 ms): it now
   draws every other point (384, bunched at the subject), and the wide mesh's blocks under its box are not drawn.
+- First picture (`ready`, 26 shots, 1200 x 800): median 642 -> 706 ms (the plain view is unchanged; the range comes after
+  it). The range is in ~340 ms after it is handed over (238-638 ms, page's own count). The foreground's own time: 4.6 s
+  -> 9.4 s on Snake River Overlook measured alone (the gap is the software-graphics frames drawn while the page waits
+  for its photo decoders; the 1.5 km box's photo is read at 1024 px), 5.4 s -> 20 s median in the 26-shot run, which
+  shared the machine with another render job. Buildings: 125 ms median (15-404), 554 drawn median (5 at Emily's Pond,
+  3,887 at Taggart: Jenny Lake's and Colter Bay's cabins within 8 km).
+- Memory, 26 shots each: JS heap peak median 72 -> 129 MB (+53 per shot, +5 to +88), whole test browser RSS peak median
+  844 -> 970 MB (+122 per shot, +9 to +164). The range's own heights stay in memory for the sun times (16 MB of
+  Float32 for 2048^2) and the 1.5 km box is 2.3 x the 500 m one; on a phone with 2 GB or less both read every other
+  point (range 1024^2 at 10 m, box 752^2 at 2 m).
+- No network: all 26 shots with every request refused: 0 requests, range (23 shots that have one), foreground, buildings
+  and trees all drawn, no page error.
+- Sun times, 26 shots, 4-minute steps (`sharp/out/changes.md`): stand spots move at most one step (+-4 min) on 6 shots;
+  subjects' last light moves on 8: Chapel 08:40 -> 08:08, Jenny Lake 09:00 -> 08:40, John Moulton (subject on the face
+  under Nez Perce) 16:56 -> 13:52, John Moulton 2 12:56 -> 12:40, Snake River Overlook x2 13:52 -> 13:40, Teton Point
+  09:20 -> 09:08, Teton Pines first light 10:16 -> 10:24. All are subject pins on faces and in bowls: the 5 m grid has the
+  real ridges (the wide grid is 5-70 m low on the summits and smooth), so a face goes into shade earlier. No picture
+  checks these pins; the webcam events below did not move. (A bug found on the way: from a 1.5 km box the sun check's
+  440 steps ran out before the ray reached the range, so stand spots came out lit until sunset; it now takes up to 2000.)
 - Webcam sun events (`suncheck/score_rules.js` rule D, re-scored with the range where it holds the ray,
   `sharp/score/score_range.js`, a range box over JHMR built for this only): high-point sunrise / sunset 9 of 12 inside the
   picture window before and after (average +0.3 -> +0.0 min, typical 4.0 -> 4.5), ridge-blocked 4 of 4 before and after
