@@ -44,12 +44,15 @@ What the file is like (measured 14 Nov 2026):
    cells round each point for the 1 m boxes, so no overshoot at a cliff), then every native top that the smoothing would
    shave by more than 0.5 m pushed back into its cell. Detail boxes also get the class mask (0 ground, 3 sea / lake /
    lagoon, 4 stream) and the aerial photo exactly as round 2. Rows in `levels.json`, files in `files/`.
-5. `houses`, `housefiles`: every building outline of the islands, each fitted (flat or gable along / across its long side)
-   to the DSM cells inside it over the filled ground; where the DSM shows nothing clear the heights are the round 2
-   guesses (house 2.6 / 4.4 m, shed 1.9 / 2.6 m, hall 5 m flat) and the record says `h: "assumed"`. Roof and wall colour
-   (`rc` / `wc`) from the aerial photos where a box covers the building. Tiles of 4.8 x 4.4 km (`fob15_<row>_<col>.json`),
-   the `terrain_house_tiles` format (outline `p` in metres from the tile's north-west corner, `e` / `r` above the ground,
-   ridge direction `a`, `hw`, `roof`, `c`); the page draws them within 8 km, never in the sun times.
+5. `houses`, `housefiles`: every building outline of the islands (bygningar layers 0 and 1, status in use) in tiles of
+   4.8 x 4.4 km (`fob15_<row>_<col>.json`, the `terrain_house_tiles` format: outline `p` in metres from the tile's
+   north-west corner, `e` / `r` eave and ridge above the ground, ridge direction `a`, `hw`, `roof`, `c`; plus `h` =
+   `assumed` | `dsm` and `rc` / `wc` = roof and wall colour as seen from the air where a box photo covers it). The 2015 file
+   cannot give house heights (its fitted ridges are 2.5 m at the median; churches read 2-5 m over their yards), so the
+   round 2 guesses stay (house 2.6 / 4.4 m, shed 1.9 / 2.6, hall 4 / 6, church 4.8 / 8, roofs at most 40 degrees) and the
+   DSM's fit is used only where it is clearly higher than the guess (big sheds, blocks of flats). The topo map's
+   church `roof_elevation` was checked and is not a roof top (Vesturkirkjan's 46 m reads like its base + 4 m). Drawn within
+   8 km of the stand pin, never in the sun times.
 6. `sql`: `terrain_faroes_2015.sql` (or `--migration <path>`) and `upload.txt` (published name, local file, bytes).
 
 Shots file: the read-only query in `../README.md`'s Faroes section (stops -> stop_sun_pairs -> scout_vantages /

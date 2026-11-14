@@ -98,8 +98,10 @@ def step_wide(a):
     S, C, M = S.reshape(n, n), C.reshape(n, n), M.reshape(n, n)
     g = np.where(C > 0, S / np.maximum(C, 1), 0.0)
     if (C == 0).any(): print(f"wide: {(C == 0).sum()} cells with no block (left at 0)")
-    # every isolated top: a cell whose highest block is the highest of its 3 x 3 neighbourhood keeps that height
-    top = (M >= ndimage.maximum_filter(M, size=3, mode='nearest')) & (M > g + 3.0)
+    # every isolated top (a summit, a stack): a cell whose highest block stands at least 0.3 m over the highest block of
+    # each of its 8 neighbours keeps that height. (Ties allowed along a cliff top raised the whole edge into a comb.)
+    fp = np.ones((3, 3), bool); fp[1, 1] = False
+    top = (M > ndimage.maximum_filter(M, footprint=fp, mode='nearest') + 0.3) & (M > g + 3.0)
     g = np.where(top, M, g); g = np.maximum(g, 0.0)
     os.makedirs(f"{a.work}/files", exist_ok=True); path = f"{a.work}/files/faroes_dsm15_wide.png"
     write_heights(path, g, R['base_m'], R['step_m'])
@@ -184,6 +186,15 @@ def level_one(job):
     C = D.clean(dsm, win, lay, con, two=True)
     hgt = D.to_grid(dsm, win, C['smooth'], box, n, order=3 if kind == 'detail' else 1, sea=C['sea'], tops=C['bare'])
     sea = D.mask_grid(dsm, win, C['sea'] | C['water'], box, n)
+    # A narrow apron on the sea side of every shore (3 cells in the 1 m boxes, 2 elsewhere): the page's meshes sample the
+    # heights at their own points (2-30 m apart), and a shore that drops from a cliff to 0 within one cell turned into a
+    # comb of thin walls with ragged feet. The apron (the land's heights blurred one apron width out over the sea, never
+    # higher than they were) gives the cliff a foot the mesh can follow; the mask still says sea there.
+    from scipy import ndimage
+    k = 3 if kind == 'detail' else 2
+    blur = ndimage.gaussian_filter(np.where(sea, 0.0, hgt), k)
+    apron = sea & ndimage.binary_dilation(~sea, iterations=2 * k)
+    hgt = np.where(apron, np.maximum(hgt, blur), hgt).astype(np.float32)
     base = math.floor(float(hgt.min())) - 2
     F = f"{a.work}/files"; os.makedirs(F, exist_ok=True); os.makedirs(f"{a.work}/raw", exist_ok=True)
     name = {'range': f"{b['id']}.png", 'near': f"{b['id']}_dsm15.png", 'detail': f"{b['id']}_ground.png"}[kind]
@@ -334,17 +345,25 @@ def houses_tile(job):
                 u = px * ax[0] + py * ax[1]; vv = -px * ax[1] + py * ax[0]
         cx_c = int(np.clip((c[0] - X[0]) / dsm.PX, 0, w - 1)); cy_c = int(np.clip((Y[0] - c[1]) / dsm.PX, 0, h - 1))
         g0 = float(ground[cy_c, cx_c])
-        # The 2015 file smooths buildings nearly away (a church ~1.5 m over its yard): a height is taken from it only where
-        # the building is at least 7 m across (3-4 cells) and stands out clearly (90th percentile at least 2 m); else the
-        # round 2 guesses, marked assumed.
-        if hh is None or len(hh) < 6 or 2 * hs < 7.0 or np.percentile(hh, 90) < 2.0:
-            meas = 'assumed'
-            roof = dict(roof='gable', e=2.6, r=4.4, axis=0, pitch=35.0, half=hs) if area >= 20 else dict(roof='gable', e=1.9, r=2.6, axis=0, pitch=30.0, half=hs)
-            if area > 300: roof = dict(roof='flat', e=5.0, r=5.0, axis=0, pitch=0.0)
-            if hs < 1.2: roof = dict(roof='flat', e=roof['e'], r=roof['e'], axis=0, pitch=0.0)
-        else:
-            roof = fit_roof(u, vv, hh, hs)
-            roof['e'] = max(1.8, min(roof['e'], 60.0)); roof['r'] = max(roof['e'], min(roof['r'], 70.0))
+        # The 2015 file smooths buildings nearly away: over 31,761 outlines the fitted ridge is 2.5 m (median), churches
+        # read 2-5 m over their yards (Vesturkirkjan, a 46 m-high spire, reads 5 m). So the round 2 guesses stay the
+        # heights (house eave 2.6 / ridge 4.4 m, shed 1.9 / 2.6, hall over 300 m2 4 / 6, church 4.8 / 8, no roof steeper
+        # than 40 degrees), and the DSM's own fit is used only where it is clearly HIGHER than the guess (h: dsm): a big
+        # shed, a block of flats. Roof form and ridge direction come from the outline (gable along its long side when
+        # the outline is a rectangle-ish shape at least 2.4 m wide).
+        church = 'kirkj' in str(b['a'].get('name') or '').lower()
+        if church: ge, gr = 4.8, 8.0
+        elif area < 20: ge, gr = 1.9, 2.6
+        elif area <= 300: ge, gr = 2.6, 4.4
+        else: ge, gr = 4.0, 6.0
+        gform = 'gable' if area / max(rect, 1e-6) >= 0.6 and hs >= 1.2 else 'flat'
+        if not church: gr = min(gr, ge + hs * math.tan(math.radians(40)))
+        if gform == 'flat': ge = gr = ge + 0.4 * (gr - ge)
+        roof = dict(roof=gform, e=ge, r=gr, axis=0, pitch=0.0, half=hs); meas = 'assumed'
+        if hh is not None and len(hh) >= 6 and 2 * hs >= 7.0 and np.percentile(hh, 90) >= 2.0:
+            fit = fit_roof(u, vv, hh, hs)
+            fit['e'] = max(1.8, min(fit['e'], 60.0)); fit['r'] = max(fit['e'], min(fit['r'], 70.0))
+            if fit['r'] > gr + 0.5: roof, meas = fit, 'dsm'
         ang = ax if roof.get('axis', 0) == 0 else np.array([-ax[1], ax[0]])
         a_deg = math.degrees(math.atan2(-ang[1], ang[0])) % 180          # ridge direction in the page's frame (x east, z south)
         hw = roof.get('half', hs) if roof['roof'] == 'gable' else hs
