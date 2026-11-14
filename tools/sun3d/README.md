@@ -600,6 +600,18 @@ so they come from the laser survey alone, inside the survey (none in Wilson / Te
 - Height-field blocks vs walls and roofs (the before / after renders): the walls and roofs read as buildings (straight
   walls, a ridge); the old height-field blocks melt into the snow. Walls and roofs it is.
 
-### Measured (scratchpad `sharp/`; headless Chromium, software graphics)
+### Measured (scratchpad `sharp/`; headless Chromium, software graphics; harness `sharp/test/rv.js` = the panel's order)
 
-See `sharp/out/changes.md` for the per-shot list. Numbers are filled in there and in the branch's final commit message.
+- Phone space for the Grand Teton trip (what `saveTripTerrain` now saves, offline): range 4 boxes 14.7 MB, laser boxes 16 x
+  1.5 km 42.8 MB, building tiles 40 of 48 (8 km of a pin) 1.35 MB = 58.9 MB new; the 19 old 500 m boxes (15.3 MB) are no
+  longer picked: net +43.6 MB. All files to upload: 131, 59.0 MB (`sharp/upload/upload.txt`, sha256 each).
+- With none of the new data the new page draws exactly the old picture (0 of 240,000 pixels differ, Oxbow Bend plain view).
+- Frame time while dragging (full quality fixed, governor off, phone-size 412 x 800 view, software graphics, two
+  interleaved rounds, while another render job ran): Snake River Overlook 1102 / 1138 -> 1226 / 1356 ms, Oxbow Bend
+  1192 / 1124 -> 1261 / (2301, one noisy run), Moulton barns 1263 / 1345 -> 1472 / 1606 ms: about +10-20 % a frame at
+  full quality, before the governor steps down. The range's mesh at all 768 points had doubled it (1885 vs 965 ms): it now
+  draws every other point (384, bunched at the subject), and the wide mesh's blocks under its box are not drawn.
+- Webcam sun events (`suncheck/score_rules.js` rule D, re-scored with the range where it holds the ray,
+  `sharp/score/score_range.js`, a range box over JHMR built for this only): high-point sunrise / sunset 9 of 12 inside the
+  picture window before and after (average +0.3 -> +0.0 min, typical 4.0 -> 4.5), ridge-blocked 4 of 4 before and after
+  (+2.0 -> +2.5 min). No change beyond a minute on any of the 16 events.

@@ -1530,7 +1530,8 @@
           const g0 = groundAt(cx0, cz0), foot = Math.min(gmin, g0) - 0.6, e = g0 + Math.max(1.8, b.e), r = g0 + Math.max(b.e, b.r || b.e);
           const gable = b.roof === 'gable' && b.r > b.e + 0.3, ar = (b.a || 0) * Math.PI / 180, nx = -Math.sin(ar), nz = Math.cos(ar), hw = Math.max(b.hw || 0, 0.5) * kxF / kxt;
           const dist = p => (p[0] - cx) * nx + (p[1] - cz) * nz, top = p => gable ? e + (r - e) * Math.max(0, 1 - Math.abs(dist(p)) / hw) : r;
-          let s = (((b.id || 0) >> 2) * 2654435761) >>> 0;   // (a building's parts share a colour: ids are building x 4 + part) const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+          // (a building's parts share a colour: ids are building x 4 + part)
+          let s = (((b.id || 0) >> 2) * 2654435761) >>> 0; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
           const tone = 0.75 + 0.5 * rnd(), wall = snowy ? [0.24 * tone, 0.17 * tone, 0.12 * tone] : [0.42 * tone, 0.36 * tone, 0.3 * tone];
           const pitch = gable ? Math.atan((r - e) / hw) * 180 / Math.PI : 0;
           const roofC = snowy ? (pitch > 48 ? [0.32, 0.31, 0.32] : [0.86, 0.89, 0.93].map(v => v * (0.94 + 0.06 * rnd()))) : [0.33 * tone, 0.25 * tone, 0.22 * tone];
