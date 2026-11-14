@@ -89,6 +89,9 @@
 
   let cfg = null, parts = [], nparts = [], dparts = [], mparts = [], tparts = [], wparts = [], cparts = [], ncparts = [], bparts = [], wcparts = [], FAR = null, NR = null, DT = null, ice = true, maxH = 4250, minH = 0, baseH = 0;
   let foreState = 0, frames = 0, lastPath = null, touched = false;
+  // 14 Nov 2026: the 1.5 km boxes hold bare ground, so a subject pin on a barn or cabin was aimed at the ground at its
+  // foot. Buildings near the eye are kept here (outline + roof top) and a close subject inside one is aimed at its roof.
+  let bldNear = [];
   let rparts = [], RG = null, rangeState = 0, hsparts = {}, houseState = 0;   // the sharp range (its file's pieces, the grid, 0 none 1 building 2 in -1 dropped); the park-wide buildings (tile pieces by index, state)
   let cnparts = {}, cnbytes = {}, cnlast = -1, wideTiles = null, wideState = 0, wideRun = 0;   // park-wide trees: tile pieces by index, each tile's packed bytes once its pieces are in, the tile coming in, the packed files, 0 none 1 building 2 in -1 dropped
   const cnAny = () => Object.keys(cnparts).length > 0 || Object.keys(cnbytes).length > 0;   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
@@ -1528,6 +1531,7 @@
           const cx = b.c ? X(b.c[0]) : cx0, cz = b.c ? Z(b.c[1]) : cz0;
           let gmin = Infinity; for (const p of pts) gmin = Math.min(gmin, groundAt(p[0], p[1]));
           const g0 = groundAt(cx0, cz0), foot = Math.min(gmin, g0) - 0.6, e = g0 + Math.max(1.8, b.e), r = g0 + Math.max(b.e, b.r || b.e);
+          if (Math.hypot(cx0 - ex, cz0 - ez) < 400) bldNear.push({ pts, cx: cx0, cz: cz0, top: r });
           const gable = b.roof === 'gable' && b.r > b.e + 0.3, ar = (b.a || 0) * Math.PI / 180, nx = -Math.sin(ar), nz = Math.cos(ar), hw = Math.max(b.hw || 0, 0.5) * kxF / kxt;
           const dist = p => (p[0] - cx) * nx + (p[1] - cz) * nz, top = p => gable ? e + (r - e) * Math.max(0, 1 - Math.abs(dist(p)) / hw) : r;
           // (a building's parts share a colour: ids are building x 4 + part)
@@ -1582,6 +1586,7 @@
       const mesh = new THREE.Mesh(geo, mat);
       R.houses = { mesh, mat, geo, count }; R.scene.add(mesh);
       houseState = 2; relight = dirty = true;
+      if (!touched && bldNear.length) { aim(); heading(); }   // a close subject on a building: aim at its roof, as before the bare boxes
       post({ type: 'houses', ok: true, count, seen, inBox, shadow, range, ms: Math.round(performance.now() - t0) });
     } catch (e) {
       for (const t of made) { try { t.dispose(); } catch (x) { /* nothing to let go */ } }
@@ -1696,6 +1701,17 @@
     const hp = herePoint(), hl = lit(hp, sun.az, sun.alt);
     post({ type: 'state', subjectLit: subjLit(sun.az, sun.alt), hereLit: hl, up: sun.alt > 0, trees: hl && treesBlock(hp, sun.az, sun.alt) });
   }
+  // How far a building's roof stands above the ground at the subject pin (0 = not on a building): the pin inside an
+  // outline, or within 4 m of one's middle
+  function roofLift(b) {
+    const x = (b.c + 0.5) * FAR.dx, z = (b.r + 0.5) * FAR.dz; let best = 0;
+    for (const h of bldNear) {
+      let k = false; const P = h.pts;
+      for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], c = P[j]; if ((a[1] > z) !== (c[1] > z) && x < (c[0] - a[0]) * (z - a[1]) / (c[1] - a[1]) + a[0]) k = !k; }
+      if (k || Math.hypot(h.cx - x, h.cz - z) < 4) best = Math.max(best, h.top - groundAt(x, z));
+    }
+    return Math.max(0, Math.min(40, best));
+  }
   function aim() {
     const a = cr(eye), b = cr(target), dx = (b.c - a.c) * FAR.dx, dz = (b.r - a.r) * FAR.dz, dist = Math.hypot(dx, dz);
     yaw = dist > 5 ? Math.atan2(dx, -dz) : 0;
@@ -1703,7 +1719,7 @@
     if (dist > 3000 || t.g === FAR) {
       const top = dist > 3000 ? Math.atan2(snap(t, snapR(t.g)).h - up, dist) : 0.04;
       pitch = Math.max(0.01, top * 0.45);
-    } else pitch = Math.max(-0.6, Math.min(0.6, Math.atan2(gh(t.g, t.c, t.r) + 6 - up, Math.max(dist, 20))));   // a close subject on the fine grid: look straight at it, up or down
+    } else pitch = Math.max(-0.6, Math.min(0.6, Math.atan2(gh(t.g, t.c, t.r) + roofLift(b) + 6 - up, Math.max(dist, 20))));   // a close subject on the fine grid: look straight at it, up or down
     focus();
   }
   function focus() {
@@ -1875,7 +1891,7 @@
   }
 
   window.S3D = {
-    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; bldNear = []; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
     chunk(s, which) {
       if (typeof which === 'string' && which.startsWith('canopy:')) {   // a tree tile: packed as soon as the next one starts, so its text is let go at once
         const i = +which.slice(7);
