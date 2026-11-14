@@ -250,6 +250,7 @@ def step_boxes(a, kinds):
         items = pl['ranges'] if kind == 'range' else pl['details'] if kind == 'detail' else pl['nears']
         for b in items:
             if a.only and b['id'] not in a.only.split(','): continue
+            if not a.only and os.path.exists(f"{a.work}/levels.json") and b['id'] in json.load(open(f"{a.work}/levels.json")).get(kind, {}): continue   # built already
             if kind == 'near':
                 side = max((b['east'] - b['west']) * P.kx((b['north'] + b['south']) / 2), (b['north'] - b['south']) * P.KZ)
                 b = dict(b, n=int(min(2048, math.ceil(side / 2.0 / 64) * 64)))
@@ -333,8 +334,10 @@ def houses_tile(job):
                 u = px * ax[0] + py * ax[1]; vv = -px * ax[1] + py * ax[0]
         cx_c = int(np.clip((c[0] - X[0]) / dsm.PX, 0, w - 1)); cy_c = int(np.clip((Y[0] - c[1]) / dsm.PX, 0, h - 1))
         g0 = float(ground[cy_c, cx_c])
-        if hh is None or len(hh) == 0 or np.percentile(hh, 90) < 1.5:
-            # not in the 2015 survey (built since, or too small for 2 m cells): modest guessed heights, said so
+        # The 2015 file smooths buildings nearly away (a church ~1.5 m over its yard): a height is taken from it only where
+        # the building is at least 7 m across (3-4 cells) and stands out clearly (90th percentile at least 2 m); else the
+        # round 2 guesses, marked assumed.
+        if hh is None or len(hh) < 6 or 2 * hs < 7.0 or np.percentile(hh, 90) < 2.0:
             meas = 'assumed'
             roof = dict(roof='gable', e=2.6, r=4.4, axis=0, pitch=35.0, half=hs) if area >= 20 else dict(roof='gable', e=1.9, r=2.6, axis=0, pitch=30.0, half=hs)
             if area > 300: roof = dict(roof='flat', e=5.0, r=5.0, axis=0, pitch=0.0)

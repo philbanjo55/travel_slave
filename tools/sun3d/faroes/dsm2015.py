@@ -177,9 +177,13 @@ class Contours:
         X, Y, Z = [], [], []
         env = dict(geometry=f"{x0},{y0},{x1},{y1}", geometryType='esriGeometryEnvelope', inSR=5316, spatialRel='esriSpatialRelIntersects')
         ids = sorted(self.ag.get(f"{CONTOURS}/4/query", dict(where='1=1', returnIdsOnly='true', f='json', **env)).get('objectIds') or [])
-        for i in range(0, len(ids), 200):
-            d = self.ag.get(f"{CONTOURS}/4/query", dict(objectIds=','.join(str(v) for v in ids[i:i + 200]), outFields='elevation', outSR=5316, f='json', geometryPrecision=1))
-            for f in d.get('features', []):
+        def get(batch):   # the server fails on some batches (a very long line): halve until it answers; one line it cannot give is left out
+            try: return self.ag.get(f"{CONTOURS}/4/query", dict(objectIds=','.join(str(v) for v in batch), outFields='elevation', outSR=5316, f='json', geometryPrecision=1)).get('features', [])
+            except IOError:
+                if len(batch) == 1: self.skipped = getattr(self, 'skipped', []) + batch; return []
+                return get(batch[:len(batch) // 2]) + get(batch[len(batch) // 2:])
+        for i in range(0, len(ids), 50):
+            for f in get(ids[i:i + 50]):
                 for p in f['geometry'].get('paths', []):
                     a = densify(np.asarray(p, float)[:, :2], 2.0); m = (a[:, 0] > x0 - 50) & (a[:, 0] < x1 + 50) & (a[:, 1] > y0 - 50) & (a[:, 1] < y1 + 50)
                     if m.any(): X.append(a[m, 0]); Y.append(a[m, 1]); Z.append(np.full(int(m.sum()), f['attributes']['elevation'], np.float32))
@@ -349,11 +353,12 @@ def window_for(dsm, box, pad=60.0):
     return dsm.cells(min(xs), max(xs), min(ys), max(ys), pad)
 
 def peaks(h, sea):
-    """Every local top of the native heights (higher than its 8 neighbours, standing 3 m over the lowest point within 6 m):
-    summits, sea stacks, pinnacles, ridge knots. Pushed into the grid cell that holds it so no resampling shaves it."""
+    """Every real top of the native heights: the highest cell within 6 m all round (7 x 7 cells), standing 5 m over the
+    lowest point within 8 m: summits, sea stacks, pinnacles. Pushed into the grid cell that holds it so no resampling
+    shaves it. (A 3 x 3 rule also caught the file's own zig-zag on steep slopes and stood single spikes on them.)"""
     from scipy import ndimage
-    mx = ndimage.maximum_filter(h, size=3, mode='nearest'); mn = ndimage.minimum_filter(h, size=7, mode='nearest')
-    m = (h >= mx) & (h - mn > 3.0) & (h > 2.0) & ~sea
+    mx = ndimage.maximum_filter(h, size=7, mode='nearest'); mn = ndimage.minimum_filter(h, size=9, mode='nearest')
+    m = (h >= mx) & (h - mn > 5.0) & (h > 2.0) & ~sea
     r, c = np.nonzero(m); return r, c, h[r, c]
 
 def to_grid(dsm, win, h, box, n, order=1, sea=None, push=True, rows=None, tops=None):
