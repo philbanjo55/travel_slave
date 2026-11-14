@@ -24,6 +24,15 @@ import jpeg from 'npm:jpeg-js@0.4.4';
 // POST {} archives this hour; {force: true} re-captures it; {backfill: n}
 // labels up to n stored daylight frames that have no label yet.
 //
+// v24 (Phil, 14 Nov 2026, offload step 2: "Yes"): a camera with label_by = 'session' is read
+// by the nightly Claude sessions (webcam_session_queue / webcam_session_label), not here, except
+// for the hours the planner needs within minutes: webcam_paid_slots() (the camera look after
+// sunrise of each live T run, and this hour + the hour before while a Re-plan now / note about
+// today is running). Those hours are read here at once, also when the picture was already taken.
+// The hourly run's small backfill leaves session cameras alone; an explicit {backfill: n} (the
+// 06:00 UTC backup cron) reads whatever is still unread. Paused cameras are never read and no
+// longer stop the backfill. Setting label_by back to 'api' restores the old behaviour.
+//
 // Stale frames: a camera can freeze and keep serving an old picture. Each
 // image's SHA-256 is stored; a repeat of an earlier frame is not sent to
 // Claude. Claude also reads the time printed on the image (camera_time_text);
@@ -353,6 +362,11 @@ Deno.serve(async (req) => {
     const { data: cams, error: cErr } = await supabase.from('webcam_cameras').select('*').eq('active', true);
     if (cErr) throw cErr;
 
+    const { data: paidRaw } = await supabase.rpc('webcam_paid_slots');
+    const paid = new Set<string>(((paidRaw as any[]) ?? []).map((t: any) => new Date(t).toISOString()));
+    const readHere = (cam: any, at: Date) => cam.label_by !== 'session' || paid.has(at.toISOString());
+    const keepFileTime = (cols: any) => { if (cols.camera_time_text == null) delete cols.camera_time_text; return cols; };
+
     const results: any[] = [];
     const mine = [...(cams ?? [])].sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
       .filter((_: any, i: number) => i % shards === shard);
@@ -382,7 +396,8 @@ Deno.serve(async (req) => {
 
         let metrics: any = {};
         try { metrics = hazeMetrics(buf); } catch (e) { res.metrics_error = String(e).slice(0, 200); }
-        const l = repeat ? { lab: null, model: null, err: 'repeat image, not labelled' } : await tryLabel(cam, buf);
+        const l = repeat ? { lab: null, model: null, err: 'repeat image, not labelled' }
+          : !readHere(cam, slot) ? { lab: null, model: null, err: 'read tonight' } : await tryLabel(cam, buf);
 
         const row = {
           camera_code: cam.code, captured_at: slot.toISOString(), storage_path: path, bytes: buf.length,
@@ -401,12 +416,33 @@ Deno.serve(async (req) => {
       results.push(res);
     }
 
+    // v24: the hours the planner needs now (paid slots), for this shard's session cameras whose
+    // picture was taken before the need came up (Re-plan now after :37).
+    const mySession = mine.filter((c: any) => c.label_by === 'session' && !c.label_paused).map((c: any) => c.code);
+    if (claude && !body.backfill && paid.size && mySession.length) {
+      const { data: due } = await supabase.from('webcam_frames')
+        .select('id,camera_code,storage_path,captured_at').in('camera_code', mySession)
+        .in('captured_at', [...paid]).is('label', null).is('label_model', null)
+        .not('storage_path', 'is', null).eq('stale', false);
+      for (const f of due ?? []) {
+        const cam = mine.find((c: any) => c.code === f.camera_code);
+        const { data: blob } = await supabase.storage.from(BUCKET).download(f.storage_path);
+        if (!cam || !blob) continue;
+        const l = await tryLabel(cam, new Uint8Array(await blob.arrayBuffer()));
+        await supabase.from('webcam_frames').update(keepFileTime(labelColumns(l.lab, l.model, l.err))).eq('id', f.id);
+        results.push({ camera: f.camera_code, captured_at: f.captured_at, read_now: !l.err, label_error: l.err });
+      }
+    }
+
     // Label stored daylight frames that have none yet (key added late, cap,
-    // errors), newest first, while their image is still in storage.
+    // errors), newest first, while their image is still in storage. v24: never paused cameras;
+    // session cameras only on an explicit backfill (the 06:00 UTC backup).
     let backfilled = 0;
     if (claude && lead) {
+      const codes = (cams ?? []).filter((c: any) => !c.label_paused && (body.backfill || c.label_by !== 'session')).map((c: any) => c.code);
       const { data: pending, error: pErr } = await supabase.from('webcam_frames')
         .select('id,camera_code,storage_path,captured_at').is('label', null).not('storage_path', 'is', null)
+        .in('camera_code', codes.length ? codes : ['-'])
         .eq('stale', false).gte('sun_altitude', NIGHT_ALT).neq('captured_at', slot.toISOString())
         .order('captured_at', { ascending: false }).limit(Math.min(Number(body.backfill ?? 4), 40));
       if (pErr) results.push({ backfill_error: pErr.message });
@@ -416,7 +452,7 @@ Deno.serve(async (req) => {
         const { data: blob, error: dErr } = await supabase.storage.from(BUCKET).download(f.storage_path);
         if (!cam || !blob) { results.push({ camera: f.camera_code, skipped: dErr?.message ?? 'camera not active' }); continue; }
         const l = await tryLabel(cam, new Uint8Array(await blob.arrayBuffer()));
-        await supabase.from('webcam_frames').update(labelColumns(l.lab, l.model, l.err)).eq('id', f.id);
+        await supabase.from('webcam_frames').update(keepFileTime(labelColumns(l.lab, l.model, l.err))).eq('id', f.id);
         if (l.err) break; // the same failure would repeat for the rest
         backfilled++;
         results.push({ camera: f.camera_code, captured_at: f.captured_at, ...l.lab });
