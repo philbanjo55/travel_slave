@@ -1536,9 +1536,12 @@
           const dist = p => (p[0] - cx) * nx + (p[1] - cz) * nz, top = p => gable ? e + (r - e) * Math.max(0, 1 - Math.abs(dist(p)) / hw) : r;
           // (a building's parts share a colour: ids are building x 4 + part)
           let s = (((b.id || 0) >> 2) * 2654435761) >>> 0; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
-          const tone = 0.75 + 0.5 * rnd(), wall = snowy ? [0.24 * tone, 0.17 * tone, 0.12 * tone] : [0.42 * tone, 0.36 * tone, 0.3 * tone];
+          // Faroes tiles (14 Nov 2026) carry each building's roof / wall colour as seen from the air (rc / wc, 0-255): turned
+          // to albedo as the old Faroes houses did; tiles without them (Grand Teton) draw as before
+          const alb = c => [Math.pow(c[0] / 255, 1.613), Math.pow(c[1] / 255, 1.613), Math.pow(c[2] / 255, 1.613)];
+          const tone = 0.75 + 0.5 * rnd(), wall = b.wc ? alb(b.wc) : snowy ? [0.24 * tone, 0.17 * tone, 0.12 * tone] : [0.42 * tone, 0.36 * tone, 0.3 * tone];
           const pitch = gable ? Math.atan((r - e) / hw) * 180 / Math.PI : 0;
-          const roofC = snowy ? (pitch > 48 ? [0.32, 0.31, 0.32] : [0.86, 0.89, 0.93].map(v => v * (0.94 + 0.06 * rnd()))) : [0.33 * tone, 0.25 * tone, 0.22 * tone];
+          const roofC = b.rc ? alb(b.rc) : snowy ? (pitch > 48 ? [0.32, 0.31, 0.32] : [0.86, 0.89, 0.93].map(v => v * (0.94 + 0.06 * rnd()))) : [0.33 * tone, 0.25 * tone, 0.22 * tone];
           count++;
           for (const part of gable ? [clip(pts, nx, nz, cx, cz, 1), clip(pts, nx, nz, cx, cz, -1)] : [pts]) {
             if (part.length < 3) continue;
