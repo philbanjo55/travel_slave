@@ -168,12 +168,12 @@ class Survey:
 def merc(lat, lng): return R * math.radians(lng), R * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
 
 
-def grid_box(sv, box, n, log, keep=False):
+def grid_box(sv, box, n, log, keep=False, maxd=99):
     """The survey's points on the box's n x n lat / lng grid (row 0 = north). keep = also every point that is not
     ground, water or building (cell + height): the trees' own returns."""
     north, south, west, east = box
     x0, y1 = merc(north, west); x1, y0 = merc(south, east)
-    keys = sv.nodes(x0, x1, y0, y1); order = sorted(keys, key=lambda s: int(s.split('-')[0]))
+    keys = sv.nodes(x0, x1, y0, y1, maxd); order = sorted(keys, key=lambda s: int(s.split('-')[0]))
     top = np.full((n, n), -1e9, np.float32); cls = np.zeros((n, n), np.uint8); gsum = np.zeros((n, n), np.float64); gcnt = np.zeros((n, n), np.int32)
     wmin = np.full((n, n), 1e9, np.float32); cnt = np.zeros((n, n), np.int32); multi = np.zeros((n, n), np.int32); total = 0; pr, pc, pz = [], [], []
     with cf.ThreadPoolExecutor(8) as ex:
@@ -258,7 +258,7 @@ def wide_water(sv, clat, clng, terrain, log):
     return out
 
 
-def clean(g, box, n, cell, stands, ww=None):
+def clean(g, box, n, cell, stands, ww=None, no_bld=False):
     """Surface heights, the class mask and the trees' own returns from the gridded points. ww = the wide water layer."""
     north, south, west, east = box
     top, cls, cnt = g['top'].astype(np.float64), g['cls'], g['cnt']; has = cnt > 0
@@ -332,6 +332,8 @@ def clean(g, box, n, cell, stands, ww=None):
         bld &= d > 4.0                                                    # never a wall or a roof under the camera
     # the surface is the bare ground with the buildings on it. Trees are NOT in it: the mask carries each tree cell's
     # canopy height, the page draws them as points you can see between and keeps them out of the sun-time checks
+    if no_bld:   # the park-wide buildings (build_buildings.py) draw them as walls and roofs: here they are ground, and no tree
+        tree &= ~grow8(grow8(bld)); bld[:] = False
     surf = np.where(bld, top, base)
     mask = np.zeros((n, n), np.uint8); mask[water] = 3
     mask[tree] = (TREE0 + np.clip(np.round(hag / TREE_STEP), 1, 255 - TREE0)).astype(np.uint8)[tree]; mask[bld] = 2
@@ -395,10 +397,20 @@ def plan(pins, a):
         la0, la1 = min(p[0] for p in pts), max(p[0] for p in pts); lo0, lo1 = min(p[1] for p in pts), max(p[1] for p in pts)
         clat, clng = (la0 + la1) / 2, (lo0 + lo1) / 2; kxl = 111320 * math.cos(math.radians(clat))
         ext = max((la1 - la0) * kz, (lo1 - lo0) * kxl)
-        if ext + 2 * min(a.pad, 200) <= 512: cell = 0.5; side = min(512.0, ext + 2 * a.pad)
+        if a.side: cell = a.cell; side = max(a.side, ext + 2 * 100)
+        elif ext + 2 * min(a.pad, 200) <= 512: cell = 0.5; side = min(512.0, ext + 2 * a.pad)
         else: cell = 1.0; side = min(1024.0, ext + 2 * a.pad)
         n = int(math.ceil(side / cell / 8) * 8); side = n * cell
         box = (clat + side / 2 / kz, clat - side / 2 / kz, clng - side / 2 / kxl, clng + side / 2 / kxl)
+        if a.side and regions:   # a big box is moved (not shrunk) to sit inside the fine box its shots use, clear of the strip where that blends out
+            reg0 = next((r for r in regions if r['south'] <= clat <= r['north'] and r['west'] <= clng <= r['east']), None)
+            nr = pick_near(nears, reg0, (mem[0]['lat'], mem[0]['lng']), mem[0]['subjects'][0]) if reg0 else None
+            if nr:
+                m = (4.2 * max(nr['width_m'], nr['depth_m']) / (G_MESH - 1) + 20)
+                n_, s_, w_, e_ = nr['north'] - m / kz, nr['south'] + m / kz, nr['west'] + m / kxl, nr['east'] - m / kxl
+                dlat = min(0, n_ - box[0]) + max(0, s_ - box[1]); dlng = min(0, e_ - box[3]) + max(0, w_ - box[2])
+                box = (box[0] + dlat, box[1] + dlat, box[2] + dlng, box[3] + dlng)
+                if box[0] > n_ + 1e-9 or box[1] < s_ - 1e-9 or box[2] < w_ - 1e-9 or box[3] > e_ + 1e-9: notes_fit = True
         box = tuple(round(v, 6) for v in box)
         stops = [s for m in mem for s in m['stops']]; stops = sorted(set(stops), key=stops.index)
         name = min(stops, key=lambda s: math.hypot((stop_pin.get(s, (clat, clng))[1] - clng) * kxl, (stop_pin.get(s, (clat, clng))[0] - clat) * kz))
@@ -421,6 +433,9 @@ def main():
     ap.add_argument('--project', default='WY_GrandTetonNP_1_D22'); ap.add_argument('--prefix', default='gtd')
     ap.add_argument('--pad', type=float, default=250.0); ap.add_argument('--merge', type=float, default=150.0); ap.add_argument('--close', type=float, default=600.0)
     ap.add_argument('--only', help='comma list of box ids'); ap.add_argument('--suffix', default='', help='added to every file name, e.g. _v3'); ap.add_argument('--out', default='files', help='folder under the work dir')
+    ap.add_argument('--side', type=float, default=0, help='every box this many metres a side (moved inside its fine box)'); ap.add_argument('--cell', type=float, default=1.0)
+    ap.add_argument('--max-depth', type=int, default=99, help='read the survey no deeper (10 = about 0.5 m apart: enough for 1 m cells)')
+    ap.add_argument('--no-buildings', action='store_true', help='buildings on the ground (the park-wide building files draw them)')
     ap.add_argument('--wide-file', help="the region's wide file, to print how the survey's ground sits against it"); ap.add_argument('--migration', default='terrain_detail.sql')
     a = ap.parse_args(); os.makedirs(a.work, exist_ok=True)
     if not a.pins and not a.trip and os.path.exists(f"{a.work}/pins.json"): a.pins = f"{a.work}/pins.json"
@@ -452,11 +467,11 @@ def main():
         if a.wide_file and r:   # the water of the 6 km around first: the box's own water search starts from it too
             if r['id'] not in wide: wide[r['id']] = read_png(a.wide_file, r['base_m'], r['step_m'])
             ww = wide_water(sv, (box[0] + box[1]) / 2, (box[2] + box[3]) / 2, (wide[r['id']], (r['north'], r['south'], r['west'], r['east'])), say)
-        g = grid_box(sv, box, n, say, keep=True)
+        g = grid_box(sv, box, n, say, keep=True, maxd=a.max_depth)
         got = float((g['cnt'] > 0).mean())
         if got < 0.5:
             print(f"  the survey has points in only {got:.0%} of the box: left out"); missing.append((bid, b['stops'], f"survey covers {got:.0%} of the box")); continue
-        surf, mask, base, st = clean(g, box, n, cell, b['stands'], ww)
+        surf, mask, base, st = clean(g, box, n, cell, b['stands'], ww, a.no_buildings)
         base_m = math.floor(float(surf.min())) - 5
         hp, mp, tp, wp = (f"{F}/{bid}_{k}{a.suffix}.png" for k in ('lidar', 'mask', 'trees', 'water'))
         write_heights(hp, surf, base_m, STEP); write_mask(mp, mask); look(f"{a.work}/look/{bid}.png", surf, mask, cell)

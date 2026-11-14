@@ -259,7 +259,11 @@ def naip(work, box, w, h):
         os.makedirs(os.path.dirname(p), exist_ok=True)
         q = dict(bbox=f"{box['west']},{box['south']},{box['east']},{box['north']}", bboxSR=4326, imageSR=4326, size=f'{w},{h}',
                  format='tiff', pixelType='U8', bandIds='0,1,2,3', interpolation='RSP_BilinearInterpolation', f='image')
-        r = requests.get(NAIP, params=q, timeout=300); r.raise_for_status()
+        for k in range(6):   # the ImageServer answers 504 now and then under load: wait and ask again
+            r = requests.get(NAIP, params=q, timeout=300)
+            if r.status_code < 500: break
+            import time; time.sleep(10 + 20 * k)
+        r.raise_for_status()
         if not r.content.startswith(b'II') and not r.content.startswith(b'MM'): raise RuntimeError('NAIP: ' + r.text[:200])
         open(p, 'wb').write(r.content)
     a = tifffile.imread(p).astype(np.float32) / 255
