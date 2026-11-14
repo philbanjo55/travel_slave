@@ -19,6 +19,11 @@ import { IS_TEST_APP } from '../utils/variant';
 // plus a class mask (tree / building / water) for their colours. Two files a
 // box. The page draws it inside the fine box, or the wide grid without one.
 //
+// Park-wide trees (Grand Teton, 13 Nov 2026): public.terrain_tree_tiles lists a coarse canopy layer from the same
+// survey (7 m cells, tiles of ~5.5 km, one small file each): the page draws trees from it beyond the detail box and
+// where there is none. A shot gets the tiles within TREE_RANGE_M of its stand spot. Sent with the foreground (after
+// the plain view); none (no table yet, nothing saved) just means no trees farther off.
+//
 // Saved ahead (TEST app): whenever a trip's sun plan loads, saveTripTerrain
 // fetches every file that trip's stand spots need, one at a time in the
 // background, so a stop never opened at home still has its 3D view in the field.
@@ -57,6 +62,13 @@ export type TerrainDetail = {
   buildings_path?: string | null; buildings_bytes?: number | null;
   width_m?: number | null; depth_m?: number | null;
 };
+export type TerrainTreeTile = {
+  id: string; parent: string;
+  north: number; south: number; west: number; east: number;
+  n: number; step_m: number;          // n x n cells; a cell's value x step_m = the canopy's height over the ground (0 = no tree)
+  lod?: number | null;                 // 0 every cell (~7 m); 1 two by two cells in one (~14 m: value = (trees - 1) x 64 + height / step_m)
+  path: string; bytes: number | null;
+};
 type Point = { lat: number; lng: number };
 type Box = { north: number; south: number; west: number; east: number };
 
@@ -65,11 +77,18 @@ const DIR = `${FileSystem.documentDirectory}pf_cache/`;
 const LIST_FILE = `${DIR}terrain_regions.json`;
 const NEAR_FILE = `${DIR}terrain_near_regions.json`;
 const DETAIL_FILE = `${DIR}terrain_detail_regions.json`;
+const TREES_FILE = `${DIR}terrain_tree_tiles.json`;
+// How far the park-wide trees reach from the stand spot: the page's own range (tools/sun3d/app_view.js WIDE_RANGE).
+// Within TREE_NEAR_M a tile comes at every cell (lod 0), farther off at two by two cells in one (lod 1): the page draws
+// one tree for many cells out there anyway, and it is a third of the bytes to carry into the web view.
+export const TREE_RANGE_M = 12000;
+const TREE_NEAR_M = 3000;
 const CALL_TIMEOUT_MS = 12000;
 
 let regions: TerrainRegion[] | null = null;
 let nears: TerrainNear[] | null = null;
 let details: TerrainDetail[] | null = null;
+let treeTiles: TerrainTreeTile[] | null = null;
 const data: Record<string, string> = {};
 const inflight: Record<string, Promise<string | null> | undefined> = {};
 
@@ -170,6 +189,20 @@ async function loadDetail(): Promise<TerrainDetail[]> {
   return (await ask) ?? [];
 }
 
+// The park-wide tree tiles. Saved copy first, the server behind it, as the other lists.
+let treesAsk: Promise<TerrainTreeTile[] | null> | null = null;
+async function loadTreeTiles(): Promise<TerrainTreeTile[]> {
+  if (treeTiles) return treeTiles;
+  const ask = () => {
+    if (!treesAsk) treesAsk = askList<TerrainTreeTile>('terrain_tree_tiles', '*', TREES_FILE)
+      .then(rows => { if (rows) treeTiles = rows; treesAsk = null; return rows; });
+    return treesAsk;
+  };
+  const saved = await readList<TerrainTreeTile>(TREES_FILE);
+  if (saved) { ask().catch(() => undefined); return saved; }
+  return (await ask()) ?? [];
+}
+
 export function inRegion(r: Box, p: Point): boolean {
   return p.lat <= r.north && p.lat >= r.south && p.lng >= r.west && p.lng <= r.east;
 }
@@ -222,6 +255,29 @@ function pickDetail(all: TerrainDetail[], region: TerrainRegion, near: TerrainNe
   }
   return best;
 }
+// The park-wide tree tiles a shot needs: those of its region within TREE_RANGE_M of the stand spot, nearest first, one
+// file a tile (the every-cell one within TREE_NEAR_M, else the coarse one; the other when only one is listed).
+export async function treeTilesFor(region: TerrainRegion, stand: Point): Promise<TerrainTreeTile[]> {
+  return pickTreeTiles(await loadTreeTiles(), region, stand);
+}
+function pickTreeTiles(all: TerrainTreeTile[], region: TerrainRegion, stand: Point): TerrainTreeTile[] {
+  const kx = 111320 * Math.cos(stand.lat * Math.PI / 180), kz = 111132;
+  const boxes = new Map<string, { d: number; byLod: Record<number, TerrainTreeTile> }>();
+  for (const t of all) {
+    if (t.parent !== region.id || !(t.n > 0) || !t.path) continue;
+    const d = Math.hypot(Math.max(t.west - stand.lng, 0, stand.lng - t.east) * kx, Math.max(t.south - stand.lat, 0, stand.lat - t.north) * kz);
+    if (d > TREE_RANGE_M) continue;
+    const key = `${t.north}|${t.west}`, b = boxes.get(key) ?? { d, byLod: {} };
+    b.byLod[t.lod ? 1 : 0] = t; boxes.set(key, b);
+  }
+  return [...boxes.values()]
+    .sort((a, b) => a.d - b.d)
+    .map(b => (b.d <= TREE_NEAR_M ? b.byLod[0] ?? b.byLod[1] : b.byLod[1] ?? b.byLod[0]));
+}
+export function treeTileFile(t: TerrainTreeTile): TerrainFile {
+  return { id: t.id, path: t.path, bytes: t.bytes };
+}
+
 // The class mask of a detail box, as a file of its own (null when the box has none: it then draws as bare shapes).
 export function detailMask(d: TerrainDetail): TerrainFile | null {
   return d.mask_path ? { id: `${d.id}_mask`, path: d.mask_path, bytes: d.mask_bytes } : null;
@@ -307,7 +363,7 @@ export function terrainData(r: TerrainFile): Promise<string | null> {
 
 // ---- Saved ahead for a whole trip ----
 
-// areas = what the trip's stand spots need (wide regions, fine boxes, detail boxes); saved = how many are on the phone.
+// areas = what the trip's stand spots need (wide regions, fine boxes, detail boxes, park-wide tree tiles); saved = how many are on the phone.
 // A detail box is one area with up to six files (heights, class mask, tree returns, wide water; Faroes: photo,
 // buildings), a fine box up to two (heights; Faroes: photo; Tetons: winter colour), a region up to two (heights;
 // Tetons: winter colour): an area counts as saved when all its files are there.
@@ -326,7 +382,7 @@ function setTrip(tripId: string, t: TripTerrain): void {
 // no signal from the saved lists.
 async function tripAreas(shots: Shot[]): Promise<TerrainFile[][]> {
   const out = new Map<string, TerrainFile[]>();
-  const [all, allNear, allDetail] = [await loadRegions(), await loadNear(), await loadDetail()];   // asked once, not per shot
+  const [all, allNear, allDetail, allTrees] = [await loadRegions(), await loadNear(), await loadDetail(), await loadTreeTiles()];   // asked once, not per shot
   for (const sh of shots) {
     const r = all.find(x => inRegion(x, sh.v));
     if (!r) continue;
@@ -335,6 +391,7 @@ async function tripAreas(shots: Shot[]): Promise<TerrainFile[][]> {
     if (nr) out.set(`n:${nr.id}`, [nr, nearColor(nr)].filter((f): f is TerrainFile => !!f));
     const dt = pickDetail(allDetail, r, nr, sh.v, sh.s);
     if (dt) out.set(`d:${dt.id}`, [dt, detailMask(dt), detailTrees(dt), detailWater(dt), detailColor(dt), detailBuildings(dt)].filter((f): f is TerrainFile => !!f));
+    for (const t of pickTreeTiles(allTrees, r, sh.v)) out.set(`t:${t.id}`, [treeTileFile(t)]);   // a tree tile is one area of its own
   }
   return [...out.values()];
 }
