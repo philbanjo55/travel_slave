@@ -699,6 +699,7 @@
       gl_FragColor = vec4(vCol, 1.);
     }`;
   const TREE_LIGHT = 40000;   // on a small phone
+  const TREE_REACH = 260;   // a 1.5 km laser box (14 Nov 2026): its dot trees only within this many metres of the eye (the old box's size); beyond, the park-wide spruce outlines, which read as trees from afar where dots read as blobs
   const TREE_MAX = 90000;   // points a box unless cfg.detail.maxTrees says otherwise: enough to read as trees, light enough for a small phone
   const POP = (() => { const t = new Uint8Array(256); for (let i = 1; i < 256; i++) t[i] = (i & 1) + t[i >> 1]; return t; })();
   // Tree points for a detail box, at most `cap`: many small ones close to the stand spot, fewer and larger ones farther
@@ -710,7 +711,8 @@
     const n = D.n, k = D.kind, e = crg(D, eye), dx = D.dx, dz = D.dz, len = n * fine * 8 + 1;
     if (!k) return null;
     const thin = (r, c) => Math.min(3, 60 / Math.max(1, Math.hypot((c - e.c) * dx, (r - e.r) * dz)));
-    const edge = (r, c) => Math.min((c + 0.5) * dx, (n - c - 0.5) * dx, (r + 0.5) * dz, (n - r - 0.5) * dz) >= D.band;   // not in the strip that blends into the coarser grid
+    const reach = D.reach || Infinity;   // a 1.5 km box: its own (laser-return) trees only this far from the eye; the park-wide trees (spruce outlines) beyond
+    const edge = (r, c) => Math.min((c + 0.5) * dx, (n - c - 0.5) * dx, (r + 0.5) * dz, (n - r - 0.5) * dz) >= D.band && Math.max(Math.abs(c - e.c) * dx, Math.abs(r - e.r) * dz) <= reach;   // not in the strip that blends into the coarser grid
     // The tree file is read twice, a line at a time (first to count, then to place the points): never whole in memory.
     // each(fn): fn(r, a, b) for every row of the box; a (and b on the light grid, where a cell is four of the file's) = the file's line(s)
     const keep = fine === 2 ? new Uint8Array(len) : null, B = new Uint8Array(8);
@@ -991,7 +993,7 @@
       const w = (dc.east - dc.west) * kx, d = (dc.north - dc.south) * kz, P = NR || my, pcell = NR ? Math.max(NR.w, NR.d) / (G - 1) : Math.max(my.W, my.D) / (G - 1);
       const keep = Math.max(4, Math.min(25, 0.5 * pcell)), band = keep + Math.max(16, Math.min(45, 2 * pcell));
       if (!(dc.west >= P.west && dc.east <= P.east && dc.south >= P.south && dc.north <= P.north) || Math.min(w, d) < 4 * band) throw new Error('detail grid does not fit');
-      D = { n: dn, HF: m.HF, north: dc.north, south: dc.south, west: dc.west, east: dc.east, x0: (dc.west - my.west) * kx, z0: (my.north - dc.north) * kz, w, d, dx: w / dn, dz: d / dn, keep, band, up: NR || FAR, lift: 2, kind: null };
+      D = { reach: Math.max(w, d) > 600 ? TREE_REACH : Infinity, n: dn, HF: m.HF, north: dc.north, south: dc.south, west: dc.west, east: dc.east, x0: (dc.west - my.west) * kx, z0: (my.north - dc.north) * kz, w, d, dx: w / dn, dz: d / dn, keep, band, up: NR || FAR, lift: 2, kind: null };
       await step('decode');
       // 2. the class mask (without it: bare shapes), and the water of the 6 km around (0 none, 1 moving, 2 still)
       if (mparts.length) {
@@ -1088,7 +1090,7 @@
       { const a = albOf(D); if (a) { ldef.APHOTO = 1; lu.aphoto = { value: a.tex }; lu.arect = { value: a.rect }; } }
       if (hs) { ldef.BSHADOW = 1; lu.bmap = { value: hs.bmap }; }
       const dLight = new THREE.ShaderMaterial({ defines: ldef, uniforms: lu, vertexShader: C.lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
-      const dlo = C.rt(Math.min(512, D.n)), dhi = C.rt(D.n); mu.lmap.value = dlo.texture;
+      const dlo = C.rt(Math.min(512, D.n)), dhi = C.rt(Math.min(1024, D.n));   // a 1.5 km box (1504 cells): its sharp light at 1.5 m, not every metre (a quarter less light-pass work and memory) mu.lmap.value = dlo.texture;
       const ddef = { BLD: 1 }; if (NR) ddef.MID = 1; if (wmap) ddef.WATER = 1;
       if (dph && !ALB) { ddef.DPHOTO = 1; Object.assign(mu, pu, { dphoto: { value: dph.tex }, pcells: { value: D.n } }); if (nph && NR) { ddef.NPH = 1; mu.nphoto = { value: nph.tex }; } }
       const mat = new THREE.ShaderMaterial({ defines: ddef, uniforms: mu, vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
@@ -1290,7 +1292,8 @@
   // in all (d0 is set to fill it: 250 m in thick forest to 1.2 km over open flats). Sorted into WB x WB blocks around the viewpoint, so a frame draws only the blocks in view.
   async function widePoints(tiles, at, cap, range, breathe) {
     const my = cfg, kx = my.W / (my.east - my.west), kz = my.D / (my.north - my.south), q = cr(at), ex = (q.c + 0.5) * FAR.dx, ez = (q.r + 0.5) * FAR.dz;
-    const inner = DT ? [DT.x0 + DT.band, DT.x0 + DT.w - DT.band, DT.z0 + DT.band, DT.z0 + DT.d - DT.band] : null;   // the laser box's own trees
+    const rch = DT && DT.reach || Infinity;
+    const inner = DT ? [Math.max(DT.x0 + DT.band, ex - rch), Math.min(DT.x0 + DT.w - DT.band, ex + rch), Math.max(DT.z0 + DT.band, ez - rch), Math.min(DT.z0 + DT.d - DT.band, ez + rch)] : null;   // the laser box's own trees (within TREE_REACH of the eye in a 1.5 km box)
     const T = [];
     for (const { t, blob } of tiles) {
       const x0 = (t.west - my.west) * kx, z0 = (my.north - t.north) * kz, w = (t.east - t.west) * kx, d = (t.north - t.south) * kz;
@@ -1495,7 +1498,7 @@
       const kxF = my.W / (my.east - my.west), kzF = my.D / (my.north - my.south), q = cr(eye), ex = (q.c + 0.5) * FAR.dx, ez = (q.r + 0.5) * FAR.dz;
       const range = Math.max(500, Math.min(20000, hc.range || HOUSE_RANGE)), snowy = my.ground !== 'green';
       const P = [], Cc = []; let count = 0, seen = 0;
-      const D = DT, bm = D ? new Uint8Array(D.n * D.n) : null; let inBox = 0;
+      const bareDT = !!(my.detail && my.detail.bare), D = DT && bareDT ? DT : null, bm = D ? new Uint8Array(D.n * D.n) : null; let inBox = 0;
       const tri = (a, b, c, col) => { for (const v of [a, b, c]) { P.push(v[0], v[1], v[2]); Cc.push(col[0], col[1], col[2]); } };
       const clip = (pts, nx, nz, cx, cz, sign) => { const out = [], dd = p => sign * ((p[0] - cx) * nx + (p[1] - cz) * nz);
         for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length], da = dd(a), db = dd(b);
@@ -1516,6 +1519,7 @@
           const cx0 = pts.reduce((s, p) => s + p[0], 0) / pts.length, cz0 = pts.reduce((s, p) => s + p[1], 0) / pts.length;
           if (Math.hypot(cx0 - ex, cz0 - ez) > range) continue;
           if (Math.hypot(cx0 - ex, cz0 - ez) < 6) continue;   // never a building round the camera
+          if (DT && !bareDT && cx0 > DT.x0 && cx0 < DT.x0 + DT.w && cz0 > DT.z0 && cz0 < DT.z0 + DT.d) continue;   // an older detail box has its buildings in its heights: not twice
           const cx = b.c ? X(b.c[0]) : cx0, cz = b.c ? Z(b.c[1]) : cz0;
           let gmin = Infinity; for (const p of pts) gmin = Math.min(gmin, groundAt(p[0], p[1]));
           const g0 = groundAt(cx0, cz0), foot = Math.min(gmin, g0) - 0.6, e = g0 + Math.max(1.8, b.e), r = g0 + Math.max(b.e, b.r || b.e);

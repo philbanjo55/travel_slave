@@ -18,7 +18,7 @@ grid's box; a point is kept when the survey calls it a building (class 6), or wh
 stands 2 m or more above the ground (the park-wide trees' ground grid, 7 m cells: tools/sun3d/lidar/build_canopy.py).
 
 build:
-  1. the kept points on a 1 m grid, joined into patches (8 neighbours, after closing 1-cell gaps);
+  1. the kept points on a 2 m grid (they are ~2 m apart), joined into patches (8 neighbours, after closing 1-cell gaps);
   2. a patch is a building when it has 20 m2 or more, 2.2 m or more above the ground, and either most of its points
      are the survey's class 6, or its points sit on one or two planes (a gable) to within 0.5 m (a tree is ragged);
   3. its points again, deeper in the survey (--refine-depth, default 10: about 0.5 m apart) inside the patch;
@@ -110,7 +110,7 @@ def scan(a):
         m = (x >= x0) & (x < x1) & (y >= y0) & (y < y1) & (c != 7) & (c != 18) & (c != 2) & (c != 9)
         x, y, z, c, nr = x[m], y[m], z[m], c[m], nr[m]
         lat, lng = unmerc(x, y); hag = z - G.at(lat, lng)
-        keep = (hag > 1.8) & ((c == 6) | ((nr == 1) & ((c == 1) | (c == 3) | (c == 4) | (c == 5))))
+        keep = hag > 1.8   # every raised return: roofs (class 6, or single returns), and the rest to tell a crown from a roof
         return len(m), lat[keep], lng[keep], z[keep], c[keep], nr[keep] == 1, hag[keep].astype(np.float32)
     with cf.ThreadPoolExecutor(a.threads) as ex:
         for i, (n, la, lo, z, c, one_, hag) in enumerate(ex.map(one, keys)):
@@ -245,21 +245,26 @@ def fit_roof(u, v, h, ub, vb):
 
 def build(a):
     S = np.load(f"{a.work}/scan.npz"); lat, lng, z, c, one, hag = (S[k] for k in ('lat', 'lng', 'z', 'c', 'one', 'hag'))
-    print(f"{len(lat):,} kept points", flush=True)
-    # 1. a 1 m grid in strips of the wide box (the whole park at 1 m does not fit at once): cells -> patches
+    print(f"{len(lat):,} raised points", flush=True)
+    # 1. roof-like points (class 6, or a pulse that came back once) on a 2 m grid (depth 8 = ~2 m apart), in strips of the
+    #    wide box, joined into patches (8 neighbours after closing 1-cell gaps). Every raised point in a patch's cells
+    #    counts for its share of pulses that gave several returns: a crown lets the laser through, a roof does not
+    #    (measured at 0.5 m in the detail boxes: roofs 0-15 %, tree tops 75-90 %).
     lat0 = (NORTH + SOUTH) / 2; KX0 = kx(lat0)
     X = (lng - WEST) * KX0; Z = (NORTH - lat) * KZ
-    W, D = int((EAST - WEST) * KX0) + 2, int((NORTH - SOUTH) * KZ) + 2
-    STRIP = 4000; found = []; pid = 0
+    D = int((NORTH - SOUTH) * KZ) + 2
+    STRIP = 4000; GRID = 2.0; found = []
     order = np.argsort(Z); X, Z, z, c, one, hag, lat, lng = X[order], Z[order], z[order], c[order], one[order], hag[order], lat[order], lng[order]
+    roofy = (c == 6) | one
     for s0 in range(0, D, STRIP - 200):
         s1 = min(D, s0 + STRIP); i0, i1 = np.searchsorted(Z, s0), np.searchsorted(Z, s1)
         if i1 - i0 < 10: continue
-        xs, zs = X[i0:i1], Z[i0:i1] - s0
-        cmin = int(xs.min()) - 2; cols = int(xs.max()) - cmin + 4
-        m = np.zeros((s1 - s0 + 1, cols), bool); m[zs.astype(int), (xs - cmin).astype(int)] = True
+        xs, zs, rf = X[i0:i1], Z[i0:i1] - s0, roofy[i0:i1]
+        cmin = int(xs.min()) - 4; cols = int((xs.max() - cmin) / GRID) + 4
+        ri, ci = (zs / GRID).astype(int), ((xs - cmin) / GRID).astype(int)
+        m = np.zeros((int((s1 - s0) / GRID) + 2, cols), bool); m[ri[rf], ci[rf]] = True
         m = close1(m); lab, k = label(m)
-        idx = lab[zs.astype(int), (xs - cmin).astype(int)]
+        idx = lab[ri, ci]
         o = np.argsort(idx, kind='stable'); idx_s = idx[o]; starts = np.searchsorted(idx_s, np.arange(1, k + 2))
         for j in range(k):
             sel = o[starts[j]:starts[j + 1]] + i0
@@ -270,36 +275,55 @@ def build(a):
     print(f"{len(found):,} patches", flush=True)
     G = Ground(a.canopy) if a.canopy else None
     blds = []; n_try = 0; why = {}
-    for sel in found:
+    def no(w): why[w] = why.get(w, 0) + 1
+    for sel_all in found:
+        multi = float(1 - one[sel_all].mean())
+        sel = sel_all[roofy[sel_all]]
+        if len(sel) < 5:   # a small roof seen by only a few points at depth 8 (a cabin): judged again on the deeper points
+            if a.refine_depth > a.depth and len(sel) >= 2 and multi <= a.max_multi and np.percentile(hag[sel], 90) >= 2.2:
+                blds.append(dict(sel=sel, ang=0.0, n6=float((c[sel] == 6).mean()), multi=multi, roof=None, h8=hag[sel], small=True)); no('few points: deeper look')
+            else: no('few points')
+            continue
         xs, zs = X[sel], Z[sel]; h = hag[sel]; cc = c[sel]
-        cells = len(set(zip((xs).astype(int).tolist(), (zs).astype(int).tolist())))
         n6 = float((cc == 6).mean())
-        # points are ~2 m apart at depth 8: the patch's area is about the points' convex extent
-        if len(sel) < 5: why['few points'] = why.get('few points', 0) + 1; continue
         ang = best_angle(xs, zs); t = math.radians(ang)
         u = xs * math.cos(t) + zs * math.sin(t); v = -xs * math.sin(t) + zs * math.cos(t)
         area_box = (u.max() - u.min() + 2) * (v.max() - v.min() + 2)
-        if area_box < 20: why['small'] = why.get('small', 0) + 1; continue
-        if np.percentile(h, 90) < 2.2: why['low'] = why.get('low', 0) + 1; continue
-        if area_box > 25000: why['huge'] = why.get('huge', 0) + 1; continue
+        if area_box < 20: no('small'); continue
+        if np.percentile(h, 90) < 2.2: no('low'); continue
+        if area_box > 25000: no('huge'); continue
         n_try += 1
+        if n6 < 0.5:   # the survey did not sort it: a roof only if solid (one return a pulse) and smooth (planes)
+            if multi > a.max_multi: no('lets the laser through (a tree)'); continue
+            if area_box < 25: no('small unsorted (a vehicle?)'); continue
         roof = fit_roof(u, v, h, (u.min(), u.max()), (v.min(), v.max()))
-        if n6 < 0.5 and roof['res'] > 0.5: why['ragged (a tree?)'] = why.get('ragged (a tree?)', 0) + 1; continue
-        blds.append(dict(sel=sel, ang=ang, n6=n6, roof=roof))
+        if n6 < 0.5 and roof['res'] > 0.4: no('ragged (a tree?)'); continue
+        blds.append(dict(sel=sel, ang=ang, n6=n6, multi=multi, roof=roof, h8=h))
     print(f"{len(blds):,} buildings from {n_try:,} candidates; left out: {why}", flush=True)
     # 2. deeper points inside each building (refine), then the final outline and roof
-    if a.refine_depth > 8: refine(a, blds, X, Z, lat, lng, KX0, G)
+    if a.refine_depth > a.depth: refine(a, blds, X, Z, lat, lng, KX0, G)
     tiles = {}
     for i, b in enumerate(blds):
         if b.get('drop'): continue
-        xs, zs, h = b.get('rx', X[b['sel']]), b.get('rz', Z[b['sel']]), b.get('rh', hag[b['sel']])
+        if b.get('rx') is not None and len(b['rx']) >= 8:
+            # the deeper points: roof-like ones (the building class, or one return a pulse) on 1 m cells, and the share of
+            # pulses with several returns among every raised point in those cells (a crown over the house counts against it)
+            rf = b['r6'] | b['rone']
+            if rf.sum() < 6: continue
+            xa, za = b['rx'], b['rz']; key_all = (np.floor(xa).astype(np.int64) << 32) + np.floor(za).astype(np.int64)
+            cells_r = np.unique(key_all[rf]); inc = np.isin(key_all, cells_r)
+            multi = float(1 - b['rone'][inc].mean()); n6 = float(b['r6'][rf].mean()); b['n6'] = max(b['n6'], n6); b['multi'] = multi
+            if n6 < 0.5 and multi > a.max_multi: continue
+            xs, zs, h = xa[rf], za[rf], b['rh'][rf]; cell = 1.0
+            b['ang'] = best_angle(xs, zs)
+        elif b.get('small'): continue
+        else: xs, zs, h = X[b['sel']], Z[b['sel']], hag[b['sel']]; cell = 2.0
         t = math.radians(b['ang']); u = xs * math.cos(t) + zs * math.sin(t); v = -xs * math.sin(t) + zs * math.cos(t)
-        cell = 1.0 if b.get('rx') is not None else 2.0
         pts, area, _ = outline(u, v, cell)
         if pts is None or area < 20: continue
         pu = np.array([p[0] for p in pts]); pv = np.array([p[1] for p in pts])
         roof = fit_roof(u, v, h, (pu.min(), pu.max()), (pv.min(), pv.max()))
-        if b['n6'] < 0.5 and roof['res'] > 0.5: continue
+        if b['n6'] < 0.5 and roof['res'] > 0.45: continue
         if roof['r'] < 2.2: continue
         # back to the park's metres, then the tile's
         PX = pu * math.cos(t) - pv * math.sin(t); PZ = pu * math.sin(t) + pv * math.cos(t)
@@ -321,7 +345,7 @@ def build(a):
         g = float(G.at(np.array([clat]), np.array([clng]))[0]) if G else 0.0
         rec = dict(p=[round(float(q), 1) for xy in zip(ox, oz) for q in xy], g=round(g, 1), e=round(max(1.8, roof['e']), 1), r=round(max(roof['r'], roof['e']), 1),
                    a=round(ridge_deg % 180, 1), hw=round(roof.get('hw', 0.0), 1), roof=roof['roof'], c=[round(cxy[0], 1), round(cxy[1], 1)], n6=round(b['n6'], 2), id=len(sum(tiles.values(), [])) if False else i,
-                   lat=round(clat, 6), lng=round(clng, 6), area=round(area, 1), pitch=round(roof['pitch'], 1), res=round(roof['res'], 2))
+                   lat=round(clat, 6), lng=round(clng, 6), area=round(area, 1), pitch=round(roof['pitch'], 1), res=round(roof['res'], 2), multi=round(b['multi'], 2))
         tiles.setdefault((tr, tc), []).append(rec)
     F = f"{a.work}/files"; os.makedirs(F, exist_ok=True); rows = []; allb = []
     for (tr, tc), L in sorted(tiles.items()):
@@ -346,13 +370,23 @@ def refine(a, blds, X, Z, lat, lng, KX0, G):
     for b in blds:
         xs, zs = X[b['sel']], Z[b['sel']]
         b['bx'] = (xs.min() - 2.5, xs.max() + 2.5, zs.min() - 2.5, zs.max() + 2.5)
-    # the deeper nodes that touch any building, each read once
-    want = {}
+    # the deeper nodes that touch any building, each read once: the survey's whole node list to that depth (one walk of its
+    # hierarchy), then each building's nodes found by their index (x, y from its box, z from its heights)
+    x0, y1 = merc(NORTH, WEST); x1, y0 = merc(SOUTH, EAST)
+    allk = H.nodes(x0, x1, y0, y1, 9, a.refine_depth); print(f"refine: {len(allk):,} nodes at depths 9-{a.refine_depth} in the box", flush=True)
+    bb, size = H.b, H.size; want = {}
     for i, b in enumerate(blds):
-        x0, x1, z0, z1 = b['bx']
-        la1, la0 = NORTH - z0 / KZ, NORTH - z1 / KZ; lo0, lo1 = WEST + x0 / KX0, WEST + x1 / KX0
+        bx0, bx1, bz0, bz1 = b['bx']
+        la1, la0 = NORTH - bz0 / KZ, NORTH - bz1 / KZ; lo0, lo1 = WEST + bx0 / KX0, WEST + bx1 / KX0
         mx0, my1 = merc(la1, lo0); mx1, my0 = merc(la0, lo1)
-        for k in H.nodes(mx0, mx1, my0, my1, 9, a.refine_depth): want.setdefault(k, []).append(i)
+        g = float(G.at(np.array([(la0 + la1) / 2]), np.array([(lo0 + lo1) / 2]))[0]); zlo, zhi = g - 5, g + 40
+        for d in range(9, a.refine_depth + 1):
+            sz = size / (1 << d)
+            for xi in range(int((mx0 - bb[0]) // sz), int((mx1 - bb[0]) // sz) + 1):
+                for yi in range(int((my0 - bb[1]) // sz), int((my1 - bb[1]) // sz) + 1):
+                    for zi in range(int((zlo - bb[2]) // sz), int((zhi - bb[2]) // sz) + 1):
+                        k = f"{d}-{xi}-{yi}-{zi}"
+                        if k in allk: want.setdefault(k, []).append(i)
     print(f"refine: {len(want):,} deeper nodes for {len(blds):,} buildings", flush=True)
     pts = {i: [] for i in range(len(blds))}; t0 = time.time()
     def one(k):
@@ -364,21 +398,18 @@ def refine(a, blds, X, Z, lat, lng, KX0, G):
         for i in want[k]:
             x0, x1, z0, z1 = blds[i]['bx']; s = (px >= x0) & (px < x1) & (pz >= z0) & (pz < z1)
             if s.any():
-                hg = zz[s] - G.at(la[s], lo[s])
-                keep = (hg > 1.8) & ((cc[s] == 6) | (nr[s] == 1))
-                res.append((i, px[s][keep], pz[s][keep], hg[keep]))
+                hg = zz[s] - G.at(la[s], lo[s]); keep = hg > 1.8
+                res.append((i, px[s][keep], pz[s][keep], hg[keep], (nr[s] == 1)[keep], (cc[s] == 6)[keep]))
         return res
     done = 0
     with cf.ThreadPoolExecutor(a.threads) as ex:
         for res in ex.map(one, list(want)):
-            for i, px, pz, hg in res: pts[i].append((px, pz, hg))
+            for i, *rest in res: pts[i].append(rest)
             done += 1
             if done % 500 == 0: print(f"  {done} / {len(want)} nodes, {time.time() - t0:.0f} s", flush=True)
     for i, b in enumerate(blds):
-        if pts[i]:
-            b['rx'] = np.concatenate([p[0] for p in pts[i]] + [X[b['sel']]]); b['rz'] = np.concatenate([p[1] for p in pts[i]] + [Z[b['sel']]])
-            b['rh'] = np.concatenate([p[2] for p in pts[i]] + [np.asarray(G.at(lat[b['sel']], lng[b['sel']]) * 0 + 0, np.float32) * 0 + (np.asarray(Z[b['sel']]) * 0)])[:0] if False else np.concatenate([p[2] for p in pts[i]] + [b['_h'] if '_h' in b else np.zeros(0, np.float32)])
-            if len(b['rh']) != len(b['rx']): b['rx'] = b['rx'][:len(b['rh'])]; b['rz'] = b['rz'][:len(b['rh'])]
+        if pts[i]:   # the deeper points (every raised one, with: came back alone, the survey's building class)
+            b['rx'], b['rz'], b['rh'], b['rone'], b['r6'] = (np.concatenate([p[k] for p in pts[i]]) for k in range(5))
     print(f"refine done, {time.time() - t0:.0f} s", flush=True)
 
 
@@ -386,6 +417,7 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('cmd', choices=['scan', 'build']); ap.add_argument('work')
     ap.add_argument('--depth', type=int, default=8); ap.add_argument('--refine-depth', type=int, default=10)
     ap.add_argument('--canopy', help="build_canopy.py's canopy.npz (its ground grid)"); ap.add_argument('--threads', type=int, default=6)
+    ap.add_argument('--max-multi', type=float, default=0.35, help='an unsorted patch is a roof only when at most this share of its pulses gave several returns')
     a = ap.parse_args(); os.makedirs(a.work, exist_ok=True)
     {'scan': scan, 'build': build}[a.cmd](a)
 

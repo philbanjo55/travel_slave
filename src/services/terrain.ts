@@ -24,6 +24,13 @@ import { IS_TEST_APP } from '../utils/variant';
 // where there is none. A shot gets the tiles within TREE_RANGE_M of its stand spot. Sent with the foreground (after
 // the plain view); none (no table yet, nothing saved) just means no trees farther off.
 //
+// Sharp range (Grand Teton, 14 Nov 2026): public.terrain_range_regions lists 2048 x 2048 grids at 5 m (10 km boxes,
+// USGS 1 m lidar DEM) over the part of the mountains the shots look at; a shot gets the one around its subject
+// (pickRange), sent first with the foreground; the page draws it between the wide grid and the fine box and reads the
+// sun times from it. Park-wide buildings: public.terrain_house_tiles lists one small JSON file per ~5.5 km tile (walls
+// and roofs from the same 2022 laser survey); a shot gets the tiles within HOUSE_RANGE_M. Drawn only, never in a sun
+// time. None of either (no table yet, nothing saved) just means the view draws as before.
+//
 // Saved ahead (TEST app): whenever a trip's sun plan loads, saveTripTerrain
 // fetches every file that trip's stand spots need, one at a time in the
 // background, so a stop never opened at home still has its 3D view in the field.
@@ -61,6 +68,8 @@ export type TerrainDetail = {
   color_path?: string | null; color_bytes?: number | null;
   buildings_path?: string | null; buildings_bytes?: number | null;
   width_m?: number | null; depth_m?: number | null;
+  // 1.5 km boxes (terrain_detail_regions_v4, 14 Nov 2026): buildings left out of the heights (drawn from terrain_house_tiles)
+  bare?: boolean | null;
 };
 export type TerrainTreeTile = {
   id: string; parent: string;
@@ -68,6 +77,17 @@ export type TerrainTreeTile = {
   n: number; step_m: number;          // n x n cells; a cell's value x step_m = the canopy's height over the ground (0 = no tree)
   lod?: number | null;                 // 0 every cell (~7 m); 1 two by two cells in one (~14 m: value = (trees - 1) x 64 + height / step_m)
   path: string; bytes: number | null;
+};
+export type TerrainRange = {
+  id: string; parent: string;
+  north: number; south: number; west: number; east: number;
+  n: number; base_m: number; step_m: number; cell_m?: number | null;
+  path: string; bytes: number | null;
+};
+export type TerrainHouseTile = {
+  id: string; parent: string;
+  north: number; south: number; west: number; east: number;
+  path: string; bytes: number | null; count?: number | null;
 };
 type Point = { lat: number; lng: number };
 type Box = { north: number; south: number; west: number; east: number };
@@ -78,6 +98,10 @@ const LIST_FILE = `${DIR}terrain_regions.json`;
 const NEAR_FILE = `${DIR}terrain_near_regions.json`;
 const DETAIL_FILE = `${DIR}terrain_detail_regions.json`;
 const TREES_FILE = `${DIR}terrain_tree_tiles.json`;
+const RANGE_FILE = `${DIR}terrain_range_regions.json`;
+const HOUSES_FILE = `${DIR}terrain_house_tiles.json`;
+// Park-wide buildings reach this far from the stand spot (the page's own HOUSE_RANGE): at 8 km a barn is a pixel or two at 135 mm
+export const HOUSE_RANGE_M = 8000;
 // How far the park-wide trees reach from the stand spot: the page's own range (tools/sun3d/app_view.js WIDE_RANGE).
 // Within TREE_NEAR_M a tile comes at every cell (lod 0), farther off at two by two cells in one (lod 1): the page draws
 // one tree for many cells out there anyway, and it is a third of the bytes to carry into the web view.
@@ -89,6 +113,8 @@ let regions: TerrainRegion[] | null = null;
 let nears: TerrainNear[] | null = null;
 let details: TerrainDetail[] | null = null;
 let treeTiles: TerrainTreeTile[] | null = null;
+let rangeList: TerrainRange[] | null = null;
+let houseList: TerrainHouseTile[] | null = null;
 const data: Record<string, string> = {};
 const inflight: Record<string, Promise<string | null> | undefined> = {};
 
@@ -166,9 +192,13 @@ function askDetail(): Promise<TerrainDetail[] | null> {
     try {
       const call = supabase.from('terrain_detail_regions')
         .select('*');   // every column there is: naming one the table does not have yet would fail the whole list
+      // the 1.5 km boxes (14 Nov 2026, buildings drawn from terrain_house_tiles) live in a table of their own, so an
+      // older app keeps its 500 m boxes with the buildings in them; no such table yet just means the old boxes alone
+      const call4 = supabase.from('terrain_detail_regions_v4').select('*');
       const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('terrain list timed out')), CALL_TIMEOUT_MS));
-      const { data: rows, error } = (await Promise.race([call, timeout])) as any;
-      if (error || !Array.isArray(rows)) throw error ?? new Error('no detail list');
+      const [{ data: rows0, error }, r4] = (await Promise.race([Promise.all([call, call4]), timeout])) as any;
+      if (error || !Array.isArray(rows0)) throw error ?? new Error('no detail list');
+      const rows = [...rows0, ...(r4 && !r4.error && Array.isArray(r4.data) ? r4.data : [])];
       details = rows as TerrainDetail[];
       try { await ensureDir(); await FileSystem.writeAsStringAsync(DETAIL_FILE, JSON.stringify(rows)); } catch { /* the list is still usable */ }
       return details;
@@ -199,6 +229,32 @@ async function loadTreeTiles(): Promise<TerrainTreeTile[]> {
     return treesAsk;
   };
   const saved = await readList<TerrainTreeTile>(TREES_FILE);
+  if (saved) { ask().catch(() => undefined); return saved; }
+  return (await ask()) ?? [];
+}
+
+// The range boxes and the building tiles. Saved copy first, the server behind it, as the other lists.
+let rangeAsk: Promise<TerrainRange[] | null> | null = null;
+async function loadRanges(): Promise<TerrainRange[]> {
+  if (rangeList) return rangeList;
+  const ask = () => {
+    if (!rangeAsk) rangeAsk = askList<TerrainRange>('terrain_range_regions', '*', RANGE_FILE)
+      .then(rows => { if (rows) rangeList = rows; rangeAsk = null; return rows; });
+    return rangeAsk;
+  };
+  const saved = await readList<TerrainRange>(RANGE_FILE);
+  if (saved) { ask().catch(() => undefined); return saved; }
+  return (await ask()) ?? [];
+}
+let houseAsk: Promise<TerrainHouseTile[] | null> | null = null;
+async function loadHouseTiles(): Promise<TerrainHouseTile[]> {
+  if (houseList) return houseList;
+  const ask = () => {
+    if (!houseAsk) houseAsk = askList<TerrainHouseTile>('terrain_house_tiles', '*', HOUSES_FILE)
+      .then(rows => { if (rows) houseList = rows; houseAsk = null; return rows; });
+    return houseAsk;
+  };
+  const saved = await readList<TerrainHouseTile>(HOUSES_FILE);
   if (saved) { ask().catch(() => undefined); return saved; }
   return (await ask()) ?? [];
 }
@@ -255,6 +311,52 @@ function pickDetail(all: TerrainDetail[], region: TerrainRegion, near: TerrainNe
   }
   return best;
 }
+// The range box for a shot: among those that hold the subject at least 1 km from their edge, the one whose middle is
+// nearest the subject moved 1.5 km toward the stand spot (the range face, canyons and lake-front moraines lie east of
+// the summits: tools/sun3d/build_range.py makes the boxes the same way); with none, the first box the line of sight
+// reaches (a subject in the valley with the range behind it); else none.
+export async function rangeFor(region: TerrainRegion, stand: Point, subject: Point): Promise<TerrainRange | null> {
+  return pickRange(await loadRanges(), region, stand, subject);
+}
+function pickRange(all: TerrainRange[], region: TerrainRegion, stand: Point, subject: Point): TerrainRange | null {
+  const kz = 111132, kx = 111320 * Math.cos(subject.lat * Math.PI / 180);
+  const margin = (r: Box, p: Point) => Math.min((r.north - p.lat) * kz, (p.lat - r.south) * kz, (p.lng - r.west) * kx, (r.east - p.lng) * kx);
+  const dx = (stand.lng - subject.lng) * kx, dz = (stand.lat - subject.lat) * kz, d = Math.hypot(dx, dz) || 1, t = Math.min(1500, d / 2);
+  const P = { lat: subject.lat + dz / d * t / kz, lng: subject.lng + dx / d * t / kx };
+  const mine = all.filter(r => r.parent === region.id && r.path && r.n > 0);
+  let best: TerrainRange | null = null, bd = Infinity;
+  for (const r of mine) {
+    if (!inRegion(r, subject) || margin(r, subject) < 1000) continue;
+    const e = Math.hypot(((r.north + r.south) / 2 - P.lat) * kz, ((r.west + r.east) / 2 - P.lng) * kx);
+    if (e < bd) { best = r; bd = e; }
+  }
+  if (best) return best;
+  for (let s = 1000; s <= 30000; s += 250) {
+    const q = { lat: stand.lat - dz / d * s / kz, lng: stand.lng - dx / d * s / kx };
+    for (const r of mine) if (inRegion(r, q) && margin(r, q) >= 500) return r;
+  }
+  return null;
+}
+export function rangeFile(r: TerrainRange): TerrainFile {
+  return { id: r.id, path: r.path, bytes: r.bytes };
+}
+// The building tiles a shot needs: those of its region within HOUSE_RANGE_M of the stand spot, nearest first.
+export async function houseTilesFor(region: TerrainRegion, stand: Point): Promise<TerrainHouseTile[]> {
+  return pickHouseTiles(await loadHouseTiles(), region, stand);
+}
+function pickHouseTiles(all: TerrainHouseTile[], region: TerrainRegion, stand: Point): TerrainHouseTile[] {
+  const kx = 111320 * Math.cos(stand.lat * Math.PI / 180), kz = 111132;
+  return all
+    .filter(t => t.parent === region.id && !!t.path)
+    .map(t => ({ t, d: Math.hypot(Math.max(t.west - stand.lng, 0, stand.lng - t.east) * kx, Math.max(t.south - stand.lat, 0, stand.lat - t.north) * kz) }))
+    .filter(x => x.d <= HOUSE_RANGE_M)
+    .sort((a, b) => a.d - b.d)
+    .map(x => x.t);
+}
+export function houseTileFile(t: TerrainHouseTile): TerrainFile {
+  return { id: t.id, path: t.path, bytes: t.bytes };
+}
+
 // The park-wide tree tiles a shot needs: those of its region within TREE_RANGE_M of the stand spot, nearest first, one
 // file a tile (the every-cell one within TREE_NEAR_M, else the coarse one; the other when only one is listed).
 export async function treeTilesFor(region: TerrainRegion, stand: Point): Promise<TerrainTreeTile[]> {
@@ -363,7 +465,8 @@ export function terrainData(r: TerrainFile): Promise<string | null> {
 
 // ---- Saved ahead for a whole trip ----
 
-// areas = what the trip's stand spots need (wide regions, fine boxes, detail boxes, park-wide tree tiles); saved = how many are on the phone.
+// areas = what the trip's stand spots need (wide regions, fine boxes, detail boxes, park-wide tree tiles, range boxes,
+// building tiles); saved = how many are on the phone.
 // A detail box is one area with up to six files (heights, class mask, tree returns, wide water; Faroes: photo,
 // buildings), a fine box up to two (heights; Faroes: photo; Tetons: winter colour), a region up to two (heights;
 // Tetons: winter colour): an area counts as saved when all its files are there.
@@ -382,7 +485,7 @@ function setTrip(tripId: string, t: TripTerrain): void {
 // no signal from the saved lists.
 async function tripAreas(shots: Shot[]): Promise<TerrainFile[][]> {
   const out = new Map<string, TerrainFile[]>();
-  const [all, allNear, allDetail, allTrees] = [await loadRegions(), await loadNear(), await loadDetail(), await loadTreeTiles()];   // asked once, not per shot
+  const [all, allNear, allDetail, allTrees, allRange, allHouses] = [await loadRegions(), await loadNear(), await loadDetail(), await loadTreeTiles(), await loadRanges(), await loadHouseTiles()];   // asked once, not per shot
   for (const sh of shots) {
     const r = all.find(x => inRegion(x, sh.v));
     if (!r) continue;
@@ -392,6 +495,9 @@ async function tripAreas(shots: Shot[]): Promise<TerrainFile[][]> {
     const dt = pickDetail(allDetail, r, nr, sh.v, sh.s);
     if (dt) out.set(`d:${dt.id}`, [dt, detailMask(dt), detailTrees(dt), detailWater(dt), detailColor(dt), detailBuildings(dt)].filter((f): f is TerrainFile => !!f));
     for (const t of pickTreeTiles(allTrees, r, sh.v)) out.set(`t:${t.id}`, [treeTileFile(t)]);   // a tree tile is one area of its own
+    const rg = pickRange(allRange, r, sh.v, sh.s);
+    if (rg) out.set(`g:${rg.id}`, [rangeFile(rg)]);
+    for (const t of pickHouseTiles(allHouses, r, sh.v)) out.set(`h:${t.id}`, [houseTileFile(t)]);
   }
   return [...out.values()];
 }
