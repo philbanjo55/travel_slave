@@ -141,7 +141,7 @@
   // the survey's surface; past a grid's edge the walk carries on in the next coarser grid (g.up).
   const treeH = (cc, rr) => { const n = DT.n, v = DT.kind ? DT.kind[Math.max(0, Math.min(n - 1, Math.round(rr))) * n + Math.max(0, Math.min(n - 1, Math.round(cc)))] : 0; return v >= 8 ? (v - 8) * 0.2 : 0; };
   function vis(p, ux, uz, tanA, trees) {
-    const fine = p.g === DT, lift = fine ? DT.lift : 3, K = RG ? 2000 : fine ? 440 : 260;
+    const fine = p.g === DT, lift = fine ? DT.lift : 3, K = RG || fine ? 2000 : 260;   // (a 1.5 km laser box takes ~400 short steps before the ray leaves it: it must still reach the range 10-20 km off)
     let g = p.g, c = p.c, r = p.r, L = fine ? 0.7 : g === NR ? 5 : g === RG ? 6 : 30, d = 0, v = 1;
     for (let k = 0; k < K; k++) {
       d += L; let cc = c + ux * d / g.dx, rr = r + uz * d / g.dz; const hh = p.h + lift + tanA * d;
@@ -164,7 +164,7 @@
     return v;
   }
   // the highest grid point close to a pin: a summit pin a few metres off would sit in the summit's own shadow
-  const snapR = g => g === NR ? 6 : g === RG ? Math.max(6, Math.round(100 / Math.max(g.dx, g.dz))) : 4;   // ~100 m on the wide and range grids, ~35 m on the fine box
+  const snapR = g => g === NR ? 6 : g === RG && FAR ? Math.max(6, Math.round(4 * Math.max(FAR.dx, FAR.dz) / Math.max(g.dx, g.dz))) : 4;   // the same ground on the range grid as the wide grid's 4 cells (~108 m), ~35 m on the fine box
   const snap = (q, rad) => { const g = q.g, n = g.n; let best = null; for (let r = Math.round(q.r) - rad; r <= Math.round(q.r) + rad; r++) for (let c = Math.round(q.c) - rad; c <= Math.round(q.c) + rad; c++) { if (r < 0 || c < 0 || r >= n || c >= n) continue; const h = g.HF[r * n + c]; if (!best || h > best.h) best = { g, c, r, h }; } return best; };
   const sunVec = (az, alt) => { const a = alt * Math.PI / 180, z = az * Math.PI / 180; return { x: Math.sin(z) * Math.cos(a), y: Math.sin(a), z: -Math.cos(z) * Math.cos(a), tan: Math.tan(a), hx: Math.sin(z), hz: -Math.cos(z) }; };
   const far = () => { const a = cr(eye), b = cr(target); return Math.hypot((b.c - a.c) * FAR.dx, (b.r - a.r) * FAR.dz); };
@@ -519,7 +519,8 @@
       return ws > 1e-4 ? hs / ws : Hc(nn);
     }
     #endif
-    float wp(float s, float f) { float d = s - f; float m = d < 0. ? f : 1. - f; if (m < .0005) return f; float x = abs(d) / m; return f + sign(d) * m * x * (.35 + .65 * x * x); }
+    uniform float wk;   // how much the points bunch at the focus: the spacing there is wk x the mean (.35; the range's mesh .2)
+    float wp(float s, float f) { float d = s - f; float m = d < 0. ? f : 1. - f; if (m < .0005) return f; float x = abs(d) / m; return f + sign(d) * m * x * (wk + (1. - wk) * x * x); }
     void main() {
       vec2 uv = vec2(wp(position.x, focus.x), wp(position.z, focus.y));
       vec2 w = rect.xy + uv * rect.zw; vUv = uv; vF = w / fsize;
@@ -928,7 +929,7 @@
       nmap = heightTex(NR); const rect = nrect = new THREE.Vector4(NR.x0, NR.z0, NR.w, NR.d);
       const nLight = new THREE.ShaderMaterial({ defines: { NEAR: 1 }, uniforms: { hmap: { value: nmap }, fmap: { value: hmap }, rect: { value: rect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(NR.dx, NR.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(NR.w, NR.d) }, texel: { value: 1 / NR.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
       const nlo = rt(Math.min(1024, NR.n)), nhi = rt(NR.n);
-      const mat = new THREE.ShaderMaterial({ defines: DT ? { DHOLE: 1 } : {}, uniforms: Object.assign({ hmap: { value: nmap }, fmap: { value: hmap }, lmap: { value: nlo.texture }, flmap: { value: lo.texture }, rect: { value: rect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: NR.keep }, band: { value: NR.band }, fogCol: fog.fogCol, fogD: fog.fogD }, dholeU), vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
+      const mat = new THREE.ShaderMaterial({ defines: DT ? { DHOLE: 1 } : {}, uniforms: Object.assign({ hmap: { value: nmap }, fmap: { value: hmap }, lmap: { value: nlo.texture }, flmap: { value: lo.texture }, rect: { value: rect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, wk: { value: 0.35 }, keep: { value: NR.keep }, band: { value: NR.band }, fogCol: fog.fogCol, fogD: fog.fogD }, dholeU), vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
       const mesh = new THREE.Mesh(ngeo, [mat]); mesh.frustumCulled = false;   // a list of one material: the mesh is drawn by its geometry's groups (the blocks in view)
       near = { lightMat: nLight, lo: nlo, hi: nhi, lite: [], mat, mesh };
       terrU.hole = { value: new THREE.Vector4(NR.x0, NR.z0, NR.x0 + NR.w, NR.z0 + NR.d) }; terrU.keep = { value: NR.keep }; terrU.band = { value: NR.band };
@@ -1083,7 +1084,7 @@
         ngeo.attributes.position.onUpload(function () { free(this.array); this.array = null; });
       }
       const lu = { hmap: { value: dmap }, fmap: { value: hmap }, kmap: { value: kmap }, lift: { value: 0.3 }, ice: R.iceU, rect: { value: drect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(D.dx, D.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(D.w, D.d) }, texel: { value: 1 / D.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH };
-      const mu = Object.assign({ hmap: { value: dmap }, kmap: { value: kmap }, cells: { value: D.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, skyZen: R.skyU.zen, skyHor: R.skyU.hor, ice: R.iceU, fmap: { value: hmap }, lmap: { value: null }, flmap: { value: lo.texture }, rect: { value: drect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: D.keep }, band: { value: D.band }, fogCol: fog.fogCol, fogD: fog.fogD }, waterU);
+      const mu = Object.assign({ hmap: { value: dmap }, kmap: { value: kmap }, cells: { value: D.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, skyZen: R.skyU.zen, skyHor: R.skyU.hor, ice: R.iceU, fmap: { value: hmap }, lmap: { value: null }, flmap: { value: lo.texture }, rect: { value: drect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, wk: { value: 0.35 }, keep: { value: D.keep }, band: { value: D.band }, fogCol: fog.fogCol, fogD: fog.fogD }, waterU);
       if (NR) { lu.mmap = { value: C.nmap }; lu.mrect = { value: C.nrect }; Object.assign(mu, { mmap: { value: C.nmap }, mrect: { value: C.nrect }, mkeep: { value: NR.keep }, mband: { value: NR.band }, skirt: { value: 14 }, mlmap: { value: near.lo.texture } }); }
       const ldef = NR ? { NEAR: 1, DETAIL: 1, MID: 1 } : { NEAR: 1, DETAIL: 1 };
       if (dph && !ALB) ldef.PHOTO = 1;
@@ -1409,6 +1410,10 @@
     }`;
   // ---- The sharp range: a fourth level, built after the plain view (before the detail box), dropped alone if it fails ----
   const RANGE_MS = 45000;
+  // Its mesh: every other point of the shared grid (384 a side: on a software-graphics test the full 768 doubled a frame's
+  // time), bunched harder at the subject (spacing .2 x the mean there: ~5 m at the peak, as the file; ~70 m at the box's
+  // edge, where it fades into the wide grid anyway). Its light map keeps every 5 m point, so the faces keep their detail.
+  const RANGE_WK = 0.2;
   async function addRange() {
     const my = cfg, rc = my.range, t0 = performance.now(), made = []; let where = 'decode';
     if (!rc || !rparts.length || !R) { rparts = []; return; }
@@ -1437,7 +1442,7 @@
         ngeo = new THREE.BufferGeometry(); ngeo.setAttribute('position', new THREE.BufferAttribute(np, 3)); ngeo.setIndex(C.index);
         ngeo.attributes.position.onUpload(function () { free(this.array); this.array = null; }); C.ngeo = ngeo;
       }
-      const u = { hmap: { value: rmap }, fmap: { value: C.hmap }, lmap: { value: lo.texture }, flmap: { value: R.lo.texture }, rect: { value: rect }, fsize: { value: C.size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: Rg.keep }, band: { value: Rg.band }, fogCol: C.fog.fogCol, fogD: C.fog.fogD };
+      const u = { hmap: { value: rmap }, fmap: { value: C.hmap }, lmap: { value: lo.texture }, flmap: { value: R.lo.texture }, rect: { value: rect }, fsize: { value: C.size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, wk: { value: RANGE_WK }, keep: { value: Rg.keep }, band: { value: Rg.band }, fogCol: C.fog.fogCol, fogD: C.fog.fogD };
       const defs = {}, hole = NR || DT;   // cut out under the fine box (or the detail box when there is no fine one)
       if (hole) { defs.DHOLE = 1; Object.assign(u, { dhole: { value: new THREE.Vector4(hole.x0, hole.z0, hole.x0 + hole.w, hole.z0 + hole.d) }, dkeep: { value: hole.keep }, dband: { value: hole.band } }); }
       const mat = new THREE.ShaderMaterial({ defines: defs, uniforms: u, vertexShader: NEAR_VS, fragmentShader: NEAR_FS }); made.push(mat);
@@ -1525,7 +1530,7 @@
           const g0 = groundAt(cx0, cz0), foot = Math.min(gmin, g0) - 0.6, e = g0 + Math.max(1.8, b.e), r = g0 + Math.max(b.e, b.r || b.e);
           const gable = b.roof === 'gable' && b.r > b.e + 0.3, ar = (b.a || 0) * Math.PI / 180, nx = -Math.sin(ar), nz = Math.cos(ar), hw = Math.max(b.hw || 0, 0.5) * kxF / kxt;
           const dist = p => (p[0] - cx) * nx + (p[1] - cz) * nz, top = p => gable ? e + (r - e) * Math.max(0, 1 - Math.abs(dist(p)) / hw) : r;
-          let s = ((b.id || 0) * 2654435761) >>> 0; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+          let s = (((b.id || 0) >> 2) * 2654435761) >>> 0;   // (a building's parts share a colour: ids are building x 4 + part) const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
           const tone = 0.75 + 0.5 * rnd(), wall = snowy ? [0.24 * tone, 0.17 * tone, 0.12 * tone] : [0.42 * tone, 0.36 * tone, 0.3 * tone];
           const pitch = gable ? Math.atan((r - e) / hw) * 180 / Math.PI : 0;
           const roofC = snowy ? (pitch > 48 ? [0.32, 0.31, 0.32] : [0.86, 0.89, 0.93].map(v => v * (0.94 + 0.06 * rnd()))) : [0.33 * tone, 0.25 * tone, 0.22 * tone];
@@ -1787,11 +1792,14 @@
   // A block's box: its span on the ground (ex, ez: NB + 1 edges) plus a metre, from under the lowest ground (the cut
   // under a finer mesh and the skirts hang below it) to above the highest. Never too small, so the picture is the same.
   const _fr = new THREE.Frustum(), _pm = new THREE.Matrix4(), _iv = new THREE.Matrix4(), _box = new THREE.Box3(), EX = new Float64Array(NB + 1), EZ = new Float64Array(NB + 1);
-  function cull(mesh, ex, ez, S) {
+  // holes: [x0, x1, z0, z1] areas a finer mesh covers where this mesh discards every fragment: a block wholly inside one is not drawn
+  const inHole = (holes, a, b, c, d) => { if (holes) for (const h of holes) if (a >= h[0] && b <= h[1] && c >= h[2] && d <= h[3]) return true; return false; };
+  const holeOf = g => g ? [g.x0 + g.band + 2, g.x0 + g.w - g.band - 2, g.z0 + g.band + 2, g.z0 + g.d - g.band - 2] : null;
+  function cull(mesh, ex, ez, S, holes) {
     const g = mesh.geometry.groups, y0 = minH - 1000, y1 = maxH + 10; let n = 0, open = false;
     for (let bj = 0; bj < NB; bj++) for (let bi = 0; bi < NB; bi++) {
       _box.min.set(ex[bi] - 1, y0, ez[bj] - 1); _box.max.set(ex[bi + 1] + 1, y1, ez[bj + 1] + 1);
-      if (!_fr.intersectsBox(_box)) { open = false; continue; }
+      if (!_fr.intersectsBox(_box) || inHole(holes, ex[bi] - 1, ex[bi + 1] + 1, ez[bj] - 1, ez[bj + 1] + 1)) { open = false; continue; }
       const b = bj * NB + bi;
       if (open) g[n - 1].count = S[b + 1] - g[n - 1].start;
       else { const o = g[n] || (g[n] = { start: 0, count: 0, materialIndex: 0 }); o.start = S[b]; o.count = S[b + 1] - S[b]; n++; open = true; }
@@ -1799,10 +1807,10 @@
     g.length = n;
   }
   // the near and detail meshes bunch their points around `focus` (wp in NEAR_VS): the same sum here gives their blocks' edges
-  const wpj = (s, f) => { const d = s - f, m = d < 0 ? f : 1 - f; if (m < 0.0005) return f; const x = Math.abs(d) / m; return f + Math.sign(d) * m * x * (0.35 + 0.65 * x * x); };
+  const wpj = (s, f, wk) => { const d = s - f, m = d < 0 ? f : 1 - f; if (m < 0.0005) return f; const x = Math.abs(d) / m; return f + Math.sign(d) * m * x * (wk + (1 - wk) * x * x); };
   function cullWarped(o, g, S) {
-    const f = o.mat.uniforms.focus.value;
-    for (let k = 0; k <= NB; k++) { const t = Math.max(0, Math.min(1, (bedge(k) - 1) / (G - 3))); EX[k] = g.x0 + wpj(t, f.x) * g.w; EZ[k] = g.z0 + wpj(t, f.y) * g.d; }
+    const f = o.mat.uniforms.focus.value, wk = o.mat.uniforms.wk ? o.mat.uniforms.wk.value : 0.35;
+    for (let k = 0; k <= NB; k++) { const t = Math.max(0, Math.min(1, (bedge(k) - 1) / (G - 3))); EX[k] = g.x0 + wpj(t, f.x, wk) * g.w; EZ[k] = g.z0 + wpj(t, f.y, wk) * g.d; }
     cull(o.mesh, EX, EZ, S);
   }
   function draw(t0) {
@@ -1818,7 +1826,8 @@
     place();
     const cam = R.cam, v = R.sv;
     cam.updateMatrixWorld(); _fr.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, _iv.copy(cam.matrixWorld).invert()));
-    cull(R.ctx.terrain, R.fx, R.fz, q.geo > 1 ? BSTART2 : BSTART); if (R.near) cullWarped(R.near, NR, q.geo ? BSTART2 : BSTART); if (R.det) cullWarped(R.det, DT, q.geo ? BSTART2 : BSTART); if (R.range) cullWarped(R.range, RG, q.geo > 1 ? BSTART2 : BSTART);
+    // (the wide mesh: none of its blocks wholly under the range's box, where it would only be discarded)
+    cull(R.ctx.terrain, R.fx, R.fz, q.geo > 1 ? BSTART2 : BSTART, R.range ? [holeOf(RG)] : null); if (R.near) cullWarped(R.near, NR, q.geo ? BSTART2 : BSTART); if (R.det) cullWarped(R.det, DT, q.geo ? BSTART2 : BSTART); if (R.range) cullWarped(R.range, RG, BSTART2);
     let wpts = 0;
     if (R.wide) {   // the park-wide trees: the level's share of them (none at the lowest), only the blocks in view
       const W = R.wide; W.mat.uniforms.share.value = q.wide; W.points.visible = q.wide > 0 && cullWide(W) > 0;

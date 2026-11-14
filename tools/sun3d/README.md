@@ -532,3 +532,74 @@ drawn; a broken tile drops only the trees ("wideTrees" ok false), a phone with 2
 new shot 1.4 km away gets its trees built again (~0.15 s here). Memory was the hard part: the first build (one 12 km
 set of every-cell files, two unpacking passes) was +56 to +84 MB at the forest stops; it came down with the coarse
 far files, 2 m steps, one pass, small text pieces and the 1.5 s wait. Sheet: scratchpad `trees_wide/trees_wide_sheet.png`.
+
+## Sharp Grand Teton (14 Nov 2026, branch `claude/sun3d-sharp-range`): range level, 1.5 km laser boxes, park-wide buildings
+
+Built, measured, NOT uploaded or applied. Three parts, each a stage of its own on the page after `ready` (range first,
+then the foreground, then the buildings, then the park-wide trees); a failure in one leaves only that one out.
+
+### 1. The range: a fourth terrain level (`build_range.py`)
+
+The peaks 10-25 km from the stand pins came from the wide grid (terrarium zoom 12, ~27 m a point) drawn by a mesh of
+768 points over 55 km (~71 m a point): soft at 135-300 mm, and 5-70 m low on the summits.
+
+- Source: USGS 3DEP 1 m lidar DEM, `prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/WY_GrandTetonNP_D22`
+  (2022; then `WY_GrandTetonElkRefuge_2014`; then the 1/3 arc-second DEM, ~10 m, west of the crest), cloud-optimised
+  GeoTIFFs in UTM 12N with overviews: only the 2 m overview's 512 x 512 blocks under a box are read (HTTP ranges, kept in
+  `<work>/tnm`, ~300 MB for the five boxes). Bare earth (above tree line = rock and snow; trees never in the heights).
+- DATA CHECK (`check`), published NAVD88 heights within 450 m: Grand 4197.6 (4199), Middle Teton 3901.8 (3903), Mount
+  Owen 3939.4 (3940), Mount Moran 3843.4 (3842), Teewinot 3753.9 (3757), South Teton 3813.6 (3814): all within 3.1 m;
+  the wide grid is 5-70 m low on the same summits. The 26 stops' stored heights inside the 1 m data: middle +1.8 m, 100 %
+  within 25 m. Against the wide grid over each box: middle -0.3 to 0.0 m, 9 in 10 within 4-8 m. PASS.
+- Boxes: 2048 x 2048 at 5 m (10.24 km), on a lattice of centres every 5.12 km (half a box) so shots share them; a shot's
+  box = the lattice centre nearest its subject moved 1.5 km toward the stand pin (the face, canyons and lake-front
+  moraines are east of the summits), only where the wide grid has mountain (over 2,600 m) within 3 km. Grand Teton
+  trip: 4 boxes (`gtr_01_01` Rendezvous / Teton Pines, `gtr_02_02` south peaks, `gtr_03_02` Grand / Jenny Lake 18 shots,
+  `gtr_05_02` Moran 3 shots), 3.5-3.8 MB each, 14.7 MB. 3 shots have no range box (subject close, range not where they look).
+  `gtr_00_01` (JHMR) was built only to score the webcam events below.
+- The page (`app_view.js`, `cfg.range` + chunk `'range'`, sent first in the foreground): heights and its own light map
+  (2048, a light pass marching in it and on into the wide grid); its mesh is every other point of the shared 768 grid
+  (384 a side) bunched at the subject (`wk` 0.2: ~5 m spacing at the peak, ~70 m at the box edge, where it fades into the
+  wide grid); the wide mesh is cut out under it (RHOLE; its blocks wholly inside are not drawn at all) and the fine box's
+  edge fades into it (RNG). It FEEDS the sun times: `pick()` reads it where it holds a pin, `vis()` steps down into it from
+  the wide grid (steps capped at 12 m there), the subject's summit snap is ~100 m on it. Light phones (deviceMemory <= 2):
+  every other point (10 m). A full 768 mesh doubled a frame's time on software graphics; 384 looks the same.
+
+### 2. 1.5 km laser boxes (`lidar/build_detail.py --side 1504 --cell 1 --max-depth 10 --no-buildings`)
+
+Each stop's laser box is now 1504 m at 1 m (was ~500 m at 0.5 m), moved (not shrunk) to sit inside the fine box its
+shots use; stand pins within 650 m share one: 16 boxes (Emily's Pond and Teton Pines are outside the survey), same five
+files a box (heights, mask, tree returns, wide water, winter colour from `teton_colour/build_teton_colour.py boxes`),
+42.8 MB. Buildings are LEFT OUT of these heights (`--no-buildings`: ground under them, no building class in the mask):
+the park-wide buildings draw them, once. Read to octree depth 10 (~15 points a 1 m cell). The page: the box's own dot
+trees only within 260 m of the eye (`TREE_REACH`; beyond, the park-wide spruce outlines, which read as trees from afar
+where dots read as blobs); its full light map capped at 1024 (1.5 m). Table `terrain_detail_regions_v4` (a table of its
+own: the app already on phones reads `terrain_detail_regions` and would lose its buildings), ids `gtd15_*`, `bare` true.
+
+### 3. Park-wide buildings (`lidar/build_buildings.py`)
+
+No footprint source answers from here (OpenStreetMap Overpass and Microsoft's US footprints are refused by the proxy),
+so they come from the laser survey alone, inside the survey (none in Wilson / Teton Pines / Jackson).
+- `scan`: the survey to octree depth 8 (~2 m) over the wide box, every raised return (2 m+ over the park-wide ground grid);
+  195 M points read, 70 M kept, 23 min.
+- `build`: roof-like points (class 6, or a pulse that came back alone) on a 2 m grid -> patches; a patch the survey did
+  not sort is a roof only when at most 35 % of the pulses in its cells gave several returns (crowns let the laser through)
+  and a roof fits it to 0.4 m; within 4 km of a stand pin (`--pins`, `--refine-km`) every candidate is looked at again on
+  the depth-9 points (~1 m: 9,025 nodes, 15 min), small ones (2-4 points at depth 8) included; footprint = the cells in the
+  frame of its long walls, closed, a rectangle when that covers 85 %, else right-angled corners (<= 12); roof = the better
+  of a gable along either axis or flat (pitch under 8 deg = flat), eave / ridge measured. 8,964 buildings in 48 tiles,
+  1.47 MB (a trip's 40 tiles within 8 km: 1.1 MB). Checked against the round-3 boxes' surveyed building cells (0.5 m, full
+  density): 47 of 89 buildings over 20 m2 found (53 %; T.A. Moulton 7 of 7, John Moulton 4 of 5, Chapel 21 of 34,
+  Menor's Ferry 7 of 17, Cunningham 1 of 1), 17 found where the survey has none (mostly trailers / sheds it left as
+  vegetation). Missed: small sheds, buildings under trees, outside 4 km the depth-8 shapes only.
+- Tile file (`gtb_<row>_<col>.json`): `{v, box, b: [{p, g, e, r, a, hw, roof, c, n6, id}]}` (README of the script).
+- The page (`cfg.houses` + chunks `'house:<i>'`, after the foreground): every building within 8 km as walls + roof (snow on
+  roofs under ~48 deg where the ground is snow), standing on the ground as drawn (detail / fine / range / wide), lit by the
+  sun its ground gets from the hills (the finest light map's alpha); inside a bare detail box they throw a drawn shadow
+  (BSHADOW). NEVER in the sun times. An older (non-bare) detail box keeps its own buildings: none drawn twice.
+- Height-field blocks vs walls and roofs (the before / after renders): the walls and roofs read as buildings (straight
+  walls, a ridge); the old height-field blocks melt into the snow. Walls and roofs it is.
+
+### Measured (scratchpad `sharp/`; headless Chromium, software graphics)
+
+See `sharp/out/changes.md` for the per-shot list. Numbers are filled in there and in the branch's final commit message.

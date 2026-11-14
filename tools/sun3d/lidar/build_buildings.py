@@ -69,6 +69,21 @@ class Hier:
         p = os.path.join(self.cache, u.replace('/', '_'))
         if os.path.exists(p): return open(p, 'rb').read()
         d = get(u); open(p, 'wb').write(d); return d
+    def page(self, key):
+        if key not in self.h: self.h[key] = json.loads(self.cached(f'ept-hierarchy/{key}.json'))
+        return self.h[key]
+    def has(self, key):
+        """Does this node hold points? Walks its ancestors' hierarchy pages from the root (each page fetched once)."""
+        d, x, y, z = map(int, key.split('-')); page = '0-0-0-0'
+        for dd in range(d + 1):
+            a = f"{dd}-{x >> (d - dd)}-{y >> (d - dd)}-{z >> (d - dd)}"
+            v = self.page(page).get(a)
+            if v is None: return False
+            if v == -1:   # its subtree, itself included, is in a page of its own
+                page = a
+                if dd == d: return self.page(a).get(a, 0) > 0
+            elif dd == d: return v > 0
+        return False
     def nodes(self, x0, x1, y0, y1, d0=0, d1=99):
         out = {}; b = self.b; size = self.size
         def load(key):
@@ -301,8 +316,15 @@ def build(a):
         blds.append(dict(sel=sel, ang=ang, n6=n6, multi=multi, roof=roof, h8=h))
     print(f"{len(blds):,} buildings from {n_try:,} candidates; left out: {why}", flush=True)
     # 2. deeper points inside each building (refine), then the final outline and roof
-    if a.refine_depth > a.depth: refine(a, blds, X, Z, lat, lng, KX0, G)
-    tiles = {}
+    if a.refine_depth > a.depth and a.pins:   # the deeper look only within --refine-km of a stand pin (what a view draws large); farther off the depth-8 shapes stay and the small doubtful ones go
+        P = json.load(open(a.pins)); pins = [((p['v']['lng'] - WEST) * KX0, (NORTH - p['v']['lat']) * KZ) for p in P] if isinstance(P, list) else [((s['vlng'] - WEST) * KX0, (NORTH - s['vlat']) * KZ) for s in P['shots']]
+        PX, PZ = np.array([q[0] for q in pins]), np.array([q[1] for q in pins]); R2 = (a.refine_km * 1000) ** 2
+        near = [b for b in blds if (((PX - X[b['sel']].mean()) ** 2 + (PZ - Z[b['sel']].mean()) ** 2) <= R2).any()]
+        print(f"refine: {len(near):,} of {len(blds):,} within {a.refine_km} km of a stand pin", flush=True)
+        ids = {id(b) for b in near}; blds = near + [b for b in blds if not b.get('small') and id(b) not in ids]
+        refine(a, near, X, Z, lat, lng, KX0, G)
+    elif a.refine_depth > a.depth: refine(a, blds, X, Z, lat, lng, KX0, G)
+    work = []   # per building: its roof-like points (park metres x / z, height over the ground), cell size, wall angle, how sure
     for i, b in enumerate(blds):
         if b.get('drop'): continue
         if b.get('rx') is not None and len(b['rx']) >= 8:
@@ -314,43 +336,76 @@ def build(a):
             cells_r = np.unique(key_all[rf]); inc = np.isin(key_all, cells_r)
             multi = float(1 - b['rone'][inc].mean()); n6 = float(b['r6'][rf].mean()); b['n6'] = max(b['n6'], n6); b['multi'] = multi
             if n6 < 0.5 and multi > a.max_multi: continue
-            xs, zs, h = xa[rf], za[rf], b['rh'][rf]; cell = 1.0
-            b['ang'] = best_angle(xs, zs)
+            work.append(dict(i=i, x=xa[rf].astype(np.float32), z=za[rf].astype(np.float32), h=b['rh'][rf].astype(np.float32), cell=1.0, ang=None, n6=b['n6'], multi=multi))
         elif b.get('small'): continue
-        else: xs, zs, h = X[b['sel']], Z[b['sel']], hag[b['sel']]; cell = 2.0
-        t = math.radians(b['ang']); u = xs * math.cos(t) + zs * math.sin(t); v = -xs * math.sin(t) + zs * math.cos(t)
-        pts, area, _ = outline(u, v, cell)
-        if pts is None or area < 20: continue
-        pu = np.array([p[0] for p in pts]); pv = np.array([p[1] for p in pts])
-        roof = fit_roof(u, v, h, (pu.min(), pu.max()), (pv.min(), pv.max()))
-        if b['n6'] < 0.5 and roof['res'] > 0.45: continue
-        if roof['r'] < 2.2: continue
-        # back to the park's metres, then the tile's
-        PX = pu * math.cos(t) - pv * math.sin(t); PZ = pu * math.sin(t) + pv * math.cos(t)
-        cx, cz = float(PX.mean()), float(PZ.mean())
-        clat, clng = NORTH - cz / KZ, WEST + cx / KX0
-        tr, tc = int((NORTH - clat) / (NORTH - SOUTH) * TR), int((clng - WEST) / (EAST - WEST) * TC)
-        if not (0 <= tr < TR and 0 <= tc < TC): continue
-        tn, ts, tw, te = tile_box(tr, tc); kxt = kx((tn + ts) / 2)
-        plat = NORTH - PZ / KZ; plng = WEST + PX / KX0
-        ox = (plng - tw) * kxt; oz = (tn - plat) * KZ
-        if roof['roof'] == 'gable':
-            ridge_deg = b['ang'] + (0 if roof['axis'] == 0 else 90)   # the ridge runs along u (axis 0) or v
-            # the ridge line's middle: across = c in the wall frame
-            if roof['axis'] == 0: rc_u, rc_v = (pu.min() + pu.max()) / 2, roof['c']
-            else: rc_u, rc_v = roof['c'], (pv.min() + pv.max()) / 2
-            rx = rc_u * math.cos(t) - rc_v * math.sin(t); rz = rc_u * math.sin(t) + rc_v * math.cos(t)
-            rlat, rlng = NORTH - rz / KZ, WEST + rx / KX0; cxy = [(rlng - tw) * kxt, (tn - rlat) * KZ]
-        else: ridge_deg = b['ang']; cxy = [float(ox.mean()), float(oz.mean())]
-        g = float(G.at(np.array([clat]), np.array([clng]))[0]) if G else 0.0
-        rec = dict(p=[round(float(q), 1) for xy in zip(ox, oz) for q in xy], g=round(g, 1), e=round(max(1.8, roof['e']), 1), r=round(max(roof['r'], roof['e']), 1),
-                   a=round(ridge_deg % 180, 1), hw=round(roof.get('hw', 0.0), 1), roof=roof['roof'], c=[round(cxy[0], 1), round(cxy[1], 1)], n6=round(b['n6'], 2), id=len(sum(tiles.values(), [])) if False else i,
-                   lat=round(clat, 6), lng=round(clng, 6), area=round(area, 1), pitch=round(roof['pitch'], 1), res=round(roof['res'], 2), multi=round(b['multi'], 2))
-        tiles.setdefault((tr, tc), []).append(rec)
+        else: work.append(dict(i=i, x=X[b['sel']].astype(np.float32), z=Z[b['sel']].astype(np.float32), h=hag[b['sel']].astype(np.float32), cell=2.0, ang=b['ang'], n6=b['n6'], multi=b['multi']))
+    import pickle
+    pickle.dump(dict(work=work, KX0=KX0), open(f"{a.work}/final_in.pkl", 'wb'))
+    final(a, work, KX0, G)
+
+
+def parts(u, v, h, cell, sure):
+    """One building's roof-like points in its wall frame -> its parts [(outline, area, roof)]: one, or (a barn with a tall
+    middle and low sheds either side, a house with a lower wing) the whole footprint with the low roof plus the tall part
+    with its own, when the heights fall in two levels at least 1.5 m apart and the tall part is 20-85 % of the whole."""
+    pts, area, _ = outline(u, v, cell)
+    if pts is None or area < 20: return []
+    pu = np.array([p[0] for p in pts]); pv = np.array([p[1] for p in pts])
+    roof = fit_roof(u, v, h, (pu.min(), pu.max()), (pv.min(), pv.max()))
+    out = [(pts, area, roof)]
+    if cell <= 1.0 and len(h) >= 40:
+        lo_h, hi_h = np.percentile(h, 25), np.percentile(h, 95); t = (lo_h + hi_h) / 2
+        hi = h > t
+        if hi.sum() >= 15 and (~hi).sum() >= 15 and np.median(h[hi]) - np.median(h[~hi]) >= 1.5:
+            p2, a2, _ = outline(u[hi], v[hi], cell)
+            if p2 is not None and 0.2 * area <= a2 <= 0.85 * area and a2 >= 15:
+                qu = np.array([p[0] for p in p2]); qv = np.array([p[1] for p in p2])
+                r_hi = fit_roof(u[hi], v[hi], h[hi], (qu.min(), qu.max()), (qv.min(), qv.max()))
+                r_lo = fit_roof(u[~hi], v[~hi], h[~hi], (pu.min(), pu.max()), (pv.min(), pv.max()))
+                if r_hi['r'] > r_lo['r'] + 1.0: out = [(pts, area, r_lo), (p2, a2, r_hi)]
+    return out
+
+
+def final(a, work, KX0, G):
+    tiles = {}; n2 = 0
+    for w in work:
+        i, xs, zs, h, cell = w['i'], w['x'].astype(np.float64), w['z'].astype(np.float64), w['h'].astype(np.float64), w['cell']
+        ang = w['ang'] if w['ang'] is not None else best_angle(xs, zs)
+        t = math.radians(ang); u = xs * math.cos(t) + zs * math.sin(t); v = -xs * math.sin(t) + zs * math.cos(t)
+        ps = parts(u, v, h, cell, w['n6'])
+        if not ps: continue
+        if w['n6'] < 0.5 and ps[0][2]['res'] > 0.45 and len(ps) == 1: continue
+        if max(p[2]['r'] for p in ps) < 2.2: continue
+        if len(ps) == 2: n2 += 1
+        for k, (pts, area, roof) in enumerate(ps):
+            pu = np.array([p[0] for p in pts]); pv = np.array([p[1] for p in pts])
+            # back to the park's metres, then the tile's (a building's parts go to the tile of its whole footprint)
+            PX = pu * math.cos(t) - pv * math.sin(t); PZ = pu * math.sin(t) + pv * math.cos(t)
+            if k == 0:
+                cx, cz = float(PX.mean()), float(PZ.mean())
+                clat, clng = NORTH - cz / KZ, WEST + cx / KX0
+                tr, tc = int((NORTH - clat) / (NORTH - SOUTH) * TR), int((clng - WEST) / (EAST - WEST) * TC)
+                if not (0 <= tr < TR and 0 <= tc < TC): break
+                tn, ts, tw, te = tile_box(tr, tc); kxt = kx((tn + ts) / 2)
+                g = float(G.at(np.array([clat]), np.array([clng]))[0]) if G else 0.0
+            plat = NORTH - PZ / KZ; plng = WEST + PX / KX0
+            ox = (plng - tw) * kxt; oz = (tn - plat) * KZ
+            if roof['roof'] == 'gable':
+                ridge_deg = ang + (0 if roof['axis'] == 0 else 90)   # the ridge runs along u (axis 0) or v
+                if roof['axis'] == 0: rc_u, rc_v = (pu.min() + pu.max()) / 2, roof['c']
+                else: rc_u, rc_v = roof['c'], (pv.min() + pv.max()) / 2
+                rx = rc_u * math.cos(t) - rc_v * math.sin(t); rz = rc_u * math.sin(t) + rc_v * math.cos(t)
+                rlat, rlng = NORTH - rz / KZ, WEST + rx / KX0; cxy = [(rlng - tw) * kxt, (tn - rlat) * KZ]
+            else: ridge_deg = ang; cxy = [float(ox.mean()), float(oz.mean())]
+            rec = dict(p=[round(float(q), 1) for xy in zip(ox, oz) for q in xy], g=round(g, 1), e=round(max(1.8, roof['e']), 1), r=round(max(roof['r'], roof['e']), 1),
+                       a=round(ridge_deg % 180, 1), hw=round(roof.get('hw', 0.0), 1), roof=roof['roof'], c=[round(cxy[0], 1), round(cxy[1], 1)], n6=round(w['n6'], 2), id=i * 4 + k,
+                       part=k, lat=round(float(plat.mean()), 6), lng=round(float(plng.mean()), 6), area=round(area, 1), pitch=round(roof['pitch'], 1), res=round(roof['res'], 2), multi=round(w['multi'], 2))
+            tiles.setdefault((tr, tc), []).append(rec)
+    print(f"{n2:,} buildings drawn in two parts (a tall middle or wing)", flush=True)
     F = f"{a.work}/files"; os.makedirs(F, exist_ok=True); rows = []; allb = []
     for (tr, tc), L in sorted(tiles.items()):
         tn, ts, tw, te = tile_box(tr, tc)
-        out = dict(v=1, box=[tn, ts, tw, te], b=[{k: r[k] for k in ('p', 'g', 'e', 'r', 'a', 'hw', 'roof', 'c', 'n6', 'id')} for r in L])
+        out = dict(v=1, box=[tn, ts, tw, te], b=[{k: r[k] for k in ('p', 'g', 'e', 'r', 'a', 'hw', 'roof', 'c', 'n6', 'id', 'part')} for r in L])
         path = f"{F}/gtb_{tr}_{tc}.json"; open(path, 'w').write(json.dumps(out, separators=(',', ':')))
         rows.append(dict(id=f"gtb_{tr}_{tc}", parent='grand_teton', north=tn, south=ts, west=tw, east=te, path=os.path.basename(path), bytes=os.path.getsize(path), count=len(L)))
         allb += L
@@ -370,11 +425,9 @@ def refine(a, blds, X, Z, lat, lng, KX0, G):
     for b in blds:
         xs, zs = X[b['sel']], Z[b['sel']]
         b['bx'] = (xs.min() - 2.5, xs.max() + 2.5, zs.min() - 2.5, zs.max() + 2.5)
-    # the deeper nodes that touch any building, each read once: the survey's whole node list to that depth (one walk of its
-    # hierarchy), then each building's nodes found by their index (x, y from its box, z from its heights)
-    x0, y1 = merc(NORTH, WEST); x1, y0 = merc(SOUTH, EAST)
-    allk = H.nodes(x0, x1, y0, y1, 9, a.refine_depth); print(f"refine: {len(allk):,} nodes at depths 9-{a.refine_depth} in the box", flush=True)
-    bb, size = H.b, H.size; want = {}
+    # the deeper nodes that touch any building, each read once: each building's node keys by their index (x, y from its
+    # box, z from its heights), kept when the survey's hierarchy has them (only the pages on their way are fetched)
+    bb, size = H.b, H.size; want = {}; seen = {}
     for i, b in enumerate(blds):
         bx0, bx1, bz0, bz1 = b['bx']
         la1, la0 = NORTH - bz0 / KZ, NORTH - bz1 / KZ; lo0, lo1 = WEST + bx0 / KX0, WEST + bx1 / KX0
@@ -386,7 +439,9 @@ def refine(a, blds, X, Z, lat, lng, KX0, G):
                 for yi in range(int((my0 - bb[1]) // sz), int((my1 - bb[1]) // sz) + 1):
                     for zi in range(int((zlo - bb[2]) // sz), int((zhi - bb[2]) // sz) + 1):
                         k = f"{d}-{xi}-{yi}-{zi}"
-                        if k in allk: want.setdefault(k, []).append(i)
+                        if k not in seen: seen[k] = H.has(k)
+                        if seen[k]: want.setdefault(k, []).append(i)
+        if i % 2000 == 0: print(f"  node lookup {i} / {len(blds)}: {len(want):,} nodes, {len(H.h):,} hierarchy pages", flush=True)
     print(f"refine: {len(want):,} deeper nodes for {len(blds):,} buildings", flush=True)
     pts = {i: [] for i in range(len(blds))}; t0 = time.time()
     def one(k):
@@ -414,11 +469,14 @@ def refine(a, blds, X, Z, lat, lng, KX0, G):
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('cmd', choices=['scan', 'build']); ap.add_argument('work')
+    ap = argparse.ArgumentParser(); ap.add_argument('cmd', choices=['scan', 'build', 'final']); ap.add_argument('work')
     ap.add_argument('--depth', type=int, default=8); ap.add_argument('--refine-depth', type=int, default=10)
     ap.add_argument('--canopy', help="build_canopy.py's canopy.npz (its ground grid)"); ap.add_argument('--threads', type=int, default=6)
+    ap.add_argument('--pins', help='shots json (rv_jobs.json list with v, or pins.json with shots): refine only near these stand pins'); ap.add_argument('--refine-km', type=float, default=5.0)
     ap.add_argument('--max-multi', type=float, default=0.35, help='an unsorted patch is a roof only when at most this share of its pulses gave several returns')
     a = ap.parse_args(); os.makedirs(a.work, exist_ok=True)
+    if a.cmd == 'final':   # the last stage again from build's saved points (footprints, roofs, files): seconds, not half an hour
+        import pickle; d = pickle.load(open(f"{a.work}/final_in.pkl", 'rb')); final(a, d['work'], d['KX0'], Ground(a.canopy) if a.canopy else None); return
     {'scan': scan, 'build': build}[a.cmd](a)
 
 
