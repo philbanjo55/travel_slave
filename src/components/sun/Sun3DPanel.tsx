@@ -119,7 +119,7 @@ const TREE_CHUNK = 60000;   // the park-wide tree tiles' pieces (a multiple of 4
 // Wherever the Faroes photos / buildings are drawn (the agency's terms ask for the credit; ArcticDEM is CC-BY-4.0).
 // Grand Teton winter colour (13 Nov 2026), when the region row has no credit text of its own.
 const TETON_CREDIT = 'Ground colour: Copernicus Sentinel-2 (ESA), 30 Dec 2025. Aerial photos: USDA NAIP via USGS, July 2022, snow added.';
-const FAROES_CREDIT = 'Ground photos, buildings and water: Faroese Environment Agency, Umhvørvisstovan (Myndakort, Bygningar, Topo; November 2026). Heights: ArcticDEM, PGC. House heights are guessed.';   // base64 characters per message to the page; a multiple of 4
+const FAROES_CREDIT = 'Heights, ground photos, buildings and water: Faroese Environment Agency, Umhvørvisstovan (DSM 2015; Myndakort, Bygningar, Topo; November 2026). House heights measured in the 2015 surface model.';   // base64 characters per message to the page; a multiple of 4
 
 // The page's framing from a saved one: { yaw_deg, pitch_deg } (null = aim at the subject).
 const pageFraming = (f: Framing | null) => (f ? { yaw_deg: f.heading, pitch_deg: f.pitch } : null);
@@ -821,7 +821,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             <Text style={styles.note}>Mountains: USGS 3DEP 1 m lidar elevation (2022), drawn at 5 m around the peaks this shot looks at; the sun times use it.</Text>
           ) : null}
           {housesIn > 0 && !hd ? (
-            <Text style={styles.note}>{`Buildings out to 8 km (${housesIn}): walls and roofs measured by the same 2022 laser survey, colours guessed, snow on the roofs. Not in the sun times.`}</Text>
+            <Text style={styles.note}>{region?.ground === 'green'
+              ? `Buildings out to 8 km (${housesIn}): the agency's outlines, walls and roofs measured in its 2015 surface model, roof colours from the air photos. Not in the sun times.`
+              : `Buildings out to 8 km (${housesIn}): walls and roofs measured by the same 2022 laser survey, colours guessed, snow on the roofs. Not in the sun times.`}</Text>
           ) : null}
           {wideTrees > 0 && !hd ? (
             <Text style={styles.note}>Forest out to 12 km: the same 2022 laser survey on a 7 m grid, a tree a cell near you, clumps farther off. Not in the sun times.</Text>

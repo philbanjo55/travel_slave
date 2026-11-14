@@ -1070,31 +1070,37 @@ def faroes_3d():
         V.check('fo3d-trip', False, 'no Faroes Live row'); return
     p = C.capture(6)
     V.check('fo3d-trip', V.has(p, 'DAY '), 'Faroes Live open')
-    d = datetime.datetime.now(ZoneInfo('Atlantic/Faroe'))
-    short = f"{d.strftime('%b')} {d.day}"
-    for _ in range(5):
-        if V.tap_text(p, short, exact=True):
-            break
-        C.adb('shell', 'input', 'swipe', '900', '700', '200', '700', '300'); p = C.capture(0.8)
-    time.sleep(3)
     skip = ('Cottages', 'Sleep', 'Hotel', 'Depart', 'Check', 'Return', 'Airport', 'Ferry')
     row = re.compile(r'^\d{1,2}:\d{2} [AP]M (.+)')
     tried = set(); opened = None
-    for _ in range(3):
-        s = C.capture(1.0); hit = None
-        for _ in range(20):
-            hit = next((c for c in s.clickables if row.match(c['label']) and not any(k in c['label'] for k in skip)
-                        and row.match(c['label']).group(1)[:30] not in tried), None)
-            if hit is not None and 0.30 * 2400 <= hit['xy'][1] <= 0.72 * 2400:
-                break
-            C.adb('shell', 'input', 'swipe', '540', '1300', '540', '950', '500'); s = C.capture(1.2); hit = None
-        if hit is None:
+    # today first, then the next days (14 Nov 2026: an arrival day has no shot stop, so the check never ran)
+    for off in range(4):
+      if opened is not None:
+        break
+      d = datetime.datetime.now(ZoneInfo('Atlantic/Faroe')) + datetime.timedelta(days=off)
+      short = f"{d.strftime('%b')} {d.day}"
+      p = C.capture(0.5)
+      for _ in range(6):
+        if V.tap_text(p, short, exact=True):
             break
-        tried.add(row.match(hit['label']).group(1)[:30]); C.tap(hit['xy']); time.sleep(4)
-        st = scroll_find('SUN & MOON', 14)
-        if st is None:
-            V.back(); time.sleep(2); continue
-        opened = hit['label'][:60]; break
+        C.adb('shell', 'input', 'swipe', '900', '700', '200', '700', '300'); p = C.capture(0.8)
+      time.sleep(3)
+      print(f'INFO fo3d day {short}', flush=True)
+      for _ in range(3):
+          s = C.capture(1.0); hit = None
+          for _ in range(20):
+              hit = next((c for c in s.clickables if row.match(c['label']) and not any(k in c['label'] for k in skip)
+                          and row.match(c['label']).group(1)[:30] not in tried), None)
+              if hit is not None and 0.30 * 2400 <= hit['xy'][1] <= 0.72 * 2400:
+                  break
+              C.adb('shell', 'input', 'swipe', '540', '1300', '540', '950', '500'); s = C.capture(1.2); hit = None
+          if hit is None:
+              break
+          tried.add(row.match(hit['label']).group(1)[:30]); C.tap(hit['xy']); time.sleep(4)
+          st = scroll_find('SUN & MOON', 14)
+          if st is None:
+              V.back(); time.sleep(2); continue
+          opened = hit['label'][:60]; break
     V.check('fo3d-stop', opened is not None, (opened or 'no shot stop with a Sun & Moon section today'))
     if opened is None:
         return
