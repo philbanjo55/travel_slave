@@ -145,29 +145,46 @@ def capture(settle=2.0):
 
 
 _ANR_DUMPED = [0]
+_OURS_SINCE = [None]
 
 
 def anr_report():
-    """13 Nov 2026: our app stopped answering on the emulator. The first two times, print why: the system's ANR reason and
-    the app's main-thread stack (from /data/anr, readable after adb root on the emulator image)."""
-    if _ANR_DUMPED[0] >= 2:
+    """13 Nov 2026: our app stopped answering on the emulator. The first four times, print why: the system's ANR reason,
+    what is using the CPU, and OUR app's main-thread stack (14 Nov 2026: the newest /data/anr file was system_server's own,
+    so now the app is asked for a fresh stack with kill -3 and that file is read)."""
+    if _ANR_DUMPED[0] >= 4:
         return
     _ANR_DUMPED[0] += 1
     try:
         lines = adb('logcat', '-d', '-t', '8000', timeout=90).splitlines()
         hits = [i for i, l in enumerate(lines) if 'ANR in' in l]
-        for i in hits[-1:]:
-            for l in lines[i:i + 14]:
+        for i in hits[-2:]:
+            for l in lines[i:i + 4]:
                 print('ANRLOG ' + l[:260], flush=True)
         adb('root', timeout=30); time.sleep(3)
+        for l in adb('shell', 'top -b -n 1 -m 12', timeout=30).splitlines()[:20]:
+            print('ANRTOP ' + l[:200], flush=True)
+        mem = adb('shell', f'dumpsys meminfo {PKG} | grep -E "TOTAL|Native Heap|Java Heap"', timeout=30)
+        for l in mem.splitlines()[:6]:
+            print('ANRMEM ' + l[:200], flush=True)
+        pid = adb('shell', f'pidof {PKG}', timeout=20).strip().split()
+        if not pid:
+            print('ANRSTACK app not running', flush=True)
+            return
+        before = set(adb('shell', 'ls /data/anr', timeout=30).split())
+        adb('shell', f'kill -3 {pid[0]}', timeout=20); time.sleep(6)
         names = adb('shell', 'ls -t /data/anr', timeout=30).split()
-        if names:
-            txt = adb('shell', f'cat /data/anr/{names[0]}', timeout=60)
-            m = re.search(r'"main" prio=.*?(?:\n\n|$)', txt, re.S)
-            for l in (m.group(0) if m else txt[:4000]).splitlines()[:60]:
+        fresh = [n for n in names if n not in before] or names
+        txt = adb('shell', f'cat /data/anr/{fresh[0]}', timeout=60) if fresh else ''
+        if f'pid {pid[0]}' not in txt[:400]:
+            print(f'ANRSTACK newest trace is not pid {pid[0]}: ' + txt[:160].replace(chr(10), ' '), flush=True)
+        m = re.search(r'"main" prio=.*?(?:\n\n|$)', txt, re.S)
+        for l in (m.group(0) if m else txt[:4000]).splitlines()[:70]:
+            print('ANRSTACK ' + l[:260], flush=True)
+        for name in ('mqt_js', 'mqt_native', 'RenderThread'):
+            m = re.search(r'"' + name + r'[^"]*" .*?(?:\n\n|$)', txt, re.S)
+            for l in (m.group(0).splitlines()[:25] if m else []):
                 print('ANRSTACK ' + l[:260], flush=True)
-        else:
-            print('ANRSTACK no files in /data/anr', flush=True)
     except Exception as e:
         print('ANRSTACK could not read: ' + str(e)[:200], flush=True)
 
@@ -187,9 +204,18 @@ def dismiss_system_dialogs():
             if "isn't responding" in t:
                 title = t
         ours = 'Philm' in title or 'philmframe' in title.lower()
+        if not title:
+            _OURS_SINCE[0] = None
+        want = 'Wait' if ours else 'Close app'
         if ours:
             anr_report()
-        want = 'Wait' if ours else 'Close app'
+            if _OURS_SINCE[0] is None:
+                _OURS_SINCE[0] = time.time()
+            elif time.time() - _OURS_SINCE[0] > 300:
+                # 14 Nov 2026: one run pressed Wait 309 times over 70 min; after 5 min it is a hang, not a slow moment
+                print(f'HUNG our app has not answered for {int(time.time() - _OURS_SINCE[0])} s: Close app', flush=True)
+                want = 'Close app'
+                _OURS_SINCE[0] = None
         hit = None
         for n in root.iter('node'):
             t = (n.get('text') or '').strip()
