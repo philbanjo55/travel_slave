@@ -67,10 +67,12 @@ answers kept in `<work>/cache`). A first run takes about 1.5 hours on 4 cores (c
 
 ## First build (14 Nov 2026, branch `claude/sun3d-faroes-2015`; nothing uploaded or applied)
 
-- Cleaning, whole islands: 2,685 land holes (404,155 cells = 1.6 km2; 62 of them over 1,000 cells, e.g. 10,028 cells on
-  a Kunoy cliff at 62.3555,-6.7058, filled 0-139 m from 1,485 contour points) filled from the 2009 contours; 2,995 water
-  holes (723,005 cells: Saksun's Pollurin, Tórshavn harbour, Skálafjørður shores) laid flat at their rim (0.1-1.5 m);
-  606 blunder pieces (3,047 cells; the worst 307 cells at 832 m on a 187 m slope, 62.2717,-6.9230). After cleaning the
+- Cleaning, whole islands: 2,672 land holes (399,837 cells = 1.6 km2; e.g. 10,028 cells on a Kunoy cliff at
+  62.3555,-6.7058, filled 0-139 m from 1,485 contour points) filled from the 2009 contours; 2,993 water holes (722,790
+  cells: Saksun's Pollurin, Tórshavn harbour, Skálafjørður shores) laid flat at their rim (0.1-1.5 m); 687 blunder pieces
+  (14,190 cells): 606 by the jump test (the worst 307 cells at 832 m on a 187 m slope, 62.2717,-6.9230) and 81 by the
+  contour envelope (11,143 cells; the 933 m cone at Velbastaður's shore, the 280 m one in Funningsfjørður, and pieces of
+  NW Streymoy's sea cliffs near Mýlingur that look like triangulated fills, up to 2,006 cells). After cleaning the
   islands' top is Slættaratindur 879.9 m. Report: `<work>/clean/report.json`; per box: `levels.json` `cleaned`.
 - Wide: `faroes_dsm15_wide.png` 0.86 MB (was 0.78). Range: 33 boxes, 43.1 MB. Near: the 11 boxes at 2048 cells (1.9-4.4 m)
   + `fo_klakkur`, 22.2 MB + one new photo (0.5 MB). Detail: 36 boxes of 1,504 m at 1 m, 33.4 MB with masks and photos.
