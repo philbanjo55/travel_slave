@@ -217,7 +217,8 @@ class Bucket:
 JUMP = 30.0        # metres between two neighbouring 2 m cells: no real Faroes slope does that (sea cliffs are smoothed over cells)
 BLOB = 5000        # cells (2 ha): a piece of surface cut off by such jumps all round and at most this big may be a blunder
 MAXH = 885.0       # Slættaratindur, the highest point of the islands, is 880 m: anything above is a blunder
-ENV = 30.0         # m beyond the 2009 contours within 60 m (see 1b in clean)
+ENV = 80.0         # m beyond the 2009 contours within 60 m (see 1b in clean)
+ENV_MAX = 2500     # cells: a piece bigger than this beyond the contours is a cliff the two surveys place differently
 DIFF = 30.0        # ... when it stands this far above / below the ground round it, and the 2009 contours do not back it
 
 def _fill_pts(px, py, pz, qx, qy):
@@ -297,6 +298,10 @@ def clean(dsm, win, lay, con, two=True, log=None):
             hi = ~nod & (CMX > -1e8) & (a > CMX + ENV); lo = ~nod & (CMN < 1e8) & (a < CMN - ENV)
             env = ndimage.binary_dilation(hi | lo, iterations=1) & ~nod & ~bad
             if env.any():
+                # only compact pieces (a cone is a few hundred cells): on the great sea cliffs (Mýlingur, Kallur) the 2009
+                # lines sit some metres off the 2015 faces and whole cliff tops would pass the height test
+                lab2, k2 = ndimage.label(env, structure=np.ones((3, 3)))
+                sz = ndimage.sum(env, lab2, range(1, k2 + 1)); env = np.isin(lab2, np.nonzero(sz <= ENV_MAX)[0] + 1)
                 lab2, k2 = ndimage.label(env, structure=np.ones((3, 3)))
                 for sl in ndimage.find_objects(lab2):
                     m = lab2[sl] > 0; yy, xx = np.nonzero(m)

@@ -28,7 +28,8 @@ What the file is like (measured 14 Nov 2026):
 1. `clean`: whole islands in 2,048-cell windows. Blunders = parts of the surface joined to the rest only across steps of
    more than 30 m between neighbouring cells (graph components), of at most 2 ha, 30 m or more off the ground round them
    (or above 885 m), and NOT backed by the 2009 10 m contours (a stack is: its contours ring it); and every cell more
-   than 30 m above every 2009 10 m contour point within 60 m (or below every one), where there are any: the file has
+   than 80 m above every 2009 10 m contour point within 60 m (or below every one), where there are any, in pieces of at
+   most 2,500 cells (bigger ones are great sea cliffs the two surveys place a little differently): the file has
    smooth blunder 'cones' that climb from the ground in steps of under 30 m (933 m on a 50 m shore at 62.0136,-6.9172,
    280 m in Funningsfjørður at 62.2839,-6.9186). A stack with no contour near it is left alone. Land holes and blunders
    are filled from the agency's 2009 contour lines (`haeddarkurvar/us_haeddarkurvar_2009_2m`, layer 0 = 10 m for this
