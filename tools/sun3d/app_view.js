@@ -61,6 +61,22 @@
 // and a cottonwood a spread crown; water is drawn as water (the sky mirrored, a glint toward a low sun), inside the
 // box from its mask and beyond it from a wide layer draped on the coarser meshes; with `ice` still water (lakes,
 // ponds, backwaters) is left as snow with a faint blue cast and only moving water (rivers) is open.
+// Sharp range (Grand Teton, 14 Nov 2026): fore({..., range: { n, north, south, west, east, base, step, light? } }) and its
+// file as S3D.chunk(b64, 'range'): a 2048 x 2048 grid at 5 m over the part of the range the shot looks at (USGS 1 m
+// lidar DEM, tools/sun3d/build_range.py). Built FIRST after `ready` (before the detail box), on its own: a fourth level
+// between the wide grid and the fine box. The wide mesh is cut out under it (RHOLE) as under the fine box; its own mesh
+// bunches its points around the subject, fades into the wide grid along its edge and is cut out under the fine box; the
+// fine box's edge fades into it (RNG). It is lit by its own light pass and it DOES feed the sun times (a better grid of
+// the same ground): pick() / vis() / snap read it where it holds a point. `range` {ok, n, light, ms} says it is in, or
+// {ok: false, msg} that it was left out (the view stays as it was). A small phone (deviceMemory <= 2 or range.light)
+// reads every other point (10 m).
+// Park-wide buildings (Grand Teton, 14 Nov 2026): fore({..., houses: { tiles: [{ north, south, west, east }], range? } })
+// and each tile's JSON as S3D.chunk(b64, 'house:<index>') (tools/sun3d/lidar/build_buildings.py: outline p in metres
+// east / south of the tile's north-west corner, e / r = eave / ridge above the ground, a = the ridge's direction, hw, c,
+// roof gable | flat). Built after the foreground, on its own: every building within `range` m (8 km) of the stand pin as
+// walls and a roof (snow on it where the ground is snow), standing on the ground as drawn, lit by the sun its ground
+// gets from the hills (the finest light map there); inside the detail box they also throw a drawn shadow (BSHADOW).
+// NEVER in lit() / the sun times. `houses` {ok, count, ms} or {ok: false, msg}.
 // Built into src/components/sun/sun3dHtml.ts by tools/sun3d/build_app_html.js. Do not edit the generated file.
 (function () {
   const post = m => { try { window.ReactNativeWebView.postMessage(JSON.stringify(m)); } catch (e) { /* not in the app */ } };
@@ -73,6 +89,10 @@
 
   let cfg = null, parts = [], nparts = [], dparts = [], mparts = [], tparts = [], wparts = [], cparts = [], ncparts = [], bparts = [], wcparts = [], FAR = null, NR = null, DT = null, ice = true, maxH = 4250, minH = 0, baseH = 0;
   let foreState = 0, frames = 0, lastPath = null, touched = false;
+  // 14 Nov 2026: the 1.5 km boxes hold bare ground, so a subject pin on a barn or cabin was aimed at the ground at its
+  // foot. Buildings near the eye are kept here (outline + roof top) and a close subject inside one is aimed at its roof.
+  let bldNear = [];
+  let rparts = [], RG = null, rangeState = 0, hsparts = {}, houseState = 0;   // the sharp range (its file's pieces, the grid, 0 none 1 building 2 in -1 dropped); the park-wide buildings (tile pieces by index, state)
   let cnparts = {}, cnbytes = {}, cnlast = -1, wideTiles = null, wideState = 0, wideRun = 0;   // park-wide trees: tile pieces by index, each tile's packed bytes once its pieces are in, the tile coming in, the packed files, 0 none 1 building 2 in -1 dropped
   const cnAny = () => Object.keys(cnparts).length > 0 || Object.keys(cnbytes).length > 0;   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
   let R = null;   // everything three.js, once built
@@ -117,14 +137,15 @@
   const pick = p => {
     if (DT) { const q = crg(DT, p); if (Math.min((q.c + 0.5) * DT.dx, (DT.n - 0.5 - q.c) * DT.dx, (q.r + 0.5) * DT.dz, (DT.n - 0.5 - q.r) * DT.dz) >= DT.band) return { g: DT, c: q.c, r: q.r }; }
     if (NR) { const q = crg(NR, p); if (Math.min((q.c + 0.5) * NR.dx, (NR.n - 0.5 - q.c) * NR.dx, (q.r + 0.5) * NR.dz, (NR.n - 0.5 - q.r) * NR.dz) >= NR.band) return { g: NR, c: q.c, r: q.r }; }
+    if (RG) { const q = crg(RG, p); if (Math.min((q.c + 0.5) * RG.dx, (RG.n - 0.5 - q.c) * RG.dx, (q.r + 0.5) * RG.dz, (RG.n - 0.5 - q.r) * RG.dz) >= RG.band) return { g: RG, c: q.c, r: q.r }; }
     const q = cr(p); return { g: FAR, c: q.c, r: q.r };
   };
   // From a point toward the sun. On the detail grid the steps are short (trees, roofs) and the point sits `lift` m above
   // the survey's surface; past a grid's edge the walk carries on in the next coarser grid (g.up).
   const treeH = (cc, rr) => { const n = DT.n, v = DT.kind ? DT.kind[Math.max(0, Math.min(n - 1, Math.round(rr))) * n + Math.max(0, Math.min(n - 1, Math.round(cc)))] : 0; return v >= 8 ? (v - 8) * 0.2 : 0; };
   function vis(p, ux, uz, tanA, trees) {
-    const fine = p.g === DT, lift = fine ? DT.lift : 3, K = fine ? 440 : 260;
-    let g = p.g, c = p.c, r = p.r, L = fine ? 0.7 : g === NR ? 5 : 30, d = 0, v = 1;
+    const fine = p.g === DT, lift = fine ? DT.lift : 3, K = RG || fine ? 2000 : 260;   // (a 1.5 km laser box takes ~400 short steps before the ray leaves it: it must still reach the range 10-20 km off)
+    let g = p.g, c = p.c, r = p.r, L = fine ? 0.7 : g === NR ? 5 : g === RG ? 6 : 30, d = 0, v = 1;
     for (let k = 0; k < K; k++) {
       d += L; let cc = c + ux * d / g.dx, rr = r + uz * d / g.dz; const hh = p.h + lift + tanA * d;
       while (g !== FAR && (cc < 0 || rr < 0 || cc > g.n - 1 || rr > g.n - 1)) {   // past a fine grid's edge: carry on in the next coarser one
@@ -132,20 +153,25 @@
         c = (g.x0 + (c + 0.5) * g.dx - up.x0) / up.dx - 0.5; r = (g.z0 + (r + 0.5) * g.dz - up.z0) / up.dz - 0.5; g = up;
         cc = c + ux * d / g.dx; rr = r + uz * d / g.dz;
       }
+      if (g === FAR && RG) {   // on the wide grid and into the range's box: carry on in its 5 m grid (the ridges the sun goes behind)
+        const rc = ((cc + 0.5) * FAR.dx - RG.x0) / RG.dx - 0.5, r2 = ((rr + 0.5) * FAR.dz - RG.z0) / RG.dz - 0.5;
+        if (rc > 2 && r2 > 2 && rc < RG.n - 3 && r2 < RG.n - 3) { c = ((c + 0.5) * FAR.dx - RG.x0) / RG.dx - 0.5; r = ((r + 0.5) * FAR.dz - RG.z0) / RG.dz - 0.5; g = RG; cc = rc; rr = r2; }
+      }
       if (cc < 0 || rr < 0 || cc > g.n - 1 || rr > g.n - 1 || hh > maxH) break;
       let cl = hh - gh(g, cc, rr);
       if (trees && g === DT) cl -= treeH(cc, rr);   // only for the "trees may block the sun" note, never for the times
       if (cl <= 0) return 0;
       const s = cl / (d * 0.02); if (s < v) v = s;
-      L = g === DT ? Math.min(L * 1.02, 2.5) : L * 1.03;
+      L = g === DT ? Math.min(L * 1.02, 2.5) : g === RG ? Math.min(L * 1.03, 12) : L * 1.03;
     }
     return v;
   }
   // the highest grid point close to a pin: a summit pin a few metres off would sit in the summit's own shadow
+  const snapR = g => g === NR ? 6 : g === RG && FAR ? Math.max(6, Math.round(4 * Math.max(FAR.dx, FAR.dz) / Math.max(g.dx, g.dz))) : 4;   // the same ground on the range grid as the wide grid's 4 cells (~108 m), ~35 m on the fine box
   const snap = (q, rad) => { const g = q.g, n = g.n; let best = null; for (let r = Math.round(q.r) - rad; r <= Math.round(q.r) + rad; r++) for (let c = Math.round(q.c) - rad; c <= Math.round(q.c) + rad; c++) { if (r < 0 || c < 0 || r >= n || c >= n) continue; const h = g.HF[r * n + c]; if (!best || h > best.h) best = { g, c, r, h }; } return best; };
   const sunVec = (az, alt) => { const a = alt * Math.PI / 180, z = az * Math.PI / 180; return { x: Math.sin(z) * Math.cos(a), y: Math.sin(a), z: -Math.cos(z) * Math.cos(a), tan: Math.tan(a), hx: Math.sin(z), hz: -Math.cos(z) }; };
   const far = () => { const a = cr(eye), b = cr(target); return Math.hypot((b.c - a.c) * FAR.dx, (b.r - a.r) * FAR.dz); };
-  const subjPoint = () => { const t = pick(target), q = far() > 3000 ? snap(t, t.g === NR ? 6 : 4) : null; if (q) return q; return { g: t.g, c: t.c, r: t.r, h: gh(t.g, t.c, t.r) + 6 }; };
+  const subjPoint = () => { const t = pick(target), q = far() > 3000 ? snap(t, snapR(t.g)) : null; if (q) return q; return { g: t.g, c: t.c, r: t.r, h: gh(t.g, t.c, t.r) + 6 }; };
   // The subject counts as lit when either that point or the pin itself is (12 Nov 2026). The nearby high point alone
   // went wrong for a pin at the foot of a wall: Teton Point Turnout's "main" sits in the Teton Glacier bowl under the
   // Grand, its "highest point nearby" is a spot part-way up the wall, which the wall shades all day, so the view said
@@ -158,7 +184,7 @@
   // detail grid, 3 m elsewhere). On the near grid the highest ground within a step and a half, so a pin on a steep slope does not
   // put the eye inside the hill; on the wide grid the ground there; on the detail grid the survey's ground is exact.
   const EYE = 1.73;
-  const eyeH = e => { if (e.g === DT) return gh(e.g, e.c, e.r) + EYE; let h = gh(e.g, e.c, e.r); if (e.g === NR) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + EYE; };
+  const eyeH = e => { if (e.g === DT) return gh(e.g, e.c, e.r) + EYE; let h = gh(e.g, e.c, e.r); if (e.g === NR || e.g === RG) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + EYE; };
   // First / last direct light. Measured 12 Nov 2026 against 102 webcam pictures (27 events, tools/sun3d/README.md): with
   // the first rule (whole disc clear of a soft skyline, never below the flat horizon) ridge-blocked events were right to
   // a few minutes but sunrise / sunset on high points were 5-13 min off. Now: the sun's CENTRE against a hard skyline
@@ -401,11 +427,17 @@
     #ifdef DHOLE
     uniform vec4 dhole; uniform float dkeep; uniform float dband;
     #endif
+    #ifdef RHOLE
+    uniform vec4 rhole; uniform float rkeep; uniform float rband;
+    #endif
     #ifdef WATER
     varying vec3 vP;
     #endif
     void main() {
       vUv = position.xz; vec2 t = texture2D(hmap, vUv).rg; float y = t.r + t.g;
+    #ifdef RHOLE
+      { vec2 w3 = vUv * size; float d3 = min(min(w3.x - rhole.x, rhole.z - w3.x), min(w3.y - rhole.y, rhole.w - w3.y)); y -= clamp(d3 - rkeep, 0., rband) * .5; }
+    #endif
     #ifdef HOLE
       vec2 w = vUv * size; float din = min(min(w.x - hole.x, hole.z - w.x), min(w.y - hole.y, hole.w - w.y));
       y -= clamp(din - keep, 0., band) * .5;
@@ -426,6 +458,9 @@
     #ifdef DHOLE
     uniform vec2 dsize; uniform vec4 dhole; uniform float dband;
     #endif
+    #ifdef RHOLE
+    uniform vec2 rsize; uniform vec4 rhole; uniform float rband;
+    #endif
     #ifdef WATER
     varying vec3 vP;
     ` + WATER_GLSL + `
@@ -439,6 +474,9 @@
     #endif
     #ifdef DHOLE
       { vec2 w2 = vUv * dsize; if (min(min(w2.x - dhole.x, dhole.z - w2.x), min(w2.y - dhole.y, dhole.w - w2.y)) > dband) discard; }
+    #endif
+    #ifdef RHOLE
+      { vec2 w3 = vUv * rsize; if (min(min(w3.x - rhole.x, rhole.z - w3.x), min(w3.y - rhole.y, rhole.w - w3.y)) > rband) discard; }
     #endif
       vec3 c = texture2D(lmap, vUv).rgb;
     #ifdef WDET
@@ -462,6 +500,9 @@
     uniform vec4 dhole; uniform float dkeep; uniform float dband; varying vec2 vW;
     #endif
     varying vec2 vUv; varying vec2 vF; varying float vT; varying float vDist;
+    #ifdef RNG
+    uniform sampler2D rmap; uniform vec4 rrect; uniform float rkeep; uniform float rband; varying vec2 vR; varying float vRT;
+    #endif
     #if defined(BLD) || defined(WATER) || defined(NPHOTO)
     varying vec3 vP;
     #endif
@@ -481,13 +522,18 @@
       return ws > 1e-4 ? hs / ws : Hc(nn);
     }
     #endif
-    float wp(float s, float f) { float d = s - f; float m = d < 0. ? f : 1. - f; if (m < .0005) return f; float x = abs(d) / m; return f + sign(d) * m * x * (.35 + .65 * x * x); }
+    uniform float wk;   // how much the points bunch at the focus: the spacing there is wk x the mean (.35; the range's mesh .2)
+    float wp(float s, float f) { float d = s - f; float m = d < 0. ? f : 1. - f; if (m < .0005) return f; float x = abs(d) / m; return f + sign(d) * m * x * (wk + (1. - wk) * x * x); }
     void main() {
       vec2 uv = vec2(wp(position.x, focus.x), wp(position.z, focus.y));
       vec2 w = rect.xy + uv * rect.zw; vUv = uv; vF = w / fsize;
       float din = min(min(uv.x, 1. - uv.x) * rect.z, min(uv.y, 1. - uv.y) * rect.w);
       vT = smoothstep(keep, band, din);
       vec2 a = texture2D(hmap, uv).rg; vec2 b = texture2D(fmap, vF).rg;
+    #ifdef RNG
+      vR = (w - rrect.xy) / rrect.zw; vRT = smoothstep(rkeep, rband, min(min(vR.x, 1. - vR.x) * rrect.z, min(vR.y, 1. - vR.y) * rrect.w));
+      if (vRT > 0.) { vec2 rh = texture2D(rmap, vR).rg; b = vec2(mix(b.r + b.g, rh.r + rh.g, vRT), 0.); }   // where the range's mesh is drawn, its heights
+    #endif
     #ifdef BLD
       a = vec2(Hd(uv), 0.);
     #endif
@@ -510,6 +556,9 @@
     precision highp float; uniform sampler2D lmap; uniform sampler2D flmap; uniform vec3 fogCol; uniform float fogD; varying vec2 vUv; varying vec2 vF; varying float vT; varying float vDist;
     #ifdef MID
     uniform sampler2D mlmap; varying vec2 vM; varying float vMT;
+    #endif
+    #ifdef RNG
+    uniform sampler2D rlmap; varying vec2 vR; varying float vRT;
     #endif
     #ifdef DHOLE
     uniform vec4 dhole; uniform float dband; varying vec2 vW;
@@ -550,6 +599,9 @@
       if (min(min(vW.x - dhole.x, dhole.z - vW.x), min(vW.y - dhole.y, dhole.w - vW.y)) > dband) discard;
     #endif
       vec3 under = texture2D(flmap, vF).rgb;
+    #ifdef RNG
+      under = mix(under, texture2D(rlmap, vR).rgb, vRT);
+    #endif
     #ifdef MID
       under = mix(under, texture2D(mlmap, vM).rgb, vMT);
     #endif
@@ -651,6 +703,7 @@
       gl_FragColor = vec4(vCol, 1.);
     }`;
   const TREE_LIGHT = 40000;   // on a small phone
+  const TREE_REACH = 260;   // a 1.5 km laser box (14 Nov 2026): its dot trees only within this many metres of the eye (the old box's size); beyond, the park-wide spruce outlines, which read as trees from afar where dots read as blobs
   const TREE_MAX = 90000;   // points a box unless cfg.detail.maxTrees says otherwise: enough to read as trees, light enough for a small phone
   const POP = (() => { const t = new Uint8Array(256); for (let i = 1; i < 256; i++) t[i] = (i & 1) + t[i >> 1]; return t; })();
   // Tree points for a detail box, at most `cap`: many small ones close to the stand spot, fewer and larger ones farther
@@ -662,7 +715,8 @@
     const n = D.n, k = D.kind, e = crg(D, eye), dx = D.dx, dz = D.dz, len = n * fine * 8 + 1;
     if (!k) return null;
     const thin = (r, c) => Math.min(3, 60 / Math.max(1, Math.hypot((c - e.c) * dx, (r - e.r) * dz)));
-    const edge = (r, c) => Math.min((c + 0.5) * dx, (n - c - 0.5) * dx, (r + 0.5) * dz, (n - r - 0.5) * dz) >= D.band;   // not in the strip that blends into the coarser grid
+    const reach = D.reach || Infinity;   // a 1.5 km box: its own (laser-return) trees only this far from the eye; the park-wide trees (spruce outlines) beyond
+    const edge = (r, c) => Math.min((c + 0.5) * dx, (n - c - 0.5) * dx, (r + 0.5) * dz, (n - r - 0.5) * dz) >= D.band && Math.max(Math.abs(c - e.c) * dx, Math.abs(r - e.r) * dz) <= reach;   // not in the strip that blends into the coarser grid
     // The tree file is read twice, a line at a time (first to count, then to place the points): never whole in memory.
     // each(fn): fn(r, a, b) for every row of the box; a (and b on the light grid, where a cell is four of the file's) = the file's line(s)
     const keep = fine === 2 ? new Uint8Array(len) : null, B = new Uint8Array(8);
@@ -784,7 +838,7 @@
   async function load() {
     const f = await decode(parts, cfg.n, cfg.base, cfg.step); parts = [];
     FAR = { n: cfg.n, HF: f.HF, north: cfg.north, south: cfg.south, west: cfg.west, east: cfg.east, x0: 0, z0: 0, w: cfg.W, d: cfg.D, dx: cfg.W / cfg.n, dz: cfg.D / cfg.n };
-    maxH = f.hi + 60; minH = f.lo; NR = null; DT = null;
+    maxH = f.hi + 60; minH = f.lo; NR = null; DT = null; RG = null;
     { const s = []; for (let i = 0; i < f.HF.length; i += 37) s.push(f.HF[i]); s.sort((a, b) => a - b); baseH = s[Math.floor(s.length * 0.1)] || 0; }   // the area's low ground: valley floor, or the sea
     const nc = cfg.near, list = nparts; nparts = [];
     if (nc && list.length) try {   // the fine grid is an extra: if its file is bad the wide one still draws
@@ -878,7 +932,7 @@
       nmap = heightTex(NR); const rect = nrect = new THREE.Vector4(NR.x0, NR.z0, NR.w, NR.d);
       const nLight = new THREE.ShaderMaterial({ defines: { NEAR: 1 }, uniforms: { hmap: { value: nmap }, fmap: { value: hmap }, rect: { value: rect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(NR.dx, NR.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(NR.w, NR.d) }, texel: { value: 1 / NR.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH }, vertexShader: lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
       const nlo = rt(Math.min(1024, NR.n)), nhi = rt(NR.n);
-      const mat = new THREE.ShaderMaterial({ defines: DT ? { DHOLE: 1 } : {}, uniforms: Object.assign({ hmap: { value: nmap }, fmap: { value: hmap }, lmap: { value: nlo.texture }, flmap: { value: lo.texture }, rect: { value: rect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: NR.keep }, band: { value: NR.band }, fogCol: fog.fogCol, fogD: fog.fogD }, dholeU), vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
+      const mat = new THREE.ShaderMaterial({ defines: DT ? { DHOLE: 1 } : {}, uniforms: Object.assign({ hmap: { value: nmap }, fmap: { value: hmap }, lmap: { value: nlo.texture }, flmap: { value: lo.texture }, rect: { value: rect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, wk: { value: 0.35 }, keep: { value: NR.keep }, band: { value: NR.band }, fogCol: fog.fogCol, fogD: fog.fogD }, dholeU), vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
       const mesh = new THREE.Mesh(ngeo, [mat]); mesh.frustumCulled = false;   // a list of one material: the mesh is drawn by its geometry's groups (the blocks in view)
       near = { lightMat: nLight, lo: nlo, hi: nhi, lite: [], mat, mesh };
       terrU.hole = { value: new THREE.Vector4(NR.x0, NR.z0, NR.x0 + NR.w, NR.z0 + NR.d) }; terrU.keep = { value: NR.keep }; terrU.band = { value: NR.band };
@@ -908,9 +962,16 @@
   function queueFore() {
     if (foreState !== 0 || !cfg) return;
     const main = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length), wide = !!(cfg.canopy && cnAny());
-    if (!main && !wide) return;
+    const rng = !!(cfg.range && rparts.length && rangeState === 0), hs = !!(cfg.houses && hsAny() && houseState === 0);
+    if (!main && !wide && !rng && !hs) return;
     foreState = main ? 1 : 0;
-    const go = () => { if (!R) return; if (frames >= 2) { if (main) addFore(); else queueWide(); } else setTimeout(go, 60); };
+    const my = cfg;
+    const go = async () => {
+      if (!R || cfg !== my) return;
+      if (frames < 2) { setTimeout(go, 60); return; }
+      if (rng) { await addRange(); await pause(); if (cfg !== my || !R) return; }   // the mountains first: the biggest gain, on its own
+      if (main) addFore(); else afterFore();
+    };
     setTimeout(go, 320);   // the plain view has had its first frames and its full light pass
   }
   async function addFore() {
@@ -936,7 +997,7 @@
       const w = (dc.east - dc.west) * kx, d = (dc.north - dc.south) * kz, P = NR || my, pcell = NR ? Math.max(NR.w, NR.d) / (G - 1) : Math.max(my.W, my.D) / (G - 1);
       const keep = Math.max(4, Math.min(25, 0.5 * pcell)), band = keep + Math.max(16, Math.min(45, 2 * pcell));
       if (!(dc.west >= P.west && dc.east <= P.east && dc.south >= P.south && dc.north <= P.north) || Math.min(w, d) < 4 * band) throw new Error('detail grid does not fit');
-      D = { n: dn, HF: m.HF, north: dc.north, south: dc.south, west: dc.west, east: dc.east, x0: (dc.west - my.west) * kx, z0: (my.north - dc.north) * kz, w, d, dx: w / dn, dz: d / dn, keep, band, up: NR || FAR, lift: 2, kind: null };
+      D = { reach: Math.max(w, d) > 600 ? TREE_REACH : Infinity, n: dn, HF: m.HF, north: dc.north, south: dc.south, west: dc.west, east: dc.east, x0: (dc.west - my.west) * kx, z0: (my.north - dc.north) * kz, w, d, dx: w / dn, dz: d / dn, keep, band, up: NR || FAR, lift: 2, kind: null };
       await step('decode');
       // 2. the class mask (without it: bare shapes), and the water of the 6 km around (0 none, 1 moving, 2 still)
       if (mparts.length) {
@@ -990,7 +1051,7 @@
       const ALB = my.ground !== 'green';   // snow regions (Grand Teton): the colour files are albedo for the light passes
       if (wcparts.length) { list = wcparts; wcparts = []; try { wph = await photoOf(list, light ? 2048 : 0, () => false); made.push(wph.tex); } catch (e) { wph = null; } list = null; await step('wide colour'); }
       if (NR && ncparts.length) { list = ncparts; ncparts = []; try { nph = await photoOf(list, light ? 1024 : 0, (fx, fy) => gh(NR, fx * NR.n - 0.5, fy * NR.n - 0.5) < 1); made.push(nph.tex); } catch (e) { nph = null; } list = null; }
-      if (D && cparts.length) { list = cparts; cparts = []; try { dph = await photoOf(list, light ? 1024 : 0, (fx, fy) => { const c = Math.min(D.n - 1, Math.floor(fx * D.n)), r = Math.min(D.n - 1, Math.floor(fy * D.n)); return D.kind ? D.kind[r * D.n + c] === 3 : D.HF[r * D.n + c] < 0.6; }); made.push(dph.tex); } catch (e) { dph = null; } list = null; }
+      if (D && cparts.length) { list = cparts; cparts = []; try { dph = await photoOf(list, light || dc.n > 1024 ? 1024 : 0, (fx, fy) => { const c = Math.min(D.n - 1, Math.floor(fx * D.n)), r = Math.min(D.n - 1, Math.floor(fy * D.n)); return D.kind ? D.kind[r * D.n + c] === 3 : D.HF[r * D.n + c] < 0.6; }); made.push(dph.tex); } catch (e) { dph = null; } list = null; }
       ncparts = []; cparts = [];
       if (nph || dph) await step('photos');
       if (D && bparts.length) {
@@ -1026,14 +1087,14 @@
         ngeo.attributes.position.onUpload(function () { free(this.array); this.array = null; });
       }
       const lu = { hmap: { value: dmap }, fmap: { value: hmap }, kmap: { value: kmap }, lift: { value: 0.3 }, ice: R.iceU, rect: { value: drect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(D.dx, D.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(D.w, D.d) }, texel: { value: 1 / D.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH };
-      const mu = Object.assign({ hmap: { value: dmap }, kmap: { value: kmap }, cells: { value: D.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, skyZen: R.skyU.zen, skyHor: R.skyU.hor, ice: R.iceU, fmap: { value: hmap }, lmap: { value: null }, flmap: { value: lo.texture }, rect: { value: drect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, keep: { value: D.keep }, band: { value: D.band }, fogCol: fog.fogCol, fogD: fog.fogD }, waterU);
+      const mu = Object.assign({ hmap: { value: dmap }, kmap: { value: kmap }, cells: { value: D.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, skyZen: R.skyU.zen, skyHor: R.skyU.hor, ice: R.iceU, fmap: { value: hmap }, lmap: { value: null }, flmap: { value: lo.texture }, rect: { value: drect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, wk: { value: 0.35 }, keep: { value: D.keep }, band: { value: D.band }, fogCol: fog.fogCol, fogD: fog.fogD }, waterU);
       if (NR) { lu.mmap = { value: C.nmap }; lu.mrect = { value: C.nrect }; Object.assign(mu, { mmap: { value: C.nmap }, mrect: { value: C.nrect }, mkeep: { value: NR.keep }, mband: { value: NR.band }, skirt: { value: 14 }, mlmap: { value: near.lo.texture } }); }
       const ldef = NR ? { NEAR: 1, DETAIL: 1, MID: 1 } : { NEAR: 1, DETAIL: 1 };
       if (dph && !ALB) ldef.PHOTO = 1;
       { const a = albOf(D); if (a) { ldef.APHOTO = 1; lu.aphoto = { value: a.tex }; lu.arect = { value: a.rect }; } }
       if (hs) { ldef.BSHADOW = 1; lu.bmap = { value: hs.bmap }; }
       const dLight = new THREE.ShaderMaterial({ defines: ldef, uniforms: lu, vertexShader: C.lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
-      const dlo = C.rt(Math.min(512, D.n)), dhi = C.rt(D.n); mu.lmap.value = dlo.texture;
+      const dlo = C.rt(Math.min(512, D.n)), dhi = C.rt(Math.min(1024, D.n));   // a 1.5 km box (1504 cells): its sharp light at 1.5 m, not every metre (a quarter less light-pass work and memory) mu.lmap.value = dlo.texture;
       const ddef = { BLD: 1 }; if (NR) ddef.MID = 1; if (wmap) ddef.WATER = 1;
       if (dph && !ALB) { ddef.DPHOTO = 1; Object.assign(mu, pu, { dphoto: { value: dph.tex }, pcells: { value: D.n } }); if (nph && NR) { ddef.NPH = 1; mu.nphoto = { value: nph.tex }; } }
       const mat = new THREE.ShaderMaterial({ defines: ddef, uniforms: mu, vertexShader: NEAR_VS, fragmentShader: NEAR_FS });
@@ -1051,11 +1112,12 @@
         det.houses = new THREE.Mesh(hs.geo, hs.mat); det.houseCount = hs.count;
       }
       Object.assign(C.terrU, dholeU, { dsize: { value: size } }, waterU);
-      const tdef = { DHOLE: 1 }; if (near) tdef.HOLE = 1; if (wmap) tdef.WATER = 1;
+      const tdef = { DHOLE: 1 }; if (near) tdef.HOLE = 1; if (wmap) tdef.WATER = 1; if (R.range) tdef.RHOLE = 1;
+      if (R.range && wmap) { Object.assign(R.range.mat.uniforms, waterU); R.range.mat.defines.WATER = 1; R.range.mat.needsUpdate = true; }   // the lakes of the 6 km around, on the range's mesh too
       terrMat = new THREE.ShaderMaterial({ defines: tdef, uniforms: C.terrU, vertexShader: TERRAIN_VS, fragmentShader: TERRAIN_FS }); made.push(terrMat);
       if (near) {
         Object.assign(near.mat.uniforms, dholeU, waterU);
-        const nd = { DHOLE: 1 }; if (wmap) nd.WATER = 1; if (nph && !ALB) nd.NPHOTO = 1;
+        const nd = { DHOLE: 1 }; if (wmap) nd.WATER = 1; if (nph && !ALB) nd.NPHOTO = 1; if (near.mat.defines.RNG) nd.RNG = 1;
         nearMat = new THREE.ShaderMaterial({ defines: nd, uniforms: near.mat.uniforms, vertexShader: NEAR_VS, fragmentShader: NEAR_FS }); made.push(nearMat);
       }
       } else if (nph && near && !ALB) {   // a fine box with a photo and no detail box: only the fine mesh changes
@@ -1072,6 +1134,8 @@
         const af = albOf(FAR), an = near && albOf(NR);
         if (af) { Object.assign(R.lightMat.uniforms, { aphoto: { value: af.tex }, arect: { value: af.rect } }); R.lightMat.defines.APHOTO = 1; R.lightMat.needsUpdate = true; }
         if (an) { Object.assign(near.lightMat.uniforms, { aphoto: { value: an.tex }, arect: { value: an.rect } }); near.lightMat.defines.APHOTO = 1; near.lightMat.needsUpdate = true; }
+        const ar = R.range && albOf(RG);
+        if (ar) { Object.assign(R.range.lightMat.uniforms, { aphoto: { value: ar.tex }, arect: { value: ar.rect } }); R.range.lightMat.defines.APHOTO = 1; R.range.lightMat.needsUpdate = true; }
         const lod = wph ? Math.log2((wph.tex.image.width || 0) / R.hi.width) : 0;
         if (lod >= 0.5) {
           const tm = R.terrMat; Object.assign(C.terrU, { wphoto: { value: wph.tex }, wlod: { value: lod } });
@@ -1097,7 +1161,7 @@
       dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = -1;
       post({ type: 'foreground', ok: false, msg: String(e && e.message || e), at: where });
     }
-    if (cfg === my) setTimeout(queueWide, WIDE_WAIT);   // the park-wide trees last, on their own: whatever happened above, they may still come. A short wait first: the foreground's leftovers are let go before more is unpacked (a lower top of the page's memory)
+    if (cfg === my) setTimeout(afterFore, WIDE_WAIT);   // the park-wide trees last, on their own: whatever happened above, they may still come. A short wait first: the foreground's leftovers are let go before more is unpacked (a lower top of the page's memory)
   }
   // base64 pieces -> bytes (each piece let go as it is used)
   function bytesOf(list) {
@@ -1201,16 +1265,26 @@
   // light passes' alpha). None inside the laser box (its own trees are there). Never in lit() / the sun times.
   // Built after the rest of the foreground, in steps; a failure or a slow phone only leaves these trees out.
   const WIDE_WAIT = 1500, WIDE_MS = 30000, WIDE_D0 = 600, WIDE_RANGE = 12000, WIDE_MAX = 60000, WIDE_LIGHT = 20000, WB = 16;
+  let DT_ = null;
   const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   // The ground as drawn at x, z (the far grid's metres): the fine mesh inside its box (blending into the wide grid's
   // heights toward its edge), else the wide mesh, whose G x G points take the wide grid's heights and join them in two
   // triangles a cell (a-d-b, b-d-e), so a tree stands on the surface you see and not on the grid between its points.
+  const inG = (g, x, z) => g && x > g.x0 && x < g.x0 + g.w && z > g.z0 && z < g.z0 + g.d;
+  const dinG = (g, x, z) => Math.min(x - g.x0, g.x0 + g.w - x, z - g.z0, g.z0 + g.d - z);
+  const ghx = (g, x, z) => gh(g, (x - g.x0) / g.dx - 0.5, (z - g.z0) / g.dz - 0.5);
   function groundAt(x, z) {
-    if (NR && x > NR.x0 && x < NR.x0 + NR.w && z > NR.z0 && z < NR.z0 + NR.d) {
-      const din = Math.min(x - NR.x0, NR.x0 + NR.w - x, z - NR.z0, NR.z0 + NR.d - z), t = sstep(NR.keep, NR.band, din);
-      const hf = gh(FAR, x / FAR.dx - 0.5, z / FAR.dz - 0.5);
-      return t > 0 ? hf + (gh(NR, (x - NR.x0) / NR.dx - 0.5, (z - NR.z0) / NR.dz - 0.5) - hf) * t : hf;
+    if (inG(DT, x, z)) {   // the survey's own ground (the detail mesh fades into the fine one along its edge)
+      const t = sstep(DT.keep, DT.band, dinG(DT, x, z)); if (t >= 1) return ghx(DT, x, z);
+      DT_ = DT; DT = null; const o = groundAt(x, z); DT = DT_; DT_ = null; return o + (ghx(DT, x, z) - o) * t;
     }
+    if (inG(NR, x, z)) {
+      const t = sstep(NR.keep, NR.band, dinG(NR, x, z));
+      let hf = gh(FAR, x / FAR.dx - 0.5, z / FAR.dz - 0.5);
+      if (inG(RG, x, z)) { const tr = sstep(RG.keep, RG.band, dinG(RG, x, z)); hf += (ghx(RG, x, z) - hf) * tr; }
+      return t > 0 ? hf + (ghx(NR, x, z) - hf) * t : hf;
+    }
+    if (inG(RG, x, z)) { const t = sstep(RG.keep, RG.band, dinG(RG, x, z)), hf = gh(FAR, x / FAR.dx - 0.5, z / FAR.dz - 0.5); return hf + (ghx(RG, x, z) - hf) * t; }
     const u = Math.max(0, Math.min(G - 1.0001, x / FAR.w * (G - 1))), v = Math.max(0, Math.min(G - 1.0001, z / FAR.d * (G - 1)));
     const i = Math.floor(u), j = Math.floor(v), fu = u - i, fv = v - j, H = (a, b) => gh(FAR, a / (G - 1) * FAR.n - 0.5, b / (G - 1) * FAR.n - 0.5);
     const b = H(i + 1, j), d = H(i, j + 1);
@@ -1222,7 +1296,8 @@
   // in all (d0 is set to fill it: 250 m in thick forest to 1.2 km over open flats). Sorted into WB x WB blocks around the viewpoint, so a frame draws only the blocks in view.
   async function widePoints(tiles, at, cap, range, breathe) {
     const my = cfg, kx = my.W / (my.east - my.west), kz = my.D / (my.north - my.south), q = cr(at), ex = (q.c + 0.5) * FAR.dx, ez = (q.r + 0.5) * FAR.dz;
-    const inner = DT ? [DT.x0 + DT.band, DT.x0 + DT.w - DT.band, DT.z0 + DT.band, DT.z0 + DT.d - DT.band] : null;   // the laser box's own trees
+    const rch = DT && DT.reach || Infinity;
+    const inner = DT ? [Math.max(DT.x0 + DT.band, ex - rch), Math.min(DT.x0 + DT.w - DT.band, ex + rch), Math.max(DT.z0 + DT.band, ez - rch), Math.min(DT.z0 + DT.d - DT.band, ez + rch)] : null;   // the laser box's own trees (within TREE_REACH of the eye in a 1.5 km box)
     const T = [];
     for (const { t, blob } of tiles) {
       const x0 = (t.west - my.west) * kx, z0 = (my.north - t.north) * kz, w = (t.east - t.west) * kx, d = (t.north - t.south) * kz;
@@ -1336,6 +1411,189 @@
       c = pow(min(c * .9, vec3(1.)), vec3(.62));
       gl_FragColor = vec4(mix(c, vFogC, vFog), 1.);
     }`;
+  // ---- The sharp range: a fourth level, built after the plain view (before the detail box), dropped alone if it fails ----
+  const RANGE_MS = 45000;
+  // Its mesh: every other point of the shared grid (384 a side: on a software-graphics test the full 768 doubled a frame's
+  // time), bunched harder at the subject (spacing .2 x the mean there: ~5 m at the peak, as the file; ~70 m at the box's
+  // edge, where it fades into the wide grid anyway). Its light map keeps every 5 m point, so the faces keep their detail.
+  const RANGE_WK = 0.2;
+  async function addRange() {
+    const my = cfg, rc = my.range, t0 = performance.now(), made = []; let where = 'decode';
+    if (!rc || !rparts.length || !R) { rparts = []; return; }
+    rangeState = 1;
+    const check = async w => { where = w; await pause(); if (cfg !== my || !R) throw new Error('the view changed'); if (R.lost) throw new Error('graphics context lost'); if (performance.now() - t0 > RANGE_MS) throw new Error('took too long');
+      const pm = performance.memory; if (pm && pm.jsHeapSizeLimit && pm.usedJSHeapSize > 0.8 * pm.jsHeapSizeLimit) throw new Error('not enough memory'); };
+    try {
+      const light = rc.light != null ? !!rc.light : (navigator.deviceMemory || 8) <= 2, skip = light && !(rc.n & 1) ? 2 : 1;
+      let list = rparts; rparts = [];
+      const m = await decode(list, rc.n, rc.base || 0, rc.step || 0.05, skip); list = null;
+      await check('decode');
+      const n = rc.n / skip, kx = my.W / (my.east - my.west), kz = my.D / (my.north - my.south), cell = Math.max(my.W, my.D) / (G - 1);
+      const w = (rc.east - rc.west) * kx, d = (rc.north - rc.south) * kz;
+      if (!(rc.west >= my.west && rc.east <= my.east && rc.south >= my.south && rc.north <= my.north) || Math.min(w, d) < 12 * cell) throw new Error('range grid does not fit');
+      const Rg = { n, HF: m.HF, north: rc.north, south: rc.south, west: rc.west, east: rc.east, x0: (rc.west - my.west) * kx, z0: (my.north - rc.north) * kz, w, d, dx: w / n, dz: d / n, keep: 1.6 * cell, band: 4.2 * cell, up: FAR };
+      const C = R.ctx, sunU = C.sunU, rmap = heightTex(Rg); made.push(rmap);
+      R.renderer.initTexture(rmap); free(rmap.image.data); rmap.image = { data: null, width: n, height: n };
+      await check('texture');
+      const rect = new THREE.Vector4(Rg.x0, Rg.z0, Rg.w, Rg.d);
+      const lightMat = new THREE.ShaderMaterial({ defines: { NEAR: 1 }, uniforms: { hmap: { value: rmap }, fmap: { value: C.hmap }, rect: { value: rect }, fsize: { value: C.size }, step0: { value: 1.2 * Math.max(Rg.dx, Rg.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(w, d) }, texel: { value: 1 / n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH }, vertexShader: C.lightVS, fragmentShader: LIGHT_FS, depthTest: false, depthWrite: false });
+      const lo = C.rt(Math.min(1024, n)), hi = C.rt(n); made.push(lightMat, lo, hi);
+      let ngeo = C.ngeo;
+      if (!ngeo) {   // no fine mesh to share the points of: the same grid with a skirt ring, kept for the detail box too
+        const np = new Float32Array(G * G * 3), sk = i => (i === 0 || i === G - 1 ? 1 : 0), at = i => Math.max(0, Math.min(1, (i - 1) / (G - 3)));
+        for (let j = 0, k = 0; j < G; j++) for (let i = 0; i < G; i++) { np[k++] = at(i); np[k++] = sk(i) || sk(j); np[k++] = at(j); }
+        ngeo = new THREE.BufferGeometry(); ngeo.setAttribute('position', new THREE.BufferAttribute(np, 3)); ngeo.setIndex(C.index);
+        ngeo.attributes.position.onUpload(function () { free(this.array); this.array = null; }); C.ngeo = ngeo;
+      }
+      const u = { hmap: { value: rmap }, fmap: { value: C.hmap }, lmap: { value: lo.texture }, flmap: { value: R.lo.texture }, rect: { value: rect }, fsize: { value: C.size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, wk: { value: RANGE_WK }, keep: { value: Rg.keep }, band: { value: Rg.band }, fogCol: C.fog.fogCol, fogD: C.fog.fogD };
+      const defs = {}, hole = NR || DT;   // cut out under the fine box (or the detail box when there is no fine one)
+      if (hole) { defs.DHOLE = 1; Object.assign(u, { dhole: { value: new THREE.Vector4(hole.x0, hole.z0, hole.x0 + hole.w, hole.z0 + hole.d) }, dkeep: { value: hole.keep }, dband: { value: hole.band } }); }
+      const mat = new THREE.ShaderMaterial({ defines: defs, uniforms: u, vertexShader: NEAR_VS, fragmentShader: NEAR_FS }); made.push(mat);
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', ngeo.attributes.position); geo.setIndex(ngeo.index);
+      const mesh = new THREE.Mesh(geo, [mat]); mesh.frustumCulled = false;
+      await check('mesh');
+      // in, all at once: the wide mesh cut out under it, the fine mesh's edge onto it
+      Object.assign(C.terrU, { rhole: { value: new THREE.Vector4(Rg.x0, Rg.z0, Rg.x0 + w, Rg.z0 + d) }, rkeep: { value: Rg.keep }, rband: { value: Rg.band }, rsize: { value: C.size } });
+      R.terrMat.defines.RHOLE = 1; R.terrMat.needsUpdate = true;
+      if (R.near) { Object.assign(R.near.mat.uniforms, { rmap: { value: rmap }, rrect: { value: rect }, rkeep: { value: Rg.keep }, rband: { value: Rg.band }, rlmap: { value: lo.texture } }); R.near.mat.defines.RNG = 1; R.near.mat.needsUpdate = true; }
+      RG = Rg; maxH = Math.max(maxH, m.hi + 60); minH = Math.min(minH, m.lo); sunU.maxH.value = maxH;
+      R.range = { lightMat, lo, hi, lite: [], mat, mesh }; R.scene.add(mesh);
+      if (touched) focus(); else { aim(); heading(); }
+      rangeState = 2; relight = dirty = true;
+      post({ type: 'range', ok: true, n, light, ms: Math.round(performance.now() - t0) });
+      if (lastPath) window.S3D.path(lastPath);   // the day's first / last light again, now with the sharp ridges
+    } catch (e) {
+      for (const t of made) { try { t.dispose(); } catch (x) { /* nothing to let go */ } }
+      rparts = []; if (rangeState === 1) rangeState = -1;
+      post({ type: 'range', ok: false, msg: String(e && e.message || e), at: where });
+    }
+  }
+
+  // ---- Park-wide buildings: walls and roofs from the laser survey, after the foreground, never in the sun times ----
+  const HOUSE_RANGE = 8000, HOUSE_MS = 30000;
+  const hsAny = () => Object.keys(hsparts).length > 0;
+  const PHOUSE_VS = `attribute vec3 bcol; varying vec3 vC; varying vec3 vN; varying vec3 vP; varying float vDist;
+    void main() { vC = bcol; vN = normal; vP = position; vec4 mv = modelViewMatrix * vec4(position, 1.); vDist = length(mv.xyz); gl_Position = projectionMatrix * mv; }`;
+  const PHOUSE_FS = `precision highp float; uniform sampler2D lmapF; uniform sampler2D lmapR; uniform sampler2D lmapN; uniform sampler2D lmapD;
+    uniform vec4 rrect; uniform vec4 nrect; uniform vec4 drect; uniform vec2 fsize; uniform vec3 has;
+    uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec3 fogCol; uniform float fogD;
+    varying vec3 vC; varying vec3 vN; varying vec3 vP; varying float vDist;
+    bool inR(vec2 u) { return u.x > 0. && u.y > 0. && u.x < 1. && u.y < 1.; }
+    float hills() {   // the sun the ground here gets from the hills: the finest light map that holds the spot (its alpha)
+      vec2 u = (vP.xz - drect.xy) / drect.zw; if (has.z > .5 && inR(u)) return texture2D(lmapD, u).a;
+      u = (vP.xz - nrect.xy) / nrect.zw; if (has.y > .5 && inR(u)) return texture2D(lmapN, u).a;
+      u = (vP.xz - rrect.xy) / rrect.zw; if (has.x > .5 && inR(u)) return texture2D(lmapR, u).a;
+      return texture2D(lmapF, vP.xz / fsize).a;
+    }
+    void main() {
+      vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
+      if (abs(n.y) > .2) n.y = abs(n.y);   // a roof faces up whichever way its triangles were wound
+      float lam = max(dot(n, sunDir), 0.), vis = lam > 0. ? max(hills(), 0.) : 0.;
+      vec3 c = vC * (amb * (.72 + .28 * max(n.y, 0.)) + sunCol * lam * vis);
+      c = pow(min(c * .9, vec3(1.)), vec3(.62));
+      float f = 1. - exp(-pow(fogD * vDist, 2.)); gl_FragColor = vec4(mix(c, fogCol, f), 1.);
+    }`;
+  function afterFore() {
+    const my = cfg; if (!my) return;
+    (async () => { try { await addHouses(); } catch (e) { /* reported by addHouses */ } if (cfg === my) queueWide(); })();
+  }
+  async function addHouses() {
+    const my = cfg, hc = my && my.houses, t0 = performance.now(), made = [];
+    if (!hc || !R || houseState !== 0 || !hsAny()) return;
+    houseState = 1; let where = 'files';
+    const breathe = async () => { await pause(); if (cfg !== my || !R) throw new Error('the view changed'); if (R.lost) throw new Error('graphics context lost'); if (performance.now() - t0 > HOUSE_MS) throw new Error('took too long'); };
+    try {
+      const kxF = my.W / (my.east - my.west), kzF = my.D / (my.north - my.south), q = cr(eye), ex = (q.c + 0.5) * FAR.dx, ez = (q.r + 0.5) * FAR.dz;
+      const range = Math.max(500, Math.min(20000, hc.range || HOUSE_RANGE)), snowy = my.ground !== 'green';
+      const P = [], Cc = []; let count = 0, seen = 0;
+      const bareDT = !!(my.detail && my.detail.bare), D = DT && bareDT ? DT : null, bm = D ? new Uint8Array(D.n * D.n) : null; let inBox = 0;
+      const tri = (a, b, c, col) => { for (const v of [a, b, c]) { P.push(v[0], v[1], v[2]); Cc.push(col[0], col[1], col[2]); } };
+      const clip = (pts, nx, nz, cx, cz, sign) => { const out = [], dd = p => sign * ((p[0] - cx) * nx + (p[1] - cz) * nz);
+        for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length], da = dd(a), db = dd(b);
+          if (da >= 0) out.push(a); if ((da >= 0) !== (db >= 0)) { const t = da / (da - db); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); } }
+        return out; };
+      const inside = (pts, x, z) => { let k = false; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) { const a = pts[i], b = pts[j]; if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) k = !k; } return k; };
+      const keys = Object.keys(hsparts).map(Number).sort((a, b) => a - b);
+      for (const i of keys) {
+        let J = null; try { J = JSON.parse(new TextDecoder().decode(bytesOf(hsparts[i]))); } catch (e) { J = null; }
+        delete hsparts[i];
+        if (!J || !J.box || !J.b) continue;
+        const [tn, ts, tw] = J.box, kxt = 111320 * Math.cos((tn + ts) / 2 * Math.PI / 180), kzt = 111132;
+        const X = (px) => (tw + px / kxt - my.west) * kxF, Z = (pz) => (my.north - (tn - pz / kzt)) * kzF;
+        for (const b of J.b) {
+          seen++;
+          if (!b.p || b.p.length < 6) continue;
+          const pts = []; for (let k = 0; k + 1 < b.p.length; k += 2) pts.push([X(b.p[k]), Z(b.p[k + 1])]);
+          const cx0 = pts.reduce((s, p) => s + p[0], 0) / pts.length, cz0 = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+          if (Math.hypot(cx0 - ex, cz0 - ez) > range) continue;
+          if (Math.hypot(cx0 - ex, cz0 - ez) < 6) continue;   // never a building round the camera
+          if (DT && !bareDT && cx0 > DT.x0 && cx0 < DT.x0 + DT.w && cz0 > DT.z0 && cz0 < DT.z0 + DT.d) continue;   // an older detail box has its buildings in its heights: not twice
+          const cx = b.c ? X(b.c[0]) : cx0, cz = b.c ? Z(b.c[1]) : cz0;
+          let gmin = Infinity; for (const p of pts) gmin = Math.min(gmin, groundAt(p[0], p[1]));
+          const g0 = groundAt(cx0, cz0), foot = Math.min(gmin, g0) - 0.6, e = g0 + Math.max(1.8, b.e), r = g0 + Math.max(b.e, b.r || b.e);
+          if (Math.hypot(cx0 - ex, cz0 - ez) < 400) bldNear.push({ pts, cx: cx0, cz: cz0, top: r });
+          const gable = b.roof === 'gable' && b.r > b.e + 0.3, ar = (b.a || 0) * Math.PI / 180, nx = -Math.sin(ar), nz = Math.cos(ar), hw = Math.max(b.hw || 0, 0.5) * kxF / kxt;
+          const dist = p => (p[0] - cx) * nx + (p[1] - cz) * nz, top = p => gable ? e + (r - e) * Math.max(0, 1 - Math.abs(dist(p)) / hw) : r;
+          // (a building's parts share a colour: ids are building x 4 + part)
+          let s = (((b.id || 0) >> 2) * 2654435761) >>> 0; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+          const tone = 0.75 + 0.5 * rnd(), wall = snowy ? [0.24 * tone, 0.17 * tone, 0.12 * tone] : [0.42 * tone, 0.36 * tone, 0.3 * tone];
+          const pitch = gable ? Math.atan((r - e) / hw) * 180 / Math.PI : 0;
+          const roofC = snowy ? (pitch > 48 ? [0.32, 0.31, 0.32] : [0.86, 0.89, 0.93].map(v => v * (0.94 + 0.06 * rnd()))) : [0.33 * tone, 0.25 * tone, 0.22 * tone];
+          count++;
+          for (const part of gable ? [clip(pts, nx, nz, cx, cz, 1), clip(pts, nx, nz, cx, cz, -1)] : [pts]) {
+            if (part.length < 3) continue;
+            for (const f of THREE.ShapeUtils.triangulateShape(part.map(p => new THREE.Vector2(p[0], p[1])), [])) tri(...f.map(k => [part[k][0], top(part[k]), part[k][1]]), roofC);
+            for (let k = 0; k < part.length; k++) {
+              const a = part[k], c = part[(k + 1) % part.length];
+              if (gable && Math.abs(dist(a)) < 1e-6 && Math.abs(dist(c)) < 1e-6) continue;   // the cut along the ridge is not a wall
+              const a0 = [a[0], foot, a[1]], c0 = [c[0], foot, c[1]], a1 = [a[0], top(a), a[1]], c1 = [c[0], top(c), c[1]];
+              tri(a0, c0, c1, wall); tri(a0, c1, a1, wall);
+            }
+          }
+          if (bm) {   // its height over the survey's ground, cell by cell, for the shadow it throws in the detail box's picture
+            let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity; for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }
+            if (x1 > D.x0 && x0 < D.x0 + D.w && z1 > D.z0 && z0 < D.z0 + D.d) {
+              inBox++;
+              for (let rr = Math.max(0, Math.floor((z0 - D.z0) / D.dz)); rr <= Math.min(D.n - 1, Math.floor((z1 - D.z0) / D.dz)); rr++) for (let cc = Math.max(0, Math.floor((x0 - D.x0) / D.dx)); cc <= Math.min(D.n - 1, Math.floor((x1 - D.x0) / D.dx)); cc++) {
+                const x = D.x0 + (cc + 0.5) * D.dx, z = D.z0 + (rr + 0.5) * D.dz; if (!inside(pts, x, z)) continue;
+                const v = Math.max(0, Math.min(255, Math.round((top([x, z]) - D.HF[rr * D.n + cc]) / 0.2))); if (v > bm[rr * D.n + cc]) bm[rr * D.n + cc] = v;
+              }
+            }
+          }
+        }
+        await breathe();
+      }
+      hsparts = {};
+      if (!count) throw new Error('no buildings in range');
+      where = 'mesh';
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.setAttribute('bcol', new THREE.Float32BufferAttribute(Cc, 3));
+      geo.computeVertexNormals(); geo.computeBoundingSphere(); made.push(geo);
+      const drop = function () { free(this.array); this.array = null; }; for (const k of ['position', 'bcol', 'normal']) geo.attributes[k].onUpload(drop);
+      const C = R.ctx, sunU = C.sunU, z4 = new THREE.Vector4(0, 0, 1, 1);
+      const mat = new THREE.ShaderMaterial({ side: THREE.DoubleSide, uniforms: { lmapF: { value: R.lo.texture }, lmapR: { value: R.range ? R.range.lo.texture : R.lo.texture }, lmapN: { value: R.near ? R.near.lo.texture : R.lo.texture }, lmapD: { value: R.det ? R.det.lo.texture : R.lo.texture },
+        rrect: { value: RG ? new THREE.Vector4(RG.x0, RG.z0, RG.w, RG.d) : z4 }, nrect: { value: NR ? new THREE.Vector4(NR.x0, NR.z0, NR.w, NR.d) : z4 }, drect: { value: DT ? new THREE.Vector4(DT.x0, DT.z0, DT.w, DT.d) : z4 }, fsize: { value: C.size },
+        has: { value: new THREE.Vector3(R.range ? 1 : 0, R.near ? 1 : 0, R.det ? 1 : 0) }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: C.fog.fogCol, fogD: C.fog.fogD }, vertexShader: PHOUSE_VS, fragmentShader: PHOUSE_FS });
+      made.push(mat);
+      await breathe();
+      let shadow = false;
+      if (bm && inBox && R.det) {   // the houses' drawn shadow in the detail box (its light pass, as the Faroes houses)
+        const bmap = new THREE.DataTexture(bm, D.n, D.n, THREE.LuminanceFormat, THREE.UnsignedByteType);
+        bmap.magFilter = bmap.minFilter = THREE.LinearFilter; bmap.wrapS = bmap.wrapT = THREE.ClampToEdgeWrapping; bmap.needsUpdate = true;
+        R.renderer.initTexture(bmap); bmap.image = { data: null, width: D.n, height: D.n }; made.push(bmap);
+        const lm = R.det.lightMat; lm.uniforms.bmap = { value: bmap }; lm.defines.BSHADOW = 1; lm.needsUpdate = true; shadow = true;
+      }
+      const mesh = new THREE.Mesh(geo, mat);
+      R.houses = { mesh, mat, geo, count }; R.scene.add(mesh);
+      houseState = 2; relight = dirty = true;
+      if (!touched && bldNear.length) { aim(); heading(); }   // a close subject on a building: aim at its roof, as before the bare boxes
+      post({ type: 'houses', ok: true, count, seen, inBox, shadow, range, ms: Math.round(performance.now() - t0) });
+    } catch (e) {
+      for (const t of made) { try { t.dispose(); } catch (x) { /* nothing to let go */ } }
+      hsparts = {}; if (houseState === 1) houseState = -1;
+      post({ type: 'houses', ok: false, msg: String(e && e.message || e), at: where });
+    }
+  }
   function queueWide() {
     if (wideState !== 0 || !cfg || !cfg.canopy || !R || !(wideTiles || cnAny())) return;
     wideState = 1; setTimeout(() => addWide(), 0);
@@ -1401,6 +1659,12 @@
     const r = R.renderer, t = tgt(R, k);
     R.quad.material = R.lightMat; r.setRenderTarget(t); r.render(R.lightScene, R.lightCam);
     R.terrMat.uniforms.lmap.value = t.texture;
+    if (R.range) {
+      const rt2 = tgt(R.range, k), u = R.range.mat.uniforms;
+      R.quad.material = R.range.lightMat; r.setRenderTarget(rt2); r.render(R.lightScene, R.lightCam);
+      u.lmap.value = rt2.texture; u.flmap.value = t.texture;
+      if (R.near && R.near.mat.uniforms.rlmap) R.near.mat.uniforms.rlmap.value = rt2.texture;
+    }
     if (R.near) {
       const nt = tgt(R.near, k);
       R.quad.material = R.near.lightMat; r.setRenderTarget(nt); r.render(R.lightScene, R.lightCam);
@@ -1413,6 +1677,7 @@
       if (R.det.points) R.det.points.material.uniforms.lmap.value = dt.texture;
     }
     if (R.wide) { const u = R.wide.mat.uniforms; u.lmapF.value = t.texture; if (R.near) u.lmapN.value = tgt(R.near, k).texture; }
+    if (R.houses) { const u = R.houses.mat.uniforms; u.lmapF.value = t.texture; if (R.range) u.lmapR.value = tgt(R.range, k).texture; if (R.near) u.lmapN.value = tgt(R.near, k).texture; if (R.det) u.lmapD.value = tgt(R.det, k).texture; }
     r.setRenderTarget(null);
   }
   function light(k) {
@@ -1436,14 +1701,25 @@
     const hp = herePoint(), hl = lit(hp, sun.az, sun.alt);
     post({ type: 'state', subjectLit: subjLit(sun.az, sun.alt), hereLit: hl, up: sun.alt > 0, trees: hl && treesBlock(hp, sun.az, sun.alt) });
   }
+  // How far a building's roof stands above the ground at the subject pin (0 = not on a building): the pin inside an
+  // outline, or within 4 m of one's middle
+  function roofLift(b) {
+    const x = (b.c + 0.5) * FAR.dx, z = (b.r + 0.5) * FAR.dz; let best = 0;
+    for (const h of bldNear) {
+      let k = false; const P = h.pts;
+      for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], c = P[j]; if ((a[1] > z) !== (c[1] > z) && x < (c[0] - a[0]) * (z - a[1]) / (c[1] - a[1]) + a[0]) k = !k; }
+      if (k || Math.hypot(h.cx - x, h.cz - z) < 4) best = Math.max(best, h.top - groundAt(x, z));
+    }
+    return Math.max(0, Math.min(40, best));
+  }
   function aim() {
     const a = cr(eye), b = cr(target), dx = (b.c - a.c) * FAR.dx, dz = (b.r - a.r) * FAR.dz, dist = Math.hypot(dx, dz);
     yaw = dist > 5 ? Math.atan2(dx, -dz) : 0;
     const e = pick(eye), t = pick(target), up = eyeH(e);
     if (dist > 3000 || t.g === FAR) {
-      const top = dist > 3000 ? Math.atan2(snap(t, t.g === NR ? 6 : 4).h - up, dist) : 0.04;
+      const top = dist > 3000 ? Math.atan2(snap(t, snapR(t.g)).h - up, dist) : 0.04;
       pitch = Math.max(0.01, top * 0.45);
-    } else pitch = Math.max(-0.6, Math.min(0.6, Math.atan2(gh(t.g, t.c, t.r) + 6 - up, Math.max(dist, 20))));   // a close subject on the fine grid: look straight at it, up or down
+    } else pitch = Math.max(-0.6, Math.min(0.6, Math.atan2(gh(t.g, t.c, t.r) + roofLift(b) + 6 - up, Math.max(dist, 20))));   // a close subject on the fine grid: look straight at it, up or down
     focus();
   }
   function focus() {
@@ -1451,6 +1727,9 @@
     if (R && R.near) {   // the near mesh is densest a little past the middle of the shot; with the subject outside the box (a far peak), around the feet and a little ahead
       const p = crg(NR, eye), q = crg(NR, target), k = t.g === NR ? 0.6 : Math.min(0.6, 250 / Math.max(dist, 1));
       R.near.mat.uniforms.focus.value.set(Math.max(0, Math.min(1, (p.c + (q.c - p.c) * k + 0.5) / NR.n)), Math.max(0, Math.min(1, (p.r + (q.r - p.r) * k + 0.5) / NR.n)));
+    }
+    if (R && R.range) {   // the range's mesh is densest at the subject (the peak), or at the point of its box nearest to it
+      const q = crg(RG, target); R.range.mat.uniforms.focus.value.set(Math.max(0.03, Math.min(0.97, (q.c + 0.5) / RG.n)), Math.max(0.03, Math.min(0.97, (q.r + 0.5) / RG.n)));
     }
     if (R && R.det) {   // the detail mesh is densest just ahead of the feet, or toward a subject that is inside it
       const p = crg(DT, eye), q = crg(DT, target), k = t.g === DT ? 0.6 : Math.min(0.6, 60 / Math.max(dist, 1));
@@ -1530,11 +1809,14 @@
   // A block's box: its span on the ground (ex, ez: NB + 1 edges) plus a metre, from under the lowest ground (the cut
   // under a finer mesh and the skirts hang below it) to above the highest. Never too small, so the picture is the same.
   const _fr = new THREE.Frustum(), _pm = new THREE.Matrix4(), _iv = new THREE.Matrix4(), _box = new THREE.Box3(), EX = new Float64Array(NB + 1), EZ = new Float64Array(NB + 1);
-  function cull(mesh, ex, ez, S) {
+  // holes: [x0, x1, z0, z1] areas a finer mesh covers where this mesh discards every fragment: a block wholly inside one is not drawn
+  const inHole = (holes, a, b, c, d) => { if (holes) for (const h of holes) if (a >= h[0] && b <= h[1] && c >= h[2] && d <= h[3]) return true; return false; };
+  const holeOf = g => g ? [g.x0 + g.band + 2, g.x0 + g.w - g.band - 2, g.z0 + g.band + 2, g.z0 + g.d - g.band - 2] : null;
+  function cull(mesh, ex, ez, S, holes) {
     const g = mesh.geometry.groups, y0 = minH - 1000, y1 = maxH + 10; let n = 0, open = false;
     for (let bj = 0; bj < NB; bj++) for (let bi = 0; bi < NB; bi++) {
       _box.min.set(ex[bi] - 1, y0, ez[bj] - 1); _box.max.set(ex[bi + 1] + 1, y1, ez[bj + 1] + 1);
-      if (!_fr.intersectsBox(_box)) { open = false; continue; }
+      if (!_fr.intersectsBox(_box) || inHole(holes, ex[bi] - 1, ex[bi + 1] + 1, ez[bj] - 1, ez[bj + 1] + 1)) { open = false; continue; }
       const b = bj * NB + bi;
       if (open) g[n - 1].count = S[b + 1] - g[n - 1].start;
       else { const o = g[n] || (g[n] = { start: 0, count: 0, materialIndex: 0 }); o.start = S[b]; o.count = S[b + 1] - S[b]; n++; open = true; }
@@ -1542,10 +1824,10 @@
     g.length = n;
   }
   // the near and detail meshes bunch their points around `focus` (wp in NEAR_VS): the same sum here gives their blocks' edges
-  const wpj = (s, f) => { const d = s - f, m = d < 0 ? f : 1 - f; if (m < 0.0005) return f; const x = Math.abs(d) / m; return f + Math.sign(d) * m * x * (0.35 + 0.65 * x * x); };
+  const wpj = (s, f, wk) => { const d = s - f, m = d < 0 ? f : 1 - f; if (m < 0.0005) return f; const x = Math.abs(d) / m; return f + Math.sign(d) * m * x * (wk + (1 - wk) * x * x); };
   function cullWarped(o, g, S) {
-    const f = o.mat.uniforms.focus.value;
-    for (let k = 0; k <= NB; k++) { const t = Math.max(0, Math.min(1, (bedge(k) - 1) / (G - 3))); EX[k] = g.x0 + wpj(t, f.x) * g.w; EZ[k] = g.z0 + wpj(t, f.y) * g.d; }
+    const f = o.mat.uniforms.focus.value, wk = o.mat.uniforms.wk ? o.mat.uniforms.wk.value : 0.35;
+    for (let k = 0; k <= NB; k++) { const t = Math.max(0, Math.min(1, (bedge(k) - 1) / (G - 3))); EX[k] = g.x0 + wpj(t, f.x, wk) * g.w; EZ[k] = g.z0 + wpj(t, f.y, wk) * g.d; }
     cull(o.mesh, EX, EZ, S);
   }
   function draw(t0) {
@@ -1561,7 +1843,8 @@
     place();
     const cam = R.cam, v = R.sv;
     cam.updateMatrixWorld(); _fr.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, _iv.copy(cam.matrixWorld).invert()));
-    cull(R.ctx.terrain, R.fx, R.fz, q.geo > 1 ? BSTART2 : BSTART); if (R.near) cullWarped(R.near, NR, q.geo ? BSTART2 : BSTART); if (R.det) cullWarped(R.det, DT, q.geo ? BSTART2 : BSTART);
+    // (the wide mesh: none of its blocks wholly under the range's box, where it would only be discarded)
+    cull(R.ctx.terrain, R.fx, R.fz, q.geo > 1 ? BSTART2 : BSTART, R.range ? [holeOf(RG)] : null); if (R.near) cullWarped(R.near, NR, q.geo ? BSTART2 : BSTART); if (R.det) cullWarped(R.det, DT, q.geo ? BSTART2 : BSTART); if (R.range) cullWarped(R.range, RG, BSTART2);
     let wpts = 0;
     if (R.wide) {   // the park-wide trees: the level's share of them (none at the lowest), only the blocks in view
       const W = R.wide; W.mat.uniforms.share.value = q.wide; W.points.visible = q.wide > 0 && cullWide(W) > 0;
@@ -1574,7 +1857,7 @@
     owe = quick || q !== QL[0]; sharp = false;
     if (owe && restTimer == null && !resting) restTimer = setTimeout(rested, REST.sun);   // a light change nobody touched for (the foreground coming in, ice on / off)
     if (a) { a.px = cw * ch; a.pts = pts; a.wpts = wpts; }
-    gate.t0 = t0; gate.act = a; gate.gov = !fresh && foreState !== 1 && wideState !== 1;
+    gate.t0 = t0; gate.act = a; gate.gov = !fresh && foreState !== 1 && wideState !== 1 && rangeState !== 1 && houseState !== 1;
     if (!gate.off && !R.lost) {
       const gl = R.gl; let sy = null;
       try { sy = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); } catch (e) { sy = null; }
@@ -1608,25 +1891,29 @@
   }
 
   window.S3D = {
-    init(c) { cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; bldNear = []; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
     chunk(s, which) {
       if (typeof which === 'string' && which.startsWith('canopy:')) {   // a tree tile: packed as soon as the next one starts, so its text is let go at once
         const i = +which.slice(7);
         if (i !== cnlast) { if (cnlast >= 0 && cnparts[cnlast]) { try { cnbytes[cnlast] = packBytes(cnparts[cnlast]); } catch (e) { /* a bad tile: left out */ } delete cnparts[cnlast]; } cnlast = i; }
         (cnparts[i] || (cnparts[i] = [])).push(s); return;
-      } (which === 'near' ? nparts : which === 'detail' ? dparts : which === 'mask' ? mparts : which === 'trees' ? tparts : which === 'water' ? wparts : which === 'color' ? cparts : which === 'ncolor' ? ncparts : which === 'bld' ? bparts : which === 'wcolor' ? wcparts : parts).push(s); },
+      }
+      if (typeof which === 'string' && which.startsWith('house:')) { const i = +which.slice(6); (hsparts[i] || (hsparts[i] = [])).push(s); return; }
+      (which === 'range' ? rparts : which === 'near' ? nparts : which === 'detail' ? dparts : which === 'mask' ? mparts : which === 'trees' ? tparts : which === 'water' ? wparts : which === 'color' ? cparts : which === 'ncolor' ? ncparts : which === 'bld' ? bparts : which === 'wcolor' ? wcparts : parts).push(s); },
     async done() {
       try {
         if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");
         if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.');
         await load(); build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
-        const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length || (cfg.canopy && cnAny()));
+        const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length || (cfg.canopy && cnAny()) || (cfg.range && rparts.length) || (cfg.houses && hsAny()));
         post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: 0, fore }); heading();
         if (fore) queueFore();
       } catch (e) { fail("The 3D view couldn't start on this phone."); post({ type: 'error', msg: String(e && e.message || e) }); }
     },
     // fore({ detail, water, ice }): the foreground for the view that is up; its chunks follow, then foreDone()
-    fore(c) { if (!cfg || foreState === 1) return; cfg.detail = c && c.detail; cfg.water = c && c.water; if (wideState !== 1 && wideState !== 2) { cfg.canopy = c && c.canopy; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; } if (c && c.ice != null) ice = !!c.ice; if (R) R.iceU.value = ice ? 1 : 0; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; if (foreState < 0) foreState = 0; },
+    fore(c) { if (!cfg || foreState === 1) return; cfg.detail = c && c.detail; cfg.water = c && c.water;
+      if (rangeState !== 1 && rangeState !== 2) { cfg.range = c && c.range; rparts = []; rangeState = 0; }
+      if (houseState !== 1 && houseState !== 2) { cfg.houses = c && c.houses; hsparts = {}; houseState = 0; } if (wideState !== 1 && wideState !== 2) { cfg.canopy = c && c.canopy; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; } if (c && c.ice != null) ice = !!c.ice; if (R) R.iceU.value = ice ? 1 : 0; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; if (foreState < 0) foreState = 0; },
     foreDone() { if (R) queueFore(); },
     sun(az, alt) { sun = { az, alt }; relight = true; touch('sun'); },
     // ice(true): still water (lakes, ponds, backwaters) is drawn frozen under snow, only moving water stays open
