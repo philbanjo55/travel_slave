@@ -351,7 +351,8 @@ export const LIGHT_WORDS: Record<string, string> = {
 // Plain words for a webcam frame's label.
 export function frameSummary(f: CameraFrame['frame']): string {
   if (!f) return 'No frame yet';
-  if (!f.label) return f.label_error ? 'Not labelled yet' : 'Not labelled yet';
+  // 14 Nov 2026 (offload step 2): pictures the planner doesn't need now are read by the nightly sessions
+  if (!f.label) return f.label_error === 'read tonight' ? 'Read tonight' : 'Not labelled yet';
   const what: Record<string, string> = {
     clear: 'Clear', haze: 'Hazy', low_cloud: 'Cloud on the hills', fog: 'Fog', dark: 'Too dark', camera_problem: 'Camera problem',
   };

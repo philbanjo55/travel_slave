@@ -155,7 +155,13 @@ export type Pair = {
   shot_name?: string | null;   // the shot's name (falls back to the subject's)
   photo_id?: string | null;    // the vantage's reference photo (a stop photo)
   photo_url?: string | null;
+  framing?: Framing | null;    // the 3D view's saved framing (trip_sun_plan, after 20261114040000_vantage_framing)
+  starred?: boolean;           // the stop's starred shot (same migration; older plans leave it out)
 };
+
+// A shot's saved framing in the 3D view: where the camera points (compass heading of the frame's middle), its tilt
+// (degrees up), the lens (Sun3DPanel's lens id) and the frame box's orientation; `at` = when it was framed.
+export type Framing = { heading: number; pitch: number; lens: string; orient: 'landscape' | 'portrait'; at: string };
 
 export type Light = {
   sun: SkyPos;

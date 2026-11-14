@@ -135,7 +135,7 @@ function saveTerrain(tripId: string, plan: SunPlan): void {
 // The pairs for one stop: from memory, else the saved file, then refreshed in
 // the background. `ready` turns true once the saved copy has been checked, so
 // callers can tell "no pairs" from "not loaded yet".
-export function useSunStopState(tripId: string | null | undefined, stopId: string): { stop: SunStop | null; ready: boolean } {
+export function useSunStopState(tripId: string | null | undefined, stopId: string): { stop: SunStop | null; ready: boolean; plan: SunPlan | null } {
   const [plan, setPlan] = useState<SunPlan | null>(tripId ? memory[tripId] ?? null : null);
   const [ready, setReady] = useState<boolean>(!!(tripId && memory[tripId]));
 
@@ -158,7 +158,7 @@ export function useSunStopState(tripId: string | null | undefined, stopId: strin
 
   const s = plan?.stops?.[stopId];
   const stop = !s || !Array.isArray(s.pairs) || s.pairs.length === 0 || !s.date ? null : s;
-  return { stop, ready };
+  return { stop, ready, plan };   // plan: every stop's shots (the 3D view's next / previous shot)
 }
 
 export function useSunStop(tripId: string | null | undefined, stopId: string): SunStop | null {

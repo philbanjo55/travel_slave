@@ -5,7 +5,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../../theme';
-import { SunStop, SUN_PLANNER_ENABLED, useSunStopState } from '../../services/sunPlan';
+import { SunPlan, SunStop, SUN_PLANNER_ENABLED, useSunStopState } from '../../services/sunPlan';
+import { useTripStore } from '../../store/tripStore';
+import { buildTour, TourShot } from './shotTour';
 import SunPairEditor from './SunPairEditor';
 import {
   dayEvents, dayStartMs, fmtMinute, lightAt, moonPosition, parseTimeLabel,
@@ -64,7 +66,7 @@ class SectionGuard extends React.Component<{ children: React.ReactNode }, { fail
 }
 
 function SunPlannerInner({ tripId, stopId, timeLabel, stopName, stopPhotos, stopCoords }: Props) {
-  const { stop, ready } = useSunStopState(tripId, stopId);
+  const { stop, ready, plan } = useSunStopState(tripId, stopId);
   const [editing, setEditing] = useState(false);
   const [editVantageId, setEditVantageId] = useState<string | null>(null);
   if (!tripId) return null;
@@ -88,7 +90,7 @@ function SunPlannerInner({ tripId, stopId, timeLabel, stopName, stopPhotos, stop
   }
   return (
     <>
-      <Planner stop={stop} tripId={tripId} stopId={stopId} timeLabel={timeLabel} onEdit={openEditor} />
+      <Planner stop={stop} tripId={tripId} stopId={stopId} timeLabel={timeLabel} onEdit={openEditor} plan={plan} stopName={stopName} />
       {editor}
     </>
   );
@@ -101,7 +103,17 @@ const TAB_NAMES: Record<Tab, string> = { map: 'Map', horizon: 'Horizon', photo: 
 // The 3D view is in the TEST app only until Phil has tried it.
 const TABS: Tab[] = IS_TEST_APP ? ['map', 'horizon', 'photo', '3d'] : ['map', 'horizon', 'photo'];
 
-function Planner({ stop, tripId, stopId, timeLabel, onEdit }: { stop: SunStop; tripId?: string | null; stopId?: string | null; timeLabel?: string | null; onEdit: (vantageId?: string | null) => void }) {
+// Every stop's starred shot as saved on the phone (starredShot keeps them), for the full-screen shot order.
+async function savedStars(stopIds: string[]): Promise<Record<string, string | null>> {
+  try {
+    const rows = await AsyncStorage.multiGet(stopIds.map(starKey));
+    const out: Record<string, string | null> = {};
+    rows.forEach(([, v], i) => { out[stopIds[i]] = v ?? null; });
+    return out;
+  } catch { return {}; }
+}
+
+function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName }: { stop: SunStop; tripId?: string | null; stopId?: string | null; timeLabel?: string | null; onEdit: (vantageId?: string | null) => void; plan?: SunPlan | null; stopName?: string | null }) {
   const stopMinute = parseTimeLabel(timeLabel);
   const day0 = dayStartMs(stop.date, stop.utc_offset_min);
   const [pairIdx, setPairIdx] = useState(0);
@@ -129,6 +141,49 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit }: { stop: SunStop; t
   const home = stopMinute ?? events.goldenPm ?? 720;
   const [minute, setMinute] = useState(home);
   useEffect(() => { setMinute(home); }, [stop.date, home]);
+
+  // ---- Full screen: every shot of the trip, one after another (Phil, 14 Nov 2026) ----
+  // The trip's shots in day order (shotTour) from the sun plan already on the phone; `away` = a shot of another stop
+  // shown in full screen (its own day, sun and time slider), null = this stop's chosen shot. Closing comes back here.
+  const tripData = useTripStore(st => st.currentTripData);
+  const tripDays = tripData?.trip?.id === tripId ? tripData?.days : null;
+  const [stars, setStars] = useState<Record<string, string | null>>({});
+  const planStops = plan?.stops;
+  useEffect(() => {
+    if (!full3d || !planStops) return;
+    let alive = true;
+    savedStars(Object.keys(planStops)).then(v => { if (alive) setStars(v); });
+    return () => { alive = false; };
+  }, [full3d, planStops]);
+  const tour = useMemo(() => (full3d ? buildTour(plan ?? null, tripDays, stars) : []), [full3d, plan, tripDays, stars]);
+  // kept as ids and looked up in the tour, so a save (new stand spot) that refreshes the sun plan shows at once
+  const [awayKey, setAwayKey] = useState<{ stopId: string; vid: string } | null>(null);
+  useEffect(() => { if (!full3d) setAwayKey(null); }, [full3d]);
+  const away: TourShot | null = awayKey ? tour.find(t => t.stopId === awayKey.stopId && t.pair.vantage_id === awayKey.vid) ?? null : null;
+  const fStop = away ? away.stop : stop;
+  const fPair = away ? away.pair : pair;
+  const fStopId = away ? away.stopId : stopId;
+  const fDay0 = away ? dayStartMs(fStop.date, fStop.utc_offset_min) : day0;
+  const fEvents = useMemo(() => (away ? dayEvents(fPair.v, fDay0) : events), [away, fPair.v.lat, fPair.v.lng, fDay0, events]);
+  const [awayMinute, setAwayMinute] = useState(720);   // the other stop's time slider: starts at its stop time, else golden hour
+  const fMinute = away ? awayMinute : minute;
+  const setFMinute = away ? setAwayMinute : setMinute;
+  const fSun = away ? lightAt(fPair, fDay0 + fMinute * 60000).sun : null;
+  const tourAt = tour.findIndex(t => t.stopId === fStopId && t.pair.vantage_id === fPair.vantage_id);
+  const goTour = (i: number) => {
+    const t = tour[i];
+    if (!t) return;
+    if (t.stopId === stopId) {   // a shot of this stop: choose it here too, so closing shows it
+      const k = stop.pairs.findIndex(p => p.vantage_id === t.pair.vantage_id);
+      if (k >= 0) { chosen.current = true; setPairIdx(k); }
+      setAwayKey(null);
+    } else {
+      const d0 = dayStartMs(t.stop.date, t.stop.utc_offset_min);
+      setAwayMinute(parseTimeLabel(t.timeLabel) ?? dayEvents(t.pair.v, d0).goldenPm ?? 720);
+      setAwayKey({ stopId: t.stopId, vid: t.pair.vantage_id });
+    }
+  };
+  const fStopName = away ? away.stopName : (tour[tourAt]?.stopName ?? stopName ?? '');
 
   const ms = day0 + minute * 60000;
   const light = lightAt(pair, ms);
@@ -250,17 +305,30 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit }: { stop: SunStop; t
       <Modal visible={full3d} animationType="fade" onRequestClose={() => setFull3d(false)}>
         <View style={[styles.fullScreen, { paddingTop: insets.top }]}>
           {full3d ? (
-            <Sun3DPanel full pair={pair} tripId={tripId} stopId={stopId} sun={light.sun} day0={day0} onJump={setMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} />
+            <Sun3DPanel full pair={fPair} tripId={tripId} stopId={fStopId} sun={fSun ?? light.sun} day0={fDay0} onJump={setFMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} />
           ) : null}
           <View style={[styles.fullBar, { paddingBottom: 18 + insets.bottom }]}>
+            {tour.length > 1 && tourAt >= 0 ? (
+              <View style={styles.tourRow}>
+                <TouchableOpacity onPress={() => goTour(tourAt - 1)} disabled={tourAt <= 0} style={[styles.tourBtn, tourAt <= 0 && { opacity: 0.35 }]} accessibilityRole="button" accessibilityLabel="Previous shot" hitSlop={6}>
+                  <Ionicons name="chevron-back" size={20} color="#ffffff" />
+                </TouchableOpacity>
+                <Text style={styles.tourText} numberOfLines={1} accessibilityLabel={`Shot ${tourAt + 1} of ${tour.length}, ${fStopName}, ${shotName(fPair)}`}>
+                  Shot {tourAt + 1} of {tour.length} · {fStopName} · {shotName(fPair)}
+                </Text>
+                <TouchableOpacity onPress={() => goTour(tourAt + 1)} disabled={tourAt >= tour.length - 1} style={[styles.tourBtn, tourAt >= tour.length - 1 && { opacity: 0.35 }]} accessibilityRole="button" accessibilityLabel="Next shot" hitSlop={6}>
+                  <Ionicons name="chevron-forward" size={20} color="#ffffff" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
             <View style={styles.timeRow}>
-              <Text style={styles.timeText}>{fmtMinute(minute)}</Text>
-              <Text style={styles.fullShot} numberOfLines={1}>{shotName(pair)}</Text>
+              <Text style={styles.timeText}>{fmtMinute(fMinute)}</Text>
+              <Text style={styles.fullShot} numberOfLines={1}>{away ? `${MONTHS[Number(fStop.date.slice(5, 7)) - 1]} ${Number(fStop.date.slice(8, 10))}` : shotName(pair)}</Text>
               <TouchableOpacity onPress={() => setFull3d(false)} style={styles.fullClose} accessibilityRole="button" accessibilityLabel="Close the 3D view">
                 <Text style={styles.fullCloseText}>Close</Text>
               </TouchableOpacity>
             </View>
-            <TimeScrubber minute={minute} onChange={setMinute} phases={events.phases} />
+            <TimeScrubber minute={fMinute} onChange={setFMinute} phases={fEvents.phases} />
           </View>
         </View>
       </Modal>
@@ -399,6 +467,9 @@ const styles = StyleSheet.create({
   fullScreen: { flex: 1, backgroundColor: '#000000' },
   fullBar: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 18, gap: 8, backgroundColor: '#000000' },
   fullShot: { flex: 1, color: '#888888', fontSize: 13 },
+  tourRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  tourBtn: { width: 44, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' },
+  tourText: { flex: 1, color: '#ffffff', fontSize: 13, textAlign: 'center' },
   fullClose: { minHeight: 40, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' },
   fullCloseText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
   tabTextOn: { color: '#000000' },

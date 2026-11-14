@@ -1,0 +1,57 @@
+-- Park-wide Teton buildings rebuilt after an outline bug (14 Nov 2026, Phil: "Chapel of trans seems worse").
+-- build_buildings.py simplify_ortho closed a short wall by moving the wrong coordinate, so 2,146 of 9,895 outlines
+-- came out as slivers or crossed shapes (the Chapel of the Transfiguration was a twisted 10 m2 wall instead of a
+-- 126 m2 chapel). Fixed and rebuilt from the saved survey points: 10,021 buildings, 184 left as plain boxes for
+-- complex shapes, none twisted. New file names (gtb2_*) and ids so phones download the new files.
+update terrain_house_tiles t set id = v.nid, path = v.npath, bytes = v.nbytes, count = v.ncount
+  from (values
+  ('gtb_0_0', 'gtb2_0_0', 'gtb2_0_0.json', 1224, 7),
+  ('gtb_0_1', 'gtb2_0_1', 'gtb2_0_1.json', 51467, 296),
+  ('gtb_0_2', 'gtb2_0_2', 'gtb2_0_2.json', 109938, 632),
+  ('gtb_0_3', 'gtb2_0_3', 'gtb2_0_3.json', 4019, 24),
+  ('gtb_0_4', 'gtb2_0_4', 'gtb2_0_4.json', 18854, 101),
+  ('gtb_0_5', 'gtb2_0_5', 'gtb2_0_5.json', 793, 4),
+  ('gtb_0_6', 'gtb2_0_6', 'gtb2_0_6.json', 224, 1),
+  ('gtb_1_0', 'gtb2_1_0', 'gtb2_1_0.json', 5913, 34),
+  ('gtb_1_1', 'gtb2_1_1', 'gtb2_1_1.json', 115935, 667),
+  ('gtb_1_2', 'gtb2_1_2', 'gtb2_1_2.json', 73572, 429),
+  ('gtb_1_3', 'gtb2_1_3', 'gtb2_1_3.json', 371, 2),
+  ('gtb_1_4', 'gtb2_1_4', 'gtb2_1_4.json', 4508, 24),
+  ('gtb_1_5', 'gtb2_1_5', 'gtb2_1_5.json', 13502, 74),
+  ('gtb_1_6', 'gtb2_1_6', 'gtb2_1_6.json', 2637, 15),
+  ('gtb_2_0', 'gtb2_2_0', 'gtb2_2_0.json', 13162, 76),
+  ('gtb_2_1', 'gtb2_2_1', 'gtb2_2_1.json', 150447, 865),
+  ('gtb_2_2', 'gtb2_2_2', 'gtb2_2_2.json', 97465, 562),
+  ('gtb_2_3', 'gtb2_2_3', 'gtb2_2_3.json', 2117, 12),
+  ('gtb_2_4', 'gtb2_2_4', 'gtb2_2_4.json', 3475, 19),
+  ('gtb_2_5', 'gtb2_2_5', 'gtb2_2_5.json', 8549, 46),
+  ('gtb_2_6', 'gtb2_2_6', 'gtb2_2_6.json', 10574, 58),
+  ('gtb_2_7', 'gtb2_2_7', 'gtb2_2_7.json', 1232, 7),
+  ('gtb_3_0', 'gtb2_3_0', 'gtb2_3_0.json', 4771, 27),
+  ('gtb_3_1', 'gtb2_3_1', 'gtb2_3_1.json', 125629, 724),
+  ('gtb_3_2', 'gtb2_3_2', 'gtb2_3_2.json', 143058, 801),
+  ('gtb_3_3', 'gtb2_3_3', 'gtb2_3_3.json', 726, 4),
+  ('gtb_3_4', 'gtb2_3_4', 'gtb2_3_4.json', 5572, 29),
+  ('gtb_3_5', 'gtb2_3_5', 'gtb2_3_5.json', 22001, 117),
+  ('gtb_3_6', 'gtb2_3_6', 'gtb2_3_6.json', 391, 2),
+  ('gtb_4_1', 'gtb2_4_1', 'gtb2_4_1.json', 238632, 1320),
+  ('gtb_4_2', 'gtb2_4_2', 'gtb2_4_2.json', 192142, 1050),
+  ('gtb_4_3', 'gtb2_4_3', 'gtb2_4_3.json', 4193, 22),
+  ('gtb_4_4', 'gtb2_4_4', 'gtb2_4_4.json', 580, 3),
+  ('gtb_5_0', 'gtb2_5_0', 'gtb2_5_0.json', 29344, 166),
+  ('gtb_5_1', 'gtb2_5_1', 'gtb2_5_1.json', 124586, 701),
+  ('gtb_5_2', 'gtb2_5_2', 'gtb2_5_2.json', 36331, 189),
+  ('gtb_5_3', 'gtb2_5_3', 'gtb2_5_3.json', 32729, 170),
+  ('gtb_5_4', 'gtb2_5_4', 'gtb2_5_4.json', 9964, 53),
+  ('gtb_6_0', 'gtb2_6_0', 'gtb2_6_0.json', 37286, 214),
+  ('gtb_6_1', 'gtb2_6_1', 'gtb2_6_1.json', 41064, 237),
+  ('gtb_6_2', 'gtb2_6_2', 'gtb2_6_2.json', 7978, 43),
+  ('gtb_6_3', 'gtb2_6_3', 'gtb2_6_3.json', 5968, 32),
+  ('gtb_6_4', 'gtb2_6_4', 'gtb2_6_4.json', 24935, 133),
+  ('gtb_7_0', 'gtb2_7_0', 'gtb2_7_0.json', 2478, 14),
+  ('gtb_7_1', 'gtb2_7_1', 'gtb2_7_1.json', 543, 3),
+  ('gtb_7_2', 'gtb2_7_2', 'gtb2_7_2.json', 391, 2),
+  ('gtb_7_3', 'gtb2_7_3', 'gtb2_7_3.json', 871, 5),
+  ('gtb_8_2', 'gtb2_8_2', 'gtb2_8_2.json', 988, 5)
+  ) v(oid, nid, npath, nbytes, ncount)
+ where t.id = v.oid;

@@ -43,7 +43,12 @@
 //   page posts `perf` {kind: 'look' | 'sun', ms: median frame time, worst, frames, level: 0 full .. 3 low, quality: its
 //   name, levels: {look, sun}, px: canvas pixels while moving, pts: tree points drawn, timed: 'fence' | 'frame'}, at
 //   most once a second. cfg.level = {look, sun} (the `levels` of an earlier page) starts a new page at those levels.
-//   S3D.view(eyeLat, eyeLng, targetLat, targetLng)                S3D.path([[minute, az, alt], ...]) -> 'moments'
+//   S3D.view(eyeLat, eyeLng, targetLat, targetLng, framing?)      S3D.path([[minute, az, alt], ...]) -> 'moments'
+// Saved framing (14 Nov 2026, Phil: frame every shot in 3D and keep it): framing = { yaw_deg, pitch_deg } (yaw = compass
+// heading of the view's middle, pitch = the page's tilt, degrees up). Given in cfg.view (init), as view()'s fifth
+// argument, or alone as S3D.view({ yaw_deg, pitch_deg }), the shot opens on it and every later re-aim (the foreground
+// coming in, walk mode's home) keeps it; S3D.view(null) goes back to aiming at the subject. With no framing anywhere the
+// page aims exactly as before. Every `look` message also says { yaw, pitch } in degrees to 0.01 for saving.
 // Two levels (Faroes close-ups): the wide grid (far) draws everything; where a near grid is given, the far mesh is cut
 // out inside it and a second, finer mesh is drawn there (denser around the shot), lit from its own heights, with
 // shadows that carry on into the far grid beyond its edge. The point checks use the finer grid where it holds the pin.
@@ -96,7 +101,7 @@
   let cnparts = {}, cnbytes = {}, cnlast = -1, wideTiles = null, wideState = 0, wideRun = 0;   // park-wide trees: tile pieces by index, each tile's packed bytes once its pieces are in, the tile coming in, the packed files, 0 none 1 building 2 in -1 dropped
   const cnAny = () => Object.keys(cnparts).length > 0 || Object.keys(cnbytes).length > 0;   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
   let R = null;   // everything three.js, once built
-  let eye = null, eye0 = null, target = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true;
+  let eye = null, eye0 = null, target = null, framed = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true;
   const G = 768;  // mesh points per side
 
   // ---- Smooth by construction (12 Nov 2026; measured in tools/sun3d/README.md, "Smoothness") ----
@@ -1720,7 +1725,15 @@
       const top = dist > 3000 ? Math.atan2(snap(t, snapR(t.g)).h - up, dist) : 0.04;
       pitch = Math.max(0.01, top * 0.45);
     } else pitch = Math.max(-0.6, Math.min(0.6, Math.atan2(gh(t.g, t.c, t.r) + roofLift(b) + 6 - up, Math.max(dist, 20))));   // a close subject on the fine grid: look straight at it, up or down
+    if (framed) { yaw = framed.yaw; pitch = framed.pitch; }   // the shot's saved framing wins over the subject aim
     focus();
+  }
+  // { yaw_deg, pitch_deg } -> the page's own radians; anything else (null, {}, bad numbers) = no framing
+  function toFraming(v) {
+    if (!v || typeof v !== 'object') return null;
+    const y = Number(v.yaw_deg), p = Number(v.pitch_deg);
+    if (v.yaw_deg == null || v.pitch_deg == null || !Number.isFinite(y) || !Number.isFinite(p)) return null;
+    return { yaw: y * Math.PI / 180, pitch: Math.max(-1.2, Math.min(1.2, p * Math.PI / 180)) };
   }
   function focus() {
     const a = cr(eye), b = cr(target), dist = Math.hypot((b.c - a.c) * FAR.dx, (b.r - a.r) * FAR.dz), t = pick(target);
@@ -1871,7 +1884,10 @@
     requestAnimationFrame(tick);
   }
   function inside(p) { return p && p.lat <= cfg.north && p.lat >= cfg.south && p.lng >= cfg.west && p.lng <= cfg.east; }
-  function heading() { post({ type: 'look', deg: Math.round(((yaw * 180 / Math.PI) % 360 + 360) % 360) }); }
+  function heading() {
+    const y = ((yaw * 180 / Math.PI) % 360 + 360) % 360;
+    post({ type: 'look', deg: Math.round(y), yaw: Math.round(y * 100) / 100 % 360, pitch: Math.round(pitch * 18000 / Math.PI) / 100 });
+  }
 
   const WALK_MAX = 400;
   function told() {
@@ -1891,7 +1907,7 @@
   }
 
   window.S3D = {
-    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; bldNear = []; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; bldNear = []; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; framed = toFraming(c.view); act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
     chunk(s, which) {
       if (typeof which === 'string' && which.startsWith('canopy:')) {   // a tree tile: packed as soon as the next one starts, so its text is let go at once
         const i = +which.slice(7);
@@ -1924,7 +1940,11 @@
     // inline(true): the small view inside a scrolling page. A sideways drag looks around; up-down drags are left to the
     // page (touch-action pan-y), so the two no longer fight. Full screen: free look both ways.
     inline(v) { inline = !!v; const c = document.getElementById('view'); if (c) c.style.touchAction = inline ? 'pan-y' : 'none'; },
-    view(eLat, eLng, tLat, tLng) {
+    view(eLat, eLng, tLat, tLng, fr) {
+      if (eLat === null || typeof eLat === 'object') {   // view({ yaw_deg, pitch_deg }) / view(null): only the framing changes
+        framed = toFraming(eLat); touched = false; if (R) { aim(); dirty = true; heading(); } return;
+      }
+      if (fr !== undefined) framed = toFraming(fr);
       eye = { lat: eLat, lng: eLng }; eye0 = eye; target = { lat: tLat, lng: tLng }; if (!R) return; if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.'); say(''); aim(); relight = dirty = true; heading();
       if (R.wide && wideState === 2 && Math.hypot((eye.lat - R.wide.at.lat) * 111132, (eye.lng - R.wide.at.lng) * 111320 * Math.cos(eye.lat * Math.PI / 180)) > 300) { wideState = 0; queueWide(); }   // the park-wide trees again, around the new spot
     },

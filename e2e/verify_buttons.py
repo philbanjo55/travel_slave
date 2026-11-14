@@ -884,6 +884,10 @@ def sun_3d():
                 V.check('walk-alive', C.app_alive())
             else:
                 print('INFO walk: no walk button in full screen (this build has no walk mode)', flush=True)
+            try:
+                framing()
+            except Exception as e:
+                V.check('frame-run', False, f'framing checks stopped: {e!r}'[:120])
             V.show('sun3d-full-drawn', g)
             c_ = C.capture(1)
             closed = V.tap_text(c_, 'Close the 3D view')
@@ -934,6 +938,93 @@ def sun_3d():
     except Exception as e:
         print(f'INFO cut-off checks on the stop page stopped: {e}', flush=True)
     V.check('sun3d-alive', C.app_alive())
+
+
+def framing():
+    """Framing and next / previous shot in the full-screen 3D view (14 Nov 2026, branch claude/sun3d-framing).
+    Runs inside sun_3d's full screen on Teton Live (a practice trip). Save framing is tapped only to see its question,
+    which is always CANCELLED: a shot (vantage row) is shared by the practice copy and the real Grand Teton trip, so a
+    saved framing here would change the real trip too (fetchGuard would refuse the write anyway). Checks frame-*."""
+    panel = os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'Sun3DPanel.tsx')
+    if os.path.exists(panel) and 'Save framing' not in open(panel, encoding='utf-8').read():
+        print('INFO framing: this build has no framing controls', flush=True); return
+    s = C.capture(1)
+    # Walk mode off first: its row sits above the framing row inside the short scrolling area under the picture
+    walk_on = next((c for c in s.clickables if 'Walk mode: move your viewpoint' in c['label']), None)
+    if walk_on is not None and (V.has(s, 'Hold an arrow to walk') or V.has(s, "You've walked") or V.has(s, 'Back to my saved spot')):
+        C.tap(walk_on['xy']); time.sleep(1.5); s = C.capture(1)
+    H = 2400
+    def framing_row(st):
+        return next((t for t in st.all_texts if t.startswith(('Framing: ', 'Not framed yet', 'Framed ', 'Saved on the phone'))), None)
+    for _ in range(4):   # the row may sit below the fold of the area under the picture: a small swipe inside it
+        if framing_row(s) and any('Save framing for this shot' in c['label'] for c in s.clickables):
+            break
+        C.adb('shell', 'input', 'swipe', '540', str(int(0.80 * H)), '540', str(int(0.70 * H)), '500'); s = C.capture(1.2)
+    line = framing_row(s)
+    V.check('frame-line', line is not None, (line or 'no "Not framed yet" / "Framed ..." line in full screen')[:110])
+    V.check('frame-save-button', any('Save framing for this shot' in c['label'] for c in s.clickables), 'Save framing button')
+    V.check('frame-aim-button', any('Aim at subject' in c['label'] for c in s.clickables), 'Aim at subject button')
+    cut_off('3d-framing', s)
+    # Save framing: its question, then Cancel (never Save, see above)
+    if V.tap_text(s, 'Save framing for this shot'):
+        q = None
+        for _ in range(5):
+            q = C.capture(1.2)
+            if V.has(q, 'Save this framing?'):
+                break
+        asked = q is not None and V.has(q, 'Save this framing?')
+        V.check('frame-save-asks', asked, 'question before saving' if asked else 'no "Save this framing?" question')
+        if asked:
+            V.check('frame-save-shared-note', V.has(q, 'practice copies included'), 'says it changes the shot on every trip')
+            print('INFO framing question: ' + ' | '.join(t for t in q.all_texts if len(t) > 3)[:400], flush=True)
+            cancelled = V.tap_text(q, 'Cancel', exact=True)
+            time.sleep(1.5); a = C.capture(1)
+            V.check('frame-save-cancel', cancelled and not V.has(a, 'Save this framing?'), 'cancelled, nothing saved')
+            after = framing_row(a)
+            V.check('frame-line-unchanged', after == line, f'before: {(line or "")[:50]} | after: {(after or "")[:50]}')
+        else:
+            V.back(); time.sleep(1)
+    # Aim at subject: the view stays up
+    a = C.capture(1)
+    if V.tap_text(a, 'Aim at subject'):
+        time.sleep(2); b = C.capture(1)
+        V.check('frame-aim', V.has(b, 'Looking ') and C.app_alive(), 'view still drawn after Aim at subject')
+    # Next / previous shot ("Shot 5 of 38 · Oxbow Bend · main" over the time slider)
+    pat = re.compile(r'Shot (\d+) of (\d+)')
+    def where(st):
+        for t in st.all_texts:
+            m = pat.search(t)
+            if m:
+                return int(m.group(1)), int(m.group(2)), t
+        return None
+    st = C.capture(1); w0 = where(st)
+    V.check('frame-tour-line', w0 is not None, (w0[2] if w0 else 'no "Shot n of m" line in full screen')[:110])
+    if w0 is None or w0[1] < 2:
+        return
+    n0, total, _ = w0
+    first, back_ = ('Next shot', 'Previous shot') if n0 < total else ('Previous shot', 'Next shot')
+    want = n0 + 1 if first == 'Next shot' else n0 - 1
+    if not V.tap_text(st, first, exact=True):
+        V.check('frame-next', False, f'no {first} button'); return
+    t0 = time.time(); w1 = None; drawn = False
+    for _ in range(30):   # another stop may need its terrain read from the phone first
+        c = C.capture(3); w1 = where(c)
+        if w1 and w1[0] == want and V.has(c, 'Looking '):
+            drawn = True; break
+    V.check('frame-next', w1 is not None and w1[0] == want, f'{first}: {(w1[2] if w1 else "no line")[:90]}')
+    V.check('frame-next-drawn', drawn, f'view drawn {time.time() - t0:.0f} s after {first}' if drawn else 'no "Looking" caption after the switch')
+    V.check('frame-next-alive', C.app_alive())
+    c = C.capture(1)
+    if V.tap_text(c, back_, exact=True):
+        w2 = None
+        for _ in range(30):
+            c = C.capture(3); w2 = where(c)
+            if w2 and w2[0] == n0 and V.has(c, 'Looking '):
+                break
+        V.check('frame-prev', w2 is not None and w2[0] == n0, f'{back_}: {(w2[2] if w2 else "no line")[:90]}')
+    else:
+        V.check('frame-prev', False, f'no {back_} button')
+    cut_off('3d-tour', C.capture(1))
 
 
 def offline_3d():
