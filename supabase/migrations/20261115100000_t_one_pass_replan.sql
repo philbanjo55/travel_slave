@@ -11,6 +11,10 @@
 -- not planned again for nothing. The nightly / Plan again draft starts from today's plan the same way while today's
 -- stops are not over (the Faroes 04:23 UTC draft is made at dawn: it re-planned today's places from tomorrow).
 -- Switch off = every function below that already existed behaves exactly as before.
+-- Shadow (planner_t_trips.config.one_pass = "shadow", for the live side-by-side on the practice trips): everything
+-- runs as today (Re-plan now, Plan again, the nightly draft, all published as now) and each of them ALSO makes the
+-- one-pass rest-of-trip draft as run config name op_shadow_T, which publishes nothing (whatif): the app shows the old
+-- two-step plans, and both can be graded on the same days afterwards.
 --
 -- Optional speed (planner_t_trips.config.chain_nights, also copied into the drafts): the draft's nights and their
 -- steps start each other at once (solver-replay calls itself) instead of one per 20-s tick; a call that gets lost is
@@ -43,25 +47,27 @@ revoke all on function public.planner_t_rest_seed(uuid, date, timestamptz, times
 -- one-pass step, planner_t_week with the switch on). Stops older drafts still in flight (they planned without it).
 create or replace function public.planner_t_rest(p_trip uuid, p_at timestamptz default now(), p_req bigint default null)
 returns jsonb language plpgsql security definer set search_path to 'public' as $$
-declare p record; v_tz text; v_today date; v_dates date[]; v_seed jsonb; v_run bigint; v_chain boolean; i int;
+declare p record; v_tz text; v_today date; v_dates date[]; v_seed jsonb; v_run bigint; v_chain boolean; i int; v_shadow boolean;
 begin
   select * into p from planner_t_trips where trip_id = p_trip;
   if p.trip_id is null then return jsonb_build_object('ok', false, 'error', 'T does not plan this trip'); end if;
+  v_shadow := coalesce(p.config ->> 'one_pass' = 'shadow', false);
   select coalesce(t.timezone, 'UTC') into v_tz from trips t where t.id = p_trip;
   v_today := (p_at at time zone v_tz)::date;
   v_dates := array(select d.date from days d where d.trip_id = p_trip and d.date >= v_today + 1 order by d.date);
   if coalesce(cardinality(v_dates), 0) = 0 then return jsonb_build_object('ok', true, 'run', null, 'reason', 'no days after today'); end if;
   v_seed := planner_t_rest_seed(p_trip, v_today, p_at);
   update replay_runs set status = 'stopped', updated_at = now()
-   where trip_id = p_trip and config ->> 'name' = 'draft_T' and status in ('queued', 'running');
+   where trip_id = p_trip and config ->> 'name' = case when v_shadow then 'op_shadow_T' else 'draft_T' end and status in ('queued', 'running');
   v_chain := coalesce((p.config ->> 'chain_nights')::boolean, false);
   insert into replay_runs (trip_id, start_date, trip_dates, nights, config, status)
   values (p_trip, v_dates[1], v_dates, cardinality(v_dates),
-          p.config || jsonb_build_object('name', 'draft_T', 'draft', true, 'live', true, 'publish', true,
+          p.config || jsonb_build_object('name', case when v_shadow then 'op_shadow_T' else 'draft_T' end, 'draft', true, 'live', true, 'publish', true,
                                          'fc_days', 0, 'kinds', '["mrmc"]'::jsonb, 'made', now(),
                                          'rest_of', jsonb_build_object('date', v_today, 'at', p_at, 'req', p_req,
                                                                         'plan', v_seed -> 'plan', 'step', v_seed -> 'step', 'seeded', v_seed -> 'n'))
-            || case when v_chain then jsonb_build_object('chain', true, 'chain_nights', true) else '{}'::jsonb end,
+            || case when v_chain then jsonb_build_object('chain', true, 'chain_nights', true) else '{}'::jsonb end
+            || case when v_shadow then jsonb_build_object('whatif', true) else '{}'::jsonb end,
           case when v_chain then 'running' else 'queued' end)
   returning id into v_run;
   -- v53: the past counts through Phil's ticks (solver-replay reads them); today's plan still ahead counts as done.
@@ -80,7 +86,7 @@ begin
   elsif not exists (select 1 from cron.job where jobname = 'replay-run') then
     perform cron.schedule('replay-run', '20 seconds', 'set statement_timeout = ''10min''; select public.replay_run_tick();');
   end if;
-  return jsonb_build_object('ok', true, 'run', v_run, 'seeded', v_seed -> 'n', 'from', v_seed -> 'step', 'chain', v_chain);
+  return jsonb_build_object('ok', true, 'run', v_run, 'seeded', v_seed -> 'n', 'from', v_seed -> 'step', 'chain', v_chain, 'shadow', v_shadow);
 end $$;
 revoke all on function public.planner_t_rest(uuid, timestamptz, bigint) from public, anon, authenticated;
 grant execute on function public.planner_t_rest(uuid, timestamptz, bigint) to service_role;
@@ -96,11 +102,13 @@ begin
   perform planner_t_autoadd();
   for p in select * from planner_t_trips where p_trip is null or trip_id = p_trip loop
     -- One-pass Re-plan (15 Nov 2026): the draft starts from today's plan while today's stops are not over.
-    if coalesce((p.config ->> 'one_pass')::boolean, false) then
+    if p.config ->> 'one_pass' = 'true' then
       v_r := planner_t_rest(p.trip_id);
       if (v_r ->> 'run') is not null then n := n + 1; end if;
       continue;
     end if;
+    -- Shadow: the seeded draft is made too (it publishes nothing), then the usual draft exactly as before.
+    if p.config ->> 'one_pass' = 'shadow' then perform planner_t_rest(p.trip_id); end if;
     select coalesce(t.timezone, 'UTC') into v_tz from trips t where t.id = p.trip_id;
     v_from := (now() at time zone v_tz)::date + 1;
     v_dates := array(select d.date from days d where d.trip_id = p.trip_id and d.date >= v_from order by d.date);
@@ -144,7 +152,7 @@ begin
      and coalesce((x.config ->> 'publish')::boolean, false) and not coalesce((x.config ->> 'draft')::boolean, false)
      and v_today between x.start_date and x.start_date + x.nights - 1
    order by x.id desc limit 1;
-  v_one := coalesce((v.config ->> 'one_pass')::boolean, false);
+  v_one := coalesce(v.config ->> 'one_pass' = 'true', false);
   if v.id is not null and exists (select 1 from replay_live_today t where t.run_id = v.id and t.replay_date = v_today)
      and exists (select 1 from solver_runs r join solver_plans p on p.run_id = r.id and p.rank = 1
                   cross join jsonb_array_elements(p.visits) x
