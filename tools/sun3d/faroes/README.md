@@ -108,3 +108,7 @@ keep files by id + bytes) and a migration that repoints only those rows (first r
 
 **The arch through Stóri Drangur cannot be drawn**: every level is a height field (one height a cell), so the stack is
 drawn solid. The same holds for sea caves and overhangs (the Drangarnir cave overhang shot).
+First run's check (34 shot-days that see the four stacks: the Bøur, Drangarnir and Tindhólmur shots, Tjørnuvík main,
+Eiðiskollur main view and zoom; live 2015 build vs stack tops raised, same harness): every view drew; one sun time
+moved (Drangarnir Guided "narrow view (no cave)": last sun on the subject 13:44 -> 13:40); the stacks stand 4-12 m
+taller, nothing else in the pictures changes.
