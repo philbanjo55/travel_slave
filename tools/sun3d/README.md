@@ -667,6 +667,21 @@ photo does most of it (the winter picture alone finds 26% of the bare trees). Wr
 picture), leave-one-box-out it finds 34% of the bare cells and keeps 90% of the evergreen ones (weak: far groves stay
 mostly green); 16% of the park's tree cells called bare.
 
+**A2 (15 Nov 2026, after Phil's Snake River Overlook scan, solved 53 m SSW of the 'main' pin):** two fixes.
+(1) Near crowns: mask v6 (`*_mask_v6.png`: tree cell = 8 + 3 x round(h / 0.6) + class 0 evergreen / 1 bare / 2 bare by the
+summer photo only, the winter picture saying the crown hides the snow as the evergreen forest does, e >= 0.85, the known
+evergreens' 10th percentile; `detail.leaf: 2`, picked by `services/terrain.ts` from the file name). Within 200 m of the stand
+spot, where the canopy is 6 m or more, the page draws class 2 evergreen (`NEAR_EVER`, `NEAR_EVER_H5`): the firs on the bluff
+below the overlook (24-200 m, a bright patch of the summer photo) are dense conifers in the scan. 78% of the Mormon Row
+cottonwoods are class 1; the first 200 m of the Moulton / Cunningham / Oxbow scans hold no tree called bare 6 m up.
+(2) Crown shape: an evergreen's outline is R (1 - y)^a with a from its own survey crown (the crown cells' mean height over
+the top's = 1 / (2a + 1); kept 0.65-1, `crownEx`), the bough cut-ins shallower (to 82%, was 62%) and fewer gaps at the
+edge, so a closed stand reads closed. Snake River scan, share of the lower half that is tree: photo 76%, A 61%, A2 69%;
+left fifth 99 / 58 / 81%; tree tops at the left edge 16% of the frame too low in A, 4.4% in A2; pixels agreeing 80% -> 87%.
+Phil's other five scans: pixel agreement unchanged or up (Oxbow +0.7 points in the lower half). Frame time and memory: same as A within the run-to-run spread.
+Known: a tree a few metres from the eye can fill a frame edge as a striped slab (Oxbow main); heights in 0.6 m steps
+(v5 0.4 m) move a few segmentation tops (a 4.8 m sapling 6 m in front of the Menor's Ferry pin is gone).
+
 **Accuracy of A / B** (`lidar/review/accuracy.py`; harness `lidar/review/rv2.js` with DUMP=1 / TSTYLE / LEAFDIR / WLEAFDIR; scratchpad paths inside, reference = the same cutting in Python with scipy on the 1 m mask):
 98.4-98.5% of the survey trees drawn one to one at 0-100 / 100-260 / 260-500 m, at the same cell (angle 0.002 deg),
 heights +-0.2 m (0.4 m steps), 9-12% extra trees (crowns split differently); widths 0.98-1.08 x the laser's 0.5 m crowns
@@ -675,7 +690,7 @@ heights +-0.2 m (0.4 m steps), 9-12% extra trees (crowns split differently); wid
 small lone bushes and trees under ~5 m across removed by the mask's cleaning), 95-100% of what it holds is real; nothing
 under 2 m (the willows in Phil's Oxbow scan).
 
-**Files:** A / B need the 16 v5 masks (6.6 MB, v4 7.3) and the 102 v2 tiles (7.2 MB, v1 6.8) and NOT the 16 tree-returns
+**Files:** A / B need the 16 leaf masks (v6 6.3 MB, v5 6.6, v4 7.3) and the 102 v2 tiles (7.2 MB, v1 6.8) and NOT the 16 tree-returns
 files (21.5 MB): ~22 MB less on the phone for the trip. Draft migration `20261115010000_terrain_trees_leaf.sql` (new columns
 `leaf_mask_path` on `terrain_detail_regions_v4`, `leaf_path` on `terrain_tree_tiles`; older app builds keep reading the old
 columns). App: `services/terrain.ts` `TREE_STYLE` ('dots' until Phil picks; 'shapes' / 'cloud' switch the files and the

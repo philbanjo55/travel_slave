@@ -24,8 +24,14 @@ Bare or evergreen (the survey is from summer, leaves on): per tree, from
   A logistic model on those (e, NIR, visible, NDVI), fitted on trees whose kind is known: the planted cottonwoods of
   Mormon Row (T.A. Moulton box, bare) against the lodgepole / spruce-fir forest of the Jenny Lake and Taggart boxes
   (evergreen). Trees under 4 m (willow thickets, young conifers) count as bare from p > 0.3.
-Mask v5: a tree cell's byte = 8 + 2 x round(height / 0.4 m) + 1 if bare (the page reads it with detail.leaf = true; an
-older page reads 0.2 m higher or lower heights, nothing else).
+Mask v6 (A2, 15 Nov 2026): a tree cell's byte = 8 + 3 x round(height / 0.6 m, 1..81: to 48.6 m) + class: 0 evergreen,
+1 bare, 2 bare by the summer photo only, a weak call: the winter picture darkens the snow under the crown as much as the
+evergreen forest does (e >= E_STRONG = 0.85, the known evergreens' 10th percentile). The page (detail.leaf = 2, set by
+services/terrain.ts from the *_mask_v6.png name) draws a weak call evergreen within 200 m of the stand spot where the
+canopy is 6 m or more (willow / shrub calls stay as they are): the firs on the
+bluff below the Snake River Overlook (24-200 m, a bright patch of the summer photo, e 0.88-1.47) are dense and dark in
+Phil's scan, while 78% of the Mormon Row cottonwoods (the known bare trees) are strong calls.
+Mask v5 (the first look A): 8 + 2 x round(height / 0.4 m) + 1 if bare (detail.leaf = true).
 Park-wide tiles v2 (gtl_* / gtll_*): as build_canopy.py's, with 128 = bare; lod 1: 128 bare + (cells - 1) x 32 +
 height / step (1..31, to 62 m). The bare call there is a second model on 7 m cells (NAIP averaged to 7 m + the winter
 picture), fitted on the box trees' calls of the cells inside the boxes.
@@ -43,6 +49,7 @@ import build_teton_colour as tc   # noqa: E402
 MODEL = {"mu": [1.0237287959635801, 1.3082069183143494, 0.9366943252403247, 0.16857996372356365], "sd": [0.3340671842887291, 0.3749338165056496, 0.2723237060542778, 0.13148074127729487],
          "w": [-0.7036476307825519, 2.7803390039423164, 2.522551645974452, 0.24046951040600073], "b": -5.837981451936919, "which": ["e", "nir", "vis", "ndvi"]}
 DARK = 0.02
+E_STRONG = 0.85   # mask v6: a bare call with e at least this is weak (drawn evergreen near the stand spot)
 KNOWN_BARE = ['t_a_moulton']; KNOWN_EVER = ['jenny_lake_2', 'taggart_bradley_lakes_2']
 
 
@@ -179,11 +186,13 @@ def boxes(a):
         # the trees again, a broadleaf's crown searched wider; a tree is bare when most of its crown cells are
         s2 = segment(H, bare=cell_bare); ids = np.arange(1, len(s2['h']) + 1)
         bare2 = np.asarray(nd.mean(cell_bare.astype(np.float32), s2['lab'], ids)) > 0.5
-        k = np.clip(np.round(H / 0.4), 1, 123).astype(np.int32)
-        m5 = np.where(m >= 8, 8 + 2 * k + cell_bare.astype(np.int32), m).astype(np.uint8)
-        name = r['mask_path'].replace('_mask_v4.png', '_mask_v5.png'); path = os.path.join(a.out, name); bd.write_mask(path, m5)
+        cw_ = np.zeros(len(bare) + 1, bool); cw_[1:] = bare & (X[:, 0] >= E_STRONG); cell_weak = cw_[s['lab']]   # the weak calls (see Mask v6)
+        k = np.clip(np.round(H / 0.6), 1, 81).astype(np.int32)
+        m6 = np.where(m >= 8, 8 + 3 * k + np.where(cell_bare, np.where(cell_weak, 2, 1), 0), m).astype(np.uint8)
+        name = r['mask_path'].replace('_mask_v4.png', '_mask_v6.png'); path = os.path.join(a.out, name); bd.write_mask(path, m6)
         st = dict(id=r['id'], leaf_mask_path=name, leaf_mask_bytes=os.path.getsize(path), trees=int(len(bare2)), trees_4m=int((s2['h'] >= 4).sum()),
-                  bare_4m=round(float(bare2[s2['h'] >= 4].mean()), 3), bare_cells=round(float(cell_bare[H > 0].mean()), 3))
+                  bare_4m=round(float(bare2[s2['h'] >= 4].mean()), 3), bare_cells=round(float(cell_bare[H > 0].mean()), 3),
+                  weak_cells=round(float(cell_weak[H > 0].mean()), 3))
         out.append(st); print(json.dumps(st), flush=True)
         np.savez_compressed(os.path.join(a.work, f'trees_{short(r["id"])}.npz'), r=s2['r'], c=s2['c'], h=s2['h'], cw=s2['cw'], area=s2['area'], bare=bare2)
         np.savez_compressed(os.path.join(a.work, f'cells_{short(r["id"])}.npz'), bare=np.packbits(cell_bare))
@@ -283,10 +292,11 @@ def sql(a):
     out = ["""-- 3D sun view, Grand Teton trees review (15 Nov 2026; tools/sun3d/lidar/build_leaf.py). DRAFT: not applied.
 -- Which surveyed trees are bare in late December, for the page's tree styles A (shapes) / B (soft dots)
 -- (tools/sun3d/app_view.js 'Trees as trees'; the app reads them only when services/terrain.ts TREE_STYLE is not 'dots').
---   terrain_detail_regions_v4.leaf_mask_path: the box's mask again, a tree cell = 8 + 2 x round(height / 0.4 m) + 1 if bare;
+--   terrain_detail_regions_v4.leaf_mask_path: the box's mask again, mask v6: a tree cell = 8 + 3 x round(height / 0.6 m) + class
+--   (0 evergreen, 1 bare, 2 bare by the summer photo only; ship the app that reads v6 before pointing rows at v6 files);
 --   terrain_tree_tiles.leaf_path: the park-wide tile again, 128 = bare (lod 1: 128 bare + (trees - 1) x 32 + height / step_m).
 -- New columns only: older app builds keep reading mask_path / path (and never see the bare bit).
--- Before applying: upload the files (bucket terrain): the 16 *_mask_v5.png and the gtl_* / gtll_* tiles.
+-- Before applying: upload the files (bucket terrain): the 16 *_mask_v6.png and the gtl_* / gtll_* tiles.
 alter table public.terrain_detail_regions_v4 add column if not exists leaf_mask_path text, add column if not exists leaf_mask_bytes integer;
 alter table public.terrain_tree_tiles add column if not exists leaf_path text, add column if not exists leaf_bytes integer;
 """]

@@ -109,7 +109,7 @@ const tilesFor = v => { const kx = 111320 * Math.cos(v.lat * Math.PI / 180), kz 
       if (mode !== 'plain') {
         tl = mode === 'trees' ? tilesFor(eye) : [];
         const fo = { detail: det ? { n: det.n, north: det.north, south: det.south, west: det.west, east: det.east, base: det.base_m, step: det.step_m, width: det.width_m ?? undefined, depth: det.depth_m ?? undefined, bare: det.bare ?? (newDet ? true : undefined),
-          trees: det.trees_path ? { bins: det.trees_bins ?? 64, bin: det.trees_bin_m ?? 0.6 } : undefined, leaf: LEAFM && LEAFM[det.id] ? true : undefined } : undefined,
+          trees: det.trees_path ? { bins: det.trees_bins ?? 64, bin: det.trees_bin_m ?? 0.6 } : undefined, leaf: LEAFM && LEAFM[det.id] ? (/_mask_v6\.png$/.test(LEAFM[det.id]) ? 2 : true) : undefined } : undefined,
           water: det && det.water_path && det.water_n ? { n: det.water_n, north: det.water_north, south: det.water_south, west: det.water_west, east: det.water_east } : undefined, ice,
           canopy: tl.length && !process.env.NOCFG ? { tiles: tl.map(t => ({ n: t.n, north: t.north, south: t.south, west: t.west, east: t.east, step: t.step_m, lod: t.lod })), max: process.env.CAPMAX ? +process.env.CAPMAX : undefined, leaf: LEAFT ? true : undefined } : undefined };
         await p.evaluate(() => { window.__f = performance.now(); });
