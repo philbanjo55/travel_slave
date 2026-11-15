@@ -39,6 +39,20 @@ function useOpenStop() {
 }
 
 // One trip day: Light only / This day, or this week's weather as that day.
+// Plan again, said plainly (Phil, 15 Nov 2026: "make the plan again much more obvious that it's a full level
+// planner"): it re-plans every day left of the trip; Re-plan today (Re-plan now) is the today-only one.
+function WholeTripButton({ onPress, disabled }: { onPress: () => void; disabled: boolean }) {
+  return (
+    <TouchableOpacity onPress={onPress} style={styles.bigBtn} disabled={disabled} accessibilityRole="button" accessibilityLabel="Plan again: re-plan the whole trip">
+      <Ionicons name="calendar-outline" size={18} color={colors.textPrimary} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.bigBtnTitle}>Re-plan the whole trip</Text>
+        <Text style={styles.bigBtnSub}>Every day left, with your latest changes · 2–4 min · also runs by itself each night</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: string }) {
   const [preview, setPreview] = useState(false);
   const [run, setRun] = useState<PlanRun | null>(null);
@@ -114,17 +128,15 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
             </Text>
           </TouchableOpacity>
         ))}
-        <TouchableOpacity onPress={() => load(preview, true)} style={styles.replan} disabled={!!busy} accessibilityLabel="Plan again">
-          <Ionicons name="refresh" size={16} color={colors.textSecondary} />
-          <Text style={styles.replanText}>Plan again</Text>
-        </TouchableOpacity>
       </View>
+      <WholeTripButton onPress={() => load(preview, true)} disabled={!!busy} />
       {t && isToday ? (
-        <TouchableOpacity onPress={doNow} style={[styles.replan, styles.nowBtn]} disabled={!!busy || nowView.phase === 'running'} accessibilityLabel="Re-plan now">
-          {nowView.phase === 'running' ? <ActivityIndicator size="small" color={colors.textPrimary} /> : <Ionicons name="camera-outline" size={16} color={colors.textPrimary} />}
-          <Text style={[styles.replanText, { color: colors.textPrimary }]}>
-            {nowView.phase === 'running' ? 'Re-planning with fresh camera pictures… (about 1 min)' : 'Re-plan now with the cameras'}
-          </Text>
+        <TouchableOpacity onPress={doNow} style={styles.bigBtn} disabled={!!busy || nowView.phase === 'running'} accessibilityRole="button" accessibilityLabel="Re-plan now: the rest of today, with the cameras">
+          {nowView.phase === 'running' ? <ActivityIndicator size="small" color={colors.textPrimary} /> : <Ionicons name="camera-outline" size={18} color={colors.textPrimary} />}
+          <View style={{ flex: 1 }}>
+            <Text style={styles.bigBtnTitle}>{nowView.phase === 'running' ? 'Re-planning today…' : 'Re-plan today'}</Text>
+            <Text style={styles.bigBtnSub}>{nowView.phase === 'running' ? 'Fresh camera pictures, then the rest of today (about 30 s)' : 'Rest of today only, from where you are, with fresh camera pictures · about 30 s'}</Text>
+          </View>
         </TouchableOpacity>
       ) : null}
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
@@ -199,11 +211,8 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
           {t ? "T's plan for each day (forecast, else week draft)."
              : 'Each subject counts once, on its best day.'}
         </Text>
-        <TouchableOpacity onPress={() => load(true)} style={styles.replan} disabled={!!busy} accessibilityLabel="Plan again">
-          <Ionicons name="refresh" size={16} color={colors.textSecondary} />
-          <Text style={styles.replanText}>Plan again</Text>
-        </TouchableOpacity>
       </View>
+      <WholeTripButton onPress={() => load(true)} disabled={!!busy} />
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>
           {run ? <Text style={styles.hint}>Planned {ago(run.created_at)}{note ? `\n${note}` : ''}</Text> : note ? <Text style={styles.hint}>{note}</Text> : null}
@@ -467,6 +476,10 @@ const styles = StyleSheet.create({
             borderRadius: radius.full, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
   replanText: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   nowBtn: { backgroundColor: colors.surface, borderRadius: radius.sm },
+  bigBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 10,
+    minHeight: 52, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  bigBtnTitle: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
+  bigBtnSub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
   center: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingVertical: spacing.xxl },
   hint: { fontSize: 12, color: colors.textTertiary, lineHeight: 17 },
   error: { fontSize: 13, color: '#e74c3c' },
