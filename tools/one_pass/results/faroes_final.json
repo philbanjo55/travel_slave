@@ -1,0 +1,755 @@
+{
+ "checks": {
+  "days": 2243,
+  "no_route": 0,
+  "together_split": 0,
+  "once_twice": 8,
+  "dark": 0,
+  "booking_diff": 0,
+  "drop_required": 72,
+  "drop_replaced": 71,
+  "drop_missed": 1,
+  "drop_optional": 56,
+  "drop_optional_replaced": 43,
+  "stale_drop_required": 72,
+  "stale_drop_replaced": 71,
+  "op_repeat_today": 159,
+  "stale_repeat_today": 272,
+  "op_repeat_once": 26,
+  "stale_repeat_once": 110,
+  "opdrop_repeat_today": 95,
+  "together_repeat_half": 135,
+  "stale_days": 1147,
+  "stale_once_twice": 144,
+  "stale_together_repeat_half": 63
+ },
+ "missed": [
+  {
+   "R": 7246,
+   "d": 6,
+   "run": 7934,
+   "unit": "t:gjogv",
+   "names": [
+    "\ud83d\udc26 Ambadalur + B\u00fagvin",
+    "\ud83d\udc26 Gj\u00f3gv Gorge"
+   ]
+  }
+ ],
+ "violations": [
+  [
+   7228,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:8",
+    "g:22"
+   ]
+  ],
+  [
+   7228,
+   9,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:9"
+   ]
+  ],
+  [
+   7229,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:26"
+   ]
+  ],
+  [
+   7229,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:13",
+    "g:22",
+    "g:35"
+   ]
+  ],
+  [
+   7229,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:saksun"
+   ]
+  ],
+  [
+   7229,
+   6,
+   "op/opdrop",
+   "once-only twice",
+   [
+    "t:saksun"
+   ]
+  ],
+  [
+   7230,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:26"
+   ]
+  ],
+  [
+   7230,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:kalsoy",
+    "g:22"
+   ]
+  ],
+  [
+   7230,
+   3,
+   "op/opdrop",
+   "once-only twice",
+   [
+    "t:kalsoy"
+   ]
+  ],
+  [
+   7230,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:15"
+   ]
+  ],
+  [
+   7231,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:37"
+   ]
+  ],
+  [
+   7231,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:33",
+    "t:saksun",
+    "g:15"
+   ]
+  ],
+  [
+   7231,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:9"
+   ]
+  ],
+  [
+   7232,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:26"
+   ]
+  ],
+  [
+   7232,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:35",
+    "g:3",
+    "t:saksun",
+    "g:22"
+   ]
+  ],
+  [
+   7232,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:15"
+   ]
+  ],
+  [
+   7232,
+   9,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:gjogv"
+   ]
+  ],
+  [
+   7233,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   7233,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:gjogv",
+    "g:9"
+   ]
+  ],
+  [
+   7233,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:35"
+   ]
+  ],
+  [
+   7234,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:26"
+   ]
+  ],
+  [
+   7234,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:saksun"
+   ]
+  ],
+  [
+   7234,
+   9,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:gjogv"
+   ]
+  ],
+  [
+   7237,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:37"
+   ]
+  ],
+  [
+   7237,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:13",
+    "t:gjogv",
+    "g:9"
+   ]
+  ],
+  [
+   7237,
+   3,
+   "op/opdrop",
+   "once-only twice",
+   [
+    "t:gjogv"
+   ]
+  ],
+  [
+   7237,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:35",
+    "g:22"
+   ]
+  ],
+  [
+   7238,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:8",
+    "g:2"
+   ]
+  ],
+  [
+   7238,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:10",
+    "t:kalsoy"
+   ]
+  ],
+  [
+   7238,
+   3,
+   "op/opdrop",
+   "once-only twice",
+   [
+    "t:kalsoy"
+   ]
+  ],
+  [
+   7238,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22",
+    "g:9"
+   ]
+  ],
+  [
+   7239,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:9",
+    "g:10"
+   ]
+  ],
+  [
+   7239,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:15",
+    "g:11",
+    "t:kalsoy"
+   ]
+  ],
+  [
+   7239,
+   3,
+   "op/opdrop",
+   "once-only twice",
+   [
+    "t:kalsoy"
+   ]
+  ],
+  [
+   7239,
+   9,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:26"
+   ]
+  ],
+  [
+   7241,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:8",
+    "g:2"
+   ]
+  ],
+  [
+   7241,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:33",
+    "g:13",
+    "g:11"
+   ]
+  ],
+  [
+   7241,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:kalsoy"
+   ]
+  ],
+  [
+   7241,
+   9,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:26"
+   ]
+  ],
+  [
+   7242,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:26"
+   ]
+  ],
+  [
+   7242,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:3",
+    "t:gjogv",
+    "g:2"
+   ]
+  ],
+  [
+   7242,
+   3,
+   "op/opdrop",
+   "once-only twice",
+   [
+    "t:gjogv"
+   ]
+  ],
+  [
+   7242,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:saksun"
+   ]
+  ],
+  [
+   7242,
+   6,
+   "op/opdrop",
+   "once-only twice",
+   [
+    "t:saksun"
+   ]
+  ],
+  [
+   7243,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:saksun"
+   ]
+  ],
+  [
+   7243,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:10",
+    "g:35",
+    "g:22"
+   ]
+  ],
+  [
+   7243,
+   9,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:26"
+   ]
+  ],
+  [
+   7244,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:8",
+    "g:2"
+   ]
+  ],
+  [
+   7244,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:26"
+   ]
+  ],
+  [
+   7244,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:kalsoy"
+   ]
+  ],
+  [
+   7245,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:kalsoy",
+    "g:9"
+   ]
+  ],
+  [
+   7245,
+   3,
+   "op/opdrop",
+   "once-only twice",
+   [
+    "t:kalsoy"
+   ]
+  ],
+  [
+   7245,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:37"
+   ]
+  ],
+  [
+   7245,
+   9,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:gjogv"
+   ]
+  ],
+  [
+   7246,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:8",
+    "g:11"
+   ]
+  ],
+  [
+   7246,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:33",
+    "g:35"
+   ]
+  ],
+  [
+   7247,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:saksun"
+   ]
+  ],
+  [
+   7247,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "t:kalsoy",
+    "g:9"
+   ]
+  ],
+  [
+   7247,
+   6,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:37"
+   ]
+  ],
+  [
+   7247,
+   9,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:15"
+   ]
+  ]
+ ],
+ "plain": {
+  "points": {
+   "weeks": 30,
+   "days": 146,
+   "mean_per_day": -0.259,
+   "se": 0.237,
+   "better": 58,
+   "worse": 53,
+   "op_mean": 24.39,
+   "two_mean": 24.665
+  },
+  "places": {
+   "weeks": 30,
+   "days": 146,
+   "mean_per_day": 0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 31.904,
+   "two_mean": 31.904
+  },
+  "places_good": {
+   "weeks": 30,
+   "days": 146,
+   "mean_per_day": 0.079,
+   "se": 0.089,
+   "better": 36,
+   "worse": 26,
+   "op_mean": 28.411,
+   "two_mean": 28.329
+  },
+  "sgod_good": {
+   "weeks": 30,
+   "days": 146,
+   "mean_per_day": -0.045,
+   "se": 0.036,
+   "better": 9,
+   "worse": 11,
+   "op_mean": 9.521,
+   "two_mean": 9.568
+  },
+  "points_repeat_today": {
+   "weeks": 30,
+   "days": 146,
+   "mean_per_day": -0.285,
+   "se": 0.093,
+   "better": 16,
+   "worse": 58,
+   "op_mean": 0.893,
+   "two_mean": 1.184
+  },
+  "points_other": {
+   "weeks": 30,
+   "days": 146,
+   "mean_per_day": 0.025,
+   "se": 0.267,
+   "better": 62,
+   "worse": 47,
+   "op_mean": 23.497,
+   "two_mean": 23.481
+  }
+ },
+ "drop": {
+  "points": {
+   "weeks": 30,
+   "days": 128,
+   "mean_per_day": -0.541,
+   "se": 0.231,
+   "better": 50,
+   "worse": 48,
+   "op_mean": 27.338,
+   "two_mean": 27.835
+  },
+  "places": {
+   "weeks": 30,
+   "days": 128,
+   "mean_per_day": 0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 31.883,
+   "two_mean": 31.883
+  },
+  "places_good": {
+   "weeks": 30,
+   "days": 128,
+   "mean_per_day": -0.067,
+   "se": 0.141,
+   "better": 27,
+   "worse": 30,
+   "op_mean": 27.984,
+   "two_mean": 28.039
+  },
+  "sgod_good": {
+   "weeks": 30,
+   "days": 128,
+   "mean_per_day": -0.109,
+   "se": 0.043,
+   "better": 5,
+   "worse": 13,
+   "op_mean": 9.383,
+   "two_mean": 9.484
+  },
+  "points_repeat_today": {
+   "weeks": 30,
+   "days": 128,
+   "mean_per_day": -0.242,
+   "se": 0.083,
+   "better": 7,
+   "worse": 35,
+   "op_mean": 0.72,
+   "two_mean": 0.956
+  },
+  "points_other": {
+   "weeks": 30,
+   "days": 128,
+   "mean_per_day": -0.299,
+   "se": 0.235,
+   "better": 54,
+   "worse": 42,
+   "op_mean": 26.618,
+   "two_mean": 26.878
+  }
+ },
+ "cpu_ms": {
+  "op": {
+   "n": 1147,
+   "median": 1224,
+   "p95": 2574,
+   "max": 3451
+  },
+  "stale": {
+   "n": 1147,
+   "median": 1244,
+   "p95": 2776,
+   "max": 3371
+  },
+  "opdrop": {
+   "n": 1096,
+   "median": 1245.5,
+   "p95": 2656,
+   "max": 3245
+  }
+ }
+}

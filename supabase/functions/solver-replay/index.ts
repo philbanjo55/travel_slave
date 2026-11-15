@@ -2473,8 +2473,16 @@ Deno.serve(async (req) => {
             const saveMc = async (cs: any[], todo: any[]) => {
               const pending = { night: n, stage: 'cands', visits: st!.route.map(v => ({ id: nodes[v.n].id, startMs: p0.dayStart + v.start * 60000, drive: v.drive, anchor: v.anchor })),
                                 units: list.map(u => mustOf(u).map(x => nodes[x].id)), cands: cs, todo, ms: (stage === 'cands' ? pend.ms ?? 0 : 0) + Math.round(performance.now() - tMc) };
-              await db.from('replay_run_state').update({ sets: { ...(ks.sets ?? {}), pending }, status: 'idle', note: null, updated_at: new Date().toISOString() })
+              // v102: a chained draft (run config chain) goes straight on to its next Monte Carlo step too.
+              const chainMc = draft && cfg.chain === true, tMcSave = new Date().toISOString();
+              await db.from('replay_run_state').update({ sets: { ...(ks.sets ?? {}), pending }, status: chainMc ? 'planning' : 'idle', note: null,
+                                                          ...(chainMc ? { started_at: tMcSave } : {}), updated_at: tMcSave })
                 .eq('run_id', runId).eq('kind', kind);
+              if (chainMc) {
+                const go = fetch(SELF_URL(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run_id: runId, kind }) })
+                  .then(r => r.body?.cancel()).catch(() => {});
+                (globalThis as any).EdgeRuntime?.waitUntil?.(go);
+              }
               return null;
             };
             const scoreLite = (c: any, vb: Map<number, Uint8Array>[]) => {

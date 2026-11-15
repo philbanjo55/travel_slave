@@ -1,0 +1,229 @@
+{
+ "checks": {
+  "days": 171,
+  "no_route": 0,
+  "together_split": 0,
+  "once_twice": 0,
+  "dark": 0,
+  "booking_diff": 0,
+  "drop_required": 4,
+  "drop_replaced": 4,
+  "drop_missed": 0,
+  "drop_optional": 6,
+  "drop_optional_replaced": 0,
+  "stale_drop_required": 4,
+  "stale_drop_replaced": 3,
+  "op_repeat_today": 4,
+  "stale_repeat_today": 6,
+  "op_repeat_once": 0,
+  "stale_repeat_once": 2,
+  "opdrop_repeat_today": 2,
+  "stale_days": 101,
+  "stale_once_twice": 8,
+  "together_repeat_half": 3,
+  "stale_together_repeat_half": 1
+ },
+ "missed": [],
+ "violations": [
+  [
+   3919,
+   0,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:2",
+    "g:19"
+   ]
+  ],
+  [
+   5028,
+   1,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:17"
+   ]
+  ],
+  [
+   5028,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:0",
+    "g:3"
+   ]
+  ],
+  [
+   5028,
+   5,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:19"
+   ]
+  ],
+  [
+   5028,
+   8,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:10"
+   ]
+  ],
+  [
+   5028,
+   9,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:13"
+   ]
+  ]
+ ],
+ "plain": {
+  "points": {
+   "weeks": 2,
+   "days": 13,
+   "mean_per_day": 0.0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 1.031,
+   "two_mean": 1.031
+  },
+  "places": {
+   "weeks": 2,
+   "days": 13,
+   "mean_per_day": 0.65,
+   "se": 0.35,
+   "better": 4,
+   "worse": 0,
+   "op_mean": 23.231,
+   "two_mean": 22.769
+  },
+  "places_good": {
+   "weeks": 2,
+   "days": 13,
+   "mean_per_day": 0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 3.923,
+   "two_mean": 3.923
+  },
+  "sgod_good": {
+   "weeks": 2,
+   "days": 13,
+   "mean_per_day": 0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 3,
+   "two_mean": 3
+  },
+  "points_repeat_today": {
+   "weeks": 2,
+   "days": 13,
+   "mean_per_day": 0.0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 0.0,
+   "two_mean": 0.0
+  },
+  "points_other": {
+   "weeks": 2,
+   "days": 13,
+   "mean_per_day": 0.0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 1.031,
+   "two_mean": 1.031
+  }
+ },
+ "drop": {
+  "points": {
+   "weeks": 2,
+   "days": 10,
+   "mean_per_day": 0.0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 0.496,
+   "two_mean": 0.496
+  },
+  "places": {
+   "weeks": 2,
+   "days": 10,
+   "mean_per_day": 0.667,
+   "se": 0.667,
+   "better": 1,
+   "worse": 0,
+   "op_mean": 21.7,
+   "two_mean": 21.3
+  },
+  "places_good": {
+   "weeks": 2,
+   "days": 10,
+   "mean_per_day": 0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 4,
+   "two_mean": 4
+  },
+  "sgod_good": {
+   "weeks": 2,
+   "days": 10,
+   "mean_per_day": 0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 3.1,
+   "two_mean": 3.1
+  },
+  "points_repeat_today": {
+   "weeks": 2,
+   "days": 10,
+   "mean_per_day": 0.0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 0.0,
+   "two_mean": 0.0
+  },
+  "points_other": {
+   "weeks": 2,
+   "days": 10,
+   "mean_per_day": 0.0,
+   "se": 0.0,
+   "better": 0,
+   "worse": 0,
+   "op_mean": 0.496,
+   "two_mean": 0.496
+  }
+ },
+ "cpu_ms": {
+  "op": {
+   "n": 101,
+   "median": 1076,
+   "p95": 1524,
+   "max": 3214
+  },
+  "stale": {
+   "n": 101,
+   "median": 1059,
+   "p95": 1491,
+   "max": 3215
+  },
+  "opdrop": {
+   "n": 70,
+   "median": 1084.0,
+   "p95": 1387,
+   "max": 1587
+  }
+ }
+}

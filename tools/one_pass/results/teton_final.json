@@ -1,0 +1,790 @@
+{
+ "checks": {
+  "days": 2233,
+  "no_route": 0,
+  "together_split": 0,
+  "once_twice": 0,
+  "dark": 0,
+  "booking_diff": 0,
+  "drop_required": 151,
+  "drop_replaced": 142,
+  "drop_missed": 9,
+  "drop_optional": 134,
+  "drop_optional_replaced": 111,
+  "stale_drop_required": 151,
+  "stale_drop_replaced": 100,
+  "op_repeat_today": 570,
+  "stale_repeat_today": 500,
+  "op_repeat_once": 0,
+  "stale_repeat_once": 18,
+  "opdrop_repeat_today": 357,
+  "stale_days": 1176,
+  "stale_once_twice": 65
+ },
+ "missed": [
+  {
+   "R": 6887,
+   "d": 3,
+   "run": 7833,
+   "unit": "g:19",
+   "names": [
+    "Emily's Pond Levee"
+   ]
+  },
+  {
+   "R": 6887,
+   "d": 4,
+   "run": 7842,
+   "unit": "g:20",
+   "names": [
+    "Elk Ranch Flats"
+   ]
+  },
+  {
+   "R": 6893,
+   "d": 0,
+   "run": 7846,
+   "unit": "g:23",
+   "names": [
+    "Snake River Overlook"
+   ]
+  },
+  {
+   "R": 6895,
+   "d": 4,
+   "run": 7874,
+   "unit": "g:24",
+   "names": [
+    "Swan Lake\u2013Heron Pond Loop"
+   ]
+  },
+  {
+   "R": 6897,
+   "d": 3,
+   "run": 7828,
+   "unit": "g:19",
+   "names": [
+    "Emily's Pond Levee"
+   ]
+  },
+  {
+   "R": 6897,
+   "d": 4,
+   "run": 7834,
+   "unit": "g:20",
+   "names": [
+    "Elk Ranch Flats"
+   ]
+  },
+  {
+   "R": 6903,
+   "d": 1,
+   "run": 7895,
+   "unit": "g:17",
+   "names": [
+    "Glacier View Turnout"
+   ]
+  },
+  {
+   "R": 6903,
+   "d": 4,
+   "run": 7911,
+   "unit": "g:6",
+   "names": [
+    "Cunningham Cabin"
+   ]
+  },
+  {
+   "R": 6907,
+   "d": 0,
+   "run": 7933,
+   "unit": "g:6",
+   "names": [
+    "Cunningham Cabin"
+   ]
+  }
+ ],
+ "violations": [
+  [
+   6847,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:19"
+   ]
+  ],
+  [
+   6847,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6853,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6855,
+   1,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:0"
+   ]
+  ],
+  [
+   6855,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6859,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6865,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6869,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:0",
+    "g:22"
+   ]
+  ],
+  [
+   6871,
+   1,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:0"
+   ]
+  ],
+  [
+   6871,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:19"
+   ]
+  ],
+  [
+   6873,
+   1,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:0"
+   ]
+  ],
+  [
+   6873,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6875,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:0",
+    "g:19"
+   ]
+  ],
+  [
+   6877,
+   1,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:0"
+   ]
+  ],
+  [
+   6877,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:19"
+   ]
+  ],
+  [
+   6881,
+   1,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:19"
+   ]
+  ],
+  [
+   6881,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21",
+    "g:0"
+   ]
+  ],
+  [
+   6883,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6883,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6885,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21",
+    "g:0"
+   ]
+  ],
+  [
+   6893,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6895,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6897,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6909,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6913,
+   1,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:0"
+   ]
+  ],
+  [
+   6913,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6913,
+   4,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:19"
+   ]
+  ],
+  [
+   6915,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6915,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6917,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6917,
+   4,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:24"
+   ]
+  ],
+  [
+   6919,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6919,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6919,
+   4,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:19"
+   ]
+  ],
+  [
+   6921,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:24"
+   ]
+  ],
+  [
+   6923,
+   4,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:24"
+   ]
+  ],
+  [
+   6925,
+   1,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:0"
+   ]
+  ],
+  [
+   6925,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:24"
+   ]
+  ],
+  [
+   6925,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:19"
+   ]
+  ],
+  [
+   6927,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6927,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6929,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6929,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6935,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6937,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6937,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6939,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6939,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6943,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6943,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6945,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6945,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6949,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6951,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21",
+    "g:0"
+   ]
+  ],
+  [
+   6951,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:22"
+   ]
+  ],
+  [
+   6955,
+   1,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:19"
+   ]
+  ],
+  [
+   6955,
+   2,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:21"
+   ]
+  ],
+  [
+   6955,
+   3,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:24",
+    "g:0"
+   ]
+  ],
+  [
+   6957,
+   1,
+   "stale/op",
+   "once-only twice",
+   [
+    "g:19"
+   ]
+  ]
+ ],
+ "plain": {
+  "points": {
+   "weeks": 56,
+   "days": 336,
+   "mean_per_day": 1.129,
+   "se": 0.219,
+   "better": 204,
+   "worse": 78,
+   "op_mean": 17.735,
+   "two_mean": 16.606
+  },
+  "places": {
+   "weeks": 56,
+   "days": 336,
+   "mean_per_day": 0.619,
+   "se": 0.048,
+   "better": 149,
+   "worse": 0,
+   "op_mean": 15.509,
+   "two_mean": 14.89
+  },
+  "places_good": {
+   "weeks": 56,
+   "days": 336,
+   "mean_per_day": 0.673,
+   "se": 0.077,
+   "better": 151,
+   "worse": 22,
+   "op_mean": 10.759,
+   "two_mean": 10.086
+  },
+  "sgod_good": {
+   "weeks": 56,
+   "days": 336,
+   "mean_per_day": 0.071,
+   "se": 0.026,
+   "better": 40,
+   "worse": 20,
+   "op_mean": 3.902,
+   "two_mean": 3.83
+  },
+  "points_repeat_today": {
+   "weeks": 56,
+   "days": 336,
+   "mean_per_day": 0.113,
+   "se": 0.122,
+   "better": 81,
+   "worse": 51,
+   "op_mean": 2.555,
+   "two_mean": 2.443
+  },
+  "points_other": {
+   "weeks": 56,
+   "days": 336,
+   "mean_per_day": 1.017,
+   "se": 0.199,
+   "better": 195,
+   "worse": 80,
+   "op_mean": 15.18,
+   "two_mean": 14.163
+  }
+ },
+ "drop": {
+  "points": {
+   "weeks": 56,
+   "days": 285,
+   "mean_per_day": 1.383,
+   "se": 0.304,
+   "better": 190,
+   "worse": 64,
+   "op_mean": 19.072,
+   "two_mean": 17.695
+  },
+  "places": {
+   "weeks": 56,
+   "days": 285,
+   "mean_per_day": 0.741,
+   "se": 0.051,
+   "better": 158,
+   "worse": 0,
+   "op_mean": 15.446,
+   "two_mean": 14.691
+  },
+  "places_good": {
+   "weeks": 56,
+   "days": 285,
+   "mean_per_day": 0.842,
+   "se": 0.089,
+   "better": 149,
+   "worse": 15,
+   "op_mean": 10.467,
+   "two_mean": 9.649
+  },
+  "sgod_good": {
+   "weeks": 56,
+   "days": 285,
+   "mean_per_day": 0.117,
+   "se": 0.033,
+   "better": 45,
+   "worse": 17,
+   "op_mean": 3.8,
+   "two_mean": 3.688
+  },
+  "points_repeat_today": {
+   "weeks": 56,
+   "days": 285,
+   "mean_per_day": 0.004,
+   "se": 0.132,
+   "better": 53,
+   "worse": 40,
+   "op_mean": 1.942,
+   "two_mean": 1.954
+  },
+  "points_other": {
+   "weeks": 56,
+   "days": 285,
+   "mean_per_day": 1.38,
+   "se": 0.292,
+   "better": 192,
+   "worse": 61,
+   "op_mean": 17.13,
+   "two_mean": 15.741
+  }
+ },
+ "cpu_ms": {
+  "op": {
+   "n": 1176,
+   "median": 1110.5,
+   "p95": 1626,
+   "max": 3153
+  },
+  "stale": {
+   "n": 1176,
+   "median": 1104.0,
+   "p95": 1593,
+   "max": 6914
+  },
+  "opdrop": {
+   "n": 1057,
+   "median": 1100,
+   "p95": 1579,
+   "max": 3082
+  }
+ }
+}

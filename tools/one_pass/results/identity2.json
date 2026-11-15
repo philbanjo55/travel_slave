@@ -1,0 +1,91 @@
+{
+ "bench": [
+  {
+   "R": 6873,
+   "old_run": 9433,
+   "new_run": 9434,
+   "nights": 7,
+   "nights_new": 7,
+   "identical": 7,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 7,
+    "reqs": 21,
+    "secs": 75.5
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 7,
+    "reqs": 21,
+    "secs": 75.6
+   }
+  },
+  {
+   "R": 7256,
+   "old_run": 9436,
+   "new_run": 9435,
+   "nights": 15,
+   "nights_new": 15,
+   "identical": 15,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 15,
+    "reqs": 43,
+    "secs": 194.4
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 15,
+    "reqs": 44,
+    "secs": 199.0
+   }
+  }
+ ],
+ "draft": [
+  {
+   "R": 6895,
+   "old_run": 9429,
+   "new_run": 9430,
+   "nights": 6,
+   "nights_new": 6,
+   "identical": 6,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 6,
+    "reqs": 18,
+    "secs": 61.4
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 6,
+    "reqs": 18,
+    "secs": 65.3
+   }
+  },
+  {
+   "R": 7243,
+   "old_run": 9431,
+   "new_run": 9432,
+   "nights": 14,
+   "nights_new": 14,
+   "identical": 14,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 14,
+    "reqs": 29,
+    "secs": 119.6
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 14,
+    "reqs": 28,
+    "secs": 115.9
+   }
+  }
+ ],
+ "now": []
+}
