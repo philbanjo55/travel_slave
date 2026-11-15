@@ -394,7 +394,9 @@ export function treeTileFile(t: TerrainTreeTile): TerrainFile {
 }
 // whether the tiles sent carry the bare bit (all of them, or the page reads them as the old tiles)
 export function treeTilesLeaf(ts: TerrainTreeTile[]): boolean { return PER_TREE && ts.length > 0 && ts.every(t => !!t.leaf_path); }
-export function detailLeaf(d: TerrainDetail): boolean { return PER_TREE && !!d.leaf_mask_path; }
+// 0 none, 1 mask v5 (bare bit), 2 mask v6 (evergreen / bare / bare by the summer photo only; the page draws that last
+// one evergreen near the stand spot). The format goes with the file name: tools/sun3d/lidar/build_leaf.py writes *_mask_v6.png.
+export function detailLeaf(d: TerrainDetail): 0 | 1 | 2 { return PER_TREE && d.leaf_mask_path ? (/_mask_v6\.png$/.test(d.leaf_mask_path) ? 2 : 1) : 0; }
 
 // The class mask of a detail box, as a file of its own (null when the box has none: it then draws as bare shapes).
 export function detailMask(d: TerrainDetail): TerrainFile | null {

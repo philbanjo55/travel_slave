@@ -717,9 +717,20 @@
   // from Sentinel-2 30 Dec 2025 and the summer aerial photo, tools/sun3d/lidar/build_leaf.py, which also has the same
   // cutting into trees in Python, the reference the page is measured against); without it, a guess from
   // the crown's shape. The park-wide trees beyond take the same call from their tiles (cfg.canopy.leaf). Never in lit().
-  let LEAF = false;
+  // A2 (Snake River photo check, 15 Nov 2026): mask v6 (cfg.detail.leaf = 2): a tree cell's byte is 8 + 3 x (height / 0.6 m)
+  // + 0 evergreen, 1 bare, 2 bare by the summer photo only (the weak call: the winter picture darkens the snow under the
+  // crown as much as the evergreen forest does, e >= 0.85, the known evergreens' 10th percentile). Within NEAR_EVER m of
+  // the stand spot a weak call is drawn evergreen: there a crown wrongly drawn bare opens a whole side of the picture (the
+  // firs on the bluff below the Snake River Overlook, 24-200 m, called bare from a bright patch of the summer photo, are
+  // dense and dark in Phil's scan). The Mormon Row cottonwoods (the model's known bare trees) are 78% strong calls; the
+  // first 200 m of Phil's Moulton, Cunningham and Oxbow scans hold no tree called bare at all.
+  // Only where the canopy is 6 m or more (NEAR_EVER_H5, in 0.2 m): willow and shrub calls stay as they are (the bare willows
+  // on the bank in Phil's Oxbow scan are weak calls too).
+  let LEAF = 0;
+  const NEAR_EVER = 200, NEAR_EVER_H5 = 30;
   const TSTYLES = ['dots', 'shapes', 'cloud'];
-  const khv = v => v >= 8 ? (LEAF ? (v - 8) & ~1 : v - 8) : 0;   // a mask byte -> canopy height / 0.2 m
+  const khv = v => v >= 8 ? (LEAF === 2 ? Math.floor((v - 8) / 3) * 3 : LEAF ? (v - 8) & ~1 : v - 8) : 0;   // a mask byte -> canopy height / 0.2 m
+  const kcls = v => v >= 8 && LEAF ? (LEAF === 2 ? (v - 8) % 3 : (v - 8) & 1) : 0;   // 0 evergreen, 1 bare, 2 bare (weak call, v6)
   // The trees of a laser box within its reach of the eye: tops = cells highest within a radius that grows with height
   // (1 m for a 4 m tree, 2.4 m at 20 m, 3.5 m at 32 m and up; a bare broadleaf's wider: 1.7 m at 4 m, 4.6 m at 20 m, 6 m from 28 m), crowns grown down from the tops (a cell joins the tree
   // of the higher cell beside it; then cells farther from their top than 0.8 x its height are let go). A few ms for a 520 m square.
@@ -728,7 +739,9 @@
     const rcn = Math.min(n, Math.ceil(reach / dz) + 4), ccn = Math.min(n, Math.ceil(reach / dx) + 4);
     const r0 = Math.max(0, Math.floor(e.r) - rcn), r1 = Math.min(n - 1, Math.floor(e.r) + rcn), c0 = Math.max(0, Math.floor(e.c) - ccn), c1 = Math.min(n - 1, Math.floor(e.c) + ccn);
     const h = r1 - r0 + 1, w = c1 - c0 + 1, N = w * h, V = new Uint8Array(N), Hs = new Float32Array(N), B = new Uint8Array(N);
-    for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) { const v = k[(r0 + r) * n + c0 + c]; if (v >= 8) { V[r * w + c] = Math.max(1, khv(v)); B[r * w + c] = LEAF ? (v - 8) & 1 : 0; } }
+    const NE2 = NEAR_EVER * NEAR_EVER;
+    for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) { const v = k[(r0 + r) * n + c0 + c]; if (v >= 8) { V[r * w + c] = Math.max(1, khv(v)); const cl = kcls(v);
+      B[r * w + c] = cl === 2 && V[r * w + c] >= NEAR_EVER_H5 && Math.pow((c0 + c - e.c) * dx, 2) + Math.pow((r0 + r - e.r) * dz, 2) < NE2 ? 0 : cl ? 1 : 0; } }   // a weak bare call near the eye, 6 m up: evergreen
     const g1 = 0.36 / 1.72, g0 = 1 / 1.72;   // a 0.7 m gaussian smoothing (3 x 3), trees only
     for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) {
       const i = r * w + c; if (!V[i]) continue; let s = 0;
@@ -758,9 +771,9 @@
     }
     for (let i = 0; i < N; i++) { const t = lab[i]; if (!t) continue; const ti = tops[t - 1], tr = (ti / w) | 0, tc = ti - tr * w, r = (i / w) | 0, c = i - r * w; if ((r - tr) * (r - tr) + (c - tc) * (c - tc) > lim2[t]) lab[i] = 0; }   // then no farther from its top than 0.8 x its height
     await breathe();
-    const cnt = new Uint32Array(T + 1), hm = new Uint8Array(T + 1), bare = new Uint32Array(T + 1);
-    for (let i = 0; i < N; i++) { const t = lab[i]; if (!t) continue; cnt[t]++; if (V[i] > hm[t]) hm[t] = V[i]; bare[t] += B[i]; }
-    const X = new Float32Array(T), Z = new Float32Array(T), Y = new Float32Array(T), Hh = new Float32Array(T), Cw = new Float32Array(T), Bb = new Uint8Array(T); let m = 0;
+    const cnt = new Uint32Array(T + 1), hm = new Uint8Array(T + 1), bare = new Uint32Array(T + 1), vs = new Float32Array(T + 1);
+    for (let i = 0; i < N; i++) { const t = lab[i]; if (!t) continue; cnt[t]++; if (V[i] > hm[t]) hm[t] = V[i]; bare[t] += B[i]; vs[t] += V[i]; }
+    const X = new Float32Array(T), Z = new Float32Array(T), Y = new Float32Array(T), Hh = new Float32Array(T), Cw = new Float32Array(T), Bb = new Uint8Array(T), Ex = new Float32Array(T); let m = 0;
     for (let t = 1; t <= T; t++) {
       const i = tops[t - 1], r = (i / w) | 0, c = i - r * w, R_ = r0 + r, C_ = c0 + c;
       const ok = Math.min((C_ + 0.5) * dx, (n - C_ - 0.5) * dx, (R_ + 0.5) * dz, (n - R_ - 0.5) * dz) >= band && Math.max(Math.abs(C_ - e.c) * dx, Math.abs(R_ - e.r) * dz) <= reach;
@@ -768,11 +781,18 @@
       const hh = hm[t] * 0.2, cw = 2 * Math.sqrt(cnt[t] * dx * dz / Math.PI);
       X[m] = D.x0 + (C_ + 0.5) * dx; Z[m] = D.z0 + (R_ + 0.5) * dz; Y[m] = D.HF[R_ * n + C_]; Hh[m] = hh; Cw[m] = cw;
       Bb[m] = LEAF ? (bare[t] * 2 > cnt[t] ? 1 : 0) : (hh >= 6 && cw > 0.6 * hh ? 1 : 0);   // no leaf data: a crown wider than 0.6 x its height is taken as a broadleaf
+      Ex[m] = crownEx(vs[t] / (cnt[t] * hm[t]));
       m++;
     }
     free(V); free(Hs); free(B); free(lab); free(next);
-    return { count: m, X, Z, Y, H: Hh, CW: Cw, bare: Bb };
+    return { count: m, X, Z, Y, H: Hh, CW: Cw, bare: Bb, EX: Ex };
   }
+  // A2: an evergreen's outline from its own crown in the survey. Seen from above, a crown whose half-width at height y
+  // (0 foot .. 1 top) is R (1 - y)^a has cells whose mean height is 1 / (2a + 1) of the top's: a cone (a = 1) a third,
+  // a full, rounded crown (a = 0.5) a half. A closed stand's crowns meet high up, so they come out full and close the gaps.
+  // Kept between 0.65 (fuller, the tip still pointed) and 1 (a cone): rounder reads as a broadleaf.
+  const NEAR_DROP = 8;   // m from the eye to a crown: not drawn below this
+  const crownEx = mrel => Math.max(0.65, Math.min(1, (1 / Math.max(0.2, Math.min(0.75, mrel)) - 1) / 2));
   // the drawn width (m) of a surveyed tree: its own crown, kept within what the shape can carry. The mask's 1 m cells
   // spread a crown by about half a cell a side (a cell counts when any return in it is high): measured against the
   // laser's own 0.5 m crowns at four stand pins, the cells' width is 1.2-1.6 m too wide; less 1.2 m (at most a third)
@@ -787,18 +807,23 @@
     const P = new Float32Array(m * 3), A = new Float32Array(m * 4), ord = new Uint32Array(m); for (let i = 0; i < m; i++) ord[i] = i;
     let s = 20261115; const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
     for (let i = m - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)), t = ord[i]; ord[i] = ord[j]; ord[j] = t; }
-    for (let q = 0; q < m; q++) { const i = ord[q]; P[q * 3] = S.X[i]; P[q * 3 + 1] = S.Y[i]; P[q * 3 + 2] = S.Z[i]; A[q * 4] = S.H[i]; A[q * 4 + 1] = drawnW(S.H[i], S.CW[i], S.bare[i]); A[q * 4 + 2] = S.bare[i]; A[q * 4 + 3] = rnd(); }
-    if (window.__treeDump) window.__treeDump.near = { style: 'shapes', trees: { X: S.X.slice(0, m), Z: S.Z.slice(0, m), Y: S.Y.slice(0, m), H: S.H.slice(0, m), CW: S.CW.slice(0, m), bare: S.bare.slice(0, m) } };
+    for (let q = 0; q < m; q++) { const i = ord[q]; P[q * 3] = S.X[i]; P[q * 3 + 1] = S.Y[i]; P[q * 3 + 2] = S.Z[i]; A[q * 4] = S.H[i]; A[q * 4 + 1] = drawnW(S.H[i], S.CW[i], S.bare[i]); A[q * 4 + 2] = S.bare[i] ? 2 : S.EX[i] / 2.5; A[q * 4 + 3] = rnd(); }   // z: 2 = bare, else the crown's shape (a / 2.5)
+    if (window.__treeDump) window.__treeDump.near = { style: 'shapes', trees: { X: S.X.slice(0, m), Z: S.Z.slice(0, m), Y: S.Y.slice(0, m), H: S.H.slice(0, m), CW: S.CW.slice(0, m), bare: S.bare.slice(0, m), EX: S.EX.slice(0, m) } };
     g.setAttribute('tpos', new THREE.InstancedBufferAttribute(P, 3)); g.setAttribute('tsz', new THREE.InstancedBufferAttribute(A, 4)); g.instanceCount = m;
     return g;
   }
   const SHAPE_VS = `
     uniform sampler2D kmap; uniform sampler2D lmap; uniform vec4 rect; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform float fogD; uniform float pscale;
-    attribute vec3 tpos; attribute vec4 tsz;   // ground point; height m, drawn width m, bare (0 / 1), random
+    attribute vec3 tpos; attribute vec4 tsz;   // ground point; height m, drawn width m, 2 = bare else the crown's shape a / 2.5, random
     varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx;
     void main() {
       vec2 rg = vec2(viewMatrix[0][0], viewMatrix[2][0]); rg = length(rg) > 1e-5 ? normalize(rg) : vec2(1., 0.);
-      if (distance(tpos.xz, cameraPosition.xz) < max(1.5, .5 * tsz.y)) { gl_Position = vec4(2., 2., 2., 1.); return; }   // the camera stands in this crown
+      // A2: a crown close to the eye is a flat quad seen from inside its own width (a striped slab at a frame edge): a tree
+      // whose crown (a cylinder: the drawn half-width round the stem, foot to top) is within NEAR_DROP m of the eye in 3D is
+      // not drawn. Per frame in the shader, so it follows the eye while walking. (A dithered fade over 8-12 m was tried:
+      // still pictures showed half-faded ghost trees, so it is a clean drop.)
+      vec2 dxz = tpos.xz - cameraPosition.xz; float dh = max(length(dxz) - .5 * tsz.y, 0.), dv = max(max(tpos.y - cameraPosition.y, cameraPosition.y - tpos.y - tsz.x), 0.);
+      if (length(vec2(dh, dv)) < ${NEAR_DROP.toFixed(1)}) { gl_Position = vec4(2., 2., 2., 1.); return; }
       vec3 p = vec3(tpos.x + rg.x * position.x * tsz.y, tpos.y - .4 + position.y * (tsz.x + .4), tpos.z + rg.y * position.x * tsz.y);   // the foot a little into the ground (slopes)
       vec4 mv = modelViewMatrix * vec4(p, 1.); gl_Position = projectionMatrix * mv; float dist = length(mv.xyz);
       vQ = position.xy; vT = tsz;
@@ -826,22 +851,22 @@
     void main() {
       float H = vT.x, W = vT.y, r = vT.w, x = vQ.x * W, y = vQ.y * H, px = max(vPx, .01), lit, sh = .5;
       vec3 c;
-      if (vT.z < .5) {   // evergreen: a spire of tiered boughs from just over the snow to the top
-        float cb = .06 + .05 * h1(r * 13.), tw = max(.14, .02 * H);
+      if (vT.z < 1.) {   // evergreen: a spire of tiered boughs from just over the snow to the top, as full as its survey crown
+        float cb = .06 + .05 * h1(r * 13.), tw = max(.14, .02 * H), ex = vT.z * 2.5;
         if (vQ.y < cb) { if (abs(x) > max(.5 * tw, .5 * px)) discard; c = vec3(.17, .13, .10); lit = .3; }
         else {
           float nt = 4. + floor(H / 3.), yc = (vQ.y - cb) / (1. - cb), side = x < 0. ? 1.7 : 0., tier = fract(yc * nt + r * 5. + .35 * h1(floor(yc * nt) + side + r));
           float wob = .5 + .25 * sin(y * 2.3 + r * 40. + side) + .25 * sin(y * 5.1 + r * 17.);
     #ifdef STIPPLE
-          float hw = .5 * W * pow(1. - yc, .9) * (.8 + .2 * pow(tier, 1.6)) * (.92 + .08 * wob), ax = abs(x) / max(hw, 1e-3);
+          float hw = .5 * W * pow(1. - yc, ex) * (.85 + .15 * pow(tier, 1.6)) * (.94 + .06 * wob), ax = abs(x) / max(hw, 1e-3);
           if (ax > 1.15) discard;
           if (!dot2(vec2(x, y), max(.13, 1.5 * px), .92 - .55 * smoothstep(.55, 1.15, ax), r, sh)) discard;
           c = (snowMode > .5 ? vec3(.075, .12, .095) : vec3(.10, .19, .09)) * (.65 + .7 * sh);
           if (snowMode > .5 && tier > .8 && sh > .82) c = vec3(.78, .82, .87);   // snow caught on a bough
     #else
-          float hw = .5 * W * pow(1. - yc, .9) * (.62 + .38 * pow(tier, 1.6)) * (.9 + .1 * wob);
+          float hw = .5 * W * pow(1. - yc, ex) * (.82 + .18 * pow(tier, 1.6)) * (.94 + .06 * wob);
           if (abs(x) > max(hw, .5 * px)) discard;
-          vec2 gq = max(vec2(.5, .3), vec2(px)); if (abs(x) > .7 * hw && h2(floor(vec2(x, y) / gq) + r * 3.) > .93 - .4 * (abs(x) / hw - .7)) discard;   // light through the outer boughs
+          vec2 gq = max(vec2(.5, .3), vec2(px)); if (abs(x) > .8 * hw && h2(floor(vec2(x, y) / gq) + r * 3.) > .96 - .4 * (abs(x) / hw - .8)) discard;   // light through the outermost boughs
           c = (snowMode > .5 ? vec3(.075, .12, .095) : vec3(.10, .19, .09)) * (.8 + .4 * h1(r * 7.)) * (.9 + .2 * tier);
           vec2 sq = max(vec2(.6, .35), vec2(px)), sg2 = vec2(x, y) / sq, sf = fract(sg2) - .5;
           if (snowMode > .5 && tier > .8 && abs(x) > .3 * hw && abs(x) < .92 * hw && h2(floor(sg2) + r) > .62 && (px > .2 || length(sf * vec2(1., 3.)) < .5)) c = mix(c, vec3(.80, .84, .88), .7);   // snow lying along a bough's upper side (a thin clump close by)
@@ -1166,7 +1191,7 @@
       const light = dc && dc.light != null ? !!dc.light : (navigator.deviceMemory || 8) <= 2, fine = hasDet && light && !(dc.n & 1) ? 2 : 1, dn = hasDet ? dc.n / fine : 0;
       let D = null, m = null, W = null, wmap = null, kmap = null, dmap = null, tp = null, list = null;
       const STYLE = TSTYLES.includes(my.treeStyle) ? my.treeStyle : 'dots';
-      LEAF = !!(hasDet && dc.leaf);
+      LEAF = hasDet && dc.leaf ? (dc.leaf === 2 ? 2 : 1) : 0;
       if (hasDet) {
       // 1. the heights: inside the near box when there is one, else inside the wide grid
       list = dparts; dparts = [];
