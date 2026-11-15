@@ -667,7 +667,7 @@ photo does most of it (the winter picture alone finds 26% of the bare trees). Wr
 picture), leave-one-box-out it finds 34% of the bare cells and keeps 90% of the evergreen ones (weak: far groves stay
 mostly green); 16% of the park's tree cells called bare.
 
-**Accuracy of A / B** (`trees_review/py/accuracy.py`, reference = the same cutting in Python with scipy on the 1 m mask):
+**Accuracy of A / B** (`lidar/review/accuracy.py`; harness `lidar/review/rv2.js` with DUMP=1 / TSTYLE / LEAFDIR / WLEAFDIR; scratchpad paths inside, reference = the same cutting in Python with scipy on the 1 m mask):
 98.4-98.5% of the survey trees drawn one to one at 0-100 / 100-260 / 260-500 m, at the same cell (angle 0.002 deg),
 heights +-0.2 m (0.4 m steps), 9-12% extra trees (crowns split differently); widths 0.98-1.08 x the laser's 0.5 m crowns
 (lone trees 0.97-1.05) at Moulton, Cunningham, Oxbow, Snake River (`crowncheck.py`). What the 1 m grid itself misses
