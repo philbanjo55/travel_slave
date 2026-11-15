@@ -22,7 +22,7 @@ import { useDayPlanner } from '../components/planner/DayPlannerHints';
 import { IS_TEST_APP } from '../utils/variant';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
-import { photoGroupPhotos, photoGroupStops } from '../utils/photoGroups';
+import { photoGroupPhotos, photoGroupStops, splitStopPhotos } from '../utils/photoGroups';
 
 const { width } = Dimensions.get('window');
 
@@ -120,9 +120,7 @@ export default function StopDetailScreen() {
   if (!stop) return <MissingScreen loading={!currentTripData} what="stop" />;
 
   const allPhotos = photoGroupPhotos(groupStops);
-  const byPosition = (a: any, b: any) => (a.position ?? 1e9) - (b.position ?? 1e9);
-  const refPhotos = allPhotos.filter((p: any) => !p.photo_type || p.photo_type === 'reference').sort(byPosition);
-  const fieldPhotos = allPhotos.filter((p: any) => p.photo_type === 'field').sort(byPosition);
+  const { ref: refPhotos, field: fieldPhotos } = splitStopPhotos(allPhotos);   // also what the 3D view's photo card shows
 
   const handlePhotoLongPress = (photoId: string, type: string, after?: () => void) => {
     if (allPhotos.find((p: any) => p.id === photoId)?.borrowed) {

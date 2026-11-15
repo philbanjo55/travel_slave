@@ -15,6 +15,7 @@ import verify as V
 
 
 OFFLINE = False   # set by offline_3d(): the network is off and every check name gets an 'offline-' prefix
+STOP_REF_PHOTOS = None   # set by sun_3d(): whether the opened stop page showed its reference photo thumbnail
 
 
 def seen_has(seen, needle):
@@ -623,6 +624,8 @@ def sun_3d():
         print('INFO sun3d crash ' + line[:300], flush=True)
     t = C.capture(1)
     V.show('sun3d-stop-page', t)
+    global STOP_REF_PHOTOS
+    STOP_REF_PHOTOS = V.has(t, 'Open reference photos')   # the thumbnail next to the stop's name (refphoto-* below)
     texts = [x for x in t.all_texts if x.strip()]
     opened = len(texts) > 3 and not V.has(t, 'Open the Planner')   # app still on screen, and not the trip page
     V.check('sun3d-stop-open', opened, 'stop page on screen' if opened else ('the app is not on screen' if len(texts) <= 3 else 'still on the trip page'))
@@ -888,6 +891,10 @@ def sun_3d():
                 framing()
             except Exception as e:
                 V.check('frame-run', False, f'framing checks stopped: {e!r}'[:120])
+            try:
+                refphoto()
+            except Exception as e:
+                V.check('refphoto-run', False, f'reference photo checks stopped: {e!r}'[:120])
             V.show('sun3d-full-drawn', g)
             c_ = C.capture(1)
             closed = V.tap_text(c_, 'Close the 3D view')
@@ -1025,6 +1032,96 @@ def framing():
     else:
         V.check('frame-prev', False, f'no {back_} button')
     cut_off('3d-tour', C.capture(1))
+
+
+def refphoto():
+    """Reference photo in the full-screen 3D view (15 Nov 2026, branch claude/sun3d-ref-photo): the photo button opens a
+    small card of the stop's photos, X closes it, a tap on the card lays the photo see-through over the picture with an
+    amount slider, its X goes back to the card. None of it may restart the view: the caption's heading must be the same
+    after. Runs inside sun_3d's full screen (online and offline). Checks refphoto-*."""
+    panel = os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'Sun3DPanel.tsx')
+    if os.path.exists(panel) and 'RefPhotoCard' not in open(panel, encoding='utf-8').read():
+        print('INFO refphoto: this build has no reference photo card', flush=True); return
+    look = re.compile(r'Looking (\S+ \d+)°')
+    def heading(st):
+        for t in st.all_texts:
+            m = look.search(t)
+            if m:
+                return m.group(1)
+        return None
+    def clickable(st, label, exact=False):
+        return next((c for c in st.clickables if ((c['label'].strip().lower() == label.lower()) if exact else (label.lower() in c['label'].lower()))), None)
+    def wait_for(test, tries=6):
+        st = C.capture(1)
+        for _ in range(tries):
+            if test(st):
+                return st, True
+            st = C.capture(1.2)
+        return st, False
+    s = C.capture(1)
+    h0 = heading(s)
+    btn = clickable(s, 'Reference photo', exact=True)
+    if btn is None:
+        if STOP_REF_PHOTOS:
+            V.check('refphoto-button', False, 'the stop page shows reference photos, but there is no photo button in full screen')
+        else:
+            V.check('refphoto-button', None, 'this stop has no reference photos: no photo button (as designed)')
+        return
+    V.check('refphoto-button', True, f'photo button in full screen (heading {h0})')
+    tap_btn = lambda: V.tap_text(C.capture(1), 'Reference photo', exact=True)
+    # Open the card
+    tap_btn()
+    c, ok = wait_for(lambda st: clickable(st, 'Close reference photo') is not None)
+    count = next((t for t in c.all_texts if re.fullmatch(r'\d+ of \d+', t.strip())), None)
+    V.check('refphoto-card-open', ok, f'card with {count or "no n of m label"}')
+    if not ok:
+        V.show('refphoto-card', c); return
+    card = clickable(c, 'over the view')
+    if card is not None:
+        # is a picture drawn inside the card? (offline: from the phone's photo store)
+        x, y = card['xy']
+        imgs = [n for n in (c.root.iter('node') if c.root is not None else []) if n.get('package') == V.PKG and 'Image' in (n.get('class') or '')
+                and C.bounds(n)[0] <= x <= C.bounds(n)[2] and C.bounds(n)[1] <= y <= C.bounds(n)[3]]
+        print(f'INFO refphoto card at {card["xy"]}: {len(imgs)} image view(s) under it', flush=True)
+    if clickable(c, 'Next reference photo') is not None:
+        V.tap_text(c, 'Next reference photo'); n2 = C.capture(1.2)
+        count2 = next((t for t in n2.all_texts if re.fullmatch(r'\d+ of \d+', t.strip())), None)
+        V.check('refphoto-next', count2 is not None and count2 != count, f'{count} -> {count2}')
+        c = n2
+    cut_off('3d-refphoto-card', c)
+    # X closes it (the button stays)
+    V.tap_text(c, 'Close reference photo')
+    c, ok = wait_for(lambda st: clickable(st, 'Close reference photo') is None)
+    V.check('refphoto-card-close', ok and clickable(c, 'Reference photo', exact=True) is not None, 'card closed, photo button still there')
+    # Card -> see-through
+    tap_btn()
+    c, ok = wait_for(lambda st: clickable(st, 'over the view') is not None)
+    if not ok:
+        V.check('refphoto-see-open', False, 'the card did not open again'); return
+    V.tap_text(c, 'over the view')
+    c, ok = wait_for(lambda st: V.has(st, 'See-through amount') and clickable(st, 'Close see-through') is not None)
+    V.check('refphoto-see-open', ok and clickable(c, 'Close reference photo') is None, 'see-through bar with the amount slider, card hidden')
+    if ok:
+        V.show('refphoto-see', c)
+        cut_off('3d-refphoto-see', c)
+        # move the amount: a tap near the slider's right end; the bar and the picture stay
+        node = next((n for n in (c.root.iter('node') if c.root is not None else []) if (n.get('content-desc') or '') == 'See-through amount'), None)
+        if node is not None:
+            x1, y1, x2, y2 = C.bounds(node)
+            C.tap((x1 + int(0.85 * (x2 - x1)), (y1 + y2) // 2)); time.sleep(1)
+            d = C.capture(1)
+            V.check('refphoto-slider', V.has(d, 'See-through amount') and V.has(d, 'Looking ') and C.app_alive(), 'slider moved, bar and view still up')
+        V.tap_text(C.capture(1), 'Close see-through')
+        c, ok = wait_for(lambda st: clickable(st, 'Close see-through') is None and clickable(st, 'Close reference photo') is not None)
+        V.check('refphoto-see-close', ok, 'see-through closed, back to the card')
+    # Close the card with the photo button itself, then: the view is the same one (no restart, same heading)
+    if clickable(C.capture(1), 'Close reference photo') is not None:
+        tap_btn()
+    c, gone = wait_for(lambda st: clickable(st, 'Close reference photo') is None and clickable(st, 'Close see-through') is None)
+    h1 = heading(c)
+    V.check('refphoto-closed', gone, 'card and see-through gone after the photo button')
+    V.check('refphoto-spot-kept', h0 is not None and h1 == h0, f'heading before: {h0} | after: {h1}')
+    V.check('refphoto-alive', C.app_alive())
 
 
 def offline_3d():
