@@ -11,6 +11,7 @@ import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { framingOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
 import type { Framing, Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
+import { RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar } from './RefPhotoOverlay';
 
 // 3D view of the shot (TEST app, Phil 12 Nov 2026): the real terrain from the
 // stand spot toward the subject, lit by the sun at the slider's time. The
@@ -65,6 +66,13 @@ import { compassPoint } from './sunStyle';
 // subject" points the view back at the subject pin (the saved framing stays until
 // a new one is saved or it is forgotten). Saves made with no signal wait on the
 // phone and are sent later, the stand spot's too. HD shows no framing controls.
+//
+// Reference photo (Phil, 15 Nov 2026): in full screen a photo button (only when the
+// stop has photos) opens a small card of the stop's photos in the top-right corner;
+// a tap on it lays the photo see-through over the picture, with an amount slider.
+// It is drawn over the web view and never touches it (no restart, no new key), so
+// the view, heading, lens and walk position stay as they are. Not over HD: Google's
+// picture and its credits must stay clear.
 
 type Props = {
   pair: Pair;
@@ -78,6 +86,7 @@ type Props = {
   onFull: () => void;          // open or close full screen
   hdOn?: boolean;              // HD wanted (kept by the parent so full screen opens the way the small view was)
   onHd?: (on: boolean) => void;
+  photos?: RefPhoto[];         // full screen: the stop's photos as the stop page lists them, for the reference photo card
 };
 
 // The package's prop types don't resolve against this React Native version's types; the props used below are its documented ones.
@@ -106,6 +115,7 @@ let lastFrame: FrameMode = 'land';
 let lastForeground = true;
 let lastIce: boolean | null = null;
 let pickedFor: string | null = null;   // the shot whose lens / frame box the user changed by hand: its framing's lens is not put back over that
+let lastRefOpacity = 0.45;   // the see-through amount last chosen, kept while the app is open
 let foregroundTooHeavy = false;   // the web view died with the foreground on: it stays off until the user turns it on again
 // How this phone kept up the last time the view was moved: the page's quality levels while moving (0 full .. 3 low),
 // one for looking around / walking and one for the time slider. Handed to the next page, so it starts where this one ended.
@@ -138,7 +148,7 @@ function Below({ full, max, children }: { full?: boolean; max: number; children:
   return <ScrollView style={{ maxHeight: max, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
 }
 
-export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd }: Props) {
+export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -232,6 +242,16 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const want = hdOn ?? wantLocal;
   const setWant = useCallback((on: boolean) => { if (onHd) onHd(on); else setWantLocal(on); }, [onHd]);
   const savedLine = tripTerrainLine(useTripTerrain(tripId));
+  // Reference photo (full screen only): 'card' = the small card, 'see' = see-through over the picture.
+  const refList = full && photos ? photos.filter(p => p && (p.id || p.storage_url || p.base64_data)) : [];
+  const refKey = refList.map(p => p.id ?? p.storage_url ?? '').join('|');
+  const [refMode, setRefMode] = useState<'off' | 'card' | 'see'>('off');
+  const [refIdx, setRefIdx] = useState(0);
+  const [refOpacity, setRefOpacityState] = useState(lastRefOpacity);
+  const setRefOpacity = useCallback((v: number) => { lastRefOpacity = v; setRefOpacityState(v); }, []);
+  const [topH, setTopH] = useState(40);   // the button row's height (it wraps): the card sits under it
+  // Another stop's shot (next / previous) brings its own photos: start again at its first, or close when it has none.
+  useEffect(() => { setRefIdx(0); if (!refKey) setRefMode('off'); }, [refKey]);
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
 
@@ -343,6 +363,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     setLit(null); setMoments(null); setLook(null); setShapes(false); setWideTrees(0); setRangeIn(false); setHousesIn(0); setPhotoFore(false); setForeBusy(false); setProblem(null);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p)); setGen(g => g + 1);
   }, []);
+  const refOn = full && !hd && refList.length > 0;   // the photo button and card: full screen, offline view, the stop has photos
+  const refPhoto = refList[Math.min(refIdx, Math.max(0, refList.length - 1))] ?? null;
   const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64 || !!treeTiles || !!rangeBox || !!houseTiles;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour or the park-wide trees
   const useDetail = foreground && !hd && hasFore;
   const useDetailRef = useRef(false);
@@ -616,10 +638,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             style={styles.web}
           />
         ) : null}
+        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} /> : null}
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
-        <View style={styles.topRow} pointerEvents="box-none">
+        <View style={styles.topRow} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
           <View style={styles.lens} accessibilityRole="tablist">
             {LENSES.map(l => (
               <TouchableOpacity
@@ -692,6 +715,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
                 <Ionicons name="snow-outline" size={17} color={iceOn ? '#000000' : '#ffffff'} />
               </TouchableOpacity>
             ) : null}
+            {refOn ? (
+              <TouchableOpacity
+                onPress={() => setRefMode(refMode === 'off' ? 'card' : 'off')}
+                style={[styles.fullBtn, refMode !== 'off' && styles.lensOn]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: refMode !== 'off' }}
+                accessibilityLabel="Reference photo"
+                hitSlop={6}
+              >
+                <Ionicons name="image-outline" size={17} color={refMode !== 'off' ? '#000000' : '#ffffff'} />
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity onPress={onFull} style={styles.fullBtn} accessibilityRole="button" accessibilityLabel={full ? 'Close full screen' : 'Open the 3D view full screen'} hitSlop={6}>
               <Ionicons name={full ? 'contract-outline' : 'expand-outline'} size={18} color="#ffffff" />
             </TouchableOpacity>
@@ -713,6 +748,13 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
               </TouchableOpacity>
             ))}
           </View>
+        ) : null}
+        {refOn && refMode === 'card' ? (
+          <RefPhotoCard photos={refList} index={Math.min(refIdx, refList.length - 1)} onIndex={setRefIdx} onSee={() => setRefMode('see')} onClose={() => setRefMode('off')} top={8 + topH + 2} />
+        ) : null}
+        {refOn && refMode === 'see' ? (
+          // above the caption; while walking, above the walk arrows (bottom-left, up to 192 dp)
+          <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('card')} bottom={walking ? 200 : 34} />
         ) : null}
         {ready && look != null ? (
           <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format} · {hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}</Text>
