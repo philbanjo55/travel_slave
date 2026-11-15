@@ -93,3 +93,22 @@ answers kept in `<work>/cache`). A first run takes about 1.5 hours on 4 cores (c
   foreground in 6-9 s both; a full-quality redraw 1.4-2.6 s median both (no measurable change); JS heap 99-118 MB with
   the range box and houses (was 54-87), 222 MB at Tórshavn / Kirkjubøur / Velbastaður where ~10,000 buildings are within
   8 km (was 64-87): the houses are the heaviest new part (the page builds them in plain JS arrays). Not measured on a phone.
+
+## Sea-stack tops (`stack_tops.py`, 14 Nov 2026, after the first build went live)
+
+The 2 m file shaves thin tops. Checked against the agency's 2009 contours (closed rings) and published heights:
+Stóri Drangur 66.4 m in the file (top contour 72, published ~70), Risin 67.4 (contour 68, published 71), Kellingin 56.6
+(contour 62, published 68), Tindhólmur 255.2 (published 262). `python3 stack_tops.py <work> --migration <path>` raises
+each stack's own top in every file that holds it: the cells above half the stack's height that are connected to its top
+are lifted by (target - top) x w^1.5, w = 0 at half height and 1 at the top, so the footprint, the shore and the lower
+cliffs stay as they were. Targets: Stóri Drangur 72, Risin 71, Kellingin 68, Tindhólmur 262. Lítli Drangur stays at 28 m
+(no survey line or published figure). Run it after the `sql` step; it writes `<name>_st.png` files (new names: phones
+keep files by id + bytes) and a migration that repoints only those rows (first run: 10 files, 9.6 MB, migration
+`20261114060000_terrain_faroes_stack_tops.sql`). These are ground heights, so the sun times use them.
+
+**The arch through Stóri Drangur cannot be drawn**: every level is a height field (one height a cell), so the stack is
+drawn solid. The same holds for sea caves and overhangs (the Drangarnir cave overhang shot).
+First run's check (34 shot-days that see the four stacks: the Bøur, Drangarnir and Tindhólmur shots, Tjørnuvík main,
+Eiðiskollur main view and zoom; live 2015 build vs stack tops raised, same harness): every view drew; one sun time
+moved (Drangarnir Guided "narrow view (no cave)": last sun on the subject 13:44 -> 13:40); the stacks stand 4-12 m
+taller, nothing else in the pictures changes.
