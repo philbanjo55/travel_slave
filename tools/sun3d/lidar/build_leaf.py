@@ -6,6 +6,7 @@ own size, for the page's tree styles A (shapes) and B (cloud) (tools/sun3d/app_v
   build_leaf.py tiles <work> --rows <detail rows json> --files <dir> --canopy <canopy work dir>  park-wide tiles, v2
   build_leaf.py sizes <work> --rows <detail rows json> --files <dir>                             crown width / height table
   build_leaf.py train <work> --rows <detail rows json> --files <dir>                             refit the tree model (prints it)
+  build_leaf.py sql   <work> --out-sql <file>                                                      the (draft) migration
 
 Needs: pip install numpy scipy pillow tifffile imagecodecs pyproj requests; the colour builder's caches
 (tools/sun3d/teton_colour/build_teton_colour.py, <work>/cache): Sentinel-2 and NAIP are read through it.
@@ -111,12 +112,15 @@ class Green:
         pid = (ri - ri0) * ww + (ci - ci0)
         cnt = np.bincount(pid.ravel(), minlength=hh * ww); tcn = np.bincount(pid.ravel(), weights=tree.ravel().astype(np.float64), minlength=hh * ww)
         cov = nd.gaussian_filter((tcn / np.maximum(cnt, 1)).reshape(hh, ww), 0.6)   # the sensor's blur
-        obs = s.B[ri0:ri0 + hh, ci0:ci0 + ww]
-        open_ = cov < 0.03; k = 21
+        obs = np.zeros((hh, ww), np.float32)   # (a tile at the grid's edge reaches past the picture: nothing there)
+        a0, b0, a1, b1 = max(ri0, 0), max(ci0, 0), min(ri0 + hh, s.B.shape[0]), min(ci0 + ww, s.B.shape[1])
+        if a1 > a0 and b1 > b0: obs[a0 - ri0:a1 - ri0, b0 - ci0:b1 - ci0] = s.B[a0:a1, b0:b1]
+        nodata = obs <= 0
+        open_ = (cov < 0.03) & ~nodata; k = 21
         num = nd.uniform_filter(np.where(open_, obs, 0), k); den = nd.uniform_filter(open_.astype(np.float32), k)
         ref = np.where(den > 0.05, num / np.maximum(den, 1e-6), np.nan)
         if np.isnan(ref).any(): ref = ref[tuple(nd.distance_transform_edt(np.isnan(ref), return_distances=False, return_indices=True))]
-        e = (ref - obs) / (np.maximum(cov, 0.08) * np.maximum(ref - DARK, 0.05))
+        e = np.where(nodata, 1.0, (ref - obs) / (np.maximum(cov, 0.08) * np.maximum(ref - DARK, 0.05)))   # no picture: taken as evergreen-dark (the summer photo decides)
         return np.clip(e, -0.5, 2.0)[ri - ri0, ci - ci0]
 
 
@@ -134,10 +138,11 @@ def feats_box(work, green, r, H, s):
     return np.stack([np.clip(e, -0.5, 2.0), f[3] / 100, (f[0] + f[1] + f[2]) / 300, (f[3] - f[0]) / np.maximum(f[3] + f[0], 1)], 1)
 
 
-def fit(X, y, l2=1e-3, it=3000):
+def fit(X, y, l2=1e-3, it=3000, balance=False):
     mu, sd = X.mean(0), X.std(0) + 1e-6; Z = (X - mu) / sd; w = np.zeros(Z.shape[1]); b = 0.0
+    sw = np.where(y > .5, .5 / max(y.mean(), 1e-6), .5 / max(1 - y.mean(), 1e-6)) if balance else np.ones(len(y))   # each class weighs the same
     for _ in range(it):
-        p = 1 / (1 + np.exp(-(Z @ w + b))); g = p - y; w -= 0.5 * (Z.T @ g / len(y) + l2 * w); b -= 0.5 * g.mean()
+        p = 1 / (1 + np.exp(-(Z @ w + b))); g = (p - y) * sw; w -= 0.5 * (Z.T @ g / len(y) + l2 * w); b -= 0.5 * g.mean()
     return dict(mu=mu.tolist(), sd=sd.tolist(), w=w.tolist(), b=float(b))
 
 
@@ -208,7 +213,8 @@ def tiles(a):
     sys.path.insert(0, HERE); import build_canopy as bc   # noqa
     ca = argparse.Namespace(work=a.canopy, min_h=4.0, min_multi=0.5, max_elev=3300, max_slope=55)
     can, n = bc.load_can(ca); N, M = can.shape; green = Green(a.work)
-    feats = np.zeros((N, M, 5), np.float32); have = np.zeros((N, M), bool)
+    NF = 8; feats = np.zeros((N, M, NF), np.float16); have = np.zeros((N, M), bool)
+    sm = lambda x: nd.uniform_filter(x, 5, mode='nearest')   # the stand around (35 m): less of the ground between crowns
     for tr in range(bc.TR):
         for tc_ in range(bc.TC):
             t = can[tr * n:(tr + 1) * n, tc_ * n:(tc_ + 1) * n]
@@ -217,7 +223,8 @@ def tiles(a):
             A = tc.naip(a.work, box, n, n) * 255
             LA, LO = grid_latlng(box, n); E = green.e_on(LA, LO, (t > 0).astype(np.float32))
             sl = (slice(tr * n, (tr + 1) * n), slice(tc_ * n, (tc_ + 1) * n))
-            feats[sl] = np.stack([np.clip(E, -0.5, 2.0), A[..., 3] / 100, A[..., :3].mean(-1) / 100, (A[..., 3] - A[..., 0]) / np.maximum(A[..., 3] + A[..., 0], 1), np.log(np.maximum(t, 2))], -1); have[sl] = True
+            Ec, nir, vis = np.clip(E, -0.5, 2.0), A[..., 3] / 100, A[..., :3].mean(-1) / 100
+            feats[sl] = np.stack([Ec, nir, vis, (A[..., 3] - A[..., 0]) / np.maximum(A[..., 3] + A[..., 0], 1), np.log(np.maximum(t, 2)), sm(Ec), sm(nir), sm(vis)], -1); have[sl] = True
             print('features', box['id'], flush=True)
     # labels from the boxes
     rows = [r for r in json.load(open(a.rows)) if r.get('parent') == 'grand_teton' and r.get('mask_path')]
@@ -232,17 +239,23 @@ def tiles(a):
         idx = (R_ * M + C_)[H > 0]; vb = cell[H > 0]
         tot = np.bincount(idx, minlength=N * M); bb = np.bincount(idx, weights=vb, minlength=N * M)
         sel = np.nonzero((tot >= 8) & (can.ravel() > 0))[0]
-        X.append(feats.reshape(-1, 5)[sel]); y.append((bb[sel] / tot[sel] > 0.5).astype(float)); g.append(np.full(len(sel), bi))
+        X.append(feats.reshape(-1, NF)[sel].astype(np.float32)); y.append((bb[sel] / tot[sel] > 0.5).astype(float)); g.append(np.full(len(sel), bi))
     X, y, g = np.concatenate(X), np.concatenate(y), np.concatenate(g)
+    np.savez_compressed(os.path.join(a.work, 'train7.npz'), X=X, y=y, g=g)
     print('7 m cells with a box call', len(y), 'bare share', round(float(y.mean()), 3))
-    ok, nn_ = 0, 0
+    # each class weighs the same in the fit; the cut is the one that makes the left-out boxes' bare share come out right overall
+    P_out = np.zeros(len(y))
     for bi in np.unique(g):   # leave one box out
-        tr_ = g != bi; mm = fit(X[tr_], y[tr_]); p = prob(mm, X[~tr_]) > 0.5; ok += int((p == (y[~tr_] > .5)).sum()); nn_ += int((~tr_).sum())
-        print(f'  {short(rows[bi]["id"]):30s} cells {int((~tr_).sum()):6d} bare {float(y[~tr_].mean()):.2f} called bare {float(p.mean()):.2f} agree {float((p == (y[~tr_] > .5)).mean()):.3f}')
-    print('leave-one-box-out agreement', round(ok / nn_, 3))
-    mm = fit(X, y); json.dump(mm, open(os.path.join(a.work, 'model7.json'), 'w'))
-    P = np.zeros((N, M), np.float32); P[have] = prob(mm, feats[have])
-    bare = (P > 0.5) & (can > 0)
+        tr_ = g != bi; mm = fit(X[tr_], y[tr_], balance=True); P_out[~tr_] = prob(mm, X[~tr_])
+    cut = float(np.quantile(P_out, 1 - y.mean()))
+    for bi in np.unique(g):
+        k = g == bi; p = P_out[k] > cut
+        print(f'  {short(rows[bi]["id"]):30s} cells {int(k.sum()):6d} bare {float(y[k].mean()):.2f} called bare {float(p.mean()):.2f} agree {float((p == (y[k] > .5)).mean()):.3f}')
+    yb = y > .5; pb = P_out > cut
+    print('leave-one-box-out: agree', round(float((pb == yb).mean()), 3), '; bare found', round(float(pb[yb].mean()), 3), '; evergreen kept', round(float((~pb[~yb]).mean()), 3), '; cut', round(cut, 3))
+    mm = fit(X, y, balance=True); mm['cut'] = cut; json.dump(mm, open(os.path.join(a.work, 'model7.json'), 'w'))
+    P = np.zeros((N, M), np.float32); P[have] = prob(mm, feats[have].astype(np.float32))
+    bare = (P > cut) & (can > 0)
     print('park: tree cells', int((can > 0).sum()), 'called bare', round(float(bare[can > 0].mean()), 3))
     os.makedirs(a.out, exist_ok=True)
     v = np.clip(np.round(can / bc.STEP_M), 0, 127).astype(np.uint8); v[(can > 0) & (v == 0)] = 1; v = v | np.where(bare, 128, 0).astype(np.uint8)
@@ -263,11 +276,30 @@ def tiles(a):
     print(len(rows_out), 'files,', round(sum(r['leaf_bytes'] for r in rows_out) / 1e6, 2), 'MB')
 
 
+def sql(a):
+    """The migration (draft: apply only after the files in upload_leaf.txt / the masks are in bucket terrain)."""
+    boxes = json.load(open(os.path.join(a.work, 'leaf_rows.json'))); tiles = json.load(open(os.path.join(a.work, 'leaf_tiles.json')))
+    q = lambda v: "'" + str(v).replace("'", "''") + "'"
+    out = ["""-- 3D sun view, Grand Teton trees review (15 Nov 2026; tools/sun3d/lidar/build_leaf.py). DRAFT: not applied.
+-- Which surveyed trees are bare in late December, for the page's tree styles A (shapes) / B (soft dots)
+-- (tools/sun3d/app_view.js 'Trees as trees'; the app reads them only when services/terrain.ts TREE_STYLE is not 'dots').
+--   terrain_detail_regions_v4.leaf_mask_path: the box's mask again, a tree cell = 8 + 2 x round(height / 0.4 m) + 1 if bare;
+--   terrain_tree_tiles.leaf_path: the park-wide tile again, 128 = bare (lod 1: 128 bare + (trees - 1) x 32 + height / step_m).
+-- New columns only: older app builds keep reading mask_path / path (and never see the bare bit).
+-- Before applying: upload the files (bucket terrain): the 16 *_mask_v5.png and the gtl_* / gtll_* tiles.
+alter table public.terrain_detail_regions_v4 add column if not exists leaf_mask_path text, add column if not exists leaf_mask_bytes integer;
+alter table public.terrain_tree_tiles add column if not exists leaf_path text, add column if not exists leaf_bytes integer;
+"""]
+    out.append('update public.terrain_detail_regions_v4 t set leaf_mask_path = v.p, leaf_mask_bytes = v.b from (values\n' + ',\n'.join(f"  ({q(b['id'])}, {q(b['leaf_mask_path'])}, {b['leaf_mask_bytes']})" for b in boxes) + '\n) v(id, p, b) where t.id = v.id;\n')
+    out.append('update public.terrain_tree_tiles t set leaf_path = v.p, leaf_bytes = v.b from (values\n' + ',\n'.join(f"  ({q(t['id'])}, {q(t['leaf_path'])}, {t['leaf_bytes']})" for t in tiles) + '\n) v(id, p, b) where t.id = v.id;\n')
+    open(a.out_sql, 'w').write('\n'.join(out)); print('wrote', a.out_sql)
+
+
 def main():
     p = argparse.ArgumentParser(); p.add_argument('cmd'); p.add_argument('work')
-    p.add_argument('--rows'); p.add_argument('--files'); p.add_argument('--out'); p.add_argument('--canopy')
+    p.add_argument('--rows'); p.add_argument('--files'); p.add_argument('--out'); p.add_argument('--canopy'); p.add_argument('--out-sql', dest='out_sql')
     a = p.parse_args(); os.makedirs(a.work, exist_ok=True); a.out = a.out or os.path.join(a.work, 'files')
-    {'boxes': boxes, 'tiles': tiles, 'sizes': sizes, 'train': train}[a.cmd](a)
+    {'boxes': boxes, 'tiles': tiles, 'sizes': sizes, 'train': train, 'sql': sql}[a.cmd](a)
 
 
 if __name__ == '__main__':

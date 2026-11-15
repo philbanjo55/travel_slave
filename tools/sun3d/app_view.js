@@ -722,7 +722,7 @@
   const khv = v => v >= 8 ? (LEAF ? (v - 8) & ~1 : v - 8) : 0;   // a mask byte -> canopy height / 0.2 m
   // The trees of a laser box within its reach of the eye: tops = cells highest within a radius that grows with height
   // (1 m for a 4 m tree, 2.4 m at 20 m, 3.5 m at 32 m and up; a bare broadleaf's wider: 1.7 m at 4 m, 4.6 m at 20 m, 6 m from 28 m), crowns grown down from the tops (a cell joins the tree
-  // of the higher cell beside it, never farther from its top than 0.8 x its height). A few ms for a 520 m square.
+  // of the higher cell beside it; then cells farther from their top than 0.8 x its height are let go). A few ms for a 520 m square.
   async function segTrees(D, breathe) {
     const n = D.n, k = D.kind, e = crg(D, eye), dx = D.dx, dz = D.dz, reach = D.reach || Infinity, band = D.band;
     const rcn = Math.min(n, Math.ceil(reach / dz) + 4), ccn = Math.min(n, Math.ceil(reach / dx) + 4);
@@ -740,22 +740,24 @@
     for (let r = 0; r < h; r++) {
       for (let c = 0; c < w; c++) {
         const i = r * w + c, hv = Hs[i]; if (!V[i] || hv < 2) continue;
-        const rad = Math.round(2 * (B[i] ? Math.max(1.5, Math.min(6, 1 + 0.18 * hv)) : Math.max(1, Math.min(3.5, 0.6 + 0.09 * hv)))) / 2 / dx, R = Math.ceil(rad), R2 = rad * rad + 1e-6; let top = true;
-        for (let a = -R; a <= R && top; a++) { const rr = r + a; if (rr < 0 || rr >= h) continue; for (let b = -R; b <= R; b++) { if (a * a + b * b > R2) continue; const cc = c + b; if (cc < 0 || cc >= w) continue; const j = rr * w + cc, hj = Hs[j]; if (hj > hv || (hj === hv && j < i)) { top = false; break; } } }
+        const rad = Math.round(2 * (B[i] ? Math.max(1.5, Math.min(6, 1 + 0.18 * hv)) : Math.max(1, Math.min(3.5, 0.6 + 0.09 * hv)))) / 2, R = Math.ceil(rad / Math.min(dx, dz) - 1e-3), R2 = rad * rad + 0.01; let top = true;   // in metres (a box's cell is 1.0013 m, not 1)
+        for (let a = -R; a <= R && top; a++) { const rr = r + a; if (rr < 0 || rr >= h) continue; for (let b = -R; b <= R; b++) { if (a * a * dz * dz + b * b * dx * dx > R2) continue; const cc = c + b; if (cc < 0 || cc >= w) continue; const j = rr * w + cc, hj = Hs[j]; if (hj > hv || (hj === hv && j < i)) { top = false; break; } } }
         if (top) tops.push(i);
       }
       if (!(r & 127)) await breathe();
     }
-    const T = tops.length, lab = new Int32Array(N), next = new Int32Array(N), head = new Int32Array(256).fill(-1), lim2 = new Float32Array(T + 1);
-    const push = (i, l) => { next[i] = head[l]; head[l] = i; };
-    for (let t = 0; t < T; t++) { const i = tops[t]; lab[i] = t + 1; const th = V[i] * 0.2; lim2[t + 1] = Math.pow(Math.max(2, 0.8 * th) / dx, 2); push(i, V[i]); }
+    const T = tops.length, lab = new Int32Array(N), next = new Int32Array(N), head = new Int32Array(256).fill(-1), tail = new Int32Array(256).fill(-1), lim2 = new Float32Array(T + 1);
+    const push = (i, l) => { next[i] = -1; if (tail[l] >= 0) next[tail[l]] = i; else head[l] = i; tail[l] = i; };   // first in, first out within a height: fronts meeting on a flat crown split it evenly
+    for (let t = 0; t < T; t++) { const i = tops[t]; lab[i] = t + 1; const th = V[i] * 0.2; lim2[t + 1] = Math.pow(Math.max(2, 0.8 * th) / dx, 2) + 0.01; push(i, V[i]); }
     for (let l = 255; l >= 1; l--) {
       while (head[l] >= 0) {
-        const i = head[l]; head[l] = next[i]; const t = lab[i], ti = tops[t - 1], tr = (ti / w) | 0, tc = ti - tr * w, r = (i / w) | 0, c = i - r * w;
+        const i = head[l]; head[l] = next[i]; if (head[l] < 0) tail[l] = -1; const t = lab[i], r = (i / w) | 0, c = i - r * w;
         for (let a = -1; a <= 1; a++) { const rr = r + a; if (rr < 0 || rr >= h) continue; for (let b = -1; b <= 1; b++) { const cc = c + b; if (cc < 0 || cc >= w || (!a && !b)) continue; const j = rr * w + cc; if (!V[j] || lab[j]) continue;
-          if ((rr - tr) * (rr - tr) + (cc - tc) * (cc - tc) > lim2[t]) continue; lab[j] = t; push(j, Math.min(V[j], l)); } }
+          lab[j] = t; push(j, Math.min(V[j], l)); } }
       }
     }
+    for (let i = 0; i < N; i++) { const t = lab[i]; if (!t) continue; const ti = tops[t - 1], tr = (ti / w) | 0, tc = ti - tr * w, r = (i / w) | 0, c = i - r * w; if ((r - tr) * (r - tr) + (c - tc) * (c - tc) > lim2[t]) lab[i] = 0; }   // then no farther from its top than 0.8 x its height
+    await breathe();
     const cnt = new Uint32Array(T + 1), hm = new Uint8Array(T + 1), bare = new Uint32Array(T + 1);
     for (let i = 0; i < N; i++) { const t = lab[i]; if (!t) continue; cnt[t]++; if (V[i] > hm[t]) hm[t] = V[i]; bare[t] += B[i]; }
     const X = new Float32Array(T), Z = new Float32Array(T), Y = new Float32Array(T), Hh = new Float32Array(T), Cw = new Float32Array(T), Bb = new Uint8Array(T); let m = 0;
@@ -771,8 +773,12 @@
     free(V); free(Hs); free(B); free(lab); free(next);
     return { count: m, X, Z, Y, H: Hh, CW: Cw, bare: Bb };
   }
-  // the drawn width (m) of a surveyed tree: its own crown, kept within what the shape can carry
-  const drawnW = (h, cw, bare) => bare ? Math.max(1.2, Math.min(1.4 * h, Math.max(0.2 * h, cw))) : Math.max(0.8, Math.min(1.2 * h, Math.max(0.15 * h, cw)));
+  // the drawn width (m) of a surveyed tree: its own crown, kept within what the shape can carry. The mask's 1 m cells
+  // spread a crown by about half a cell a side (a cell counts when any return in it is high): measured against the
+  // laser's own 0.5 m crowns at four stand pins, the cells' width is 1.2-1.6 m too wide; less 1.2 m (at most a third)
+  // the drawn width is 0.97-1.08 x the laser's (trees review, 15 Nov 2026)
+  const crownW = cw => Math.max(0.65 * cw, cw - 1.2);
+  const drawnW = (h, cw, bare) => { const c = crownW(cw); return bare ? Math.max(1.2, Math.min(1.4 * h, Math.max(0.2 * h, c))) : Math.max(0.8, Math.min(1.2 * h, Math.max(0.15 * h, c))); };
   // A: one quad a tree, turned to the camera, the outline cut in the fragment shader. In a random order, so the slow
   // phone's share while moving is a thinner copy of the whole stand.
   function shapeGeo(S) {
@@ -815,7 +821,7 @@
     bool dot2(vec2 p, float q, float keep, float r, out float shade) {
       vec2 g = p / q, cell = floor(g), f = fract(g) - .5, off = vec2(h2(cell + r), h2(cell + r + 3.1)) - .5;
       shade = h2(cell + r + 5.);
-      return h2(cell + r + 11.) < keep && length(f - .4 * off) < .3 + .14 * h2(cell + r + 7.);
+      return h2(cell + r + 11.) < keep && length(f - .75 * off) < .3 + .2 * h2(cell + r + 7.);   // dots off the grid, of uneven size
     }
     void main() {
       float H = vT.x, W = vT.y, r = vT.w, x = vQ.x * W, y = vQ.y * H, px = max(vPx, .01), lit, sh = .5;
@@ -838,7 +844,7 @@
           vec2 gq = max(vec2(.5, .3), vec2(px)); if (abs(x) > .7 * hw && h2(floor(vec2(x, y) / gq) + r * 3.) > .93 - .4 * (abs(x) / hw - .7)) discard;   // light through the outer boughs
           c = (snowMode > .5 ? vec3(.075, .12, .095) : vec3(.10, .19, .09)) * (.8 + .4 * h1(r * 7.)) * (.9 + .2 * tier);
           vec2 sq = max(vec2(.6, .35), vec2(px)), sg2 = vec2(x, y) / sq, sf = fract(sg2) - .5;
-          if (snowMode > .5 && tier > .72 && abs(x) < .9 * hw && h2(floor(sg2) + r) > .7 && (px > .2 || length(sf * vec2(1., 1.7)) < .5)) c = mix(c, vec3(.80, .84, .88), .75);   // snow lying on a bough (a rounded clump close by)
+          if (snowMode > .5 && tier > .8 && abs(x) > .3 * hw && abs(x) < .92 * hw && h2(floor(sg2) + r) > .62 && (px > .2 || length(sf * vec2(1., 3.)) < .5)) c = mix(c, vec3(.80, .84, .88), .7);   // snow lying along a bough's upper side (a thin clump close by)
     #endif
           lit = .3 + .55 * yc;
         }
@@ -1446,8 +1452,8 @@
   // light passes' alpha). None inside the laser box (its own trees are there). Never in lit() / the sun times.
   // Built after the rest of the foreground, in steps; a failure or a slow phone only leaves these trees out.
   // A / B: a lone park-wide tree's width for its height, from the laser boxes' own trees (tools/sun3d/lidar/build_leaf.py sizes:
-  // the median crown width over height, evergreen / bare, trees of 8 m and up, 16 boxes, 185,000 trees)
-  const WIDE_EVER = 0.28, WIDE_BARE = 0.36;
+  // the median crown width over height, evergreen / bare, trees of 8 m and up, 16 boxes, 185,000 trees, less the 1 m cells' spread as crownW)
+  const WIDE_EVER = 0.2, WIDE_BARE = 0.27;
   const WIDE_WAIT = 1500, WIDE_MS = 30000, WIDE_D0 = 600, WIDE_RANGE = 12000, WIDE_MAX = 60000, WIDE_LIGHT = 20000, WB = 16;
   let DT_ = null;
   const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
