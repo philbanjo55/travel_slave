@@ -1050,7 +1050,8 @@ def refphoto():
                 return m.group(1)
         return None
     def clickable(st, label, exact=False):
-        return next((c for c in st.clickables if ((c['label'].strip().lower() == label.lower()) if exact else (label.lower() in c['label'].lower()))), None)
+        # a button's label is its texts joined by ' | ', and an icon glyph counts as a text: compare the first part
+        return next((c for c in st.clickables if ((c['label'].split(' | ')[0].strip().lower() == label.lower()) if exact else (label.lower() in c['label'].lower()))), None)
     def wait_for(test, tries=6):
         st = C.capture(1)
         for _ in range(tries):
@@ -1070,7 +1071,10 @@ def refphoto():
             V.check('refphoto-button', None, 'this stop has no reference photos: no photo button (as designed)')
         return
     V.check('refphoto-button', True, f'photo button in full screen (heading {h0})')
-    tap_btn = lambda: V.tap_text(C.capture(1), 'Reference photo', exact=True)
+    def tap_btn():
+        b = clickable(C.capture(1), 'Reference photo', exact=True)
+        if b: C.tap(b['xy'])
+        return b is not None
     # Open the card
     tap_btn()
     c, ok = wait_for(lambda st: clickable(st, 'Close reference photo') is not None)
