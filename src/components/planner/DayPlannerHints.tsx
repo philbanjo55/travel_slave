@@ -392,7 +392,7 @@ export function ReplanNowButton({ tripId }: { tripId: string }) {
     <TouchableOpacity onPress={go} disabled={busy} style={[styles.nowBtn, busy && { opacity: 0.6 }]} activeOpacity={0.8} accessibilityRole="button"
       accessibilityState={{ disabled: busy, busy }} accessibilityLabel="Re-plan now with the cameras: the rest of today">
       {busy ? <ActivityIndicator size="small" color={colors.textPrimary} /> : null}
-      <Text style={styles.nowText} numberOfLines={1}>{busy ? 'Re-planning today…' : 'Re-plan today'}</Text>
+      <Text style={styles.nowText} numberOfLines={1}>{busy ? 'Re-planning…' : 'Re-plan now'}</Text>
     </TouchableOpacity>
   );
 }

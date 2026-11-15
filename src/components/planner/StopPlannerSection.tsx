@@ -154,8 +154,8 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
           <SettingsEditor stopId={stopId} initial={setting} onChange={s => { setSetting(s); setSaved(true); }} />
           {saved && tripId ? (
             <TouchableOpacity style={styles.replan} onPress={replan} disabled={replanning} accessibilityRole="button">
-              <Text style={styles.replanText}>Saved. Re-plan the whole trip with this change? (2–4 min)</Text>
-              {replanning ? <ActivityIndicator size="small" color={colors.signalOk} /> : <Text style={styles.replanGo} accessibilityLabel="Plan again">Re-plan trip ›</Text>}
+              <Text style={styles.replanText}>Saved. Re-plan with this change?</Text>
+              {replanning ? <ActivityIndicator size="small" color={colors.signalOk} /> : <Text style={styles.replanGo}>Plan again ›</Text>}
             </TouchableOpacity>
           ) : !setting ? null : <Text style={styles.hint}>{settingsSummary(setting)}</Text>}
         </View>

@@ -634,3 +634,50 @@ so they come from the laser survey alone, inside the survey (none in Wilson / Te
   `sharp/score/score_range.js`, a range box over JHMR built for this only): high-point sunrise / sunset 9 of 12 inside the
   picture window before and after (average +0.3 -> +0.0 min, typical 4.0 -> 4.5), ridge-blocked 4 of 4 before and after
   (+2.0 -> +2.5 min). No change beyond a minute on any of the 16 events.
+
+## Trees review (15 Nov 2026, branch `claude/sun3d-trees-review`): one tree per surveyed tree, bare in winter (NOT uploaded or applied)
+
+Phil (14 Nov): "the tree dots are a little weird ... How accurate are they?"; then "The thinning is fine, it's a matter of
+the shape and size, so try both and show me." Measured, and two new looks built behind a switch.
+
+**What was wrong (measured at the 24 Teton stand pins that have a laser box, harness = `sharp/test/rv.js` + dumps of the
+drawn trees):** positions are right (each tree's dots sit 0.7 m median from its surveyed top, 0.38 deg in the frame, p90
+1.4 deg, within 100 m); sizes and look are not: a tree's dots spread 1.47-1.52 x its crown width (round dots up to 28 px),
+heights run 0.1 m low close by and 0.6-0.8 m low past 100 m (the point budget drops top returns first), every tree is
+evergreen green (the survey is leaf-on; ~1 tree in 6 in the boxes is bare in late December, 3 in 4 at Shane Cabins and on
+Mormon Row), and past 260 m the 7 m park-wide layer draws one spruce outline per patch, 1.47 x too wide.
+
+**The new styles** (`app_view.js` 'Trees as trees', `cfg.treeStyle`): `'dots'` = as before (default), `'shapes'` (A) and
+`'cloud'` (B). A and B cut the box's 1 m canopy heights (the mask) into single trees in the page (`segTrees`: tops =
+highest cell within 1-3.5 m, 1.5-6 m for a bare broadleaf; crowns grown by height, at most 0.8 x the height from the top;
+a few hundred ms for a 1.5 km box) and draw every tree of the box (no 260 m reach) as one camera-facing quad
+(`InstancedBufferGeometry`, ~2-50k a box): A cuts a solid outline in the fragment shader (evergreen: tiered spire, snow on
+the boughs; bare: trunk, 9 forked limbs, a lace of twigs), B (`STIPPLE`) fills the same outlines with soft dots. Drawn width
+= the crown less the 1 m cells' spread (`crownW`: cw - 1.2 m, at most a third off; the cells make a crown 1.2-1.6 m too wide
+against the laser's own 0.5 m crowns). The park-wide sprites get the bare shape too and a survey-based width (`WIDE_EVER`
+0.2 x height, `WIDE_BARE` 0.27). The tree-returns file is not used by A / B. Trees still never feed the sun times
+(moments identical on all 26 shots in all three styles).
+
+**Bare or evergreen** (`lidar/build_leaf.py`): per tree, a logistic model on the Sentinel-2 30 Dec 2025 green band (how much
+the crown darkens the snow, 10 m) and the NAIP July 2022 photo over the crown (near infrared, visible, NDVI), fitted on
+known stands (Mormon Row cottonwoods bare, Jenny Lake / Taggart conifers evergreen): 82% / 96% right on those; the summer
+photo does most of it (the winter picture alone finds 26% of the bare trees). Written into a new mask per box
+(`*_mask_v5.png`: tree cell = 8 + 2 x round(h / 0.4) + 1 if bare; `detail.leaf: true`). Park-wide tiles v2 (`gtl_*` /
+`gtll_*`, bit 128 = bare; lod 1: 128 + (cells - 1) x 32 + h / 2): a second model on 7 m cells (NAIP averaged + the winter
+picture), leave-one-box-out it finds 34% of the bare cells and keeps 90% of the evergreen ones (weak: far groves stay
+mostly green); 16% of the park's tree cells called bare.
+
+**Accuracy of A / B** (`lidar/review/accuracy.py`; harness `lidar/review/rv2.js` with DUMP=1 / TSTYLE / LEAFDIR / WLEAFDIR; scratchpad paths inside, reference = the same cutting in Python with scipy on the 1 m mask):
+98.4-98.5% of the survey trees drawn one to one at 0-100 / 100-260 / 260-500 m, at the same cell (angle 0.002 deg),
+heights +-0.2 m (0.4 m steps), 9-12% extra trees (crowns split differently); widths 0.98-1.08 x the laser's 0.5 m crowns
+(lone trees 0.97-1.05) at Moulton, Cunningham, Oxbow, Snake River (`crowncheck.py`). What the 1 m grid itself misses
+(`rawcheck.py`, raw points via `ept_box.py`, 280 m round those pins): it holds 82-96% of the laser canopy (Cunningham 82%:
+small lone bushes and trees under ~5 m across removed by the mask's cleaning), 95-100% of what it holds is real; nothing
+under 2 m (the willows in Phil's Oxbow scan).
+
+**Files:** A / B need the 16 v5 masks (6.6 MB, v4 7.3) and the 102 v2 tiles (7.2 MB, v1 6.8) and NOT the 16 tree-returns
+files (21.5 MB): ~22 MB less on the phone for the trip. Draft migration `20261115010000_terrain_trees_leaf.sql` (new columns
+`leaf_mask_path` on `terrain_detail_regions_v4`, `leaf_path` on `terrain_tree_tiles`; older app builds keep reading the old
+columns). App: `services/terrain.ts` `TREE_STYLE` ('dots' until Phil picks; 'shapes' / 'cloud' switch the files and the
+page style), `Sun3DPanel` passes `treeStyle`, `detail.leaf`, `canopy.leaf`. To ship: upload the files, apply the
+migration, set `TREE_STYLE`, emulator run (online + offline), instant update (JS only).
