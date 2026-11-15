@@ -1,4 +1,4 @@
--- 3D sun view, trees A2 (15 Nov 2026; tools/sun3d/lidar/build_leaf.py, mask v6). DRAFT: not applied.
+-- 3D sun view, trees A2 (15 Nov 2026; tools/sun3d/lidar/build_leaf.py, mask v6). Applied 15 Nov 2026 (Phil OK on A2).
 -- After Phil's Snake River Overlook scan: firs on the bluff below the overlook were drawn bare (a bright patch of the
 -- summer photo). Mask v6 adds a 'weak bare' class that the page draws evergreen within 200 m of the stand spot:
 --   a tree cell = 8 + 3 x round(height / 0.6 m) + class (0 evergreen, 1 bare, 2 bare by the summer photo only).
