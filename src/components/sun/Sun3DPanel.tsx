@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
 import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
-import { detailBuildings, detailColor, detailFor, detailMask, detailTrees, detailWater, houseTileFile, houseTilesFor, nearColor, nearFor, rangeFile, rangeFor, regionColor, regionFor, terrainData, TerrainDetail, TerrainHouseTile, TerrainNear, TerrainRange, TerrainRegion, TerrainTreeTile, treeTileFile, treeTilesFor, tripTerrainLine, useTripTerrain } from '../../services/terrain';
+import { detailBuildings, detailColor, detailFor, detailLeaf, detailMask, detailTrees, TREE_STYLE, treeTilesLeaf, detailWater, houseTileFile, houseTilesFor, nearColor, nearFor, rangeFile, rangeFor, regionColor, regionFor, terrainData, TerrainDetail, TerrainHouseTile, TerrainNear, TerrainRange, TerrainRegion, TerrainTreeTile, treeTileFile, treeTilesFor, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { framingOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
@@ -368,6 +368,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       ice: iceOn,
       view: pageFraming(framingRef.current) ?? undefined,   // a framed shot opens on its framing (older pages ignore it)
       level: lastLevels ?? undefined,
+      treeStyle: TREE_STYLE,   // how the laser trees are drawn (services/terrain.ts TREE_STYLE)
       ...(hd && hdCfg ? { tiles: { base: hdCfg.base, draco: hdCfg.draco, root: hd } } : null),
     };
     run(`window.S3D.init(${JSON.stringify(cfg)})`);
@@ -392,10 +393,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         n: det.n, north: det.north, south: det.south, west: det.west, east: det.east, base: det.base_m, step: det.step_m,
         width: det.width_m ?? undefined, depth: det.depth_m ?? undefined, bare: det.bare ?? undefined,
         trees: treesB64 ? { bins: det.trees_bins ?? 64, bin: det.trees_bin_m ?? 0.6 } : undefined,
+        leaf: detailLeaf(det) || undefined,
       } : undefined,
       water: det && waterB64 ? { n: det.water_n, north: det.water_north, south: det.water_south, west: det.water_west, east: det.water_east } : undefined,
       ice: iceOn,
-      canopy: treeTiles ? { tiles: treeTiles.tiles.map(t => ({ n: t.n, north: t.north, south: t.south, west: t.west, east: t.east, step: t.step_m, lod: t.lod ? 1 : 0 })) } : undefined,
+      canopy: treeTiles ? { tiles: treeTiles.tiles.map(t => ({ n: t.n, north: t.north, south: t.south, west: t.west, east: t.east, step: t.step_m, lod: t.lod ? 1 : 0 })), leaf: treeTilesLeaf(treeTiles.tiles) || undefined } : undefined,
       range: rangeBox ? { n: rangeBox.r.n, north: rangeBox.r.north, south: rangeBox.r.south, west: rangeBox.r.west, east: rangeBox.r.east, base: rangeBox.r.base_m, step: rangeBox.r.step_m } : undefined,
       houses: houseTiles ? { tiles: houseTiles.tiles.map(t => ({ north: t.north, south: t.south, west: t.west, east: t.east })) } : undefined,
     };
