@@ -12,6 +12,8 @@ import { VERDICT_COLOR, VERDICT_TEXT, countText, isBig, planKindText, shotsText,
 import { TDay, TWeek, bestElsewhere, tripWeek } from '../../services/plannerWeek';
 import { DayScore, tripToday } from '../../services/plannerDay';
 import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../../services/replanNowStore';
+import { ONE_PASS_UI } from '../../services/onePass';
+import { OnePassButton } from './OnePassButton';
 import { useTripStore } from '../../store/tripStore';
 import { PlanCheckRow } from './PlanCheck';
 import { TellTRow } from './TellT';
@@ -384,6 +386,12 @@ export function ReplanNowStatus({ tripId }: { tripId: string }) {
 }
 
 export function ReplanNowButton({ tripId }: { tripId: string }) {
+  // One-pass Re-plan (15 Nov 2026, flag off): one button for today + the rest of the trip.
+  if (ONE_PASS_UI) return <OnePassButton tripId={tripId} variant="card" />;
+  return <ReplanNowOnly tripId={tripId} />;
+}
+
+function ReplanNowOnly({ tripId }: { tripId: string }) {
   const v = useReplanNow(tripId);
   const { currentTripData } = useTripStore();
   const busy = v.phase === 'running';

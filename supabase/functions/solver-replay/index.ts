@@ -3,6 +3,17 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v102 (15 Nov 2026, Phil: "if my initial plan has stop A on it but when I replan stop A is no longer there I want that
+// to trickle down to the rest of the week so it gets planned somewhere automatically, at the same time"): one-pass
+// Re-plan, planner version BH. Run config one_pass (live publish T runs): a finished Re-plan now (button, Tell T note,
+// "I'm at X", sky report) goes straight on to the rest of the trip: RPC planner_t_rest queues a week draft from tomorrow
+// whose starting state is today's NEW plan (its visits still ahead count as shot at their expected value and as seen,
+// like a draft's own earlier days), so a place the re-plan dropped is open again and lands on its best later day,
+// and nothing still planned today is planned again for nothing. The request's result carries rest = {run, seeded}.
+// Run config chain_nights (drafts): each night, once done, starts the next itself instead of waiting for the 20-s tick
+// (the tick still resets a step that got no answer in 2 min). Bench-only switches for the one-pass test: sim_mean = a
+// draft that loads the truth (to grade its visits) still counts what it planned at its expected value, as live does;
+// sim_info = night 0 stores each stop's subject group, place, weight and rules in stats.sim. All off = as v101.
 // v84 (6 Nov 2026, Phil: count blue hour): run config blue = builds and light-only days score a clear blue hour as a
 // good shot (lead + 10240); blue_judge = only the truth does (to judge plain T on the same rule).
 // v82 (6 Nov 2026): run config sbfix = builds at lead + 5120 with the odds bug fixed (fit loads read sb = 0).
@@ -321,6 +332,9 @@ const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) 
 const dayBefore = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const DEFAULTS = { TIER_W: { ...TIER_W }, LAMBDA, DRIVE_PENALTY, LONG_LEG_MIN, LONG_LEG_PENALTY };
+// Where a draft calls itself (run configs chain / chain_nights). SOLVER_REPLAY_URL (unset on the edge) points a local
+// test copy at itself.
+const SELF_URL = () => Deno.env.get('SOLVER_REPLAY_URL') ?? `${Deno.env.get('SUPABASE_URL')}/functions/v1/solver-replay`;
 
 Deno.serve(async (req) => {
   const json = (b: any, status = 200) =>
@@ -1626,7 +1640,10 @@ Deno.serve(async (req) => {
       // What happened on the day being done (live: not known yet, scored later; what a
       // visit got is counted as the forecast's mean until then).
       const truthN = trSc[0].length ? planDay({ ...days[0], light: false }, trSc[0], false) : null;
-      const fcN = truthN ? null : planDay({ ...days[0], light: draft }, fcSc[0], false);
+      // sim_mean (v102, bench only): the one-pass test grades a draft's visits on the truth, but what it planned still
+      // counts as shot at its expected value, as on a live draft (no truth then).
+      const simMean = !!cfg.sim_mean && !cfg.publish;
+      const fcN = truthN && !simMean ? null : planDay({ ...days[0], light: draft }, fcSc[0], false);
       const meanAt = (tp: DayPlan, v: { n: number; startMs: number }) => {
         const w = tp.W(v.n, Math.round((v.startMs - tp.dayStart) / (SLOT * 60000))); if (!w) return 0;
         let t = 0; for (const x of w) t += x; return t / w.length;
@@ -1669,13 +1686,16 @@ Deno.serve(async (req) => {
         for (const v of visits) {
           if (nodes[v.n].w <= 0) continue;
           const k = keyOf(nodes[v.n].group);
-          shot[k] = Math.max(shot[k] ?? 0, truthN ? truthAt(truthN, v) : meanAt(fcN!, v));
+          shot[k] = Math.max(shot[k] ?? 0, truthN && !simMean ? truthAt(truthN, v) : meanAt(fcN!, v));
         }
         row = { run_id: runId, night: n, kind, replay_date: days[0].date, trip_date: days[0].tripDate, realized: realized == null ? null : r3(realized), ...extra };
         if (Array.isArray(row.visits) && row.stats) row.stats = { ...row.stats, ...goodShots(row.visits) };
         if (row.stats && missedNode != null) row.stats = { ...row.stats, missed: nodes[missedNode].name };
         if (row.stats && days[0].notes && Array.isArray(row.visits)) row.stats = { ...row.stats, notes: noteCheck(days[0], row.visits) };
         if (row.stats && walkStats) row.stats = { ...row.stats, walk: walkStats };
+        // sim_info (v102, bench only): what the one-pass checks need to know about every rated stop.
+        if (row.stats && cfg.sim_info && !cfg.publish && n === 0) row.stats = { ...row.stats, sim: Object.fromEntries(nodes.filter(x => x.w > 0).map(x => [x.id, {
+          g: rated[x.group]?.stop_id ?? null, u: x.together ? 't:' + x.together : 'g:' + x.group, w: x.ws, once: x.once, tog: x.together, free: x.free, dur: x.dur, name: x.name }])) };
         if (row.stats && cfg.slow_drive && truthN && visits.length) {
           const sl = slowOf(visits);
           row.stats = { ...row.stats, slow: { realized: r3(evalVisits(truthN, sl.out)), late: sl.late, delay_min: sl.delay } };
@@ -2231,6 +2251,13 @@ Deno.serve(async (req) => {
           if (body.dry) { nowOut = { ...nd, dry: true, visits: visitsOf(p0, st).map((v: any) => ({ name: v.name, stop_id: v.stop_id, booked: v.booked, start: v.start, end: v.end, drive_min: v.drive_min })) }; return null; }
           await publish('now', p0, st, { mr }, askMs);
           await saveToday(p0, st, list, 'now', mr);
+          // One-pass Re-plan (v102, run config one_pass): the rest of the trip at once, planned around today's NEW plan
+          // (planner_t_rest reads the plan just published: its visits still ahead start the week draft as done). An
+          // error there never fails today's re-plan; the nightly draft still comes.
+          if (cfg.one_pass) {
+            const { data: rest, error: rErr } = await db.rpc('planner_t_rest', { p_trip: tripId, p_at: new Date(askMs).toISOString(), p_req: body.req_id ?? null });
+            nd.rest = rErr ? { error: String(rErr.message ?? rErr).slice(0, 200) } : rest;
+          }
           nowOut = nd;
           return null;
         }
@@ -2517,7 +2544,7 @@ Deno.serve(async (req) => {
                                                       ...(chain ? { started_at: now } : {}), updated_at: now })
             .eq('run_id', runId).eq('kind', kind);
           if (chain) {
-            const go = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/solver-replay`, {
+            const go = fetch(SELF_URL(), {
               method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run_id: runId, kind }),
             }).then(r => r.body?.cancel()).catch(() => {});
             (globalThis as any).EdgeRuntime?.waitUntil?.(go);
@@ -2816,9 +2843,24 @@ Deno.serve(async (req) => {
       row.stats = { ...(row.stats ?? {}), t: { loaded: Math.round(tLoaded - tReq), wait: Math.round(tWait), light: Math.round(tLight), done: Math.round(performance.now() - tReq) } };
       const { error: rErr } = await db.from('replay_run_days').upsert(row, { onConflict: 'run_id,night,kind' });
       if (rErr) throw rErr;
-      await db.from('replay_run_state').update({ night: n + 1, state: shot, ...(nextSets ? { sets: nextSets } : {}), status: 'idle', note: null, updated_at: new Date().toISOString() })
+      // chain_nights (v102, one-pass Re-plan): a draft starts its next night itself (the step marked planning and the run
+      // moved on in one go, so the tick never sees an idle step to start twice; one that gets no answer is reset by the
+      // tick after 2 min and then planned as usual). The last night ends idle and the tick closes the run.
+      const chainN = draft && cfg.chain_nights === true && runId != null && n + 1 < run.nights && ((cfg.kinds ?? []) as any[]).length === 1;
+      const tEnd = new Date().toISOString();
+      await db.from('replay_run_state').update({ night: n + 1, state: shot, ...(nextSets ? { sets: nextSets } : {}), status: chainN ? 'planning' : 'idle', note: null,
+                                                  ...(chainN ? { started_at: tEnd } : {}), updated_at: tEnd })
         .eq('run_id', runId).eq('kind', kind);
-      return json({ ok: true, run_id: runId, kind, night: n, realized: row.realized, predicted: row.predicted });
+      if (chainN) {
+        const { data: moved } = await db.from('replay_runs').update({ night: n + 1, updated_at: tEnd }).eq('id', runId).eq('night', n).eq('status', 'running').select('id');
+        if (moved?.length) {
+          const go = fetch(SELF_URL(), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run_id: runId, kind }),
+          }).then(r => r.body?.cancel()).catch(() => {});
+          (globalThis as any).EdgeRuntime?.waitUntil?.(go);
+        } else await db.from('replay_run_state').update({ status: 'idle', updated_at: tEnd }).eq('run_id', runId).eq('kind', kind).eq('night', n + 1);
+      }
+      return json({ ok: true, run_id: runId, kind, night: n, realized: row.realized, predicted: row.predicted, ...(chainN ? { chained: n + 1 } : {}) });
     }
 
     // ---- One replay day ----
