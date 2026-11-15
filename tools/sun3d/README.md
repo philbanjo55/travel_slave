@@ -679,7 +679,10 @@ the top's = 1 / (2a + 1); kept 0.65-1, `crownEx`), the bough cut-ins shallower (
 edge, so a closed stand reads closed. Snake River scan, share of the lower half that is tree: photo 76%, A 61%, A2 69%;
 left fifth 99 / 58 / 81%; tree tops at the left edge 16% of the frame too low in A, 4.4% in A2; pixels agreeing 80% -> 87%.
 Phil's other five scans: pixel agreement unchanged or up (Oxbow +0.7 points in the lower half). Frame time and memory: same as A within the run-to-run spread.
-Known: a tree a few metres from the eye can fill a frame edge as a striped slab (Oxbow main); heights in 0.6 m steps
+Near the eye: a tree whose crown (drawn half-width round the stem, foot to top) is within 8 m in 3D is not drawn (`NEAR_DROP`,
+in the shape shader, so walking re-checks it every frame; a dithered 8-12 m fade left ghost trees in stills): a quad seen from
+inside its own width drew as a striped slab at the Oxbow main pin. No in-frame crown in Phil's six scans is within 12 m
+(nearest 21 m, Snake River). Known: heights in 0.6 m steps
 (v5 0.4 m) move a few segmentation tops (a 4.8 m sapling 6 m in front of the Menor's Ferry pin is gone).
 
 **Accuracy of A / B** (`lidar/review/accuracy.py`; harness `lidar/review/rv2.js` with DUMP=1 / TSTYLE / LEAFDIR / WLEAFDIR; scratchpad paths inside, reference = the same cutting in Python with scipy on the 1 m mask):

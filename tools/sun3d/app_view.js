@@ -791,6 +791,7 @@
   // (0 foot .. 1 top) is R (1 - y)^a has cells whose mean height is 1 / (2a + 1) of the top's: a cone (a = 1) a third,
   // a full, rounded crown (a = 0.5) a half. A closed stand's crowns meet high up, so they come out full and close the gaps.
   // Kept between 0.65 (fuller, the tip still pointed) and 1 (a cone): rounder reads as a broadleaf.
+  const NEAR_DROP = 8;   // m from the eye to a crown: not drawn below this
   const crownEx = mrel => Math.max(0.65, Math.min(1, (1 / Math.max(0.2, Math.min(0.75, mrel)) - 1) / 2));
   // the drawn width (m) of a surveyed tree: its own crown, kept within what the shape can carry. The mask's 1 m cells
   // spread a crown by about half a cell a side (a cell counts when any return in it is high): measured against the
@@ -817,7 +818,12 @@
     varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx;
     void main() {
       vec2 rg = vec2(viewMatrix[0][0], viewMatrix[2][0]); rg = length(rg) > 1e-5 ? normalize(rg) : vec2(1., 0.);
-      if (distance(tpos.xz, cameraPosition.xz) < max(1.5, .5 * tsz.y)) { gl_Position = vec4(2., 2., 2., 1.); return; }   // the camera stands in this crown
+      // A2: a crown close to the eye is a flat quad seen from inside its own width (a striped slab at a frame edge): a tree
+      // whose crown (a cylinder: the drawn half-width round the stem, foot to top) is within NEAR_DROP m of the eye in 3D is
+      // not drawn. Per frame in the shader, so it follows the eye while walking. (A dithered fade over 8-12 m was tried:
+      // still pictures showed half-faded ghost trees, so it is a clean drop.)
+      vec2 dxz = tpos.xz - cameraPosition.xz; float dh = max(length(dxz) - .5 * tsz.y, 0.), dv = max(max(tpos.y - cameraPosition.y, cameraPosition.y - tpos.y - tsz.x), 0.);
+      if (length(vec2(dh, dv)) < ${NEAR_DROP.toFixed(1)}) { gl_Position = vec4(2., 2., 2., 1.); return; }
       vec3 p = vec3(tpos.x + rg.x * position.x * tsz.y, tpos.y - .4 + position.y * (tsz.x + .4), tpos.z + rg.y * position.x * tsz.y);   // the foot a little into the ground (slopes)
       vec4 mv = modelViewMatrix * vec4(p, 1.); gl_Position = projectionMatrix * mv; float dist = length(mv.xyz);
       vQ = position.xy; vT = tsz;
