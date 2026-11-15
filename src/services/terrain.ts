@@ -70,6 +70,9 @@ export type TerrainDetail = {
   width_m?: number | null; depth_m?: number | null;
   // 1.5 km boxes (terrain_detail_regions_v4, 14 Nov 2026): buildings left out of the heights (drawn from terrain_house_tiles)
   bare?: boolean | null;
+  // trees review (15 Nov 2026, absent until its migration is applied): the mask again with each tree cell's bare-in-winter
+  // bit (8 + 2 x height / 0.4 m + 1 if bare), read by the tree styles A / B (TREE_STYLE)
+  leaf_mask_path?: string | null; leaf_mask_bytes?: number | null;
 };
 export type TerrainTreeTile = {
   id: string; parent: string;
@@ -77,6 +80,9 @@ export type TerrainTreeTile = {
   n: number; step_m: number;          // n x n cells; a cell's value x step_m = the canopy's height over the ground (0 = no tree)
   lod?: number | null;                 // 0 every cell (~7 m); 1 two by two cells in one (~14 m: value = (trees - 1) x 64 + height / step_m)
   path: string; bytes: number | null;
+  // trees review (15 Nov 2026, absent until its migration is applied): the same tile with 128 = bare in winter (lod 1:
+  // 128 bare + (trees - 1) x 32 + height / step_m), read by the tree styles A / B
+  leaf_path?: string | null; leaf_bytes?: number | null;
 };
 export type TerrainRange = {
   id: string; parent: string;
@@ -91,6 +97,13 @@ export type TerrainHouseTile = {
 };
 type Point = { lat: number; lng: number };
 type Box = { north: number; south: number; west: number; east: number };
+
+// How the 3D view draws the Teton trees (tools/sun3d/app_view.js 'Trees as trees'): 'dots' = the laser returns as points
+// within 260 m (as on 14 Nov), 'shapes' = A (one solid tree outline per surveyed tree), 'cloud' = B (the same trees
+// filled with soft dots). A and B read the bare-in-winter files (leaf_mask_path, leaf_path) and need no tree-returns file.
+// Phil picks (trees review, 15 Nov 2026); until then the view stays as it was.
+export const TREE_STYLE: 'dots' | 'shapes' | 'cloud' = 'shapes';
+const PER_TREE = (TREE_STYLE as string) !== 'dots';
 
 const FILES_URL = 'https://ohshrzlvvxyovcjmdajc.supabase.co/storage/v1/object/public/terrain/';
 const DIR = `${FileSystem.documentDirectory}pf_cache/`;
@@ -377,16 +390,23 @@ function pickTreeTiles(all: TerrainTreeTile[], region: TerrainRegion, stand: Poi
     .map(b => (b.d <= TREE_NEAR_M ? b.byLod[0] ?? b.byLod[1] : b.byLod[1] ?? b.byLod[0]));
 }
 export function treeTileFile(t: TerrainTreeTile): TerrainFile {
-  return { id: t.id, path: t.path, bytes: t.bytes };
+  return PER_TREE && t.leaf_path ? { id: `${t.id}_leaf`, path: t.leaf_path, bytes: t.leaf_bytes ?? null } : { id: t.id, path: t.path, bytes: t.bytes };
 }
+// whether the tiles sent carry the bare bit (all of them, or the page reads them as the old tiles)
+export function treeTilesLeaf(ts: TerrainTreeTile[]): boolean { return PER_TREE && ts.length > 0 && ts.every(t => !!t.leaf_path); }
+// 0 none, 1 mask v5 (bare bit), 2 mask v6 (evergreen / bare / bare by the summer photo only; the page draws that last
+// one evergreen near the stand spot). The format goes with the file name: tools/sun3d/lidar/build_leaf.py writes *_mask_v6.png.
+export function detailLeaf(d: TerrainDetail): 0 | 1 | 2 { return PER_TREE && d.leaf_mask_path ? (/_mask_v6\.png$/.test(d.leaf_mask_path) ? 2 : 1) : 0; }
 
 // The class mask of a detail box, as a file of its own (null when the box has none: it then draws as bare shapes).
 export function detailMask(d: TerrainDetail): TerrainFile | null {
+  if (PER_TREE && d.leaf_mask_path) return { id: `${d.id}_leafmask`, path: d.leaf_mask_path, bytes: d.leaf_mask_bytes ?? null };
   return d.mask_path ? { id: `${d.id}_mask`, path: d.mask_path, bytes: d.mask_bytes } : null;
 }
 
 // The two round 3 files of a detail box, each null when the row has none.
 export function detailTrees(d: TerrainDetail): TerrainFile | null {
+  if (PER_TREE) return null;   // A / B cut the trees from the mask: the returns file is not needed (1.2 MB a box less)
   return d.trees_path ? { id: `${d.id}_trees`, path: d.trees_path, bytes: d.trees_bytes ?? null } : null;
 }
 export function detailWater(d: TerrainDetail): TerrainFile | null {
