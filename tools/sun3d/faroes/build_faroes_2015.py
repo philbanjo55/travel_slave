@@ -16,6 +16,7 @@ steps (each reads what the ones before it wrote; run them in this order, or `all
           aerial photo (same grading as round 2) and the shot coverage.
   houses  every building of the islands with heights measured in the DSM, in tiles (terrain_house_tiles format).
   sql     the draft migration and upload list.
+  (then)  stack_tops.py <work>: the four named sea stacks' tops to their surveyed / published heights (see README).
 """
 import argparse, json, math, os, sys, time
 import numpy as np
