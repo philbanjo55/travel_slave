@@ -105,6 +105,15 @@ PRIORITY = ['Jenny Lake', 'Taggart & Bradley Lakes', 'T.A. Moulton Barn', 'Snake
             'Kallur', 'Drangarnir — Guided', 'Drangarnir - Golden Hour Landing', 'Trælanípa · Sørvágsvatn · Bøsdalafossur · Geituskorardrangur',
             '🐦 Múlafossur', '🐦 Mýlingur Sea Cliffs', 'Saksun', 'Tjørnuvík', 'Tinganes', 'Kirkjubøur', '🐦 Gjógv Gorge', 'Klakkur',
             '⚓ Tindhólmur — Landing on the Islet', 'Dunnesdrangar', 'Fossá', 'JAC — Arrive + Rental', 'FAE — Arrive + Europcar', 'JAC — Depart', 'FAE — Depart']
+MENUS = {  # (link text, address); search results, 15 Nov 2026
+  'StillWest Brewery & Grill': ('Menu', 'https://stillwestbreweryandgrill.getbento.com'),
+  'Bapp Korean': ('Menu', 'https://bappinjh.getbento.com'),
+  'FIGS': ('Menu', 'https://hoteljackson.com/eat-drink/figs'),
+  'The Kitchen': ('Menu', 'https://www.toasttab.com/local/order/the-kitchen-jackson-hole'),
+  'Glorietta Trattoria': ('Menu', 'https://www.exploretock.com/glorietta-trattoria-jackson/'),
+  'Gather': ('Menu', 'https://www.opentable.com/r/gather-jackson-hole-jackson-hole'),
+  'Gjógv': ('About the café', 'https://visitfaroeislands.com/en/whatson/places/place/gjaargardur-guesthouse'),
+}
 MEAL_STOPS = {'Lunch — Gjáargarður': 'Lunch: the guesthouse café in Gjógv (coffee and liquorice ice cream)'}
 PENCIL_DAYS = {('faroes', 5), ('faroes', 6), ('faroes', 8)}
 
@@ -187,7 +196,11 @@ def day_html(key, d):
     stops = f'<ul class="stops">{lis}{more}</ul>' if d['head'] else ''
     pencil = '<span class="tag">Pencilled in</span>' if d['pencil'] else ''
     hotel = f'<p class="night">{"Night: " if d["hotel"] and d["hotel"] != "Overnight flight" else ""}{E(d["hotel"] or "Flying home")}</p>'
-    meal = ''.join(f'<p class="meal">{E(m)}</p>' for m in d.get('meals') or [])
+    def menu(m):
+        for k, (t, u) in MENUS.items():
+            if k in m: return f' <a class="menu" href="{E(u)}" target="_blank" rel="noopener">{E(t)}</a>'
+        return ''
+    meal = ''.join(f'<p class="meal">{E(m)}{menu(m)}</p>' for m in d.get('meals') or [])
     return (f'<details class="day" id="{key}-day-{d["n"]}"><summary><span class="d-date">{E(dlabel(d["date"]))}</span>'
             f'<span class="d-main"><span class="d-title">{E(d["title"])}</span><span class="d-region">{E(d["region"])}</span></span>{pencil}'
             f'<span class="chev" aria-hidden="true"></span></summary><div class="d-body"><p class="d-intro">{E(d["intro"])}</p>{stops}{meal}{hotel}</div></details>')

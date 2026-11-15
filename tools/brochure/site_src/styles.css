@@ -115,6 +115,7 @@ figcaption .by::before { content: "· "; }
 .stops .t { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 14px; }
 .stops .more span:last-child { color: var(--muted); font-style: italic; }
 .meal { font-size: 14px; margin: 0 0 4px; }
+.meal .menu { margin-left: 6px; white-space: nowrap; }
 .night { font-size: 14px; color: var(--muted); margin: 0; }
 .day:target summary, .day.flash summary { background: linear-gradient(90deg, var(--accent-soft), transparent); }
 
