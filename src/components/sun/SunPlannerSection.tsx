@@ -189,7 +189,11 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   // shot, that stop's own list worked out the same way from the trip on the phone.
   const awayStopId = away ? away.stopId : null;
   const awayPhotos = useMemo(() => (awayStopId ? stopPagePhotos(tripData, awayStopId) : null), [awayStopId, tripData]);
-  const fPhotos = awayStopId ? awayPhotos ?? [] : stopPhotos ?? [];
+  // Another entry of the same place (a repeat visit) that comes back empty (its photos not in the trip as held) shows
+  // this stop's photos: same place, same pictures.
+  const fPhotos = awayStopId
+    ? ((awayPhotos && awayPhotos.length) ? awayPhotos : (away && stopName && away.stopName === stopName ? stopPhotos ?? [] : awayPhotos ?? []))
+    : stopPhotos ?? [];
 
   const ms = day0 + minute * 60000;
   const light = lightAt(pair, ms);

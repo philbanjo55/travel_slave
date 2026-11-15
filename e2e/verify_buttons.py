@@ -1064,6 +1064,8 @@ def refphoto():
     if btn is None:
         if STOP_REF_PHOTOS:
             V.check('refphoto-button', False, 'the stop page shows reference photos, but there is no photo button in full screen')
+            print('INFO refphoto: panel says ' + ' | '.join(t for t in s.all_texts if '3D view' in t or 'photos ' in t)[:300], flush=True)
+            print('INFO refphoto: buttons ' + ' | '.join(c['label'][:30] for c in s.clickables)[:600], flush=True)
         else:
             V.check('refphoto-button', None, 'this stop has no reference photos: no photo button (as designed)')
         return
