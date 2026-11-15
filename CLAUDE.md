@@ -4,6 +4,7 @@ Philm+Frame trip planner: Expo/React Native app (`src/`), static web viewers (`f
 
 - **Talking to Phil:** give him times in US Eastern time (EDT, EST from 1 Nov 2026), never UTC; keep UTC for cron and code.
 - **Bugs and fixes (Phil, 12 Nov 2026):** when he reports a problem, say in plain words why it happened and what the fix is, one numbered item per problem ("why was it an issue explain. propose solution"). Then do the ones I judge right without waiting for his yes or no ("i also want u to be able to do these things without me saying yes or no, so just explain and do the ones u think u should... i dont want to block u"); ask first only when it is truly his call (money, his real trips' stops, something he may not want). Whenever he says yes to something, update the Planner Tracker ("whenever i say yes, update tracker").
+- **App changes (Phil, 15 Nov 2026):** no long text on screen; show a before / after picture in the app's real look and wait for his OK before any UI change reaches his phone.
 - **Status updates (Phil, 9 Nov 2026):** when he asks what's on the board / what's running, list only current and upcoming items. Leave out anything finished, retired or left off.
 
 ## Data safety (hard rules)
