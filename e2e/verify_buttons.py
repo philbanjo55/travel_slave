@@ -1643,6 +1643,13 @@ def find_spot():
 
 def main():
     for st in (find_spot, sun_3d, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, offline_3d):
+        # Every section starts on a fresh app (16 Nov 2026): one software-graphics freeze in 3D used to leave the app hung
+        # and fail every later section with 'no Training trips row'. offline_3d makes its own fresh start.
+        if st is not offline_3d:
+            try:
+                C.launch()
+            except Exception as e:
+                print(f'INFO relaunch before {st.__name__} failed: {e!r}', flush=True)
         try:
             st()
         except Exception as e:
