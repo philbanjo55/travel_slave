@@ -942,11 +942,18 @@ def sun_3d():
                 fwd = next((c for c in w0.clickables if 'Walk forward' in c['label']), None)
                 if fwd is not None:
                     x, y = fwd['xy']
-                    C.adb('shell', 'input', 'swipe', str(x), str(y), str(x), str(y), '1500')   # hold the arrow for 1.5 s
+                    C.tap((x, y)); time.sleep(2)   # one tap = a fine 25 cm step (16 Nov 2026)
+                    wt = C.capture(1)
+                    tline = next((t for t in wt.all_texts if "You've walked" in t), None)
+                    m_ = re.search(r"walked ([\d.]+) m", tline or '')
+                    V.check('walk-fine-tap', m_ is not None and 0.1 <= float(m_.group(1)) <= 0.6, (tline or 'no "You have walked" line after one tap')[:110])
+                    C.adb('shell', 'input', 'swipe', str(x), str(y), str(x), str(y), '2500')   # hold the arrow for 2.5 s
                     time.sleep(2.5)
                     w1 = C.capture(1)
                     line = next((t for t in w1.all_texts if "You've walked" in t), None)
+                    m2 = re.search(r"walked ([\d.]+) m", line or '')
                     V.check('walk-moved', line is not None, (line or 'no "You have walked" line after holding the forward arrow')[:110])
+                    V.check('walk-hold-faster', m2 is not None and m_ is not None and float(m2.group(1)) >= float(m_.group(1)) + 3, f'hold walked on: {(m_.group(1) if m_ else "?")} -> {(m2.group(1) if m2 else "?")} m')
                     V.check('walk-save-offered', V.has(w1, 'Save this as my stand spot for the shot'), 'Save as my spot button (not tapped)')
                     cut_off('walk-mode', w1)
                     V.tap_text(w1, 'Back to my saved spot'); time.sleep(2)
@@ -1173,17 +1180,23 @@ def overhead_walk():
             break
         C.adb('shell', 'input', 'swipe', '540', '1440', '540', str(1440 - (y - 750)), '600'); s = C.capture(1.2)
     V.check('over-tab', V.tap_text(s, 'Overhead', exact=True), 'tap the Overhead tab')
-    def label(st):
+    def label(st, start=('Overhead satellite', 'Overhead 3D')):
         if st is None or st.root is None:
             return None
         return next(((nd.get('content-desc') or nd.get('text') or '') for nd in st.root.iter('node')
-                     if (nd.get('content-desc') or nd.get('text') or '').startswith('Overhead satellite')), None)
-    o = None; lab = None
-    for _ in range(8):
-        o = C.capture(1.5); lab = label(o)
-        if lab:
+                     if (nd.get('content-desc') or nd.get('text') or '').startswith(start)), None)
+    def look_tab(st, name):
+        return next((c for c in st.clickables if c['label'].split(' | ')[0].startswith(f'Overhead look: {name}')), None)
+    # 3D from above is the default look (16 Nov 2026); wait for it to draw (software graphics: up to ~90 s)
+    o = None; lab = None; t0 = time.time()
+    for _ in range(45):
+        o = C.capture(2); lab = label(o)
+        if lab and (lab.startswith('Overhead satellite') or ' ready' in lab or 'failed' in lab or 'error' in lab):
             break
-    V.check('over-shown', lab is not None, (lab or 'no overhead map')[:80])
+    V.check('over-shown', lab is not None, (lab or 'no overhead view')[:80])
+    if lab and lab.startswith('Overhead 3D'):
+        V.check('over-3d-ready', ' ready' in lab, f'{lab[:60]} after {time.time() - t0:.0f} s')
+    V.check('over-look-switch', look_tab(o, '3D') is not None and look_tab(o, 'satellite') is not None, '3D / Satellite switch under the view')
     V.show('over-inline', o)
     sun = next((c for c in o.clickables if c['label'].split(' | ')[0] in ('Sun on', 'Sun off')), None)
     if sun is not None:
@@ -1208,6 +1221,23 @@ def overhead_walk():
     else:
         V.check('over-full-open', False, 'no full screen button')
     V.check('over-alive', C.app_alive())
+    # Satellite look, then back to 3D (the choice is kept on the phone: leave it on the default)
+    o = C.capture(1); sat = look_tab(o, 'satellite')
+    if sat is not None:
+        C.tap(sat['xy']); s2 = None
+        for _ in range(6):
+            s2 = C.capture(1.5)
+            if label(s2, ('Overhead satellite',)): break
+        V.check('over-sat-shown', label(s2, ('Overhead satellite',)) is not None, 'satellite look after the switch')
+        V.show('over-sat', s2)
+        back = look_tab(s2, '3D')
+        if back is not None:
+            C.tap(back['xy']); b3 = None
+            for _ in range(30):
+                b3 = C.capture(2); l3 = label(b3, ('Overhead 3D',))
+                if l3 and ' ready' in l3: break
+            V.check('over-3d-again', label(b3, ('Overhead 3D',)) is not None and C.app_alive(), (label(b3, ('Overhead 3D',)) or 'no 3D overhead after switching back')[:60])
+    V.check('over-alive-2', C.app_alive())
     # Walk to shot
     w = C.capture(1)
     wb = next((c for c in w.clickables if c['label'].startswith('Walk to')), None)
@@ -1282,62 +1312,39 @@ def refphoto():
         b = clickable(C.capture(1), 'Reference photo', exact=True)
         if b: C.tap(b['xy'])
         return b is not None
-    # Open the card
+    # One tap = the photo see-through over the view (16 Nov 2026: no card in between); its amount is kept
     tap_btn()
-    c, ok = wait_for(lambda st: clickable(st, 'Close reference photo') is not None)
-    count = next((t for t in c.all_texts if re.fullmatch(r'\d+ of \d+', t.strip())), None)
-    V.check('refphoto-card-open', ok, f'card with {count or "one photo (no n of m)"}')
-    V.check('refphoto-one-only', clickable(c, 'Next reference photo') is None and (count is None), "only the shot's own photo: no arrows, no count")
-    if not ok:
-        V.show('refphoto-card', c); return
-    card = clickable(c, 'over the view')
-    if card is not None:
-        # is a picture drawn inside the card? (offline: from the phone's photo store)
-        x, y = card['xy']
-        imgs = [n for n in (c.root.iter('node') if c.root is not None else []) if n.get('package') == V.PKG and 'Image' in (n.get('class') or '')
-                and C.bounds(n)[0] <= x <= C.bounds(n)[2] and C.bounds(n)[1] <= y <= C.bounds(n)[3]]
-        print(f'INFO refphoto card at {card["xy"]}: {len(imgs)} image view(s) under it', flush=True)
-    if clickable(c, 'Next reference photo') is not None:
-        V.tap_text(c, 'Next reference photo'); n2 = C.capture(1.2)
-        count2 = next((t for t in n2.all_texts if re.fullmatch(r'\d+ of \d+', t.strip())), None)
-        V.check('refphoto-next', count2 is not None and count2 != count, f'{count} -> {count2}')
-        c = n2
-    cut_off('3d-refphoto-card', c)
-    # X closes it (the button stays)
-    V.tap_text(c, 'Close reference photo')
-    c, ok = wait_for(lambda st: clickable(st, 'Close reference photo') is None)
-    V.check('refphoto-card-close', ok and clickable(c, 'Reference photo', exact=True) is not None, 'card closed, photo button still there')
-    # Card -> see-through
-    tap_btn()
-    c, ok = wait_for(lambda st: clickable(st, 'over the view') is not None)
-    if not ok:
-        V.check('refphoto-see-open', False, 'the card did not open again'); return
-    V.tap_text(c, 'over the view')
     c, ok = wait_for(lambda st: V.has(st, 'See-through amount') and clickable(st, 'Close see-through') is not None)
-    V.check('refphoto-see-open', ok and clickable(c, 'Close reference photo') is None, 'see-through bar with the amount slider, card hidden')
-    if ok:
-        V.show('refphoto-see', c)
-        cut_off('3d-refphoto-see', c)
-        if 'Move photo' in open(os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'RefPhotoOverlay.tsx'), encoding='utf-8').read():
-            V.check('refphoto-move-btn', any((nd.get('content-desc') or '').startswith('Move photo') for nd in (c.root.iter('node') if c.root is not None else [])),
-                    'Move photo toggle on the see-through bar')
-        # move the amount: a tap near the slider's right end; the bar and the picture stay
-        node = next((n for n in (c.root.iter('node') if c.root is not None else []) if (n.get('content-desc') or '') == 'See-through amount'), None)
-        if node is not None:
-            x1, y1, x2, y2 = C.bounds(node)
-            C.tap((x1 + int(0.85 * (x2 - x1)), (y1 + y2) // 2)); time.sleep(1)
-            d = C.capture(1)
-            V.check('refphoto-slider', V.has(d, 'See-through amount') and V.has(d, 'Looking ') and C.app_alive(), 'slider moved, bar and view still up')
-        V.tap_text(C.capture(1), 'Close see-through')
-        c, ok = wait_for(lambda st: clickable(st, 'Close see-through') is None and clickable(st, 'Close reference photo') is not None)
-        V.check('refphoto-see-close', ok, 'see-through closed, back to the card')
-    # Close the card with the photo button itself, then: the view is the same one (no restart, same heading)
-    if clickable(C.capture(1), 'Close reference photo') is not None:
-        tap_btn()
-    c, gone = wait_for(lambda st: clickable(st, 'Close reference photo') is None and clickable(st, 'Close see-through') is None)
+    V.check('refphoto-see-open', ok and clickable(c, 'Close reference photo') is None, 'one tap: see-through with the amount slider, no card')
+    if not ok:
+        V.show('refphoto-see', c); return
+    V.show('refphoto-see', c)
+    cut_off('3d-refphoto-see', c)
+    V.check('refphoto-move-btn', any((nd.get('content-desc') or '').startswith('Move photo') for nd in (c.root.iter('node') if c.root is not None else [])),
+            'Move photo toggle on the see-through bar')
+    def amount(st):
+        nd = next((n for n in (st.root.iter('node') if st.root is not None else []) if (n.get('content-desc') or '') == 'See-through amount'), None)
+        return nd
+    node = amount(c)
+    if node is not None:
+        x1, y1, x2, y2 = C.bounds(node)
+        C.tap((x1 + int(0.85 * (x2 - x1)), (y1 + y2) // 2)); time.sleep(1)
+        d = C.capture(1)
+        V.check('refphoto-slider', V.has(d, 'See-through amount') and V.has(d, 'Looking ') and C.app_alive(), 'slider moved, bar and view still up')
+    # the photo button again turns it off
+    tap_btn()
+    c, gone = wait_for(lambda st: clickable(st, 'Close see-through') is None)
     h1 = heading(c)
-    V.check('refphoto-closed', gone, 'card and see-through gone after the photo button')
+    V.check('refphoto-closed', gone and clickable(c, 'Reference photo', exact=True) is not None, 'photo button turns the overlay off, button still there')
     V.check('refphoto-spot-kept', h0 is not None and h1 == h0, f'heading before: {h0} | after: {h1}')
+    # on again: straight back to see-through (amount kept), then off with the X on the bar
+    tap_btn()
+    c, ok = wait_for(lambda st: clickable(st, 'Close see-through') is not None)
+    V.check('refphoto-see-again', ok, 'second tap: see-through again')
+    if ok:
+        V.tap_text(c, 'Close see-through')
+        c, gone = wait_for(lambda st: clickable(st, 'Close see-through') is None)
+        V.check('refphoto-x-off', gone and V.has(c, 'Looking '), 'X on the bar turns it off, view still up')
     V.check('refphoto-alive', C.app_alive())
 
 
@@ -1542,8 +1549,10 @@ def faroes_3d():
         time.sleep(2)
     V.check('fo3d-fg-in', lab is not None and ', showing' in lab, f'{(lab or "no Foreground button")[:80]} after {time.time() - t1:.0f} s')
     seen = []
-    if V.find_scroll('About this view', 4):   # credits behind "About" since 13 Nov 2026
+    if V.find_scroll('About this view', 8):   # credits behind "About" since 13 Nov 2026
         time.sleep(1.5)
+    else:
+        print('INFO fo3d: no About this view link found after 8 scrolls', flush=True)
     for _ in range(3):
         seen += C.capture(1.2).all_texts
         C.adb('shell', 'input', 'swipe', '540', '1500', '540', '900', '500')
@@ -1637,31 +1646,17 @@ def spot_open_3d_edit():
     if b is None:
         print('INFO spot-3d buttons: ' + ' | '.join(c['label'][:30] for c in f.clickables)[:600], flush=True); return
     C.tap(b['xy'])
-    c = C.capture(1.2)
+    d = C.capture(1.5)
     for _ in range(5):
-        if btn(c, 'Close reference photo', exact=False) is not None: break
-        c = C.capture(1.2)
-    count = next((t for t in c.all_texts if re.fullmatch(r'\d+ of \d+', t.strip())), None)
-    V.check('spot-3d-refphoto-open', btn(c, 'Close reference photo', exact=False) is not None and (count is None or count.startswith('1 of')),
-            f'card open on {count or "no n of m label"}')
-    V.show('spot-3d-refphoto', c)
-    card = btn(c, 'over the view', exact=False)
-    if card is not None:
-        C.tap(card['xy']); d = C.capture(1.5)
-        for _ in range(4):
-            if V.has(d, 'See-through amount'): break
-            d = C.capture(1.2)
-        V.check('spot-3d-refphoto-see', V.has(d, 'See-through amount') and V.has(d, 'Looking '), 'job photo see-through over the view, slider shown')
-        V.show('spot-3d-refphoto-see', d)
-        cut_off('spot-3d-refphoto-see', d)
-        move_photo_checks(d, 'spot-3d')
-        V.tap_text(d, 'Close see-through'); time.sleep(1.2)
+        if V.has(d, 'See-through amount'): break
+        d = C.capture(1.2)
+    V.check('spot-3d-refphoto-see', V.has(d, 'See-through amount') and V.has(d, 'Looking '), "one tap: the job's photo see-through over the view")
+    V.show('spot-3d-refphoto-see', d)
+    cut_off('spot-3d-refphoto-see', d)
+    move_photo_checks(d, 'spot-3d')
+    V.tap_text(C.capture(1), 'Close see-through'); time.sleep(1.2)
     e = C.capture(1)
-    b = btn(e, 'Reference photo')
-    if btn(e, 'Close reference photo', exact=False) is not None and b is not None:
-        C.tap(b['xy']); time.sleep(1.2); e = C.capture(1)
-    V.check('spot-3d-refphoto-closed', btn(e, 'Close reference photo', exact=False) is None and btn(e, 'Close see-through', exact=False) is None
-            and V.has(e, 'Looking ') and C.app_alive(), 'card and see-through closed, view still up')
+    V.check('spot-3d-refphoto-closed', btn(e, 'Close see-through', exact=False) is None and V.has(e, 'Looking ') and C.app_alive(), 'see-through closed, view still up')
 
 
 def find_spot():
