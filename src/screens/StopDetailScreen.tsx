@@ -13,6 +13,7 @@ import { useTripStore } from '../store/tripStore';
 import StopWeatherCard from '../components/StopWeatherCard';
 import MissingScreen from '../components/MissingScreen';
 import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
+import SpotFoundChip from '../components/SpotFoundChip';
 import SunPlannerSection from '../components/sun/SunPlannerSection';
 import StopLocationEditor from '../components/StopLocationEditor';
 import StopDurationEditor from '../components/StopDurationEditor';
@@ -255,6 +256,7 @@ export default function StopDetailScreen() {
         {error && (
           <Text style={[styles.uploadError, { marginBottom: spacing.md }]}>{error}</Text>
         )}
+        <SpotFoundChip stopId={stop.id} stopName={stop.name} />
 
         {/* Planner chance + settings (TEST app only until the solver is signed off) */}
         {PLANNER_ON && (
@@ -489,6 +491,7 @@ export default function StopDetailScreen() {
         photos={viewerKind === 'field' ? fieldPhotos : refPhotos}
         visible={!!viewerPhoto}
         onClose={closeViewer}
+        spotStop={{ id: stop.id, name: stop.name }}
         onDelete={(p) => handlePhotoLongPress(p.id, viewerKind, closeViewer)}
         onMakeFirst={viewerKind === 'reference' && !refPhotos.some((r: any) => r.borrowed) ? async (p) => {
           const ok = await makeFirst(p.id, refPhotos.map((r: any) => r.id));

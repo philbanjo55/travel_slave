@@ -18,6 +18,8 @@ import DayCompareScreen from '../screens/DayCompareScreen';
 import PlannerScreen from '../screens/PlannerScreen';
 import TrainingScreen from '../screens/TrainingScreen';
 import FeedsScreen from '../screens/FeedsScreen';
+import PhotoSpotScreen from '../screens/PhotoSpotScreen';
+import { resumePhotoSpots } from '../services/photoSpot';
 import { colors } from '../theme';
 
 export type RootStackParamList = {
@@ -37,6 +39,8 @@ export type RootStackParamList = {
   Training: undefined;
   // Every live feed for a trip (cameras, airport, last updated), TEST app only.
   Feeds: { tripId: string };
+  // Find my spot: where a stop photo was taken from (both apps).
+  PhotoSpot: { jobId: string; stopName?: string | null };
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -61,9 +65,15 @@ const navigationRef = createNavigationContainerRef<RootStackParamList>();
 // trip page, which loads the trip).
 function usePlannerNotificationTaps() {
   const last = Notifications.useLastNotificationResponse();
+  useEffect(() => { resumePhotoSpots().catch(() => {}); }, []);
   useEffect(() => { if (PLANNER_ON) { setupPlannerNotifications(); refreshNightly().catch(() => {}); resumeReplanNow().catch(() => {}); } }, []);
   useEffect(() => {
     const data: any = last?.notification.request.content.data;
+    if (data?.kind === 'photo_spot' && data.jobId) {   // Find spot finished while the app was in the background
+      const open = () => { if (!navigationRef.isReady()) { setTimeout(open, 300); return; } navigationRef.navigate('PhotoSpot', { jobId: data.jobId }); };
+      open();
+      return;
+    }
     if (!PLANNER_ON || data?.kind !== 'planner_brief' || !data.tripId) return;
     const go = () => {
       if (!navigationRef.isReady()) { setTimeout(go, 300); return; }
@@ -109,6 +119,7 @@ export default function RootNavigator() {
         <Stack.Screen name="Planner" component={PlannerScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Training" component={TrainingScreen} />
         <Stack.Screen name="Feeds" component={FeedsScreen} />
+        <Stack.Screen name="PhotoSpot" component={PhotoSpotScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
