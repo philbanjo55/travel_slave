@@ -10,6 +10,9 @@
 //                   S3D.chunk(b64, 'detail') for the detail heights, S3D.chunk(b64, 'mask') for its class mask,
 //                   S3D.chunk(b64, 'trees') and S3D.chunk(b64, 'water') for the two files above; then S3D.done()
 //   S3D.ice(bool)   frozen lakes on / off
+//   S3D.trees(bool) every tree layer shown / hidden (Phil, 16 Nov 2026: a "no trees" foreground): the close-up box's
+//                   trees and their soft canopy shadow on its ground, and the park-wide trees. A visibility switch, no
+//                   rebuild; cfg.trees === false starts a page with them hidden. Trees never reach lit() / the sun times.
 //   The foreground (detail box, tree returns, water) never holds the plain view up: done() draws far + near and posts
 //   `ready`; the foreground is built after the first frames, in steps, and `foreground` {ok, detail, trees, water, ms}
 //   says when it is in, or why it was dropped (the plain view then simply stays). While it is being built the page
@@ -93,7 +96,7 @@
   window.onerror = msg => { post({ type: 'error', msg: String(msg) }); };
 
   let cfg = null, parts = [], nparts = [], dparts = [], mparts = [], tparts = [], wparts = [], cparts = [], ncparts = [], bparts = [], wcparts = [], FAR = null, NR = null, DT = null, ice = true, maxH = 4250, minH = 0, baseH = 0;
-  let foreState = 0, frames = 0, lastPath = null, touched = false;
+  let foreState = 0, frames = 0, lastPath = null, touched = false, treesOn = true;
   // 14 Nov 2026: the 1.5 km boxes hold bare ground, so a subject pin on a barn or cabin was aimed at the ground at its
   // foot. Buildings near the eye are kept here (outline + roof top) and a close subject inside one is aimed at its roof.
   let bldNear = [];
@@ -230,7 +233,7 @@
     uniform sampler2D bmap;   // house heights above the ground / 51 m (assumed heights): a drawn shadow only, never in the sun times
     #endif
     #ifdef DETAIL
-    uniform sampler2D kmap; uniform float lift; uniform float ice;
+    uniform sampler2D kmap; uniform float lift; uniform float ice; uniform float tsh;
     #ifdef MID
     uniform sampler2D mmap; uniform vec4 mrect;
     #endif
@@ -332,7 +335,7 @@
     #endif
               L *= 1.06;
             } else {
-              gr = H(p); if (hh - gr < texture2D(kmap, p).a * 51.) ts += L * .2; L = min(L * 1.025, 3.);   // under a tree's canopy: a soft shadow that grows with the way through it
+              gr = H(p); if (tsh > .5 && hh - gr < texture2D(kmap, p).a * 51.) ts += L * .2; L = min(L * 1.025, 3.);   // under a tree's canopy: a soft shadow that grows with the way through it
     #ifdef BSHADOW
               bh = texture2D(bmap, p).r * 51.;
     #endif
@@ -1120,7 +1123,7 @@
     const fog = { fogCol: { value: new THREE.Vector3() }, fogD: { value: 0.000011 } };
     const terrU = { hmap: { value: hmap }, lmap: { value: lo.texture }, size: { value: size }, fogCol: fog.fogCol, fogD: fog.fogD };
     let near = null, det = null, ngeo = null, nmap = null, nrect = null, wide = null;
-    const skyU = { zen: { value: new THREE.Vector3(.2, .4, .8) }, hor: { value: new THREE.Vector3(.7, .8, .9) } }, iceU = { value: ice ? 1 : 0 };
+    const skyU = { zen: { value: new THREE.Vector3(.2, .4, .8) }, hor: { value: new THREE.Vector3(.7, .8, .9) } }, iceU = { value: ice ? 1 : 0 }, tshU = { value: treesOn ? 1 : 0 };
     const dholeU = DT ? { dhole: { value: new THREE.Vector4(DT.x0, DT.z0, DT.x0 + DT.w, DT.z0 + DT.d) }, dkeep: { value: DT.keep }, dband: { value: DT.band } } : {};
     if (NR || DT) {
       // the same triangles as the far mesh; the outer ring of points is the skirt (y = 1), the next ring is the box edge
@@ -1152,7 +1155,7 @@
     const halo = new THREE.Mesh(new THREE.CircleGeometry(9000, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, transparent: true, opacity: 0.22, depthWrite: false }));
     scene.add(halo); scene.add(disc);
     const fx = new Float64Array(NB + 1), fz = new Float64Array(NB + 1); for (let k = 0; k <= NB; k++) { fx[k] = bedge(k) / (G - 1) * FAR.w; fz[k] = bedge(k) / (G - 1) * FAR.d; }
-    R = { renderer, canvas, gl: renderer.getContext(), cw: 0, ch: 0, thin: 1, fx, fz, lite: [], lo, hi, lightMat, quad, lightScene, lightCam, terrMat, near, det, skyU, iceU, lost: false,
+    R = { renderer, canvas, gl: renderer.getContext(), cw: 0, ch: 0, thin: 1, fx, fz, lite: [], lo, hi, lightMat, quad, lightScene, lightCam, terrMat, near, det, skyU, iceU, tshU, lost: false,
       ctx: { hmap, nmap, nrect, size, rt, sunU, lightVS, fog, terrU, index, ngeo, terrain }, scene, cam, sky, skyPos, skyCol, disc, halo, sv: sunVec(180, 20) };
   }
 
@@ -1294,7 +1297,7 @@
         ngeo = new THREE.BufferGeometry(); ngeo.setAttribute('position', new THREE.BufferAttribute(np, 3)); ngeo.setIndex(C.index);   // not in `made`: letting it go would take the shared triangle list with it
         ngeo.attributes.position.onUpload(function () { free(this.array); this.array = null; });
       }
-      const lu = { hmap: { value: dmap }, fmap: { value: hmap }, kmap: { value: kmap }, lift: { value: 0.3 }, ice: R.iceU, rect: { value: drect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(D.dx, D.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(D.w, D.d) }, texel: { value: 1 / D.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH };
+      const lu = { hmap: { value: dmap }, fmap: { value: hmap }, kmap: { value: kmap }, lift: { value: 0.3 }, ice: R.iceU, tsh: R.tshU, rect: { value: drect }, fsize: { value: size }, step0: { value: 1.2 * Math.max(D.dx, D.dz) }, fcells: { value: FAR.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, size: { value: new THREE.Vector2(D.w, D.d) }, texel: { value: 1 / D.n }, snowMode: sunU.snowMode, maxH: sunU.maxH, baseH: sunU.baseH };
       const mu = Object.assign({ hmap: { value: dmap }, kmap: { value: kmap }, cells: { value: D.n }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, skyZen: R.skyU.zen, skyHor: R.skyU.hor, ice: R.iceU, fmap: { value: hmap }, lmap: { value: null }, flmap: { value: lo.texture }, rect: { value: drect }, fsize: { value: size }, focus: { value: new THREE.Vector2(0.5, 0.5) }, wk: { value: 0.35 }, keep: { value: D.keep }, band: { value: D.band }, fogCol: fog.fogCol, fogD: fog.fogD }, waterU);
       if (NR) { lu.mmap = { value: C.nmap }; lu.mrect = { value: C.nrect }; Object.assign(mu, { mmap: { value: C.nmap }, mrect: { value: C.nrect }, mkeep: { value: NR.keep }, mband: { value: NR.band }, skirt: { value: 14 }, mlmap: { value: near.lo.texture } }); }
       const ldef = NR ? { NEAR: 1, DETAIL: 1, MID: 1 } : { NEAR: 1, DETAIL: 1 };
@@ -2079,7 +2082,8 @@
     if (relight) { light(q.lt); relight = false; quick = true; }
     else if (!a && sharp && quick) { lightPass(-1); quick = false; }   // the sun has rested: the full light pass, in the same frame as the sharp picture
     const P = R.det && R.det.points; let pts = 0;
-    if (P) { pts = Math.max(1, Math.floor(R.det.count * q.trees)); if (R.det.inst) P.geometry.instanceCount = pts; else if (P.geometry.drawRange.count !== pts) P.geometry.setDrawRange(0, pts); R.thin = q.trees; }   // fewer points are drawn larger (place)
+    if (P) P.visible = treesOn;
+    if (P && treesOn) { pts = Math.max(1, Math.floor(R.det.count * q.trees)); if (R.det.inst) P.geometry.instanceCount = pts; else if (P.geometry.drawRange.count !== pts) P.geometry.setDrawRange(0, pts); R.thin = q.trees; }   // fewer points are drawn larger (place)
     place();
     const cam = R.cam, v = R.sv;
     cam.updateMatrixWorld(); _fr.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, _iv.copy(cam.matrixWorld).invert()));
@@ -2087,7 +2091,7 @@
     cull(R.ctx.terrain, R.fx, R.fz, q.geo > 1 ? BSTART2 : BSTART, R.range ? [holeOf(RG)] : null); if (R.near) cullWarped(R.near, NR, q.geo ? BSTART2 : BSTART); if (R.det) cullWarped(R.det, DT, q.geo ? BSTART2 : BSTART); if (R.range) cullWarped(R.range, RG, BSTART2);
     let wpts = 0;
     if (R.wide) {   // the park-wide trees: the level's share of them (none at the lowest), only the blocks in view
-      const W = R.wide; W.mat.uniforms.share.value = q.wide; W.points.visible = q.wide > 0 && cullWide(W) > 0;
+      const W = R.wide; W.mat.uniforms.share.value = q.wide; W.points.visible = treesOn && q.wide > 0 && cullWide(W) > 0;
       if (W.points.visible) for (const g of W.geo.groups) wpts += g.count;
       wpts = Math.round(wpts * q.wide);
     }
@@ -2134,7 +2138,7 @@
   }
 
   window.S3D = {
-    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; bldNear = []; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; framed = toFraming(c.view); act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; bldNear = []; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; treesOn = c.trees !== false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; framed = toFraming(c.view); act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
     chunk(s, which) {
       if (typeof which === 'string' && which.startsWith('canopy:')) {   // a tree tile: packed as soon as the next one starts, so its text is let go at once
         const i = +which.slice(7);
@@ -2161,6 +2165,8 @@
     sun(az, alt) { sun = { az, alt }; relight = true; touch('sun'); },
     // ice(true): still water (lakes, ponds, backwaters) is drawn frozen under snow, only moving water stays open
     ice(v) { ice = !!v; if (R) { R.iceU.value = ice ? 1 : 0; relight = dirty = true; } },
+    // trees(false): every tree hidden (and the close-up trees' soft shadow on the ground); the sun times never used them
+    trees(v) { treesOn = v !== false; if (R) { R.tshU.value = treesOn ? 1 : 0; relight = dirty = true; } },
     focal(f) { lens = Object.assign({}, lens, { f }); dirty = true; },
     // lens({ f, fw, fh, box }): focal length, film width / height in mm as the camera is turned, frame box on / off
     lens(o) { lens = Object.assign({}, lens, o || {}); dirty = true; },
