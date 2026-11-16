@@ -239,6 +239,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
           sel={pair}
           onPick={p => { const i = stop.pairs.indexOf(p); if (i >= 0) { chosen.current = true; setPairIdx(i); } }}
           sun={light.sun}
+          shaded={light.label === 'in shadow'}
           height={208}
         />
       ) : tab === 'horizon' ? (
