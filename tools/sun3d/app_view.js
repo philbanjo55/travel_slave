@@ -104,6 +104,7 @@
   let cnparts = {}, cnbytes = {}, cnlast = -1, wideTiles = null, wideState = 0, wideRun = 0;   // park-wide trees: tile pieces by index, each tile's packed bytes once its pieces are in, the tile coming in, the packed files, 0 none 1 building 2 in -1 dropped
   const cnAny = () => Object.keys(cnparts).length > 0 || Object.keys(cnbytes).length > 0;   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
   let R = null;   // everything three.js, once built
+  const OHU = { value: 0 };   // the view from above is on (S3D.overhead): shaders draw trees as crowns seen from over them
   let eye = null, eye0 = null, target = null, framed = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true;
   const G = 768;  // mesh points per side
 
@@ -685,7 +686,7 @@
   // what the crowns toward the sun take; none are drawn within `clearR` m of the eye.
   const TREE_VS = `
     uniform sampler2D kmap; uniform sampler2D lmap; uniform vec4 rect; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec3 fogCol; uniform float fogD;
-    uniform float pscale; uniform float snowMode; uniform float clearR;
+    uniform float pscale; uniform float snowMode; uniform float clearR; uniform float oh;
     attribute vec4 seed;   // x: how far under the canopy top (0 top .. 1), y: random, z: size in metres, w: metres above the ground
     varying vec3 vCol;
     void main() {
@@ -701,7 +702,7 @@
       vec4 mv = modelViewMatrix * vec4(position, 1.); float dist = length(mv.xyz);
       vCol = mix(c, fogCol, 1. - exp(-pow(fogD * dist, 2.)));
       gl_Position = projectionMatrix * mv; gl_PointSize = clamp(seed.z * pscale / max(dist, 1.), 1.5, 28.);
-      if (distance(position.xz, cameraPosition.xz) < clearR) gl_Position = vec4(2., 2., 2., 1.);
+      if (distance(position.xz, cameraPosition.xz) < clearR * (1. - oh)) gl_Position = vec4(2., 2., 2., 1.);
     }`;
   const TREE_FS = `
     precision highp float; varying vec3 vCol;
@@ -817,10 +818,12 @@
   }
   const SHAPE_VS = `
     uniform sampler2D kmap; uniform sampler2D lmap; uniform vec4 rect; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform float fogD; uniform float pscale;
+    uniform float oh;   // 1 = the view from above: each tree is its crown seen from over it (a flat quad at the tree's top)
     attribute vec3 tpos; attribute vec4 tsz;   // ground point; height m, drawn width m, 2 = bare else the crown's shape a / 2.5, random
-    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx;
+    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx; varying vec3 vOh;
     void main() {
       vec2 rg = vec2(viewMatrix[0][0], viewMatrix[2][0]); rg = length(rg) > 1e-5 ? normalize(rg) : vec2(1., 0.);
+      vec2 fw = vec2(viewMatrix[0][1], viewMatrix[2][1]); fw = length(fw) > 1e-5 ? normalize(fw) : vec2(0., -1.);   // the screen's up, on the ground (from above)
       // A2: a crown close to the eye is a flat quad seen from inside its own width (a striped slab at a frame edge): a tree
       // whose crown (a cylinder: the drawn half-width round the stem, foot to top) is within NEAR_DROP m of the eye in 3D is
       // not drawn. Per frame in the shader, so it follows the eye while walking. (A dithered fade over 8-12 m was tried:
@@ -828,6 +831,7 @@
       vec2 dxz = tpos.xz - cameraPosition.xz; float dh = max(length(dxz) - .5 * tsz.y, 0.), dv = max(max(tpos.y - cameraPosition.y, cameraPosition.y - tpos.y - tsz.x), 0.);
       if (length(vec2(dh, dv)) < ${NEAR_DROP.toFixed(1)}) { gl_Position = vec4(2., 2., 2., 1.); return; }
       vec3 p = vec3(tpos.x + rg.x * position.x * tsz.y, tpos.y - .4 + position.y * (tsz.x + .4), tpos.z + rg.y * position.x * tsz.y);   // the foot a little into the ground (slopes)
+      if (oh > .5) p = vec3(tpos.x + (rg.x * position.x + fw.x * (position.y - .5)) * tsz.y, tpos.y + tsz.x, tpos.z + (rg.y * position.x + fw.y * (position.y - .5)) * tsz.y);
       vec4 mv = modelViewMatrix * vec4(p, 1.); gl_Position = projectionMatrix * mv; float dist = length(mv.xyz);
       vQ = position.xy; vT = tsz;
       vec2 uv = (tpos.xz - rect.xy) / rect.zw; float sh = 0., hl = length(sunDir.xz);
@@ -835,13 +839,14 @@
         for (int k = 1; k <= 6; k++) { float d = .5 * tsz.y + 1.6 * float(k); if (y0 + tanA * d < texture2D(kmap, uv + dir * d).a * 51.) sh += .22; } }
       vSun = sunCol * texture2D(lmap, uv).a * (1. - .8 * min(sh, 1.)); vAmb = amb;
       vSide = hl > 1e-4 ? dot(sunDir.xz / hl, rg) : 0.;
+      vOh = vec3(oh, hl > 1e-4 ? dot(sunDir.xz / hl, rg) : 0., hl > 1e-4 ? dot(sunDir.xz / hl, fw) : 0.);
       vFog = 1. - exp(-pow(fogD * dist, 2.)); vPx = dist / pscale;
     }`;
   // A draws the outline solid; B (STIPPLE) fills the same outline with soft dots (a point cloud with no gaps however
   // near the tree is: the dots are cut in the fragment shader, a few cm apart close by, a pixel and a half far off).
   const SHAPE_FS = `
     precision highp float; uniform float snowMode; uniform vec3 fogCol;
-    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx;
+    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx; varying vec3 vOh;
     float h1(float x) { return fract(sin(x * 78.233) * 43758.5453); }
     float h2(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     float sg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float t = clamp(dot(pa, ba) / dot(ba, ba), 0., 1.); return length(pa - ba * t); }
@@ -852,6 +857,24 @@
       return h2(cell + r + 11.) < keep && length(f - .75 * off) < .3 + .2 * h2(cell + r + 7.);   // dots off the grid, of uneven size
     }
     void main() {
+      if (vOh.x > .5) {   // from above: an evergreen is a dark round crown (snow on its boughs), a bare tree a lace of limbs
+        vec2 d = vec2(vQ.x, vQ.y - .5) * 2.; float rr = length(d), rw = vT.w, ww = vT.y, pxo = max(vPx, .01), lt = .5 + .5 * clamp(dot(d, vOh.yz), -1., 1.);
+        vec3 co;
+        if (vT.z >= 2.) {
+          if (rr > 1.) discard;
+          float ang = atan(d.y, d.x), limb = abs(fract(ang / 6.2832 * 7. + rw * 3.) - .5) * rr * ww;
+          if (limb > max(.12, .6 * pxo) && rr > .1 && h2(floor(d * ww / max(.2, pxo)) + rw * 17.) > .1 + .22 * (1. - rr)) discard;
+          co = vec3(.30, .27, .25) * (.8 + .4 * h1(rw * 9.));
+        } else {
+          float ang = atan(d.y, d.x);
+          if (rr > .84 + .1 * sin(ang * 7. + rw * 40.) + .06 * sin(ang * 13. + rw * 17.)) discard;
+          co = (snowMode > .5 ? vec3(.075, .12, .095) : vec3(.10, .19, .09)) * (.8 + .4 * h1(rw * 7.)) * (.75 + .5 * (1. - rr));
+          if (snowMode > .5 && rr < .8 && h2(floor(d * ww / max(.5, pxo)) + rw) > .72) co = mix(co, vec3(.80, .84, .88), .55);
+        }
+        vec3 cl = co * (vAmb * .8 + vSun * (.3 + .55 * lt));
+        cl = pow(min(cl * .9, vec3(1.)), vec3(.62));
+        gl_FragColor = vec4(mix(cl, fogCol, vFog), 1.); return;
+      }
       float H = vT.x, W = vT.y, r = vT.w, x = vQ.x * W, y = vQ.y * H, px = max(vPx, .01), lit, sh = .5;
       vec3 c;
       if (vT.z < 1.) {   // evergreen: a spire of tiered boughs from just over the snow to the top, as full as its survey crown
@@ -1314,11 +1337,11 @@
       const mesh = new THREE.Mesh(dgeo, [mat]); mesh.frustumCulled = false; made.push(dLight, dlo, dhi, mat);
       det = { lightMat: dLight, lo: dlo, hi: dhi, lite: [], mat, mesh, dmap, kmap, points: null, count: 0, houses: null };
       if (tp && tp.inst) {   // A / B: one quad a tree
-        const smat = new THREE.ShaderMaterial({ defines: STYLE === 'cloud' ? { STIPPLE: 1 } : {}, uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode }, vertexShader: SHAPE_VS, fragmentShader: SHAPE_FS });
+        const smat = new THREE.ShaderMaterial({ defines: STYLE === 'cloud' ? { STIPPLE: 1 } : {}, uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, oh: OHU }, vertexShader: SHAPE_VS, fragmentShader: SHAPE_FS });
         det.points = new THREE.Mesh(tp.inst, smat); det.points.frustumCulled = false; det.inst = true; det.count = tp.count; made.push(tp.inst, smat);
         const drop = function () { free(this.array); this.array = null; }; tp.inst.attributes.tpos.onUpload(drop); tp.inst.attributes.tsz.onUpload(drop);
       } else if (tp) {
-        const pmat = new THREE.ShaderMaterial({ uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, clearR: { value: 12 } }, vertexShader: TREE_VS, fragmentShader: TREE_FS });
+        const pmat = new THREE.ShaderMaterial({ uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, clearR: { value: 12 }, oh: OHU }, vertexShader: TREE_VS, fragmentShader: TREE_FS });
         det.points = new THREE.Points(tp.geo, pmat); det.points.frustumCulled = false; det.count = tp.count; made.push(tp.geo, pmat);
         const drop = function () { free(this.array); this.array = null; }; tp.geo.attributes.position.onUpload(drop); tp.geo.attributes.seed.onUpload(drop);
       }
@@ -1594,15 +1617,16 @@
     uniform sampler2D lmapF; uniform sampler2D lmapN; uniform vec4 nrect; uniform vec2 size; uniform float hasN;
     uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec3 fogCol; uniform float fogD;
     uniform float pscale; uniform float snowMode; uniform float share; uniform float clearR; uniform float psMax;
+    uniform float oh;   // 1 = from above: the point is the crown seen from over the tree's top
     attribute vec4 tw;
-    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide;
+    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide; varying vec3 vOh;
     void main() {
       float S = max(tw.x, tw.y);
-      vec4 mv = modelViewMatrix * vec4(position.x, position.y + S * .5, position.z, 1.); float dist = length(mv.xyz);
-      float px = S * pscale / max(dist, 1.);
+      vec4 mv = modelViewMatrix * vec4(position.x, position.y + (oh > .5 ? tw.x : S * .5), position.z, 1.); float dist = length(mv.xyz);
+      float px = (oh > .5 ? tw.y : S) * pscale / max(dist, 1.);
       // not drawn: past the level's share, under a pixel, too close, or bigger than the phone draws a point (a smaller one
       // would float over the ground: its middle is pinned, not its foot)
-      if (tw.z >= share || px < .8 || px > psMax || distance(position.xz, cameraPosition.xz) < clearR) { gl_Position = vec4(2., 2., 2., 1.); gl_PointSize = 1.; return; }
+      if (tw.z >= share || px < .8 || px > psMax || distance(position.xz, cameraPosition.xz) < clearR * (1. - oh)) { gl_Position = vec4(2., 2., 2., 1.); gl_PointSize = 1.; return; }
       gl_Position = projectionMatrix * mv; gl_PointSize = px;
       float k = max(1., floor(tw.y / max(.55 * tw.x, 1.) + .5));   // a clump: a few tips side by side
       vS = vec4(tw.x / S, tw.y / S, k, tw.w);
@@ -1612,13 +1636,28 @@
       vSun = sunCol * vis;
       vec2 rgt = vec2(viewMatrix[0][0], viewMatrix[2][0]), sh = sunDir.xz;
       vSide = length(rgt) > 1e-4 && length(sh) > 1e-4 ? dot(normalize(sh), normalize(rgt)) : 0.;
+      vec2 upg = vec2(viewMatrix[0][1], viewMatrix[2][1]);
+      vOh = vec3(oh, vSide, length(upg) > 1e-4 && length(sh) > 1e-4 ? dot(normalize(sh), normalize(upg)) : 0.);
       vFog = 1. - exp(-pow(fogD * dist, 2.)); vFogC = fogCol;
     }`;
   const WTREE_FS = `
     precision highp float; uniform vec3 amb; uniform float snowMode;
-    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide;
+    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide; varying vec3 vOh;
     float h1(float x) { return fract(sin(x * 78.233) * 43758.5453); }
     void main() {
+      if (vOh.x > .5) {   // from above: a round crown (an evergreen), or a see-through lace (bare in winter)
+        vec2 qo = gl_PointCoord, d = vec2(qo.x - .5, .5 - qo.y) * 2.; float rr = length(d), ro = fract(vS.w), lt = .5 + .5 * clamp(dot(d, vOh.yz), -1., 1.);
+        vec3 co;
+        if (vS.w >= 2.) { if (rr > 1. || h1(floor(qo.x * 20.) + floor(qo.y * 20.) * 53.1 + ro * 7.) > .2 + .3 * (1. - rr)) discard; co = vec3(.30, .27, .25) * (.8 + .4 * h1(ro * 9.)); }
+        else {
+          float ang = atan(d.y, d.x); if (rr > .84 + .1 * sin(ang * 7. + ro * 40.)) discard;
+          co = vBase * (.75 + .5 * (1. - rr));
+          if (snowMode > .5 && rr < .8 && h1(floor(qo.x * 9.) + floor(qo.y * 9.) * 31.7 + ro * 13.) > .72) co = mix(co, vec3(.80, .84, .88), .5);
+        }
+        vec3 cl = co * (amb * .8 + vSun * (.3 + .55 * lt));
+        cl = pow(min(cl * .9, vec3(1.)), vec3(.62));
+        gl_FragColor = vec4(mix(cl, vFogC, vFog), 1.); return;
+      }
       vec2 q = gl_PointCoord; float yb = (1. - q.y) / vS.x, u = (q.x - .5) / vS.y;   // yb 0 at the ground .. 1 at the crown's top; u -.5 .. .5 across it
       if (yb > 1. || abs(u) > .5) discard;
       if (vS.w >= 2.) {   // bare in winter (A / B): a trunk and a lace of twigs in an oval crown, see-through, grey-brown
@@ -1856,7 +1895,7 @@
       const C = R.ctx, sunU = C.sunU, fog = C.fog, gl = R.gl;
       let psMax = 256; try { psMax = Math.max(16, Math.min(512, gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] || 64)); } catch (e) { psMax = 64; }
       const mat = new THREE.ShaderMaterial({ uniforms: { lmapF: { value: R.lo.texture }, lmapN: { value: R.near ? R.near.lo.texture : R.lo.texture }, nrect: { value: NR ? new THREE.Vector4(NR.x0, NR.z0, NR.w, NR.d) : new THREE.Vector4(0, 0, 1, 1) }, hasN: { value: NR && R.near ? 1 : 0 }, size: { value: C.size },
-        sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, share: { value: 1 }, clearR: { value: 30 }, psMax: { value: psMax } },
+        sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, share: { value: 1 }, clearR: { value: 30 }, psMax: { value: psMax }, oh: OHU },
         vertexShader: WTREE_VS, fragmentShader: WTREE_FS });
       made.push(mat);
       const pts = new THREE.Points(wp.geo, [mat]); pts.frustumCulled = false;
@@ -1916,9 +1955,11 @@
     r.setRenderTarget(null);
   }
   function light(k) {
-    const v = sunVec(sun.az, sun.alt), A = atmo(sun.alt); R.sv = v;
+    const ls = OH.on && !OH.sunOn ? OH_EVEN : sun;   // from above with the sun off: an even light, no shadows
+    const v = sunVec(ls.az, ls.alt), A = atmo(ls.alt); R.sv = v;
     R.lightMat.uniforms.sunDir.value.set(v.x, v.y, v.z);
-    R.lightMat.uniforms.sunCol.value.set(A.sun[0] * A.sunI, A.sun[1] * A.sunI, A.sun[2] * A.sunI);
+    const sI = A.sunI * (ls.k || 1);
+    R.lightMat.uniforms.sunCol.value.set(A.sun[0] * sI, A.sun[1] * sI, A.sun[2] * sI);
     R.lightMat.uniforms.amb.value.set(A.amb[0], A.amb[1], A.amb[2]);
     R.skyU.zen.value.set(A.zen[0], A.zen[1], A.zen[2]); R.skyU.hor.value.set(A.hor[0], A.hor[1], A.hor[2]);
     lightPass(k);   // a quick pass while the time is moving; draw() runs the full one once it rests
@@ -2084,7 +2125,7 @@
     const P = R.det && R.det.points; let pts = 0;
     if (P) P.visible = treesOn;
     if (P && treesOn) { pts = Math.max(1, Math.floor(R.det.count * q.trees)); if (R.det.inst) P.geometry.instanceCount = pts; else if (P.geometry.drawRange.count !== pts) P.geometry.setDrawRange(0, pts); R.thin = q.trees; }   // fewer points are drawn larger (place)
-    place();
+    if (OH.on) placeOH(); else place();
     const cam = R.cam, v = R.sv;
     cam.updateMatrixWorld(); _fr.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, _iv.copy(cam.matrixWorld).invert()));
     // (the wide mesh: none of its blocks wholly under the range's box, where it would only be discarded)
@@ -2097,7 +2138,9 @@
     }
     R.disc.position.set(cam.position.x + v.x * 190000, cam.position.y + v.y * 190000, cam.position.z + v.z * 190000); R.disc.lookAt(cam.position);
     R.halo.position.copy(R.disc.position); R.halo.lookAt(cam.position);
+    if (OH.on) R.disc.visible = R.halo.visible = false;
     R.renderer.render(R.scene, cam); dirty = false; frames++;
+    if (OH.on) ohOverlay();
     owe = quick || q !== QL[0]; sharp = false;
     if (owe && restTimer == null && !resting) restTimer = setTimeout(rested, REST.sun);   // a light change nobody touched for (the foreground coming in, ice on / off)
     if (a) { a.px = cw * ch; a.pts = pts; a.wpts = wpts; }
@@ -2108,6 +2151,210 @@
       if (sy) { gate.sync = sy; if (a) gate.poll = setTimeout(poll, 3); } else gate.off = true;   // while moving the fence is asked every few ms, so the time is finer than a screen refresh
     }
     if (gate.off) gate.wait = true;
+  }
+  // ---- From above (Phil, 16 Nov 2026: the stop page's Overhead tab, "3D from above") ----
+  // S3D.overhead({ on, shots: [{ id, code, name, subject?, v: {lat, lng}, s?: {lat, lng}, heading_deg: number | null,
+  //   fov_deg, star, sel }], heading_up_deg?, sun?, fit? }) puts the page into a view straight down over the shots: the
+  // same terrain, colour, buildings and trees as the 3D view, lit by the sun at the slider's time (S3D.sun) with the real
+  // calculated shadows, or (sun: false) by an even light with no shadows. Drawn over it (a 2D layer): a dot per stand
+  // spot (the selected one red), its code, each shot's framing as a wedge (the selected one filled; direction = the
+  // saved framing's heading, else toward the subject; width = the lens's horizontal angle, fov_deg), the sun's
+  // direction from the selected stand spot, and, when the selected shot's subject is off screen, a tag at the edge on
+  // the line toward it ("Grand Teton · 13.6 km"). heading_up_deg: the compass heading at the top of the screen; null or
+  // 'view' (default) = the selected shot's aim, 0 / 'north' = north up. The first call (and fit: true, or a new set of
+  // shots) frames every stand spot. Full screen: one finger pans, two pinch (15 m to 20 km across) and turn; the small
+  // view (inline) takes no gestures but taps. A tap on a stand dot posts { type: 'overheadTap', id }; the first picture
+  // posts { type: 'overhead', ok: true }; the end of a gesture (or a new heading) posts { type: 'overheadView', up, span,
+  // mode: 'view' | 'north' | 'turned' }. S3D.overheadSel(id), S3D.overheadUp(deg | 'view' | 'north'), S3D.overheadSun(bool), S3D.overheadZoom(k),
+  // S3D.overheadFit(); S3D.overhead({ on: false }) gives the perspective view back exactly as it was.
+  // The camera is a narrow (15 deg across) perspective camera high over the middle: a peak 1.5 km above the valley 10 km
+  // off-centre leans ~4% of its distance. Fog, sky and sun disc are off; nothing here reaches lit() / the sun times.
+  const OH_FOVH = 15 * Math.PI / 180, OH_MIN = 15, OH_MAX = 20000, OH_EVEN = { az: 180, alt: 88, k: 0.5 };   // the sun off: high and soft (k = its strength), so nothing casts a shadow and snow is not burnt out
+  const OH = { on: false, shots: [], sel: null, upMode: 'view', rot: 0, cx: 0, cz: 0, span: 400, sunOn: true, posted: false, saved: null, cv: null, g2: null,
+    ptr: new Map(), tap: null, tw: 0, turning: false, shotKey: '', needFit: false };
+  const ohRad = d => d * Math.PI / 180, ohDeg = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
+  const ohKx = lat => 111320 * Math.cos(lat * Math.PI / 180);
+  const ohBear = (a, b) => ((Math.atan2((b.lng - a.lng) * ohKx(a.lat), (b.lat - a.lat) * 111132) * 180 / Math.PI) % 360 + 360) % 360;
+  const ohDist = (a, b) => Math.hypot((b.lng - a.lng) * ohKx(a.lat), (b.lat - a.lat) * 111132);
+  const ohXZ = p => { const q = cr(p); return { x: (q.c + 0.5) * FAR.dx, z: (q.r + 0.5) * FAR.dz }; };
+  const ohH = p => { const e = pick(p); return gh(e.g, e.c, e.r); };
+  const ohSelShot = () => OH.shots.find(s => s.id === OH.sel) || OH.shots[0] || null;
+  const ohAim = s => !s ? 0 : s.heading_deg != null && Number.isFinite(+s.heading_deg) ? +s.heading_deg : s.s ? ohBear(s.v, s.s) : 0;
+  const ohU = () => ({ x: Math.sin(OH.rot), z: -Math.cos(OH.rot) }), ohRt = () => ({ x: Math.cos(OH.rot), z: Math.sin(OH.rot) });   // the screen's up and right, on the ground
+  const ohMode = () => OH.upMode === 'view' ? 'view' : OH.upMode === 'north' ? 'north' : 'turned';
+  const ohSay = () => post({ type: 'overheadView', up: Math.round(ohDeg(OH.rot) * 10) / 10, span: Math.round(OH.span), mode: ohMode() });
+  function ohClamp() {
+    OH.span = Math.max(OH_MIN, Math.min(OH_MAX, OH.span));
+    if (FAR) { OH.cx = Math.max(0, Math.min(FAR.w, OH.cx)); OH.cz = Math.max(0, Math.min(FAR.d, OH.cz)); }
+  }
+  function ohSetUp(v) {
+    if (v == null || v === 'view') { OH.upMode = 'view'; OH.rot = ohRad(ohAim(ohSelShot())); }
+    else if (v === 'north') { OH.upMode = 'north'; OH.rot = 0; }
+    else if (Number.isFinite(+v)) { OH.upMode = +v === 0 ? 'north' : 'set'; OH.rot = ohRad(+v); }
+  }
+  // every stand spot on screen with a margin, the shots a little low so the wedges ahead of them show
+  function ohFit() {
+    OH.needFit = false;
+    if (!FAR || !OH.shots.length) return;
+    const U = ohU(), Rt = ohRt(), w = window.innerWidth || 1, h = window.innerHeight || 1;
+    let r0 = Infinity, r1 = -Infinity, u0 = Infinity, u1 = -Infinity;
+    for (const s of OH.shots) { const p = ohXZ(s.v), a = p.x * Rt.x + p.z * Rt.z, b = p.x * U.x + p.z * U.z; r0 = Math.min(r0, a); r1 = Math.max(r1, a); u0 = Math.min(u0, b); u1 = Math.max(u1, b); }
+    OH.span = Math.max(200, (r1 - r0) * 1.6 + 60, ((u1 - u0) * 1.6 + 60) * w / h);
+    const rel = ohRad(ohAim(ohSelShot())) - OH.rot, hh = OH.span * h / w;
+    const cr0 = (r0 + r1) / 2 + 0.15 * OH.span * Math.sin(rel), cu = (u0 + u1) / 2 + 0.15 * hh * Math.cos(rel);
+    OH.cx = cr0 * Rt.x + cu * U.x; OH.cz = cr0 * Rt.z + cu * U.z; ohClamp();
+  }
+  function ohCanvas() {
+    if (OH.cv) return OH.cv;
+    const c = document.createElement('canvas'); c.id = 'oh'; c.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none';
+    document.body.insertBefore(c, document.getElementById('msg')); OH.cv = c; OH.g2 = c.getContext('2d'); return c;
+  }
+  function ohApplyR() {
+    const cam = R.cam, F = R.ctx.fog;
+    if (!OH.saved) OH.saved = { near: cam.near, far: cam.far, fogD: F.fogD.value };
+    F.fogD.value = 0; R.sky.visible = false; R.renderer.setClearColor(0x111111, 1);
+    const fr = document.getElementById('frame'); if (fr) fr.style.display = 'none'; lensKey = '';
+    ohCanvas().style.display = 'block';
+    if (OH.needFit || !OH.shotKey) ohFit();
+    relight = dirty = true;
+  }
+  function ohEnter() { OH.on = true; OHU.value = 1; OH.posted = false; OH.ptr.clear(); OH.tap = null; if (R) ohApplyR(); }
+  function ohLeave() {
+    if (!OH.on) return;
+    OH.on = false; OHU.value = 0; OH.ptr.clear();
+    if (R && OH.saved) { const cam = R.cam; cam.near = OH.saved.near; cam.far = OH.saved.far; R.ctx.fog.fogD.value = OH.saved.fogD; R.sky.visible = true; R.renderer.setClearColor(0x000000, 1); }
+    OH.saved = null; lensKey = '';
+    if (OH.cv) { OH.cv.style.display = 'none'; OH.g2.clearRect(0, 0, OH.cv.width, OH.cv.height); }
+    if (R) { aim(); relight = dirty = true; }
+  }
+  function placeOH() {
+    const cam = R.cam, a = cam.aspect || 1, tH = Math.tan(OH_FOVH / 2);
+    let g; try { g = groundAt(OH.cx, OH.cz); } catch (e) { g = NaN; }
+    if (!Number.isFinite(g)) g = gh(FAR, OH.cx / FAR.dx - 0.5, OH.cz / FAR.dz - 0.5);
+    const hgt = (OH.span / 2) / tH, y = g + hgt;
+    cam.fov = 2 * Math.atan(tH / a) * 180 / Math.PI;
+    cam.position.set(OH.cx, y, OH.cz); cam.rotation.set(-Math.PI / 2, -OH.rot, 0);
+    cam.near = Math.max(0.5, Math.min(hgt * 0.2, y - maxH - 50)); cam.far = y - Math.min(minH, g) + 2000;
+    cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
+    if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360)) / (R.det.inst ? 1 : Math.sqrt(R.thin));
+    if (R.wide) R.wide.mat.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360));
+  }
+  // screen point (CSS px) <-> ground (far grid metres), at the middle's ground height
+  function ohS2W(sx, sy) { const w = window.innerWidth || 1, h = window.innerHeight || 1, m = OH.span / w, U = ohU(), Rt = ohRt(), ox = (sx - w / 2) * m, oy = (sy - h / 2) * m; return { x: OH.cx + ox * Rt.x - oy * U.x, z: OH.cz + ox * Rt.z - oy * U.z }; }
+  function ohPut(W, sx, sy) { const w = window.innerWidth || 1, h = window.innerHeight || 1, m = OH.span / w, U = ohU(), Rt = ohRt(), ox = (sx - w / 2) * m, oy = (sy - h / 2) * m; OH.cx = W.x - ox * Rt.x + oy * U.x; OH.cz = W.z - ox * Rt.z + oy * U.z; ohClamp(); }
+  function ohDown(e) {
+    OH.ptr.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { R.canvas.setPointerCapture(e.pointerId); } catch (x) { /* fine */ }
+    OH.tap = OH.ptr.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
+    if (OH.ptr.size === 2) { OH.tw = 0; OH.turning = false; }
+  }
+  function ohMove(e) {
+    const p = OH.ptr.get(e.pointerId); if (!p) return;
+    if (OH.tap && Math.hypot(e.clientX - OH.tap.x, e.clientY - OH.tap.y) > 8) OH.tap.moved = true;
+    const before = [...OH.ptr.values()].slice(0, 2).map(q => ({ x: q.x, y: q.y }));
+    p.x = e.clientX; p.y = e.clientY;
+    if (inline) return;   // the small view inside the page: no pan / zoom / turn (the page scrolls), taps only
+    const after = [...OH.ptr.values()].slice(0, 2);
+    if (after.length === 1) { const W = ohS2W(before[0].x, before[0].y); ohPut(W, after[0].x, after[0].y); }
+    else {
+      const [a0, b0] = before, [a1, b1] = after, m0x = (a0.x + b0.x) / 2, m0y = (a0.y + b0.y) / 2, d0 = Math.hypot(b0.x - a0.x, b0.y - a0.y), d1 = Math.hypot(b1.x - a1.x, b1.y - a1.y);
+      const W = ohS2W(m0x, m0y);
+      if (d0 > 8 && d1 > 8) OH.span = Math.max(OH_MIN, Math.min(OH_MAX, OH.span * d0 / d1));
+      let da = Math.atan2(b1.y - a1.y, b1.x - a1.x) - Math.atan2(b0.y - a0.y, b0.x - a0.x); da = Math.atan2(Math.sin(da), Math.cos(da));
+      OH.tw += da;
+      if (!OH.turning && Math.abs(OH.tw) > ohRad(10)) { OH.turning = true; da = OH.tw; }   // a pinch is not a turn until the fingers have turned 10 degrees
+      if (OH.turning) { OH.rot -= da; OH.upMode = 'turned'; }
+      ohPut(W, (a1.x + b1.x) / 2, (a1.y + b1.y) / 2);
+    }
+    touched = true; touch('look');
+  }
+  function ohUp(e) {
+    const had = OH.ptr.has(e.pointerId); OH.ptr.delete(e.pointerId);
+    const t = OH.tap; if (had && t && !t.moved && OH.ptr.size === 0 && performance.now() - t.t < 600 && e.type === 'pointerup') {
+      let best = null, bd = 26;
+      for (const d of OH.dots || []) { const k = Math.hypot(d.x - e.clientX, d.y - e.clientY); if (k < bd) { bd = k; best = d.id; } }
+      if (best != null) post({ type: 'overheadTap', id: best });
+    }
+    if (OH.ptr.size === 0) { OH.tap = null; if (!inline && t && t.moved) ohSay(); if (act && act.kind === 'look') rest(); }
+  }
+  const _ohv = new THREE.Vector3();
+  function ohProj(x, y, z, w, h) { _ohv.set(x, y, z).project(R.cam); return { x: (_ohv.x + 1) / 2 * w, y: (1 - _ohv.y) / 2 * h }; }
+  // a screen vector no longer than k (a ray drawn toward a point km away stays a sane number of pixels)
+  const ohCap = (a, b, k) => { const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy); return l > k ? { x: a.x + dx / l * k, y: a.y + dy / l * k } : b; };
+  const ohShort = n => { let t = String(n || '').replace(/\s*\(.*?\)\s*/g, ' ').trim(); if (t.length > 14) t = t.replace(/^(Mount|Mt\.?)\s+/i, ''); if (t.length > 14) t = t.split(/\s+/)[0]; return t; };
+  const ohKm = m => m >= 1000 ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : `${Math.round(m / 10) * 10} m`;
+  function ohLabel(g, t, x, y, bold, align) {
+    g.font = `${bold ? 700 : 600} 12px Roboto, system-ui, sans-serif`; g.textAlign = align || 'left'; g.textBaseline = 'middle';
+    g.lineJoin = 'round'; g.lineWidth = 3.5; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(t, x, y); g.fillStyle = '#ffffff'; g.fillText(t, x, y);
+  }
+  function ohOverlay() {
+    const c = ohCanvas(), w = window.innerWidth || 1, h = window.innerHeight || 1, dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cw = Math.round(w * dpr), ch = Math.round(h * dpr); if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+    const g = OH.g2; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    const sel = ohSelShot(), K = 3 * Math.hypot(w, h); OH.dots = [];
+    if (!sel) return;
+    const P = OH.shots.map(s => { const q = ohXZ(s.v), y = ohH(s.v); return { s, q, y, p: ohProj(q.x, y, q.z, w, h) }; });
+    const wedge = d => {   // the two edges of a shot's framing, out to its subject (or 1.5 km)
+      const s = d.s, a = ohRad(ohAim(s)), half = ohRad(Math.max(1, Math.min(170, +s.fov_deg || 47.9)) / 2), L = s.s ? Math.max(30, ohDist(s.v, s.s)) : 1500;
+      const end = b => ohCap(d.p, ohProj(d.q.x + Math.sin(b) * L, d.y, d.q.z - Math.cos(b) * L, w, h), K);
+      return [end(a - half), end(a + half)];
+    };
+    g.setLineDash([6, 5]); g.lineWidth = 1.5; g.strokeStyle = 'rgba(0,0,0,0.8)';
+    for (const d of P) { if (d.s === sel) continue; const [e1, e2] = wedge(d); g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(d.p.x, d.p.y); g.lineTo(e2.x, e2.y); g.stroke(); }
+    g.setLineDash([]);
+    const ds = P.find(d => d.s === sel), [s1, s2] = wedge(ds);
+    g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(s1.x, s1.y); g.lineTo(s2.x, s2.y); g.closePath(); g.fillStyle = 'rgba(240,176,74,0.28)'; g.fill();
+    g.beginPath(); g.moveTo(s1.x, s1.y); g.lineTo(ds.p.x, ds.p.y); g.lineTo(s2.x, s2.y); g.lineWidth = 2; g.strokeStyle = '#F0B04A'; g.stroke();
+    if (OH.sunOn && sun.alt > -0.5) {   // the sun's direction from where you stand
+      const az = ohRad(sun.az), L = 0.4 * Math.min(w, h), far = ohProj(ds.q.x + Math.sin(az) * 1000, ds.y, ds.q.z - Math.cos(az) * 1000, w, h);
+      const dx = far.x - ds.p.x, dy = far.y - ds.p.y, l = Math.hypot(dx, dy) || 1, ex = ds.p.x + dx / l * L, ey = ds.p.y + dy / l * L;
+      g.lineCap = 'round'; g.lineWidth = 9; g.strokeStyle = 'rgba(240,176,74,0.45)'; g.beginPath(); g.moveTo(ds.p.x + dx / l * 12, ds.p.y + dy / l * 12); g.lineTo(ex, ey); g.stroke(); g.lineCap = 'butt';
+      g.beginPath(); g.arc(ex, ey, 7, 0, 2 * Math.PI); g.fillStyle = '#F0B04A'; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#ffffff'; g.stroke();
+    }
+    if (sel.s) {   // the subject: a mark where it is, or a tag at the screen's edge on the line toward it
+      // (a peak higher than the camera is placed at the stand spot's height: its direction is what counts)
+      const sq = ohXZ(sel.s), cy = R.cam.position.y, hs0 = ohH(sel.s), hs = cy - hs0 > 0.5 * (cy - ds.y) ? hs0 : ds.y, sp = ohProj(sq.x, hs, sq.z, w, h), nm = ohShort(sel.subject || sel.name), km = ohKm(ohDist(sel.v, sel.s)), m = 8;
+      if (sp.x >= m && sp.x <= w - m && sp.y >= m && sp.y <= h - m) {
+        g.beginPath(); g.arc(sp.x, sp.y, 5, 0, 2 * Math.PI); g.fillStyle = '#000000'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#ffffff'; g.stroke();
+        if (nm) ohLabel(g, nm, sp.x + 9, sp.y, false);
+      } else {
+        const x0 = 26, x1 = w - 26, y0 = 26, y1 = h - 26, S = ds.p;
+        if (S.x > x0 && S.x < x1 && S.y > y0 && S.y < y1) {
+          const dx = sp.x - S.x, dy = sp.y - S.y; let t = Infinity;
+          if (dx > 0) t = Math.min(t, (x1 - S.x) / dx); if (dx < 0) t = Math.min(t, (x0 - S.x) / dx);
+          if (dy > 0) t = Math.min(t, (y1 - S.y) / dy); if (dy < 0) t = Math.min(t, (y0 - S.y) / dy);
+          const tx = S.x + dx * t, ty = S.y + dy * t, ang = Math.atan2(dy, dx), txt = nm ? `${nm} · ${km}` : km;
+          g.save(); g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 1; g.setLineDash([3, 4]); g.beginPath(); g.moveTo(S.x, S.y); g.lineTo(tx, ty); g.stroke(); g.restore();
+          g.font = '600 12px Roboto, system-ui, sans-serif'; const tw = g.measureText(txt).width + 30, th = 22;
+          const bx = Math.max(6, Math.min(w - 6 - tw, tx - tw / 2)), by = Math.max(6, Math.min(h - 6 - th, ty - th / 2));
+          g.fillStyle = 'rgba(0,0,0,0.72)'; g.beginPath(); if (g.roundRect) g.roundRect(bx, by, tw, th, 11); else g.rect(bx, by, tw, th); g.fill();
+          g.save(); g.translate(bx + 13, by + th / 2); g.rotate(ang); g.fillStyle = '#ffffff'; g.beginPath(); g.moveTo(6, 0); g.lineTo(-4, -5); g.lineTo(-4, 5); g.closePath(); g.fill(); g.restore();
+          g.fillStyle = '#ffffff'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(txt, bx + 24, by + th / 2 + 0.5);
+        }
+      }
+    }
+    for (const d of [...P.filter(d => d.s !== sel), ds]) {   // the stand spots, the selected one last (on top)
+      const on = d.s === sel, r = on ? 8 : 6;
+      g.beginPath(); g.arc(d.p.x, d.p.y, r, 0, 2 * Math.PI); g.fillStyle = on ? '#E5484D' : '#000000'; g.fill(); g.lineWidth = on ? 2.5 : 2; g.strokeStyle = '#ffffff'; g.stroke();
+      OH.dots.push({ id: d.s.id, x: d.p.x, y: d.p.y });
+    }
+    const boxes = [];   // their codes, the selected one first; a code that would sit on another is left out (zoomed far out)
+    for (const d of [ds, ...P.filter(d => d.s !== sel)]) {
+      const on = d.s === sel, r = on ? 8 : 6, t = `${d.s.star ? '★ ' : ''}${d.s.code || d.s.name || ''}`.trim();
+      if (!t) continue;
+      g.font = `${on ? 700 : 600} 12px Roboto, system-ui, sans-serif`;
+      const bx = { x0: d.p.x - r, x1: d.p.x + r + 5 + g.measureText(t).width, y0: d.p.y - 8, y1: d.p.y + 8 };
+      if (!on && boxes.some(b => bx.x0 < b.x1 && bx.x1 > b.x0 && bx.y0 < b.y1 && bx.y1 > b.y0)) continue;
+      boxes.push(bx); ohLabel(g, t, d.p.x + r + 5, d.p.y, on);
+    }
+    {   // scale bar, bottom right
+      const mpp = OH.span / w, steps = [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]; let L = steps[0];
+      for (const s of steps) if (s / mpp <= 90) L = s;
+      const px = L / mpp, x1 = w - 12, y = h - 12;
+      g.strokeStyle = '#dddddd'; g.lineWidth = 2; g.beginPath(); g.moveTo(x1 - px, y - 6); g.lineTo(x1 - px, y); g.lineTo(x1, y); g.lineTo(x1, y - 6); g.stroke();
+      g.font = '600 10px Roboto, system-ui, sans-serif'; g.textAlign = 'right'; g.textBaseline = 'bottom'; g.fillStyle = '#dddddd'; g.fillText(L >= 1000 ? `${L / 1000} km` : `${L} m`, x1, y - 8);
+    }
+    if (!OH.posted) { OH.posted = true; post({ type: 'overhead', ok: true, span: Math.round(OH.span), up: Math.round(ohDeg(OH.rot) * 10) / 10, mode: ohMode() }); }
   }
   function tick() {
     if (resting) rest();
@@ -2129,10 +2376,10 @@
   let drag = null;
   function wire() {
     const c = R.canvas;
-    c.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
+    c.addEventListener('pointerdown', e => { if (OH.on) return ohDown(e); drag = { x: e.clientX, y: e.clientY }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
     c.addEventListener('webglcontextlost', e => { e.preventDefault(); if (R) R.lost = true; post({ type: 'lost', fore: foreState > 0 }); });
-    c.addEventListener('pointermove', e => { if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; touch('look'); });
-    const drop = () => { if (drag) { drag = null; heading(); if (act && act.kind === 'look') rest(); } };   // finger up: the sharp frame now
+    c.addEventListener('pointermove', e => { if (OH.on) return ohMove(e); if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; touch('look'); });
+    const drop = e => { if (OH.on) return ohUp(e); if (drag) { drag = null; heading(); if (act && act.kind === 'look') rest(); } };   // finger up: the sharp frame now
     c.addEventListener('pointerup', drop); c.addEventListener('pointercancel', drop);
     window.addEventListener('resize', resize);
   }
@@ -2152,6 +2399,7 @@
         if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");
         if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.');
         await load(); build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
+        if (OH.on) ohApplyR();
         const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length || (cfg.canopy && cnAny()) || (cfg.range && rparts.length) || (cfg.houses && hsAny()));
         post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: 0, fore }); heading();
         if (fore) queueFore();
@@ -2182,6 +2430,28 @@
       if (R.wide && wideState === 2 && Math.hypot((eye.lat - R.wide.at.lat) * 111132, (eye.lng - R.wide.at.lng) * 111320 * Math.cos(eye.lat * Math.PI / 180)) > 300) { wideState = 0; queueWide(); }   // the park-wide trees again, around the new spot
     },
     recenter() { if (R) { aim(); dirty = true; heading(); } },
+    // ---- from above (see "From above" before tick()) ----
+    overhead(o) {
+      if (!o || o.on === false) { ohLeave(); return; }
+      const shots = Array.isArray(o.shots) ? o.shots.filter(s => s && s.id != null && s.v && Number.isFinite(+s.v.lat) && Number.isFinite(+s.v.lng)) : OH.shots;
+      const key = shots.map(s => `${s.id}:${(+s.v.lat).toFixed(6)},${(+s.v.lng).toFixed(6)}`).join('|');
+      OH.shots = shots;
+      const flagged = shots.find(s => s.sel);
+      if (o.sel != null) OH.sel = o.sel; else if (flagged) OH.sel = flagged.id; else if (!shots.some(s => s.id === OH.sel)) OH.sel = shots.length ? shots[0].id : null;
+      if (o.sun != null) OH.sunOn = !!o.sun;
+      const up = o.heading_up_deg !== undefined ? o.heading_up_deg : o.up;
+      const first = !OH.on;
+      if (up !== undefined) ohSetUp(up); else if (first || OH.upMode === 'view') ohSetUp('view');   // (my view follows the selected shot's aim)
+      if (first || o.fit || key !== OH.shotKey) { OH.shotKey = key; OH.needFit = true; }
+      if (first) ohEnter(); else if (R && OH.needFit) ohFit();
+      if (R) { relight = dirty = true; if (up !== undefined) ohSay(); }
+    },
+    overheadSel(id) { OH.sel = id; if (OH.upMode === 'view') { OH.rot = ohRad(ohAim(ohSelShot())); ohSay(); } dirty = true; },
+    overheadUp(v) { ohSetUp(v === undefined ? 'view' : v); dirty = true; ohSay(); },
+    overheadSun(v) { OH.sunOn = v !== false; relight = dirty = true; },
+    overheadFit() { ohFit(); dirty = true; ohSay(); },
+    // overheadZoom(k): k > 1 closer, < 1 farther, about the middle of the screen (the small view's + / - buttons)
+    overheadZoom(k) { if (!(k > 0)) return; OH.span = Math.max(OH_MIN, Math.min(OH_MAX, OH.span / k)); touch('look'); ohSay(); },
     // Walk mode (12 Nov 2026): step the viewpoint f metres forward and r metres to the right of where the view is
     // looking, on the ground, at most WALK_MAX metres from the shot's own stand spot. The app is told where the
     // viewpoint now is ('eye') and whether that spot is in the sun; it asks for the day's first / last light again
