@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert, Modal } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Sun3DPanel from '../components/sun/Sun3DPanel';
@@ -50,6 +50,7 @@ export default function PhotoSpotScreen() {
   const [adding, setAdding] = useState(false);
   const [full, setFull] = useState(false);
   const refresh = useTripStore((s: any) => s.refreshCurrentTrip);
+  const focused = useIsFocused();   // one 3D web view at a time: the small one goes while full screen is open or the screen is left
 
   useEffect(() => {
     let alive = true;
@@ -136,7 +137,7 @@ export default function PhotoSpotScreen() {
               })}
             </View>
           ) : null}
-          {pair && sun ? (
+          {pair && sun && focused && !full ? (
             <View style={styles.view3d} accessibilityLabel={`The view with the ${row?.f} mm from where it says to stand`}>
               <Sun3DPanel pair={pair} sun={sun} day0={t - 12 * 3600e3} height={200} preview onJump={() => {}} onFull={() => setFull(true)} />
             </View>

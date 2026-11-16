@@ -1360,8 +1360,10 @@ def find_spot():
         V.tap_text(f, 'Close the 3D view', exact=True); time.sleep(2)
     else:
         V.check('spot-open-3d', False, 'no Open in 3D button')
-    V.back(); time.sleep(1.5)
-    V.check('spot-back', C.app_alive() and C.focus_pkg() == V.PKG, 'back from Your spot keeps the app open')
+    V.show('spot-after-close', C.capture(1.5))
+    V.back(); time.sleep(2.5)
+    alive, focus = C.app_alive(), C.focus_pkg()
+    V.check('spot-back', alive and focus == V.PKG, f'back from Your spot keeps the app open (alive {alive}, focus {focus})')
 
 
 def main():
