@@ -16,11 +16,22 @@ Two steps, as the finished feature would run:
      1.7 m above the ground, the terrain's sky line all round, every heading and 22 lens widths (12-100 deg); a vote
      counts the columns where a photo edge lies on the terrain's sky line (tilt from the vote, in 4 px bins); named
      landmarks must land near their pixels; a mild pull toward the stop (sigma 1.5 km) breaks ties;
-   - refine the best four: 25 m local grid, then heading / tilt / roll / lens fitted to the photo edges nearest the
+   - refine the best two (plus the best spot within 250 m of the stop, and the stop itself): heading / tilt / roll / lens fitted to the photo edges nearest the
      model sky line (window 40 -> 5 px), then the spot and eye height moved by a pattern search; buildings within
      ~1.8 km of the stop are part of the model sky line;
-   - confidence: the spot is slid along the line of sight and sideways, the fit redone; the range where the fit stays
-     within 0.5 px (or 15 %) of the best is reported in metres ("or more" when it reaches the 1.5 km test edge).
+   - **region match** (`contours.py`): from a spot, a small picture (180 px wide) of what our model shows in each part of
+     the frame: sky, trees (laser canopy, up to 800 m out), buildings, ground under 150 m / to 1 km / to 5 km / beyond.
+     Scored by how much of the photo's light and texture those areas explain (correlation ratio), plus "trees are
+     darker than the open ground" once trees fill a tenth of the frame. It is what pins the spot when the sky line is
+     far mountains only (Oxbow Bend 450 m -> 32 m, Snake River Overlook 155-360 m -> 2 m). Weight 0.5 inside the spot
+     search, 1.0 in the final choice;
+   - the stop pin itself is always refined too (a 150 m grid misses spots where near trees decide);
+   - confidence: the spot is slid along the line of sight and sideways (15-400 m), the orientation refitted and the
+     spot scored as in the final choice; every offset within 0.05 of the answer's score counts as possible.
+
+Results (16 Nov 2026, six film scans, hand solves as truth): 8, 0, 32, 2, 5, 2 m; 70-115 s a photo, two at a time.
+Without the named landmarks all six go wrong (heading 25-160 deg off): the vision step's names are needed.
+`--no-region` turns the region match off; `--no-names` ignores the landmark file.
 3. `review.py` builds the review page (photo + our sky line, our numpy render from the solved spot, a map sketch with
    the stop's stand pins, numbers, and for the hand-solved film scans the error).
 

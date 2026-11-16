@@ -34,6 +34,7 @@ photos = {r['id']: r for r in json.load(open(os.path.join(WD, 'meta/photos.json'
 shots = json.load(open(os.path.join(WD, 'meta/shots.json')))
 exif = {e['id']: e for e in json.load(open(os.path.join(WD, 'meta/exif.json')))} if os.path.exists(os.path.join(WD, 'meta/exif.json')) else {}
 TER = {}
+FULL_FRAME = ('5D', 'D810', 'D850', 'D750', 'A7', 'R5', 'EOS R', 'Z 7', 'Z7', '6D')
 
 
 def terrain(region):
@@ -63,10 +64,14 @@ def sky_line(T, lat, lng, eyeh, q, W, H, houses=None):
 
 def verdict(r, lm):
     if lm.get('skip'): return 'not placed', 'skipped by the look: ' + lm['skip']
-    if not r or not r.get('ok'): return 'not placed', (r or {}).get('why', 'no result')
+    if lm.get('kind') == 'drone': return 'not placed', 'drone picture: the camera was in the air, the search only tries spots on the ground'
+    if not r or not r.get('ok'): return 'not placed', {'no candidate could be refined': 'too few clear sky-line points to fit'}.get((r or {}).get('why'), (r or {}).get('why', 'no result'))
     a, rms, lmc = r['agree'], r['rms_px'], r.get('lm_cost', 0)
     if a < 0.25: return 'not placed', f'sky line agrees in only {a * 100:.0f}% of columns'
-    if lmc > 12: return 'not placed', 'named landmarks do not land where the look put them'
+    peaks = {L['name'] for L in lm.get('landmarks', []) if L.get('type') == 'peak'}
+    W = (r.get('size') or [1440])[0]
+    off = [L for L in r.get('landmarks', []) if L['name'] in peaks and not (np.isfinite(L['px']) and abs(L['px'] - L['x']) <= 0.08 * W)]
+    if off: return 'not placed', f'{off[0]["name"]} does not land where the look put it'
     rival = [x for x in r.get('alts', []) if x['dist_m'] > 150 and x.get('score', -9) >= r['score'] - 0.05]
     if rival: return 'direction only', f'another spot {rival[0]["dist_m"]:.0f} m away fits nearly as well'
     c = r.get('conf') or {}
@@ -115,7 +120,7 @@ def map_svg(r, pins, stop, truth=None):
 
 def card(name, r, lm, meta):
     T = terrain(r['region']) if r and r.get('ok') else None
-    photo = r['photo'] if r else meta['photo']
+    photo = (r or {}).get('photo') or meta['photo']
     img = cv2.imread(photo)
     W, H = img.shape[1], img.shape[0]
     truth = SCANS.get(name, (None, None))[1]
@@ -156,7 +161,8 @@ def card(name, r, lm, meta):
             rows.append(('Nearest stand pin', f'{dn:.0f} m {_compass(bearing((near["lat"], near["lng"]), sp))} of “{html.escape(near["name"])}”'))
         rows.append(('From the stop pin', f'{dist(sp, meta["stop"]):.0f} m'))
         rows.append(('Heading · tilt · roll', f'{r["yaw"]:.1f}° · {r["pitch"]:+.1f}° · {r["roll"]:+.1f}°'))
-        rows.append(('Lens', f'{r["hfov"]:.1f}° across = {f35:.0f} mm on 35 mm film'))
+        t2 = math.tan(math.radians(r['hfov'] / 2))
+        rows.append(('Lens', f'{r["hfov"]:.1f}° across = {f35:.0f} mm on 35 mm · {41.3 / t2:.0f} mm on 6x9 · {60 / t2:.0f} mm on 4x5 (landscape)'))
         rows.append(('Sky line fit', f'{r["agree"] * 100:.0f}% of columns within 4 px, {r["rms_px"]:.1f} px off on those'))
         c = r.get('conf')
         if c:
@@ -175,6 +181,12 @@ def card(name, r, lm, meta):
             rows.append(('From the stop\'s stand pins', '<br>'.join(
                 f'{dist((p["lat"], p["lng"]), sp):.0f} m {_compass(bearing((p["lat"], p["lng"]), sp))} ({bearing((p["lat"], p["lng"]), sp):.0f}°) of “{html.escape(p["name"])}”'
                 for p in sorted(pins, key=lambda p: dist((p["lat"], p["lng"]), sp)))))
+        exf = exif.get(meta.get('photo_id'), {})
+        f35e = exf.get('focal35') or (exf.get('focal') if any(k in (exf.get('model') or '') for k in FULL_FRAME) else None)
+        if f35e:
+            he = 2 * math.degrees(math.atan(18 / f35e))
+            rows.append(('Lens check', f'camera data: {f35e:.0f} mm (35 mm terms) = {he:.0f}° across uncropped; found {r["hfov"]:.0f}°'
+                         + (' (narrower: cropped?)' if r['hfov'] < he * 0.85 else ' (wider than the lens can see: wrong answer)' if r['hfov'] > he * 1.1 else ' (agrees)')))
         rows.append(('Time', f'{r["times"]["total"]:.0f} s'))
     if err:
         rows.insert(0, ('Error vs hand solve', f'<b>{err["pos"]:.0f} m</b> ({err["along"]:+.0f} along the view, {err["across"]:+.0f} sideways) · heading {err["yaw"]:+.2f}° · tilt {err["pitch"]:+.2f}° · lens {err["hfov"]:+.2f}°'))
@@ -203,35 +215,45 @@ def scan_err(n, r):
 
 
 def make_summary(cards, nonames):
-    rows = []
+    rows = []; ts = []
     for n in SCANS:
         rf = os.path.join(WD, RES, n + '.json')
         if not os.path.exists(rf): continue
         r = json.load(open(rf))
         if not r.get('ok'): rows.append(f'<tr><td>{n[5:]}</td><td colspan="7">failed</td></tr>'); continue
-        e = scan_err(n, r); nn = nonames.get(n)
+        e = scan_err(n, r); nn = nonames.get(n); ts.append(r['times']['total'])
         en = scan_err(n, nn) if nn and nn.get('ok') else None
-        ntxt = f"{en['pos']:.0f} m, heading {en['yaw']:+.1f}°" if en else '-'
-        rows.append(f'<tr><td>{n[5:]} · {html.escape(SCANS[n][0].split(" (")[0])}</td><td><b>{e["pos"]:.0f} m</b></td><td>{e["along"]:+.0f} / {e["across"]:+.0f}</td>'
-                    f'<td>{e["yaw"]:+.2f}° / {e["pitch"]:+.2f}°</td><td>{e["hfov"]:+.2f}°</td><td>{r["rms_px"]:.1f} px ({r["agree"] * 100:.0f}%)</td><td>{r["times"]["total"]:.0f} s</td>'
+        ntxt = f"{en['pos']:.0f} m, heading {en['yaw']:+.0f}°" if en else '-'
+        rows.append(f'<tr><td>{n[6:]} · {html.escape(SCANS[n][0].split(" (")[0])}</td><td><b>{e["pos"]:.0f} m</b></td><td>{e["along"]:+.0f} / {e["across"]:+.0f}</td>'
+                    f'<td>{e["yaw"]:+.1f}° / {e["pitch"]:+.1f}°</td><td>{e["hfov"]:+.1f}°</td><td>{r["times"]["total"]:.0f} s</td>'
                     f'<td>{ntxt}</td></tr>')
-    cnt = {}
+    cnt = {}; allt = []
     for n, _, v in cards:
         g = 'Grand Teton' if n.startswith('T') else 'Faroes' if n.startswith('F') else None
         if g: cnt.setdefault(g, {}); cnt[g][v] = cnt[g].get(v, 0) + 1
+        rf = os.path.join(WD, RES, n + '.json')
+        if g and os.path.exists(rf):
+            rr = json.load(open(rf)); allt.append(rr.get('times', {}).get('total', 0))
     vs = ['placed', 'direction only', 'weak', 'not placed']
     crow = ''.join(f'<tr><td>{g}</td>' + ''.join(f'<td>{c.get(v, 0)}</td>' for v in vs) + f'<td>{sum(c.values())}</td></tr>' for g, c in cnt.items())
-    return f'''<section class="sum card"><h2>What this is</h2>
+    tl = f'{min(ts + allt):.0f}-{max(ts + allt):.0f} s, middle {sorted(ts + allt)[len(ts + allt) // 2]:.0f} s' if ts + allt else '-'
+    return f'''<section class="sum card"><h2>Summary</h2>
 <p>For each photo: one quick look names what can be seen (peaks, barns, churches, with rough pixel spots; written down before solving),
-then code finds the spot and framing: it compares the photo's sky line (found automatically) with the sky line of our own 3D terrain
-from every spot within 3 km of the stop, every heading and lens width, then fine-tunes the best few. No hand tuning per photo.
-<b>Placed</b> = the sky line fits and the spot cannot slide more than ~400 m; <b>direction only</b> = it fits, but with only far mountains
-in view the spot can slide along the line of sight (lens and distance trade off); <b>weak</b> / <b>not placed</b> = poor fit, no sky line, or a close-up.</p>
-<h3>Phase 1 · film scans vs the hand solves</h3>
-<table><tr><th>Scan</th><th>Spot error</th><th>along / sideways (m)</th><th>heading / tilt</th><th>lens</th><th>sky fit</th><th>time</th><th>no names</th></tr>{''.join(rows)}</table>
-<h3>Phase 2 · reference photos</h3>
-<table><tr><th></th>{''.join(f'<th>{v}</th>' for v in vs)}<th>photos</th></tr>{crow}</table>
-<p class="sub">Faroes: one photo per stop (41 of 174). Times are on a shared 4-core test machine, 3 photos at once.</p></section>'''
+then code finds the spot and framing on our own 3D terrain, with no hand tuning per photo: (1) the photo's sky line, found
+automatically, is compared with the terrain's sky line from every spot within 2.5 km of the stop, every heading and lens width;
+(2) the best few spots, and the stop pin itself, are fine-tuned; besides the sky line, a small picture of what our model shows in
+each part of the frame (sky, trees from the laser survey, buildings, near and far ground) has to line up with the photo's light and
+dark areas. That second check is what fixed Oxbow Bend and Snake River Overlook.</p>
+<p><b>Placed</b> = fits and no other spot nearby fits nearly as well; <b>direction only</b> = fits, but another spot or a slide
+along the line of sight fits about as well; <b>weak</b> / <b>not placed</b> = poor fit, no sky line, drone, close-up or screenshot.
+Time per photo: {tl} (two photos at a time on a shared 4-core machine).</p>
+<h3>Your six film scans (known spots)</h3>
+<div class="tw"><table><tr><th>Scan</th><th>Spot error</th><th>along / sideways (m)</th><th>heading / tilt</th><th>lens</th><th>time</th><th>without names</th></tr>{''.join(rows)}</table></div>
+<p class="sub">Without the named landmarks the search picks the wrong direction on all six (last column): the names are needed.
+Scan 4 is cropped off-centre (the hand solve put the lens axis 146 px right of the middle), so its heading differs by ~5° by design.</p>
+<h3>Reference photos</h3>
+<div class="tw"><table><tr><th></th>{''.join(f'<th>{v}</th>' for v in vs)}<th>photos</th></tr>{crow}</table></div>
+<p class="sub">Grand Teton: all 28 reference photos. Faroes: 41 of the 174, about one per stop (the others were not run).</p></section>'''
 
 
 def _compass(b):
@@ -242,7 +264,7 @@ def main():
     cards = []; stats = dict(scans=[], ref={})
     names = sorted(f[:-5] for f in os.listdir(os.path.join(WD, 'landmarks')) if f.endswith('.json'))
     order = [n for n in names if n.startswith('idea')] + [n for n in names if n.startswith('scan_')] + [n for n in names if n.startswith('T')] + [n for n in names if n.startswith('F')]
-    nonames = {}
+    nonames = {}; stopname = {}
     for n in order:
         lm = json.load(open(os.path.join(WD, 'landmarks', n + '.json')))
         rf = os.path.join(WD, RES, n + '.json'); r = json.load(open(rf)) if os.path.exists(rf) else None
@@ -258,6 +280,7 @@ def main():
         else:
             p = photos[lm['photo_id']]
             meta = dict(photo=os.path.join(WD, 'photos', p['id'] + '.jpg'), stop_id=p['stop_id'], stop_name=p['name'], stop=(p['lat'], p['lng']), photo_id=p['id'])
+            stopname[n] = p['name']
         if r is None and not lm.get('skip'):
             continue
         try:
@@ -265,6 +288,7 @@ def main():
         except Exception as e:  # noqa: BLE001
             cards.append((n, f'<article class="card"><h2>{n}</h2><p>card failed: {html.escape(repr(e))}</p></article>', 'not placed'))
         print(n, cards[-1][2], flush=True)
+    cards.sort(key=lambda c: (order.index(c[0]) if not c[0][:1] in 'TF' else 10000 + (c[0][0] == 'F') * 10000, stopname.get(c[0], ''), c[0]))
     json.dump(dict(verdicts={n: v for n, _, v in cards}), open(os.path.join(OUT, 'verdicts.json'), 'w'))
     summary = make_summary(cards, nonames)
     page = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -285,17 +309,17 @@ figure .rd{{max-width:300px}} figcaption{{font-size:12px;color:var(--mut)}}
 .unc{{stroke:var(--mid);stroke-width:7;opacity:.45;stroke-linecap:round}} .unc2{{stroke:var(--mid);stroke-width:4;opacity:.35;stroke-linecap:round}}
 .scale{{stroke:var(--fg);stroke-width:2}} .mt{{fill:var(--mut);font-size:11px}}
 table{{border-collapse:collapse;width:100%;margin-top:8px;font-size:13px}} th{{text-align:left;color:var(--mut);font-weight:500;padding:3px 8px 3px 0;vertical-align:top;width:150px}} td{{padding:3px 0}}
-.sec{{font-size:18px;margin:26px 0 4px}} .sum table td, .sum table th{{border-bottom:1px solid var(--line);padding:4px 6px}} .sum{{overflow-x:auto}}
+.sec{{font-size:18px;margin:26px 0 4px}} .tw{{overflow-x:auto}} .sum table td, .sum table th{{border-bottom:1px solid var(--line);padding:4px 6px}} .sum{{overflow-x:auto}}
 @media (max-width:560px){{th{{width:110px}}}}
 </style></head><body><main>
 <h1>Find my spot from a photo — prototype check</h1>
-{''.join(['<h2 class="sec">Shot ideas</h2>'] + [c for n, c, _ in cards if n.startswith('idea')]) if any(n.startswith('idea') for n, _, _ in cards) else ''}
 {summary}
-<h2 class="sec">1 · Your six film scans (answers known from the hand solves)</h2>
+{''.join(['<h2 class="sec">Shot ideas</h2>'] + [c for n, c, _ in cards if n.startswith('idea')]) if any(n.startswith('idea') for n, _, _ in cards) else ''}
+<h2 class="sec">Your scans (known spots)</h2>
 {''.join(c for n, c, _ in cards if n.startswith('scan_'))}
-<h2 class="sec">2 · Grand Teton reference photos</h2>
+<h2 class="sec">Grand Teton stops</h2>
 {''.join(c for n, c, _ in cards if n.startswith('T'))}
-<h2 class="sec">3 · Faroes reference photos (one per stop)</h2>
+<h2 class="sec">Faroes stops (41 of 174 photos, about one per stop)</h2>
 {''.join(c for n, c, _ in cards if n.startswith('F'))}
 </main></body></html>'''
     open(os.path.join(WD, 'review.html'), 'w').write(page)
