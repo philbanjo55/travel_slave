@@ -123,6 +123,7 @@ let lastTrees = true;   // the foreground's trees (Phil, 16 Nov 2026: a "no tree
 let lastIce: boolean | null = null;
 let pickedFor: string | null = null;   // the shot whose lens / frame box the user changed by hand: its framing's lens is not put back over that
 let lastGlass = false;
+const FINE_STEP = 0.25, WALK_STEP = 2;   // metres: a tap, and the most a held arrow moves per step
 const REF_OPACITY_KEY = 'pf_ref_opacity';
 let refOpacityRead = false;
 const refXfKept = new Map<string, PhotoXf>();   // where each photo was moved / zoomed to, while the app is open
@@ -595,14 +596,23 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const stopStepping = useCallback(() => { if (stepTimer.current) { clearInterval(stepTimer.current); stepTimer.current = null; } }, []);
   useEffect(() => stopStepping, [stopStepping]);
   // One press = 2 m; holding keeps walking, about 15 m a second.
+  // Fine steps (Phil, 16 Nov 2026): a tap moves 25 cm; held, it starts walking after a moment and speeds up to 2 m a
+  // step (~15 m a second). (f, r) give the direction: forward / back and right / left.
   const startStepping = useCallback((f: number, r: number) => {
     stopStepping();
-    run(`window.S3D.walk(${f},${r})`);
-    stepTimer.current = setInterval(() => run(`window.S3D.walk(${f},${r})`), 130);
+    const go = (m: number) => run(`window.S3D.walk(${f * m},${r * m})`);
+    go(FINE_STEP);
+    let size = FINE_STEP, held = 0;
+    stepTimer.current = setInterval(() => {
+      held += 100;
+      if (held < 400) return;   // a tap is just the one fine step
+      size = Math.min(WALK_STEP, size * 1.18);
+      go(size);
+    }, 100);
   }, [run, stopStepping]);
   // Leaving walk mode keeps the view where it walked to (Phil, 16 Nov 2026); "Back to my spot" in walk mode goes back.
   const leaveWalk = useCallback(() => { stopStepping(); setWalking(false); setWalkNote(null); }, [stopStepping]);
-  const canSaveSpot = !!(tripId && stopId && at && at.moved >= 2);
+  const canSaveSpot = !!(tripId && stopId && at && at.moved >= 0.5);
   // Save framing greys out while the view is exactly the saved framing, like Save as my spot (Phil, 16 Nov 2026).
   const frameUnchanged = (() => {
     const lk = lookRef.current;
@@ -837,7 +847,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         </View>
         {walking && full && !hd && ready ? (
           <View style={styles.pad} pointerEvents="box-none">
-            {([['Walk forward', 'chevron-up', 2, 0, styles.padUp], ['Step left', 'chevron-back', 0, -2, styles.padLeft], ['Step right', 'chevron-forward', 0, 2, styles.padRight], ['Walk back', 'chevron-down', -2, 0, styles.padDown]] as const).map(([label, icon, f, r, where]) => (
+            {([['Walk forward', 'chevron-up', 1, 0, styles.padUp], ['Step left', 'chevron-back', 0, -1, styles.padLeft], ['Step right', 'chevron-forward', 0, 1, styles.padRight], ['Walk back', 'chevron-down', -1, 0, styles.padDown]] as const).map(([label, icon, f, r, where]) => (
               <TouchableOpacity
                 key={label}
                 style={[styles.padBtn, where]}
@@ -880,7 +890,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       {walking && full && !hd ? (
         <View style={[styles.walkRow, pad]}>
           <Text style={styles.walkText}>
-            {queued.move ? 'Saved on the phone, sends when you have signal.' : walkNote ?? (at && at.moved > 0 ? `You've walked ${at.moved} m from your saved spot. The times below are for here.` : 'Hold an arrow to walk. Drag the picture to turn.')}
+            {queued.move ? 'Saved on the phone, sends when you have signal.' : walkNote ?? (at && at.moved > 0 ? `You've walked ${at.moved < 10 ? at.moved.toFixed(1) : Math.round(at.moved)} m from your saved spot. The times below are for here.` : 'Hold an arrow to walk, tap for 25 cm. Drag the picture to turn.')}
           </Text>
           <View style={styles.walkBtns}>
             <TouchableOpacity onPress={() => { stopStepping(); run('window.S3D.home()'); }} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Back to my saved spot" disabled={!at || at.moved === 0}>

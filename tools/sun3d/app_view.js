@@ -2123,7 +2123,7 @@
   const WALK_MAX = 400;
   function told() {
     const kz = 111132, kx = 111320 * Math.cos(eye.lat * Math.PI / 180);
-    post({ type: 'eye', lat: eye.lat, lng: eye.lng, moved: Math.round(Math.hypot((eye.lat - eye0.lat) * kz, (eye.lng - eye0.lng) * kx)) });
+    post({ type: 'eye', lat: eye.lat, lng: eye.lng, moved: Math.round(Math.hypot((eye.lat - eye0.lat) * kz, (eye.lng - eye0.lng) * kx) * 10) / 10 });   // 0.1 m: fine steps are 25 cm
     post({ type: 'state', subjectLit: subjLit(sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
   }
   let drag = null;
