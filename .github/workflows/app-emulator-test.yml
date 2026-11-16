@@ -8,7 +8,7 @@ name: App emulator test (trip and day stay put)
 
 on:
   push:
-    branches: [claude/planner-buttons-test]
+    branches: [claude/planner-buttons-test, claude/planner-buttons-ctl]
   workflow_dispatch:
 
 concurrency:
@@ -111,7 +111,8 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          ram-size: 4096M
+          ram-size: 6144M
+          cores: 4
           disk-size: 6000M
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
