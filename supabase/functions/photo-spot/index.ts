@@ -20,7 +20,7 @@ import { MODEL, PRICE_IN, PRICE_OUT, LOOK_W, SYSTEM, schema, userText, namedNear
 
 const REPO = 'philbanjo55/travel_slave';
 const WORKFLOW = 'photo-spot.yml';
-const WORKFLOW_REF = 'claude/photo-spot-app';   // branch the worker workflow lives on (settled at merge)
+const WORKFLOW_REF = 'update';   // branch the worker workflow lives on (the main app's branch)
 const PROJECT = 'https://ohshrzlvvxyovcjmdajc.supabase.co';
 const BUCKET = 'photo-spot';
 const CAP_USD = Number(Deno.env.get('CLAUDE_PHOTOSPOT_CAP_USD') ?? 10);
