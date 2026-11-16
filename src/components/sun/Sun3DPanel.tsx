@@ -540,6 +540,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     } else { setProblem('The 3D view stopped on this phone.'); setPhase('error'); }
   }, [setWant]);
 
+  const walkQ = useRef({ busy: 0, f: 0, r: 0 });   // walk steps in flight (see sendWalk)
+  const walkAnsweredRef = useRef<() => void>(() => {});   // set by the walk code below (a step answered)
   const onMessage = useCallback((e: { nativeEvent: { data: string } }) => {
     let m: any = null;
     try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
@@ -563,8 +565,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       lookRef.current = typeof m.deg === 'number' ? { yaw: typeof m.yaw === 'number' ? m.yaw : m.deg, pitch: typeof m.pitch === 'number' ? m.pitch : 0 } : null;
       setLookTilt(typeof m.pitch === 'number' ? Math.round(m.pitch * 10) / 10 : null);
     }
-    else if (m.type === 'eye') { setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); }
-    else if (m.type === 'walk') setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : 'That is the edge of the saved terrain.');
+    else if (m.type === 'eye') { setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); walkAnsweredRef.current(); }
+    else if (m.type === 'walk') { walkQ.current.busy = 0; walkQ.current.f = 0; walkQ.current.r = 0; setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : 'That is the edge of the saved terrain.'); }
     else if (m.type === 'hd') setHdLoading(!!m.loading);
     else if (m.type === 'error') {
       if (hdRef.current) {
@@ -605,9 +607,24 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // One press = 2 m; holding keeps walking, about 15 m a second.
   // Fine steps (Phil, 16 Nov 2026): a tap moves 25 cm; held, it starts walking after a moment and speeds up to 2 m a
   // step (~15 m a second). (f, r) give the direction: forward / back and right / left.
+  // One walk step in flight at a time (emulator run 1, 16 Nov 2026: a held arrow sent a step every 100-130 ms while a
+  // slow phone drew one frame a second, and the app stopped answering); steps that come in meanwhile are added up and
+  // go as one when the page says where it now stands (its 'eye' message), or after 1.5 s at the most.
+  const sendWalk = useCallback((df: number, dr: number) => {
+    const q = walkQ.current;
+    if (q.busy && Date.now() - q.busy < 1500) { q.f += df; q.r += dr; return; }
+    q.busy = Date.now();
+    run(`window.S3D.walk(${(df + q.f).toFixed(3)},${(dr + q.r).toFixed(3)})`);
+    q.f = 0; q.r = 0;
+  }, [run]);
+  const walkAnswered = useCallback(() => {
+    const q = walkQ.current; q.busy = 0;
+    if (q.f || q.r) sendWalk(0, 0);
+  }, [sendWalk]);
+  walkAnsweredRef.current = walkAnswered;
   const startStepping = useCallback((f: number, r: number) => {
     stopStepping();
-    const go = (m: number) => run(`window.S3D.walk(${f * m},${r * m})`);
+    const go = (m: number) => sendWalk(f * m, r * m);
     go(FINE_STEP);
     let size = FINE_STEP, held = 0;
     stepTimer.current = setInterval(() => {
@@ -616,7 +633,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       size = Math.min(WALK_STEP, size * 1.18);
       go(size);
     }, 100);
-  }, [run, stopStepping]);
+  }, [sendWalk, stopStepping]);
   // Leaving walk mode keeps the view where it walked to (Phil, 16 Nov 2026); "Back to my spot" in walk mode goes back.
   const leaveWalk = useCallback(() => { stopStepping(); setWalking(false); setWalkNote(null); }, [stopStepping]);
   const canSaveSpot = !!(tripId && stopId && at && at.moved >= 0.5);
