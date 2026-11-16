@@ -533,14 +533,22 @@ export async function fetchStopCurve(stopId: string, tripDate: string): Promise<
   return { slots: (j.slots ?? []).map(s => ({ ...s, mean: Number(s.mean), p_good: Number(s.p_good) })), builtAt: j.built_at ?? null };
 }
 
-// "Accept all" writes on the test trips only (test bed, Faroes Live, Teton Live); real trips
-// get the preview until Phil signs the solver off (solver-actions TEST_TRIPS).
+// "Accept all" always writes on the test trips (test bed, Faroes Live, Teton Live) and practice copies.
 export const TEST_TRIPS = new Set([
   '7e57bed0-0000-4000-8000-000000000001',
   '7e57bed0-0000-4000-8000-000000000002',
   '7e57bed0-0000-4000-8000-000000000003',
 ]);
-export const canApply = (tripId: string) => TEST_TRIPS.has(tripId);
+// Real trips (Phil, 15 Nov 2026): Accept writes only while the trip is live, i.e. today in the
+// trip's own time zone is between its first and last day; before that it previews. The
+// server (solver-actions canWrite) decides the same way; this only picks the button.
+export const canApply = (tripId: string, trip?: any) => {
+  if (TEST_TRIPS.has(tripId) || trip?.training_of) return true;
+  if (!trip?.start_date || !trip?.end_date) return false;
+  let today = new Date().toISOString().slice(0, 10);
+  try { today = new Intl.DateTimeFormat('en-CA', { timeZone: trip.timezone || undefined }).format(new Date()); } catch { /* phone's date */ }
+  return today >= String(trip.start_date) && today <= String(trip.end_date);
+};
 // Whole-week Accept (Phil, 3 Nov 2026): T's plan for the rest of the trip at once: today's
 // visits still ahead and every later day; past days and passed stops never change; the rated
 // stops T's week leaves out are set aside (tier kept). apply false = preview. Writes on the

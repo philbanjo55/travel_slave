@@ -13,7 +13,7 @@ import { format, parseISO, differenceInDays } from 'date-fns';
 import * as Updates from 'expo-updates';
 import { migratePhotosToStorage } from '../services/migratePhotos';
 import { logLaunch, checkAndFetch, restartNow } from '../services/updateInfo';
-import { IS_TEST_APP } from '../utils/variant';
+import { PLANNER_ON } from '../utils/variant';
 import { isTrainingRunning } from './TrainingScreen';
 
 export default function TripsScreen() {
@@ -52,7 +52,7 @@ export default function TripsScreen() {
   const mainTrips = trips.filter((t: any) => !t.training_of);
   const activeTrips = mainTrips.filter((t: any) => !t.archived);
   const archivedTrips = mainTrips.filter((t: any) => t.archived);
-  const trainingTrips = IS_TEST_APP ? trips.filter((t: any) => t.training_of) : [];
+  const trainingTrips = PLANNER_ON ? trips.filter((t: any) => t.training_of) : [];
   const trainingRunning = trainingTrips.filter((t: any) => isTrainingRunning(t));
 
   const archiveTrip = async (item: any, archive: boolean) => {
@@ -158,7 +158,7 @@ export default function TripsScreen() {
       {lastUpdate && (
         <Text style={styles.lastUpdate}>SYNCED {lastUpdate}</Text>
       )}
-      {IS_TEST_APP && (
+      {PLANNER_ON && (
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel={updState === 'ready' ? 'Restart to use the new update' : 'Check for an app update now'}
