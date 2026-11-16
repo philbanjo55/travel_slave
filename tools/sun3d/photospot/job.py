@@ -85,7 +85,9 @@ def confidence(v, why, r):
         spread = max(15, int(round(spread / 5.0)) * 5)
     if v == 'placed': return dict(word='High', spread_m=spread, aim_deg=1, line=f'± {spread} m · aim ± 1°')
     if v == 'direction only':
-        return dict(word='Medium', spread_m=spread, aim_deg=2, line='direction right' + (f', spot ± {spread} m' if spread else ''))
+        import re
+        m = re.search(r'(\d+) m', why or ''); n = int(m.group(1)) if m else spread
+        return dict(word='Medium', spread_m=n, aim_deg=2, line='direction right' + (f', spot could be {n} m off' if n else ''))
     if v == 'weak': return dict(word='Low', spread_m=spread, aim_deg=None, line=why)
     return dict(word="Couldn't place it", spread_m=None, aim_deg=None, line=why)
 
@@ -256,11 +258,14 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
     dropped = [L['name'] for L in all_lms if L.get('type') == 'peak' and L not in keep and L not in extra]
     log(f"  peaks kept {[L['name'] for L in keep]}, unsure {[L['name'] for L in extra]}, disagreeing {dropped}")
     SV.HCACHE = hcache
-    # 1: the peaks that agree with each other; 2: only the peaks the look was sure of; 3: every peak it named.
+    # 1: the peaks that agree with each other; 2: every peak it named; 3: only the peaks the look was sure of.
     # The first answer that is placed wins, else the best of them (a wrong name can pull the search far off).
+    # A set with no peak at all is never tried when the look named peaks: with only a building the search can settle
+    # on a wrong heading and still look sure (scan 2: 50 deg off).
     peaks_all = [L for L in all_lms if L not in others]
     tries, seen_ = [], set()
-    for ps in (keep, [L for L in peaks_all if L.get('conf') == 'high'], peaks_all):
+    for ps in (keep, peaks_all, [L for L in peaks_all if L.get('conf') == 'high']):
+        if peaks_all and not ps: continue
         key_ = tuple(sorted(L['name'] for L in ps))
         if key_ in seen_: continue
         seen_.add(key_); tries.append(others + ps)

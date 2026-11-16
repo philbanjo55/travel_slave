@@ -1300,11 +1300,13 @@ def find_spot():
     V.check('spot-pill', pill(v) is not None, (pill(v) or 'no Find spot pill in the viewer')[:80])
     V.show('spot-viewer', v)
     cut_off('spot-viewer', v)
-    # Each photo of the stop in turn: a photo with no job gets a tap (progress card), the done one opens Your spot.
+    # Each photo of the stop in turn: a photo with no job gets a tap (progress card); then back to the done one.
     done_photo, progress = False, False
     for i in range(4):
         lab = pill(v) or ''
         print(f'INFO spot photo {i + 1}: pill {lab[:60]!r}', flush=True)
+        if lab.startswith('Your spot'):
+            done_photo = True
         if lab.startswith('Find spot: where') and not progress:
             V.tap_text(v, 'Find spot: where was this taken')
             w = C.capture(2.5)
@@ -1312,11 +1314,17 @@ def find_spot():
             V.check('spot-progress', progress, 'Finding where you stood card with its bar')
             V.show('spot-progress', w)
             cut_off('spot-progress', w)
-        if lab.startswith('Your spot'):
-            done_photo = True; break
+        if done_photo and progress:
+            break
         C.adb('shell', 'input', 'swipe', '950', '1150', '120', '1150', '250'); v = C.capture(2.5)
-    V.check('spot-done-photo', done_photo, 'the photo with a finished job shows Your spot')
-    if not done_photo: return
+    if not progress:
+        V.check('spot-progress', False, 'no photo without a job to tap')
+    for _ in range(4):   # back toward the first photos until the done one shows
+        if (pill(v) or '').startswith('Your spot'):
+            done_photo = True; break
+        C.adb('shell', 'input', 'swipe', '120', '1150', '950', '1150', '250'); v = C.capture(2.5)
+    V.check('spot-done-photo', (pill(v) or '').startswith('Your spot'), 'the photo with a finished job shows Your spot')
+    if not (pill(v) or '').startswith('Your spot'): return
     V.tap_text(v, 'Your spot: see where you stood')
     r = None
     for _ in range(10):
