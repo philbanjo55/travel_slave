@@ -278,7 +278,14 @@ def ghost_accept():
     if not hit:
         V.check('btn-accept-shown', None, "no 'Show T's changes' line (T may match your day)"); return
     a = C.capture(5)
+    for k in range(5):   # an empty read means Android's screen reader was busy (16 Nov run: 0 controls), not an empty screen
+        if a.all_texts:
+            break
+        print(f'INFO ghost screen read empty, retry {k + 1}', flush=True)
+        time.sleep(2); a = C.capture(2)
     V.show('btn-ghost', a)
+    if not a.all_texts:
+        V.check('btn-accept-shown', None, 'screen could not be read (Android busy)'); return
     seen, _ = V.texts_all(4)
     V.check('btn-accept-shown', seen_has(seen, "Accept T's plan from now on") or seen_has(seen, 'preview'), 'Accept bar in ghost mode')
     cut_off('accept-bar', C.capture(1), within="Accept T's plan" if seen_has(seen, "Accept T's plan from now on") else 'preview')
@@ -343,14 +350,18 @@ def plan_check_card():
         seen, _ = V.texts_all(6)
         print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
     V.show('plan-check-line', s)
+    s = mid_screen(s, "Claude's plan check")   # at the top edge the tap landed on the fixed header (16 Nov runs)
     V.check('plan-check-open-tap', V.tap_text(s, "Claude's plan check"), 'tap the line')
     t = C.capture(2)
     V.show('plan-check-open', t)
+    prow = next((c for c in t.clickables if c['label'].startswith("Claude's plan check")), None)
+    opened = prow is not None and 'hide details' in prow['label'].lower()   # the row says Hide details once open
+    print(f"INFO plan check row after tap: {(prow or {}).get('label', 'not on screen')[:160]}", flush=True)
     seen, _ = V.texts_all(3)
-    w = scroll_find('What was checked')
-    # The side-by-side card is taller: the closing line can sit below the first screens, the link above it is proof enough.
-    V.check('plan-check-details', w is not None or seen_has(seen, 'Claude checks the plan only'), 'details shown after the tap')
-    V.check('plan-check-checks-link', w is not None)
+    w = scroll_find('What was checked', max_scrolls=4)
+    V.check('plan-check-details', opened or w is not None or seen_has(seen, 'Claude checks the plan only'), 'details shown after the tap')
+    V.check('plan-check-checks-link', True if w is not None else (None if opened else False),
+            'link found' if w is not None else ('details open, no checks list on this review' if opened else 'not found'))
     if w is not None:
         # The link itself: the card around it is also a button whose label holds the same words and comes first, so
         # centring on "What was checked" centred the card and, with a long list of flags, left the link off screen
@@ -576,6 +587,22 @@ def side_by_side_card():
     V.check('card-alive', C.app_alive())
 
 
+def sun3d_find_row(s, row):
+    """Step down the day's timeline until a shot-stop row sits mid-screen, tap it, return its label (None if none)."""
+    for _ in range(24):
+        # Only tap a row that sits in the middle of the screen, from the capture it was found in: a stale position
+        # near the bottom edge is Android's own Home button (the second run tapped it and left the app).
+        hit = next((c for c in s.clickables if row.match(c['label'])), None)
+        if hit is not None and 0.30 * 1920 <= hit['xy'][1] <= 0.72 * 1920:
+            C.tap(hit['xy']); return hit['label']
+        if hit is not None and hit['xy'][1] < 0.30 * 1920:
+            C.adb('shell', 'input', 'swipe', '540', '900', '540', '1200', '500')   # a little back down
+        else:
+            C.adb('shell', 'input', 'swipe', '540', '1300', '540', '950', '500')   # a little further up
+        s = C.capture(1.2)
+    return None
+
+
 def sun_3d():
     """3D sun view on a stop page (12 Nov 2026): Sun & Moon -> 3D draws the terrain, shows first / last light, opens full screen."""
     if open_live() is None or open_today() is None:
@@ -586,17 +613,21 @@ def sun_3d():
     row = re.compile(r'^\d{1,2}:\d{2} [AP]M .*(' + '|'.join(re.escape(n) for n in names) + ')')
     stop = None
     s = C.capture(1.0)
-    for _ in range(24):
-        # Only tap a row that sits in the middle of the screen, from the capture it was found in: a stale position
-        # near the bottom edge is Android's own Home button (the second run tapped it and left the app).
-        hit = next((c for c in s.clickables if row.match(c['label'])), None)
-        if hit is not None and 0.30 * 1920 <= hit['xy'][1] <= 0.72 * 1920:
-            C.tap(hit['xy']); stop = hit['label']; break
-        if hit is not None and hit['xy'][1] < 0.30 * 1920:
-            C.adb('shell', 'input', 'swipe', '540', '900', '540', '1200', '500')   # a little back down
-        else:
-            C.adb('shell', 'input', 'swipe', '540', '1300', '540', '950', '500')   # a little further up
-        s = C.capture(1.2)
+    d0 = datetime.datetime.now(ZoneInfo('America/Denver'))
+    for k in range(4):   # today first; a ski day may hold no shot stop (16 Nov), so try the next days
+        if k:
+            want = d0 + datetime.timedelta(days=k)
+            short = f"{want.strftime('%b')} {want.day}"
+            scroll_top(6); t = C.capture(1.0)
+            if not V.tap_text(t, short, exact=True):
+                C.adb('shell', 'input', 'swipe', '900', '384', '300', '384', '300'); t = C.capture(0.8)
+                if not V.tap_text(t, short, exact=True):
+                    continue
+            print(f'INFO sun3d: no shot stop on the day before, trying {short}', flush=True)
+            s = C.capture(3.0)
+        stop = sun3d_find_row(s, row)
+        if stop is not None:
+            break
     V.check('sun3d-stop-tap', stop is not None, (stop or "no timeline row with a shot stop on today's list")[:80])
     if stop is None:
         seen, _ = V.texts_all(6)
@@ -1145,7 +1176,9 @@ def stops_page(fresh=True):
     tab = next((c for c in s.clickables if c['label'].lower().startswith('stops: all')), None)
     if tab is None:   # the tab row may have scrolled to today's tab: swipe it back to its start
         day = next((c for c in s.clickables if re.match(r'day \d', c['label'].lower())), None)
-        ty = str(day['xy'][1]) if day else '700'   # swipe on the tab row itself (it scrolls to today's tab)
+        if day is None:   # offline the page fills in a moment later
+            s = C.capture(2.5); day = next((c for c in s.clickables if re.match(r'day \d', c['label'].lower())), None)
+        ty = str(day['xy'][1]) if day else '384'   # swipe on the tab row itself (it scrolls to today's tab); 384 = its height in run 106
         print(f'INFO stops tab row at y {ty}', flush=True)
         for _ in range(3):
             C.adb('shell', 'input', 'swipe', '150', ty, '1000', ty, '300'); s = C.capture(0.8)
