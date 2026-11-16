@@ -20,6 +20,7 @@ type Props = {
   sun: SkyPos;
   shaded?: boolean;   // a ridge shades the picked shot's subject at this time (grey arrows)
   height: number;
+  fullBar?: React.ReactNode;   // full screen: the time and slider under the map (Phil, 16 Nov 2026: move the sun there too)
 };
 
 const coord = (p: LatLng) => ({ latitude: p.lat, longitude: p.lng });
@@ -40,6 +41,7 @@ export default function OverheadMapPanel(props: Props) {
       <Modal visible={full} animationType="fade" onRequestClose={() => setFull(false)}>
         <View style={[styles.fullScreen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           {full ? <OverheadMap {...props} full sunOn={sunOn} onSun={setSunOn} onFull={() => setFull(false)} /> : null}
+          {full && props.fullBar ? <View style={styles.fullBar}>{props.fullBar}</View> : null}
         </View>
       </Modal>
     </>
@@ -261,6 +263,7 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
 
 const styles = StyleSheet.create({
   fullScreen: { flex: 1, backgroundColor: '#000000' },
+  fullBar: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 14, gap: 8, backgroundColor: '#000000' },
   wrap: { borderRadius: 8, overflow: 'hidden', backgroundColor: '#0b0e0c' },
   wrapFull: { flex: 1, borderRadius: 0 },
   spotWrap: { alignItems: 'center' },

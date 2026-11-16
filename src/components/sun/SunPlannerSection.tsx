@@ -241,6 +241,34 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
           sun={light.sun}
           shaded={light.label === 'in shadow'}
           height={208}
+          fullBar={(
+            <>
+              <View style={styles.timeRow}>
+                <Text style={styles.timeText}>{fmtMinute(minute)}</Text>
+                <View style={[styles.chip, { backgroundColor: lab.bg }]}>
+                  <Text style={[styles.chipText, { color: lab.fg }]}>{lab.text}</Text>
+                </View>
+                <View style={styles.jumps}>
+                  {events.rise != null && (
+                    <TouchableOpacity onPress={() => setMinute(events.rise!)} style={styles.jump} accessibilityLabel="Jump to sunrise">
+                      <Text style={styles.jumpText}>↗ {fmtMinute(events.rise).replace(/ [AP]M$/, '')}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {events.goldenPm != null && (
+                    <TouchableOpacity onPress={() => setMinute(events.goldenPm!)} style={styles.jump} accessibilityLabel="Jump to golden hour">
+                      <Text style={[styles.jumpText, { color: '#F0B04A' }]}>● {fmtMinute(events.goldenPm).replace(/ [AP]M$/, '')}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {events.set != null && (
+                    <TouchableOpacity onPress={() => setMinute(events.set!)} style={styles.jump} accessibilityLabel="Jump to sunset">
+                      <Text style={styles.jumpText}>↘ {fmtMinute(events.set).replace(/ [AP]M$/, '')}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+              <TimeScrubber minute={minute} onChange={setMinute} phases={events.phases} />
+            </>
+          )}
         />
       ) : tab === 'horizon' ? (
         <SunHorizonPanel pair={pair} day0={day0} light={light} moon={moon} />
