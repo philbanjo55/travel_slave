@@ -211,7 +211,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const queued = waitingFor(vid);   // saves of this shot still waiting for signal
   // A framed shot opens with its lens and frame box; another shot with the last ones chosen by hand.
   useEffect(() => {
-    if (pickedFor === vid) return;
+    if (pickedFor === vid) return;   // the lens was just changed by hand for this shot (e.g. small view -> full screen)
+    pickedFor = null;   // another shot: a hand pick on an earlier shot must not keep that shot from its saved lens and landscape / portrait later (Phil, 16 Nov 2026)
     const f = framingRef.current;
     if (f) {
       if (LENSES.some(l => l.id === f.lens)) setLensState(f.lens);
@@ -614,6 +615,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             try {
               const id = await ensureShot();
               const r = await saveShot({ kind: 'frame', tripId, stopId, vantageId: id, framing: f });
+              pickedFor = null;   // the saved framing (lens, landscape / portrait) is what this shot opens with from now on
               run(`window.S3D.view(${JSON.stringify(pageFraming(f))})`);   // later re-aims (foreground, walk's home) keep it
               setFrameNote(null);   // the framing line says Framed, or that it waits for signal
             } catch (e: any) { setFrameNote(`Couldn't save the framing: ${e?.message || 'try again'}`); }
