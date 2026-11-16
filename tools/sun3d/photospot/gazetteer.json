@@ -1,0 +1,385 @@
+{
+ "_note": "Prototype gazetteer: named landmarks the vision step may call out. Coordinates written from general knowledge (about 100-400 m) or copied from the trips' own scout_subjects; peaks and stacks are snapped to the highest terrain point within `snap` metres, buildings to the largest building outline within `snap` metres. A real feature would load OSM / GNIS / Faroese place names instead.",
+ "grand_teton": {
+  "Grand Teton": {
+   "lat": 43.741,
+   "lng": -110.8024,
+   "type": "peak",
+   "snap": 250
+  },
+  "Mount Owen": {
+   "lat": 43.7477,
+   "lng": -110.796,
+   "type": "peak",
+   "snap": 200
+  },
+  "Teewinot Mountain": {
+   "lat": 43.7493,
+   "lng": -110.7757,
+   "type": "peak",
+   "snap": 300
+  },
+  "Middle Teton": {
+   "lat": 43.7302,
+   "lng": -110.813,
+   "type": "peak",
+   "snap": 300
+  },
+  "South Teton": {
+   "lat": 43.719,
+   "lng": -110.8172,
+   "type": "peak",
+   "snap": 300
+  },
+  "Nez Perce Peak": {
+   "lat": 43.7277,
+   "lng": -110.7939,
+   "type": "peak",
+   "snap": 300
+  },
+  "Cloudveil Dome": {
+   "lat": 43.7206,
+   "lng": -110.8002,
+   "type": "peak",
+   "snap": 300
+  },
+  "Disappointment Peak": {
+   "lat": 43.735,
+   "lng": -110.799,
+   "type": "peak",
+   "snap": 250
+  },
+  "Buck Mountain": {
+   "lat": 43.688,
+   "lng": -110.817,
+   "type": "peak",
+   "snap": 400
+  },
+  "Static Peak": {
+   "lat": 43.694,
+   "lng": -110.81,
+   "type": "peak",
+   "snap": 300
+  },
+  "Mount St. John": {
+   "lat": 43.7808,
+   "lng": -110.7785,
+   "type": "peak",
+   "snap": 400
+  },
+  "Rockchuck Peak": {
+   "lat": 43.7733,
+   "lng": -110.79,
+   "type": "peak",
+   "snap": 400
+  },
+  "Mount Moran": {
+   "lat": 43.835,
+   "lng": -110.7763,
+   "type": "peak",
+   "snap": 300
+  },
+  "Thor Peak": {
+   "lat": 43.818,
+   "lng": -110.811,
+   "type": "peak",
+   "snap": 500
+  },
+  "Bivouac Peak": {
+   "lat": 43.855,
+   "lng": -110.76,
+   "type": "peak",
+   "snap": 500
+  },
+  "Eagles Rest Peak": {
+   "lat": 43.88,
+   "lng": -110.77,
+   "type": "peak",
+   "snap": 600
+  },
+  "Mount Woodring": {
+   "lat": 43.803,
+   "lng": -110.784,
+   "type": "peak",
+   "snap": 500
+  },
+  "Shadow Peak": {
+   "lat": 43.716,
+   "lng": -110.789,
+   "type": "peak",
+   "snap": 400
+  },
+  "Prospectors Mountain": {
+   "lat": 43.66,
+   "lng": -110.83,
+   "type": "peak",
+   "snap": 500
+  },
+  "Rendezvous Mountain": {
+   "lat": 43.597,
+   "lng": -110.877,
+   "type": "peak",
+   "snap": 600
+  },
+  "Signal Mountain": {
+   "lat": 43.841,
+   "lng": -110.604,
+   "type": "peak",
+   "snap": 700
+  },
+  "Blacktail Butte": {
+   "lat": 43.6412,
+   "lng": -110.6898,
+   "type": "peak",
+   "snap": 500
+  },
+  "Sleeping Indian": {
+   "lat": 43.564,
+   "lng": -110.557,
+   "type": "peak",
+   "snap": 800
+  },
+  "T.A. Moulton Barn": {
+   "lat": 43.6606,
+   "lng": -110.665,
+   "type": "building",
+   "snap": 120
+  },
+  "John Moulton Barn": {
+   "lat": 43.6665,
+   "lng": -110.6642,
+   "type": "building",
+   "snap": 150
+  },
+  "Cunningham Cabin": {
+   "lat": 43.7786,
+   "lng": -110.5585,
+   "type": "building",
+   "snap": 150
+  },
+  "Chapel of the Transfiguration": {
+   "lat": 43.664,
+   "lng": -110.7213,
+   "type": "building",
+   "snap": 150
+  },
+  "Menor's Ferry cabin": {
+   "lat": 43.661,
+   "lng": -110.72,
+   "type": "building",
+   "snap": 200
+  }
+ },
+ "faroes": {
+  "Tindhólmur": {
+   "lat": 62.0775,
+   "lng": -7.4325,
+   "type": "peak",
+   "snap": 250
+  },
+  "Stóri Drangur": {
+   "lat": 62.0757,
+   "lng": -7.4205,
+   "type": "peak",
+   "snap": 150
+  },
+  "Drangarnir": {
+   "lat": 62.07528,
+   "lng": -7.41444,
+   "type": "peak",
+   "snap": 200
+  },
+  "Árnafjall": {
+   "lat": 62.1183,
+   "lng": -7.4144,
+   "type": "peak",
+   "snap": 600
+  },
+  "Múlafossur": {
+   "lat": 62.107559,
+   "lng": -7.435545,
+   "type": "point",
+   "snap": 0
+  },
+  "Gásadalur": {
+   "lat": 62.110589,
+   "lng": -7.438683,
+   "type": "point",
+   "snap": 0
+  },
+  "Risin": {
+   "lat": 62.32369,
+   "lng": -7.10191,
+   "type": "peak",
+   "snap": 60
+  },
+  "Kellingin": {
+   "lat": 62.3232,
+   "lng": -7.1027,
+   "type": "peak",
+   "snap": 60
+  },
+  "Risin og Kellingin": {
+   "lat": 62.32369,
+   "lng": -7.10191,
+   "type": "peak",
+   "snap": 80
+  },
+  "Eiðiskollur": {
+   "lat": 62.316,
+   "lng": -7.109,
+   "type": "peak",
+   "snap": 400
+  },
+  "Slættaratindur": {
+   "lat": 62.2981,
+   "lng": -6.9971,
+   "type": "peak",
+   "snap": 500
+  },
+  "Gráfelli": {
+   "lat": 62.306,
+   "lng": -7.022,
+   "type": "peak",
+   "snap": 600
+  },
+  "Kallur Lighthouse": {
+   "lat": 62.370169,
+   "lng": -6.813335,
+   "type": "point",
+   "snap": 0
+  },
+  "Kallur": {
+   "lat": 62.37,
+   "lng": -6.815,
+   "type": "peak",
+   "snap": 300
+  },
+  "Trælanípa": {
+   "lat": 62.025,
+   "lng": -7.227,
+   "type": "peak",
+   "snap": 300
+  },
+  "Sørvágsvatn": {
+   "lat": 62.05,
+   "lng": -7.24,
+   "type": "point",
+   "snap": 0
+  },
+  "Bøsdalafossur": {
+   "lat": 62.0378,
+   "lng": -7.2278,
+   "type": "point",
+   "snap": 0
+  },
+  "Sornfelli": {
+   "lat": 62.0731,
+   "lng": -6.9,
+   "type": "peak",
+   "snap": 800
+  },
+  "Skælingur": {
+   "lat": 62.096,
+   "lng": -7.0,
+   "type": "peak",
+   "snap": 800
+  },
+  "Klakkur": {
+   "lat": 62.226637,
+   "lng": -6.608977,
+   "type": "peak",
+   "snap": 400
+  },
+  "Villingardalsfjall": {
+   "lat": 62.366,
+   "lng": -6.527,
+   "type": "peak",
+   "snap": 800
+  },
+  "Kópakonan": {
+   "lat": 62.335067,
+   "lng": -6.765842,
+   "type": "point",
+   "snap": 0
+  },
+  "Saksun church": {
+   "lat": 62.2483,
+   "lng": -7.1772,
+   "type": "building",
+   "snap": 150
+  },
+  "Tinganes": {
+   "lat": 62.007871,
+   "lng": -6.769262,
+   "type": "point",
+   "snap": 0
+  },
+  "Kirkjubøur Magnus Cathedral": {
+   "lat": 61.951881,
+   "lng": -6.792157,
+   "type": "building",
+   "snap": 120
+  },
+  "Haldarsvík church": {
+   "lat": 62.276303,
+   "lng": -7.093061,
+   "type": "building",
+   "snap": 120
+  },
+  "Koltur": {
+   "lat": 61.987,
+   "lng": -6.967,
+   "type": "peak",
+   "snap": 1000
+  },
+  "Hestur": {
+   "lat": 61.96,
+   "lng": -6.88,
+   "type": "peak",
+   "snap": 1500
+  },
+  "Trøllkonufingur": {
+   "lat": 62.0446984,
+   "lng": -7.1271315,
+   "type": "point",
+   "snap": 0
+  },
+  "Lítli Dímun": {
+   "lat": 61.63,
+   "lng": -6.71,
+   "type": "peak",
+   "snap": 800
+  },
+  "Mykines": {
+   "lat": 62.103,
+   "lng": -7.645,
+   "type": "peak",
+   "snap": 2000
+  },
+  "Fossá": {
+   "lat": 62.252116,
+   "lng": -7.075119,
+   "type": "point",
+   "snap": 0
+  },
+  "Funningur church": {
+   "lat": 62.2905,
+   "lng": -6.9665,
+   "type": "building",
+   "snap": 300
+  },
+  "Sandavágur church": {
+   "lat": 62.055325,
+   "lng": -7.148565,
+   "type": "building",
+   "snap": 300
+  },
+  "Malinsfjall": {
+   "lat": 62.345,
+   "lng": -6.525,
+   "type": "peak",
+   "snap": 800
+  }
+ }
+}

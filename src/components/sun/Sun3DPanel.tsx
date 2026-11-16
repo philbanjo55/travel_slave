@@ -87,6 +87,7 @@ type Props = {
   hdOn?: boolean;              // HD wanted (kept by the parent so full screen opens the way the small view was)
   onHd?: (on: boolean) => void;
   photos?: RefPhoto[];         // full screen: the stop's photos as the stop page lists them, for the reference photo card
+  preview?: boolean;           // Find spot's small per-lens picture: no buttons, no lines under it, touches pass through
 };
 
 // The package's prop types don't resolve against this React Native version's types; the props used below are its documented ones.
@@ -143,12 +144,13 @@ function framedDay(at: string): string {
 // Everything under the picture. In full screen it may take at most a third of the screen and scrolls inside that:
 // with the tree note, the HD line and the walk row all showing, these lines once grew past the bottom bar and pushed
 // Close and the time slider off the screen (emulator, 12 Nov 2026).
-function Below({ full, max, children }: { full?: boolean; max: number; children: React.ReactNode }) {
+function Below({ full, max, hide, children }: { full?: boolean; max: number; hide?: boolean; children: React.ReactNode }) {
+  if (hide) return null;
   if (!full) return <>{children}</>;
   return <ScrollView style={{ maxHeight: max, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
 }
 
-export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos }: Props) {
+export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -620,7 +622,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
 
   return (
     <View style={full ? styles.fullWrap : undefined} accessibilityLabel={`3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}`}>
-      <View style={[styles.frame, full ? styles.frameFull : { height }]}>
+      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}>
         {region && b64 && !holding ? (
           <Web
             ref={web}
@@ -642,7 +644,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
-        <View style={styles.topRow} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
+        <View style={[styles.topRow, preview ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
           <View style={styles.lens} accessibilityRole="tablist">
             {LENSES.map(l => (
               <TouchableOpacity
@@ -757,11 +759,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('card')} bottom={walking ? 200 : 34} />
         ) : null}
         {ready && look != null ? (
-          <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format} · {hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}</Text>
+          <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format}{preview ? '' : ` · ${hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}`}</Text>
         ) : null}
       </View>
 
-      <Below full={full} max={belowMax}>
+      <Below full={full} max={belowMax} hide={preview}>
       {ready && lit ? (
         <Text style={[styles.status, pad]}>
           <Text style={lit.subjectLit ? styles.sunOn : undefined}>{subject}: {lit.subjectLit ? 'in the sun' : lit.up ? 'in shadow' : 'no sun'}</Text>

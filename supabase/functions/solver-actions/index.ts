@@ -47,12 +47,26 @@ import postgres from 'npm:postgres@3.4.4';
 //                built_at, when that build was made
 // Plans and settings are read straight from the tables (read-only policies).
 
-// Trips "Accept all" may write to: the test bed, Faroes Live and Teton Live.
+// Trips "Accept all" always writes to: the test bed, Faroes Live and Teton Live (see canWrite).
 const TEST_TRIPS = new Set([
   '7e57bed0-0000-4000-8000-000000000001',
   '7e57bed0-0000-4000-8000-000000000002',
   '7e57bed0-0000-4000-8000-000000000003',
 ]);
+// Accept writes to a real trip only while it is live (Phil, 15 Nov 2026: "yes, but only when
+// a trip is live"): today, in the trip's own time zone, is between its first and last day.
+// Practice copies (trips.training_of) and the TEST_TRIPS always write; anything else previews.
+async function canWrite(db: any, tripId: string): Promise<boolean> {
+  if (TEST_TRIPS.has(tripId)) return true;
+  const { data: t } = await db.from('trips').select('start_date, end_date, training_of').eq('id', tripId).maybeSingle();
+  if (!t) return false;
+  if (t.training_of) return true;
+  if (!t.start_date || !t.end_date) return false;
+  const { data: tz } = await db.rpc('solver_trip_tz', { p_trip_id: tripId });
+  let today = new Date().toISOString().slice(0, 10);
+  try { today = new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'UTC' }).format(new Date()); } catch { /* UTC */ }
+  return today >= String(t.start_date) && today <= String(t.end_date);
+}
 const TIERS = ['GOD', 'S', 'A', 'B', 'C', 'D', 'F'];
 const LIGHTS = ['front', 'side', 'back', 'soft'];
 const SETTING_COLS = 'stop_id, tier, light_wanted, fog_wanted, needs_peaks, star_vantage_id, shot_status, source';
@@ -287,7 +301,7 @@ Deno.serve(async (req) => {
         if (!body.run_id || body.rank == null) return json({ error: 'run_id and rank required' }, 400);
         const { data: run } = await db.from('solver_runs').select('trip_id').eq('id', body.run_id).maybeSingle();
         if (!run) return json({ error: 'run not found' }, 404);
-        const write = body.action === 'apply' && TEST_TRIPS.has(run.trip_id);
+        const write = body.action === 'apply' && await canWrite(db, run.trip_id);
         const { data, error } = await db.rpc('solver_apply_plan', { p_run_id: body.run_id, p_rank: body.rank, p_apply: write });
         if (error) return json({ ok: false, error: error.message });
         return json({ ok: true, preview_only: !write, result: data });
@@ -295,7 +309,7 @@ Deno.serve(async (req) => {
 
       case 'apply_week': {
         if (!body.trip_id) return json({ error: 'trip_id required' }, 400);
-        const write = !!body.apply && TEST_TRIPS.has(body.trip_id);
+        const write = !!body.apply && await canWrite(db, body.trip_id);
         const { data, error } = await db.rpc('solver_apply_week', { p_trip: body.trip_id, p_apply: write });
         if (error) return json({ ok: false, error: error.message });
         return json({ ok: true, preview_only: !write, result: data });

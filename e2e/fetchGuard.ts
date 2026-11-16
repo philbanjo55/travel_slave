@@ -47,6 +47,23 @@ globalThis.fetch = (async (input: any, init?: any) => {
     }
     return blocked(method, url, `t-notes action=${b.action ?? ''}`);
   }
+  // Find spot (16 Nov 2026): status reads are real; a new request is answered here with a made-up open job (nothing
+  // is asked of Claude or GitHub), whose status stays 'looking', so the progress card can be checked.
+  if (path.startsWith('/functions/v1/photo-spot')) {
+    let b: any = {};
+    try { b = JSON.parse(String(init?.body ?? '{}')); } catch { /* unreadable body: block */ }
+    const fake = (photo: string, stop: string) => ({ id: `e2e-${photo}`, stop_id: stop, photo_id: photo, photo_url: null, status: 'looking', note: 'looking at the photo',
+      error: null, result: null, shots: {}, overlay_url: null, created_at: new Date(Date.now() - 30000).toISOString(), updated_at: new Date().toISOString() });
+    const ok = (job: any) => new Response(JSON.stringify({ ok: true, job }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (b.action === 'request') { console.warn(`E2E_SPOT request photo=${b.photo_id} (made-up job, nothing started)`); return ok(fake(b.photo_id, b.stop_id)); }
+    if (b.action === 'status' && String(b.job_id ?? '').startsWith('e2e-')) return ok(fake(String(b.job_id).slice(4), ''));
+    if (b.action === 'status') {
+      const r = await realFetch(input, init);
+      try { const j = await r.clone().json(); console.warn(`E2E_SPOT status ${b.job_id ?? b.photo_id} -> ${j.job?.status ?? 'none'} ok=${j.job?.result?.ok ?? ''}`); } catch { /* ignore */ }
+      return r;
+    }
+    return blocked(method, url, `photo-spot action=${b.action ?? ''}`);
+  }
   if (path.startsWith('/functions/v1/solver-actions')) {
     let action = '';
     try { action = JSON.parse(String(init?.body ?? '{}')).action ?? ''; } catch { /* unreadable body: block */ }
