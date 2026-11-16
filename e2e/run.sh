@@ -7,7 +7,7 @@ adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.
 sleep 3
 echo "INFO navigation_mode=$(adb shell settings get secure navigation_mode | tr -d '\r') (0 = three buttons, 2 = gestures)"
 adb install -r -g apk/app.apk
-adb shell pm grant com.philmframe.app.test android.permission.POST_NOTIFICATIONS || true
+adb shell pm grant "${APP_PKG:-com.philmframe.app.test}" android.permission.POST_NOTIFICATIONS || true
 adb emu geo fix -77.1067 38.8816 || true
 adb logcat -c || true
 adb logcat -v time > out/logcat.txt 2>&1 &

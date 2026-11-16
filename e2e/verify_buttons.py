@@ -1337,8 +1337,120 @@ def faroes_3d():
     V.back(); time.sleep(2)
 
 
+def find_spot():
+    """Find my spot (16 Nov 2026): the Find spot pill in the photo viewer, its progress card, and the Your spot screen
+    for a job already done on Teton Live's T.A. Moulton Barn (job 34a139a0, photo 9ae511b2). Read only: a new request is
+    answered by e2e/fetchGuard.ts with a made-up open job; Add as a shot is never pressed."""
+    import json, urllib.request
+    stop_id = 'ea39ff42-3f27-4838-b085-c288e475407c'
+    try:
+        req = urllib.request.Request(f'https://ohshrzlvvxyovcjmdajc.supabase.co/rest/v1/stops?id=eq.{stop_id}&select=time_label,days(date)',
+                                     headers={'apikey': 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2'})
+        row = json.load(urllib.request.urlopen(req, timeout=30))[0]
+        d = datetime.date.fromisoformat(row['days']['date'])
+    except Exception as e:
+        V.check('spot-day', False, f'could not read the stop day: {e!r}'[:120]); return
+    if open_live() is None:
+        return
+    tab = f"{d.strftime('%b')} {d.day}"
+    s = C.capture(1); hit = False
+    for _ in range(6):
+        if V.tap_text(s, tab, exact=True):
+            hit = True; break
+        C.adb('shell', 'input', 'swipe', '900', '700', '200', '700', '300'); s = C.capture(0.8)
+    V.check('spot-day-tab', hit, tab)
+    if not hit: return
+    time.sleep(3)
+    rowre = re.compile(r'^\d{1,2}:\d{2} [AP]M .*T\.A\. Moulton Barn')
+    s = C.capture(1.0); opened = False
+    for _ in range(20):
+        c = next((c for c in s.clickables if rowre.match(c['label'])), None)
+        if c is not None and 0.30 * 1920 <= c['xy'][1] <= 0.72 * 1920:
+            C.tap(c['xy']); opened = True; break
+        if c is not None and c['xy'][1] < 0.30 * 1920:
+            C.adb('shell', 'input', 'swipe', '540', '900', '540', '1200', '500')
+        else:
+            C.adb('shell', 'input', 'swipe', '540', '1300', '540', '950', '500')
+        s = C.capture(1.2)
+    V.check('spot-stop-open', opened, 'T.A. Moulton Barn from the day list')
+    if not opened: return
+    t = C.capture(4)
+    if not V.tap_text(t, 'Open reference photos'):
+        V.check('spot-viewer', False, 'no reference photo thumbnail'); return
+    v = C.capture(3)
+    def pill(st):
+        return next((c['label'] for c in st.clickables if c['label'].split(' | ')[0].startswith(('Find spot', 'Your spot', 'Finding where'))), None)
+    V.check('spot-pill', pill(v) is not None, (pill(v) or 'no Find spot pill in the viewer')[:80])
+    V.show('spot-viewer', v)
+    cut_off('spot-viewer', v)
+    # Each photo of the stop in turn: a photo with no job gets a tap (progress card); then back to the done one.
+    done_photo, progress = False, False
+    for i in range(4):
+        lab = pill(v) or ''
+        print(f'INFO spot photo {i + 1}: pill {lab[:60]!r}', flush=True)
+        if lab.startswith('Your spot'):
+            done_photo = True
+        if lab.startswith('Find spot: where') and not progress:
+            V.tap_text(v, 'Find spot: where was this taken')
+            w = C.capture(2.5)
+            progress = V.has(w, 'Finding where you stood') and V.has(w, 'You can leave')
+            V.check('spot-progress', progress, 'Finding where you stood card with its bar')
+            V.show('spot-progress', w)
+            cut_off('spot-progress', w)
+        if done_photo and progress:
+            break
+        C.adb('shell', 'input', 'swipe', '950', '1150', '120', '1150', '250'); v = C.capture(2.5)
+    if not progress:
+        V.check('spot-progress', False, 'no photo without a job to tap')
+    for _ in range(4):   # back toward the first photos until the done one shows
+        if (pill(v) or '').startswith('Your spot'):
+            done_photo = True; break
+        C.adb('shell', 'input', 'swipe', '120', '1150', '950', '1150', '250'); v = C.capture(2.5)
+    V.check('spot-done-photo', (pill(v) or '').startswith('Your spot'), 'the photo with a finished job shows Your spot')
+    if not (pill(v) or '').startswith('Your spot'): return
+    V.tap_text(v, 'Your spot: see where you stood')
+    r = None
+    for _ in range(10):
+        r = C.capture(2)
+        if V.has(r, 'WITH YOUR LENSES'): break
+    ok = r is not None and V.has(r, 'Your spot') and V.has(r, 'EQUIVALENT') and V.has(r, 'WITH YOUR LENSES')
+    V.check('spot-result', ok, 'Your spot screen with the 4x5 equivalent and the lens rows')
+    V.show('spot-result', r)
+    if not ok: return
+    V.check('spot-confidence', V.has(r, 'CONFIDENCE') and (V.has(r, 'High') or V.has(r, 'Medium') or V.has(r, 'Low')), 'confidence tile')
+    V.check('spot-best-fit', V.has(r, 'BEST FIT'), 'a lens row marked best fit')
+    cut_off('spot-result', r)
+    # The 3D picture of the chosen lens: its caption says it has drawn.
+    t0 = time.time(); drawn = False
+    while time.time() - t0 < 90:
+        x = scroll_find('Looking ', 3)
+        if x is not None: drawn = True; break
+        time.sleep(5)
+    V.check('spot-3d-preview', drawn, f'3D view drawn in {time.time() - t0:.0f} s' if drawn else 'no "Looking ..." caption in 90 s')
+    V.show('spot-3d-preview', C.capture(1))
+    scroll_top(3)
+    r = C.capture(1)
+    if V.tap_text(r, '135 millimetre'):
+        time.sleep(4); V.show('spot-lens-135', C.capture(1))
+    scroll_top(3)
+    V.check('spot-add-btn', V.has(C.capture(1), 'Add as a shot'), 'Add as a shot button (not pressed)')
+    if V.tap_text(C.capture(1), 'Open in 3D', exact=True):
+        f = C.capture(4)
+        has_close = any(c['label'].split(' | ')[0] == 'Close the 3D view' for c in f.clickables)
+        V.check('spot-open-3d', has_close, 'full-screen 3D with its Close button')
+        V.show('spot-open-3d', f)
+        cut_off('spot-open-3d', f)
+        V.tap_text(f, 'Close the 3D view', exact=True); time.sleep(2)
+    else:
+        V.check('spot-open-3d', False, 'no Open in 3D button')
+    V.show('spot-after-close', C.capture(1.5))
+    V.back(); time.sleep(2.5)
+    alive, focus = C.app_alive(), C.focus_pkg()
+    V.check('spot-back', alive and focus == V.PKG, f'back from Your spot keeps the app open (alive {alive}, focus {focus})')
+
+
 def main():
-    for st in (sun_3d, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, offline_3d):
+    for st in (find_spot, sun_3d, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, offline_3d):
         try:
             st()
         except Exception as e:

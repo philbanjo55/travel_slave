@@ -87,6 +87,7 @@ type Props = {
   hdOn?: boolean;              // HD wanted (kept by the parent so full screen opens the way the small view was)
   onHd?: (on: boolean) => void;
   photos?: RefPhoto[];         // full screen: the stop's photos as the stop page lists them, for the reference photo card
+  preview?: boolean;           // Find spot's small per-lens picture: no buttons, no lines under it, touches pass through
 };
 
 // The package's prop types don't resolve against this React Native version's types; the props used below are its documented ones.
@@ -143,12 +144,13 @@ function framedDay(at: string): string {
 // Everything under the picture. In full screen it may take at most a third of the screen and scrolls inside that:
 // with the tree note, the HD line and the walk row all showing, these lines once grew past the bottom bar and pushed
 // Close and the time slider off the screen (emulator, 12 Nov 2026).
-function Below({ full, max, children }: { full?: boolean; max: number; children: React.ReactNode }) {
+function Below({ full, max, hide, children }: { full?: boolean; max: number; hide?: boolean; children: React.ReactNode }) {
+  if (hide) return null;
   if (!full) return <>{children}</>;
   return <ScrollView style={{ maxHeight: max, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
 }
 
-export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos }: Props) {
+export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -279,6 +281,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         loaded.current = `${r.id}|${nr && nd ? nr.id : ''}`; nearUsed.current = nr && nd ? nr : null;
         setRegion(r); setNear(nearUsed.current); setB64(d); setNearB64(nr && nd ? nd : null); setPhase('starting');
       }
+      if (preview) return;   // Find spot's small picture: the plain terrain only (no foreground files, no restarts)
       // The foreground's files come behind the plain view, never before it: the detail box for this shot (it must sit
       // inside the fine box the page really has), its mask, the tree returns and the wide water; in the Faroes also the
       // detail box's photo and buildings, and the fine box's photo (which comes even without a detail box).
@@ -317,7 +320,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       if (dt0 && dd) { setMaskB64(md); setTreesB64(td); setWaterB64(wd); setColorB64(cd); setBldB64(bd); setDetailB64(dd); setDetail(dt0); }
     })();
     return () => { alive = false; };
-  }, [vLat, vLng, sLat, sLng]);
+  }, [vLat, vLng, sLat, sLng, preview]);
 
   const dayPath = useMemo(() => {
     const out: number[][] = [];
@@ -366,7 +369,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const refOn = full && !hd && refList.length > 0;   // the photo button and card: full screen, offline view, the stop has photos
   const refPhoto = refList[Math.min(refIdx, Math.max(0, refList.length - 1))] ?? null;
   const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64 || !!treeTiles || !!rangeBox || !!houseTiles;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour or the park-wide trees
-  const useDetail = foreground && !hd && hasFore;
+  const useDetail = foreground && !hd && hasFore && !preview;
   const useDetailRef = useRef(false);
   useDetailRef.current = useDetail;
   // Frozen lakes: still water drawn as snow-covered ice, rivers open. Default from the area's ground; a tap changes it in place.
@@ -620,7 +623,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
 
   return (
     <View style={full ? styles.fullWrap : undefined} accessibilityLabel={`3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}`}>
-      <View style={[styles.frame, full ? styles.frameFull : { height }]}>
+      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}>
         {region && b64 && !holding ? (
           <Web
             ref={web}
@@ -642,7 +645,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
-        <View style={styles.topRow} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
+        <View style={[styles.topRow, preview ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
           <View style={styles.lens} accessibilityRole="tablist">
             {LENSES.map(l => (
               <TouchableOpacity
@@ -757,11 +760,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('card')} bottom={walking ? 200 : 34} />
         ) : null}
         {ready && look != null ? (
-          <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format} · {hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}</Text>
+          <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format}{preview ? '' : ` · ${hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}`}</Text>
         ) : null}
       </View>
 
-      <Below full={full} max={belowMax}>
+      <Below full={full} max={belowMax} hide={preview}>
       {ready && lit ? (
         <Text style={[styles.status, pad]}>
           <Text style={lit.subjectLit ? styles.sunOn : undefined}>{subject}: {lit.subjectLit ? 'in the sun' : lit.up ? 'in shadow' : 'no sun'}</Text>
