@@ -80,23 +80,117 @@ export function RefPhotoCard({ photos, index, onIndex, onSee, onClose, top }: {
   );
 }
 
-// The photo over the whole picture, see-through. Touches go through it to the view underneath (drag to look still works).
-export function RefPhotoGhost({ photo, opacity }: { photo: RefPhoto; opacity: number }) {
+// Where the photo sits over the picture: scale and offset (dp) from "fit" (Phil, 16 Nov 2026: zoom the photo in and out
+// to match it to his framing). Kept by the 3D panel while the photo or lens changes; reset when the photo is closed.
+export type PhotoXf = { s: number; x: number; y: number };
+export const XF0: PhotoXf = { s: 1, x: 0, y: 0 };
+const S_MIN = 0.3, S_MAX = 4;
+const clampS = (v: number) => Math.max(S_MIN, Math.min(S_MAX, v));
+type Pt = [number, number];
+
+// The photo over the whole picture, see-through. Touches go through it to the view underneath (drag to look still works),
+// except with "Move photo" on: then two fingers pinch the photo larger or smaller around the pinch, one finger moves
+// it, and a double tap puts it back to fit. PanResponder only (no native module). The transform lives here while the
+// fingers move (only this small view redraws) and is handed to the panel when they lift.
+export function RefPhotoGhost({ photo, opacity, xf = XF0, move = false, onXf }: {
+  photo: RefPhoto; opacity: number; xf?: PhotoXf; move?: boolean; onXf?: (xf: PhotoXf) => void;
+}) {
   const uri = useRefPhotoUri(photo);
+  const [t, setT] = useState<PhotoXf>(xf);
+  useEffect(() => { setT(xf); }, [xf.s, xf.x, xf.y]);
+  const cur = useRef(t);
+  cur.current = t;
+  const onXfRef = useRef(onXf);
+  onXfRef.current = onXf;
+  const viewRef = useRef<React.ComponentRef<typeof View>>(null);
+  const box = useRef({ x: 0, y: 0, w: 1, h: 1 });
+  const measure = () => viewRef.current?.measureInWindow((x, y, w, h) => { box.current = { x, y, w: Math.max(1, w), h: Math.max(1, h) }; });
+  // the gesture so far: how many fingers, the transform and the fingers' middle / spread when that number last changed
+  const g = useRef({ n: 0, s0: 1, x0: 0, y0: 0, mx: 0, my: 0, d0: 1, moved: false, lastTap: 0 });
+  const responder = useRef((() => {
+    const pts = (e: any): Pt[] => (e.nativeEvent.touches ?? []).map((q: any) => [q.pageX, q.pageY] as Pt);
+    const begin = (p: Pt[]) => {
+      const st = g.current, c = cur.current;
+      st.n = p.length; st.s0 = c.s; st.x0 = c.x; st.y0 = c.y;
+      if (p.length >= 2) {
+        st.mx = (p[0][0] + p[1][0]) / 2; st.my = (p[0][1] + p[1][1]) / 2;
+        st.d0 = Math.max(10, Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]));
+      } else if (p.length === 1) { st.mx = p[0][0]; st.my = p[0][1]; }
+    };
+    const set = (v: PhotoXf) => { cur.current = v; setT(v); };
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (e) => { measure(); g.current.moved = false; begin(pts(e)); },
+      onPanResponderMove: (e) => {
+        const p = pts(e), st = g.current;
+        if (p.length !== st.n) { begin(p); if (p.length > 1) st.moved = true; return; }
+        if (p.length >= 2) {
+          const mx = (p[0][0] + p[1][0]) / 2, my = (p[0][1] + p[1][1]) / 2;
+          const s = clampS(st.s0 * Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]) / st.d0);
+          // the photo point that was under the fingers' middle stays under it (scale is about the view's centre)
+          const cx = box.current.x + box.current.w / 2, cy = box.current.y + box.current.h / 2;
+          set({ s, x: mx - cx - (s * (st.mx - cx - st.x0)) / st.s0, y: my - cy - (s * (st.my - cy - st.y0)) / st.s0 });
+          st.moved = true;
+        } else if (p.length === 1) {
+          const dx = p[0][0] - st.mx, dy = p[0][1] - st.my;
+          if (Math.abs(dx) + Math.abs(dy) > 6) st.moved = true;
+          if (st.moved) set({ s: st.s0, x: st.x0 + dx, y: st.y0 + dy });
+        }
+      },
+      onPanResponderRelease: () => {
+        const st = g.current;
+        if (!st.moved) {   // a tap: two in a row put the photo back to fit
+          const now = Date.now();
+          if (now - st.lastTap < 320) { set(XF0); st.lastTap = 0; } else st.lastTap = now;
+        }
+        st.n = 0;
+        onXfRef.current?.(cur.current);
+      },
+      onPanResponderTerminate: () => { g.current.n = 0; onXfRef.current?.(cur.current); },
+    });
+  })()).current;
   if (!uri) return null;
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      <Image source={{ uri }} style={[StyleSheet.absoluteFill, { opacity }]} resizeMode="cover" />
+    <View
+      ref={viewRef}
+      style={StyleSheet.absoluteFill}
+      pointerEvents={move ? 'auto' : 'none'}
+      onLayout={measure}
+      {...(move ? responder.panHandlers : null)}
+      accessibilityLabel={move ? 'Photo: pinch to zoom, drag to move, double tap to fit' : undefined}
+    >
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <Image
+          source={{ uri }}
+          style={[StyleSheet.absoluteFill, { opacity, transform: [{ translateX: t.x }, { translateY: t.y }, { scale: t.s }] }]}
+          resizeMode="cover"
+        />
+      </View>
     </View>
   );
 }
 
-// The bar along the bottom of the picture while the photo is see-through: "See-through", the amount, an X back to the card.
-export function SeeThroughBar({ value, onChange, onClose, bottom }: {
-  value: number; onChange: (v: number) => void; onClose: () => void; bottom: number;
+// The bar along the bottom of the picture while the photo is see-through: "Move photo", "See-through", the amount,
+// an X back to the card.
+export function SeeThroughBar({ value, onChange, onClose, bottom, move, onMove }: {
+  value: number; onChange: (v: number) => void; onClose: () => void; bottom: number; move?: boolean; onMove?: (on: boolean) => void;
 }) {
   return (
     <View style={[styles.bar, { bottom }]}>
+      {onMove ? (
+        <TouchableOpacity
+          onPress={() => onMove(!move)}
+          style={[styles.moveBtn, move && styles.moveBtnOn]}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: !!move }}
+          accessibilityLabel="Move photo"
+          hitSlop={6}
+        >
+          <Ionicons name="move-outline" size={16} color={move ? '#000000' : '#ffffff'} />
+        </TouchableOpacity>
+      ) : null}
       <Text style={styles.barText}>See-through</Text>
       <AmountSlider value={value} onChange={onChange} />
       <TouchableOpacity onPress={onClose} style={styles.barX} accessibilityRole="button" accessibilityLabel="Close see-through" hitSlop={8}>
@@ -174,6 +268,8 @@ const styles = StyleSheet.create({
   },
   barText: { color: '#ffffff', fontSize: 12 },
   barX: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  moveBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#666666' },
+  moveBtnOn: { backgroundColor: '#ffffff', borderColor: '#ffffff' },
   slider: { flex: 1, height: 32, justifyContent: 'center' },
   track: { height: 4, borderRadius: 2, backgroundColor: '#555555', overflow: 'hidden' },
   fill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: '#5aaa7a' },

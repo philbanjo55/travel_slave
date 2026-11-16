@@ -11,7 +11,7 @@ import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { framingOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
 import type { Framing, Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
-import { RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar } from './RefPhotoOverlay';
+import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
 
 // 3D view of the shot (TEST app, Phil 12 Nov 2026): the real terrain from the
 // stand spot toward the subject, lit by the sun at the slider's time. The
@@ -88,6 +88,10 @@ type Props = {
   onHd?: (on: boolean) => void;
   photos?: RefPhoto[];         // full screen: the stop's photos as the stop page lists them, for the reference photo card
   preview?: boolean;           // Find spot's small per-lens picture: no buttons, no lines under it, touches pass through
+  // Find spot's full screen before "Add as a shot" (Phil, 16 Nov 2026: place, frame and save there): the shot is not on
+  // the stop yet, so the first save (stand spot or framing) makes it first and then saves onto it. Returns the new
+  // shot's vantage id; throws with a plain reason. The parent then hands the new id in as pair.vantage_id.
+  addShot?: () => Promise<string>;
 };
 
 // The package's prop types don't resolve against this React Native version's types; the props used below are its documented ones.
@@ -114,6 +118,7 @@ const FRAME_SAY: Record<FrameMode, string> = { land: 'landscape', port: 'portrai
 let lastLens = '135';
 let lastFrame: FrameMode = 'land';
 let lastForeground = true;
+let lastTrees = true;   // the foreground's trees (Phil, 16 Nov 2026: a "no trees" setting): kept like the foreground itself
 let lastIce: boolean | null = null;
 let pickedFor: string | null = null;   // the shot whose lens / frame box the user changed by hand: its framing's lens is not put back over that
 let lastRefOpacity = 0.45;   // the see-through amount last chosen, kept while the app is open
@@ -126,6 +131,7 @@ type Perf = { ms: number; worst: number; quality: string };
 // 17 ms is as smooth as most screens show), and the quality the page drew at while moving (it is always full when still).
 const perfLine = (p: Perf) => `${p.ms < 10 ? Math.round(p.ms * 10) / 10 : Math.round(p.ms)} ms a frame (worst ${Math.round(p.worst)}) · quality ${p.quality}`;
 const CHUNK = 240000;
+const ADD_FIRST = 'It is added to this stop as a shot first, on the real trip and its practice copy. ';
 const TREE_CHUNK = 60000;   // the park-wide tree tiles' pieces (a multiple of 4)
 // Wherever the Faroes photos / buildings are drawn (the agency's terms ask for the credit; ArcticDEM is CC-BY-4.0).
 // Grand Teton winter colour (13 Nov 2026), when the region row has no credit text of its own.
@@ -150,7 +156,7 @@ function Below({ full, max, hide, children }: { full?: boolean; max: number; hid
   return <ScrollView style={{ maxHeight: max, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
 }
 
-export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview }: Props) {
+export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview, addShot }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -178,16 +184,28 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [shapes, setShapes] = useState(false);   // the page says it is drawing the detail box
   const [foreBusy, setForeBusy] = useState(false);   // the foreground has been sent and the page has not answered yet
   const [foreground, setForegroundState] = useState(lastForeground);
+  const [treesOn, setTreesState] = useState(lastTrees);
+  const treesRef = useRef(lastTrees);
+  treesRef.current = treesOn;
   const [lensId, setLensState] = useState(lastLens);
   const pickLens = LENSES.find(l => l.id === lensId) ?? LENSES[2];
   const focal = pickLens.f;
   const [frame, setFrameState] = useState<FrameMode>(lastFrame);
-  const vid = pair.vantage_id;
+  // A shot made here by the first save (addShot): its new id stands in for the placeholder until the parent passes it,
+  // so the view does not count it as another shot (no re-aim, no lens reset) when the id changes.
+  const [made, setMade] = useState<{ from: string; id: string } | null>(null);
+  const vid = made && made.from === pair.vantage_id ? made.id : pair.vantage_id;
+  const ensureShot = useCallback(async (): Promise<string> => {
+    if (!addShot) return vid;
+    const id = await addShot();
+    if (id !== pair.vantage_id) setMade({ from: pair.vantage_id, id });
+    return id;
+  }, [addShot, vid, pair.vantage_id]);
   const setLens = useCallback((id: string) => { lastLens = id; pickedFor = vid; setLensState(id); }, [vid]);
   const setFrame = useCallback((m: FrameMode) => { lastFrame = m; pickedFor = vid; setFrameState(m); }, [vid]);
   // The shot's saved framing (a save made on this phone first, sent or waiting, then the trip's sun plan).
   useShotSaves();   // re-render when a save is made, sent or dropped
-  const framing = framingOf(pair);
+  const framing = framingOf(vid === pair.vantage_id ? pair : { ...pair, vantage_id: vid });
   const framingRef = useRef<Framing | null>(framing);
   framingRef.current = framing;
   const queued = waitingFor(vid);   // saves of this shot still waiting for signal
@@ -254,6 +272,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [topH, setTopH] = useState(40);   // the button row's height (it wraps): the card sits under it
   // Another stop's shot (next / previous) brings its own photos: start again at its first, or close when it has none.
   useEffect(() => { setRefIdx(0); if (!refKey) setRefMode('off'); }, [refKey]);
+  // "Move photo" (pinch / drag the see-through photo to match the framing): on only while see-through; where the photo
+  // sits is kept across photos and lenses and put back to fit when the photo is closed.
+  const [refMove, setRefMove] = useState(false);
+  const [refXf, setRefXf] = useState<PhotoXf>(XF0);
+  useEffect(() => { if (refMode !== 'see') setRefMove(false); if (refMode === 'off') setRefXf(XF0); }, [refMode]);
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
 
@@ -366,6 +389,20 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     setLit(null); setMoments(null); setLook(null); setShapes(false); setWideTrees(0); setRangeIn(false); setHousesIn(0); setPhotoFore(false); setForeBusy(false); setProblem(null);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p)); setGen(g => g + 1);
   }, []);
+  // Trees shown / hidden inside the foreground: the page only switches their visibility (no restart, no rebuild);
+  // the sun times never use them, so first / last light stay exactly as they are.
+  const setTrees = useCallback((on: boolean) => {
+    lastTrees = on; treesRef.current = on; setTreesState(on);
+    run(`window.S3D.trees && window.S3D.trees(${on ? 'true' : 'false'})`);
+  }, [run]);
+  // The foreground button's three states, in turn: everything -> buildings only (no trees) -> off -> everything.
+  const cycleForeground = useCallback(() => {
+    if (!foreground) { setForeground(true); return; }   // (trees are already back on: see below)
+    if (treesOn) { setTrees(false); return; }
+    lastTrees = true; treesRef.current = true; setTreesState(true);   // off; the next "on" is everything again
+    setForeground(false);
+  }, [foreground, treesOn, setForeground, setTrees]);
+  const foreSay = !foreground ? 'off' : treesOn ? 'on' : 'buildings only, no trees';
   const refOn = full && !hd && refList.length > 0;   // the photo button and card: full screen, offline view, the stop has photos
   const refPhoto = refList[Math.min(refIdx, Math.max(0, refList.length - 1))] ?? null;
   const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64 || !!treeTiles || !!rangeBox || !!houseTiles;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour or the park-wide trees
@@ -394,6 +431,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       view: pageFraming(framingRef.current) ?? undefined,   // a framed shot opens on its framing (older pages ignore it)
       level: lastLevels ?? undefined,
       treeStyle: TREE_STYLE,   // how the laser trees are drawn (services/terrain.ts TREE_STYLE)
+      trees: treesRef.current,   // the foreground's trees shown or hidden (older pages ignore it)
       ...(hd && hdCfg ? { tiles: { base: hdCfg.base, draco: hdCfg.draco, root: hd } } : null),
     };
     run(`window.S3D.init(${JSON.stringify(cfg)})`);
@@ -535,14 +573,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const spot = at;
     Alert.alert(
       'Move your stand spot here?',
-      `This shot's stand spot moves ${at.moved} m to where you are standing in the view. The sun times and the planner follow. It changes the shot on every trip that uses it, practice copies included.`,
+      `${addShot ? ADD_FIRST : ''}This shot's stand spot moves ${at.moved} m to where you are standing in the view. The sun times and the planner follow. It changes the shot on every trip that uses it, practice copies included.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Move it', onPress: async () => {
             setSavingSpot(true);
             try {
-              const r = await saveShot({ kind: 'move', tripId, stopId, vantageId: pair.vantage_id, lat: spot.lat, lng: spot.lng, at: new Date().toISOString() });
+              const id = await ensureShot();
+              const r = await saveShot({ kind: 'move', tripId, stopId, vantageId: id, lat: spot.lat, lng: spot.lng, at: new Date().toISOString() });
               setWalkNote(r === 'queued' ? null : 'Saved: this is now your stand spot for the shot.');   // waiting: the line below says so
             }
             catch (e: any) { setWalkNote(`Couldn't save the spot: ${e?.message || 'try again'}`); }
@@ -551,7 +590,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         },
       ],
     );
-  }, [tripId, stopId, at, pair.vantage_id]);
+  }, [tripId, stopId, at, addShot, ensureShot]);
 
   // ---- Framing ----
   const canFrame = !!(tripId && stopId);
@@ -565,14 +604,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const tilt = Math.abs(f.pitch) < 0.5 ? 'level' : `tilted ${f.pitch > 0 ? 'up' : 'down'} ${Math.abs(f.pitch).toFixed(1)}°`;
     Alert.alert(
       'Save this framing?',
-      `The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}. It changes the shot on every trip that uses it, practice copies included.`,
+      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}. It changes the shot on every trip that uses it, practice copies included.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Save', onPress: async () => {
             setSavingFrame(true);
             try {
-              const r = await saveShot({ kind: 'frame', tripId, stopId, vantageId: vid, framing: f });
+              const id = await ensureShot();
+              const r = await saveShot({ kind: 'frame', tripId, stopId, vantageId: id, framing: f });
               run(`window.S3D.view(${JSON.stringify(pageFraming(f))})`);   // later re-aims (foreground, walk's home) keep it
               setFrameNote(null);   // the framing line says Framed, or that it waits for signal
             } catch (e: any) { setFrameNote(`Couldn't save the framing: ${e?.message || 'try again'}`); }
@@ -581,7 +621,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         },
       ],
     );
-  }, [tripId, stopId, vid, pickLens, frame, run]);
+  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot]);
   const aimAtSubject = useCallback(() => {
     run('window.S3D.view(null)');
     setFrameNote(framingRef.current ? 'Aimed at the subject. Your saved framing is kept.' : null);
@@ -602,6 +642,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     ]);
   }, [tripId, stopId, vid, run]);
   const framedLine = queued.frame ? 'Saved on the phone, sends when you have signal.'
+    : addShot ? 'Not a shot yet: saving adds it'
     : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}`
     : 'Not framed yet';
 
@@ -641,7 +682,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             style={styles.web}
           />
         ) : null}
-        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} /> : null}
+        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} /> : null}
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
@@ -696,14 +737,14 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             </TouchableOpacity>
             {hasFore && !hd ? (
               <TouchableOpacity
-                onPress={() => setForeground(!foreground)}
+                onPress={cycleForeground}
                 style={[styles.fullBtn, foreground && styles.lensOn]}
                 accessibilityRole="switch"
                 accessibilityState={{ checked: foreground }}
-                accessibilityLabel={`Foreground (trees and buildings near you): ${foreground ? 'on' : 'off'}${foreground ? (shapes ? ', showing' : foreBusy ? ', loading' : '') : ''}. Tap to change.`}
+                accessibilityLabel={`Foreground (trees and buildings near you): ${foreSay}${foreground ? (shapes ? ', showing' : foreBusy ? ', loading' : '') : ''}. Tap to change.`}
                 hitSlop={6}
               >
-                <Ionicons name="leaf-outline" size={17} color={foreground ? '#000000' : '#ffffff'} />
+                <Ionicons name={foreground && !treesOn ? 'business-outline' : 'leaf-outline'} size={17} color={foreground ? '#000000' : '#ffffff'} />
               </TouchableOpacity>
             ) : null}
             {useDetail && ready && shapes && region?.ground === 'snow' ? (
@@ -757,7 +798,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ) : null}
         {refOn && refMode === 'see' ? (
           // above the caption; while walking, above the walk arrows (bottom-left, up to 192 dp)
-          <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('card')} bottom={walking ? 200 : 34} />
+          <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('card')} bottom={walking ? 200 : 34} move={refMove} onMove={setRefMove} />
         ) : null}
         {ready && look != null ? (
           <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format}{preview ? '' : ` · ${hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}`}</Text>
@@ -774,7 +815,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       ) : phase === 'error' && problem ? (
         <Text style={[styles.status, pad]}>{problem}</Text>
       ) : null}
-      {foreLost && foreground && !shapes && !hd ? <Text style={[styles.note, pad]}>Foreground didn't load. Tap Foreground twice to retry.</Text> : null}
+      {foreLost && foreground && !shapes && !hd ? <Text style={[styles.note, pad]}>Foreground didn't load. Turn it off and on to retry.</Text> : null}
       {heavy && !foreground && !hd ? <Text style={[styles.note, pad]}>Foreground too heavy for this phone: off.</Text> : null}
       {hdNote && !hd ? <Text style={[styles.note, pad]}>{hdNote}</Text> : null}
       {walking && full && !hd ? (
@@ -803,7 +844,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
               {savingFrame ? <ActivityIndicator size="small" color="#000000" /> : <Text style={styles.walkBtnMainText}>Save framing</Text>}
             </TouchableOpacity>
           </View>
-          {framing && canFrame && !queued.frame ? (
+          {framing && canFrame && !addShot && !queued.frame ? (
             <TouchableOpacity onPress={forgetFraming} accessibilityRole="button" accessibilityLabel="Forget the saved framing" hitSlop={{ top: 6, bottom: 6 }}>
               <Text style={[styles.streetLink, { marginTop: 0 }]}>Forget framing</Text>
             </TouchableOpacity>
