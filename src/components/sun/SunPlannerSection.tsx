@@ -23,7 +23,6 @@ import { useNearView } from './nearView';
 import { PLANNER_ON } from '../../utils/variant';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchStopSettings } from '../../services/planner';
-import { stopPagePhotos } from '../../utils/photoGroups';
 
 // The stop's starred shot, so Sun & Moon (and its 3D view) open on it rather than on the first shot in the list,
 // which for most stops is the automatic "main" shot standing on the stop's own pin (often the parking spot):
@@ -187,15 +186,6 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
     }
   };
   const fStopName = away ? away.stopName : (tour[tourAt]?.stopName ?? stopName ?? '');
-  // The photos for the full screen's reference photo card: this stop's as its page lists them, or, on another stop's
-  // shot, that stop's own list worked out the same way from the trip on the phone.
-  const awayStopId = away ? away.stopId : null;
-  const awayPhotos = useMemo(() => (awayStopId ? stopPagePhotos(tripData, awayStopId) : null), [awayStopId, tripData]);
-  // Another entry of the same place (a repeat visit) that comes back empty (its photos not in the trip as held) shows
-  // this stop's photos: same place, same pictures.
-  const fPhotos = awayStopId
-    ? ((awayPhotos && awayPhotos.length) ? awayPhotos : (away && stopName && away.stopName === stopName ? stopPhotos ?? [] : awayPhotos ?? []))
-    : stopPhotos ?? [];
 
   const ms = day0 + minute * 60000;
   const light = lightAt(pair, ms);
@@ -320,7 +310,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
       <Modal visible={full3d} animationType="fade" onRequestClose={() => setFull3d(false)}>
         <View style={[styles.fullScreen, { paddingTop: insets.top }]}>
           {full3d ? (
-            <Sun3DPanel full pair={fPair} tripId={tripId} stopId={fStopId} sun={fSun ?? light.sun} day0={fDay0} onJump={setFMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} photos={fPhotos} />
+            <Sun3DPanel full pair={fPair} tripId={tripId} stopId={fStopId} sun={fSun ?? light.sun} day0={fDay0} onJump={setFMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} />
           ) : null}
           <View style={[styles.fullBar, { paddingBottom: 18 + insets.bottom }]}>
             {tour.length > 1 && tourAt >= 0 ? (

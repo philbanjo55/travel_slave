@@ -265,7 +265,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const setWant = useCallback((on: boolean) => { if (onHd) onHd(on); else setWantLocal(on); }, [onHd]);
   const savedLine = tripTerrainLine(useTripTerrain(tripId));
   // Reference photo (full screen only): 'card' = the small card, 'see' = see-through over the picture.
-  const refList = full && photos ? photos.filter(p => p && (p.id || p.storage_url || p.base64_data)) : [];
+  // Phil, 16 Nov 2026: only the photo that belongs to this shot, never a pick of the stop's other photos. The shot's own
+  // photo (scout_vantages.photo_id) when it has one; else the first photo the parent hands in (Find spot: the photo the
+  // spot was found from); a shot with neither has no photo button.
+  const ownRef: RefPhoto | null = pair.photo_id ? { id: pair.photo_id, storage_url: pair.photo_url ?? null }
+    : (photos ?? []).find(p => p && (p.id || p.storage_url || p.base64_data)) ?? null;
+  const refList = full && ownRef ? [ownRef] : [];
   const refKey = refList.map(p => p.id ?? p.storage_url ?? '').join('|');
   const [refMode, setRefMode] = useState<'off' | 'card' | 'see'>('off');
   const [refIdx, setRefIdx] = useState(0);
