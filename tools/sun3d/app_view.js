@@ -2330,11 +2330,14 @@
     if (OH.sunOn && sun.alt > -0.83) {   // the sun: a band from where you stand toward it, and the Map tab's three arrows landing on your view
       const u = sdir(ds, ohRad(sun.az)), sp0 = { x: -u.y, y: u.x }, au = sdir(ds, ohRad(ohAim(sel))), T = { x: ds.p.x + au.x * 70, y: ds.p.y + au.y * 70 };
       g.lineCap = 'round'; g.lineWidth = 10; g.strokeStyle = 'rgba(240,176,74,0.35)'; g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(ds.p.x + u.x * 260, ds.p.y + u.y * 260); g.stroke();
-      g.lineWidth = 3; g.lineJoin = 'round'; g.strokeStyle = ohShaded() ? '#9a9a9a' : '#F0B04A';
-      for (const o of [-1, 0, 1]) {
-        const bx = T.x + sp0.x * o * 16, by = T.y + sp0.y * o * 16, tx = bx + u.x * 14, ty = by + u.y * 14, kx = tx + u.x * 9, ky = ty + u.y * 9;
-        g.beginPath(); g.moveTo(bx + u.x * 70, by + u.y * 70); g.lineTo(tx, ty); g.stroke();
-        g.beginPath(); g.moveTo(kx + sp0.x * 5, ky + sp0.y * 5); g.lineTo(tx, ty); g.lineTo(kx - sp0.x * 5, ky - sp0.y * 5); g.stroke();
+      g.lineJoin = 'round'; const shd = ohShaded();
+      for (const [lw, col] of [[5, 'rgba(0,0,0,0.45)'], [3, shd ? '#9a9a9a' : '#F0B04A']]) {   // a dark edge under each, so grey arrows show on snow in shade too
+        g.lineWidth = lw; g.strokeStyle = col;
+        for (const o of [-1, 0, 1]) {
+          const bx = T.x + sp0.x * o * 16, by = T.y + sp0.y * o * 16, tx = bx + u.x * 14, ty = by + u.y * 14, kx = tx + u.x * 9, ky = ty + u.y * 9;
+          g.beginPath(); g.moveTo(bx + u.x * 70, by + u.y * 70); g.lineTo(tx, ty); g.stroke();
+          g.beginPath(); g.moveTo(kx + sp0.x * 5, ky + sp0.y * 5); g.lineTo(tx, ty); g.lineTo(kx - sp0.x * 5, ky - sp0.y * 5); g.stroke();
+        }
       }
       g.lineCap = 'butt';
     }
@@ -2371,9 +2374,10 @@
       const on = d.s === sel, r = on ? 8 : 6, t = `${d.s.star ? '★ ' : ''}${d.s.code || d.s.name || ''}`.trim();
       if (!t) continue;
       g.font = `${on ? 700 : 600} 12px Roboto, system-ui, sans-serif`;
-      const bx = { x0: d.p.x - r, x1: d.p.x + r + 5 + g.measureText(t).width, y0: d.p.y - 8, y1: d.p.y + 8 };
-      if (!on && boxes.some(b => bx.x0 < b.x1 && bx.x1 > b.x0 && bx.y0 < b.y1 && bx.y1 > b.y0)) continue;
-      boxes.push(bx); ohLabel(g, t, d.p.x + r + 5, d.p.y, on);
+      const tw = g.measureText(t).width, hit = bx => boxes.some(b => bx.x0 < b.x1 && bx.x1 > b.x0 && bx.y0 < b.y1 && bx.y1 > b.y0);
+      const right = { x0: d.p.x - r, x1: d.p.x + r + 5 + tw, y0: d.p.y - 8, y1: d.p.y + 8 }, left = { x0: d.p.x - r - 5 - tw, x1: d.p.x + r, y0: d.p.y - 8, y1: d.p.y + 8 };
+      if (on || !hit(right)) { boxes.push(right); ohLabel(g, t, d.p.x + r + 5, d.p.y, on); }
+      else if (!hit(left)) { boxes.push(left); ohLabel(g, t, d.p.x - r - 5, d.p.y, on, 'right'); }   // (else left out: zoomed far out)
     }
     {   // scale bar, bottom right
       const mpp = OH.span / w, steps = [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]; let L = steps[0];
@@ -2464,13 +2468,15 @@
       const shots = Array.isArray(o.shots) ? o.shots.filter(s => s && s.id != null && s.v && Number.isFinite(+s.v.lat) && Number.isFinite(+s.v.lng)) : OH.shots;
       const key = shots.map(s => `${s.id}:${(+s.v.lat).toFixed(6)},${(+s.v.lng).toFixed(6)}`).join('|');
       OH.shots = shots;
-      const flagged = shots.find(s => s.sel);
+      const flagged = shots.find(s => s.sel), was = OH.sel;
       if (o.sel != null) OH.sel = o.sel; else if (flagged) OH.sel = flagged.id; else if (!shots.some(s => s.id === OH.sel)) OH.sel = shots.length ? shots[0].id : null;
       if (o.sun != null) OH.sunOn = !!o.sun;
       if (o.shaded !== undefined) OH.shaded = typeof o.shaded === 'boolean' ? o.shaded : null;
       const up = o.heading_up_deg !== undefined ? o.heading_up_deg : o.up;
       const first = !OH.on;
-      if (up !== undefined) ohSetUp(up); else if (first || OH.upMode === 'view') ohSetUp('view');   // (my view follows the selected shot's aim)
+      if (up !== undefined) ohSetUp(up); else if (first) ohSetUp('view');
+      else if (OH.sel !== was) { if (OH.upMode === 'view') OH.rot = ohRad(ohAim(ohSelShot())); ohHold(); ohSay(); }   // another shot picked: my view turns to its aim, zoom goes back to its spot
+      else if (OH.upMode === 'view') OH.rot = ohRad(ohAim(ohSelShot()));   // (its framing may have been saved since)
       if (first || o.fit || key !== OH.shotKey) { OH.shotKey = key; OH.needFit = true; }
       if (first) ohEnter(); else if (R && OH.needFit) ohFit();
       if (R) { relight = dirty = true; if (up !== undefined) ohSay(); }

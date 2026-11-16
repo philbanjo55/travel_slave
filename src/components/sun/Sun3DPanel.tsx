@@ -13,6 +13,7 @@ import type { Framing, Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
+import { Overhead3D, useOverhead3D } from './overhead3d';
 
 // 3D view of the shot (TEST app, Phil 12 Nov 2026): the real terrain from the
 // stand spot toward the subject, lit by the sun at the slider's time. The
@@ -93,6 +94,10 @@ type Props = {
   // the stop yet, so the first save (stand spot or framing) makes it first and then saves onto it. Returns the new
   // shot's vantage id; throws with a plain reason. The parent then hands the new id in as pair.vantage_id.
   addShot?: () => Promise<string>;
+  // Overhead tab, our 3D look (16 Nov 2026; Overhead3DPanel): the same page looking straight down over every shot of the
+  // place. The perspective controls (lens, frame box, walk, framing, HD, photo, Street View, the lines under the picture)
+  // are hidden and overhead3d.tsx's are shown; the foreground is always on. `pair` must be the picked shot.
+  overhead?: Overhead3D;
 };
 
 // The package's prop types don't resolve against this React Native version's types; the props used below are its documented ones.
@@ -162,7 +167,7 @@ function Below({ full, max, hide, children }: { full?: boolean; max: number; hid
   return <ScrollView style={{ maxHeight: max, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
 }
 
-export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview, addShot }: Props) {
+export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview, addShot, overhead }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -267,7 +272,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [hdLoading, setHdLoading] = useState(false);
   const hdRef = useRef<string | null>(null);
   hdRef.current = hd;
-  const want = hdOn ?? wantLocal;
+  const want = !overhead && (hdOn ?? wantLocal);   // (no HD from above)
   const setWant = useCallback((on: boolean) => { if (onHd) onHd(on); else setWantLocal(on); }, [onHd]);
   const savedLine = tripTerrainLine(useTripTerrain(tripId));
   // Reference photo (full screen only): 'card' = the small card, 'see' = see-through over the picture.
@@ -306,13 +311,14 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // Full screen only; kept while stepping between shots.
   const [glass, setGlassState] = useState(lastGlass);
   const setGlass = useCallback((on: boolean) => { lastGlass = on; setGlassState(on); }, []);
-  const glassOn = !!full && glass;
+  const glassOn = !!full && glass && !overhead;
   const [refXf, setRefXfState] = useState<PhotoXf>(() => refXfKept.get(refKey) ?? XF0);
   const setRefXf = useCallback((xf: PhotoXf) => { refXfKept.set(refKey, xf); setRefXfState(xf); }, [refKey]);
   useEffect(() => { setRefXfState(refXfKept.get(refKey) ?? XF0); }, [refKey]);
   useEffect(() => { if (refMode !== 'see') setRefMove(false); }, [refMode]);
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
+  const oh = useOverhead3D({ overhead, ready, run, full, onFull });
 
   // Which terrain files this shot needs (the wide one for the stand spot, plus a fine box around the
   // stand spot when there is one), then the files themselves (from the phone when saved).
@@ -437,10 +443,10 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     setForeground(false);
   }, [foreground, treesOn, setForeground, setTrees]);
   const foreSay = !foreground ? 'off' : treesOn ? 'on' : 'buildings only, no trees';
-  const refOn = full && !hd && refList.length > 0;   // the photo button and card: full screen, offline view, the stop has photos
+  const refOn = full && !hd && refList.length > 0 && !overhead;   // the photo button and card: full screen, offline view, the stop has photos
   const refPhoto = refList[Math.min(refIdx, Math.max(0, refList.length - 1))] ?? null;
   const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64 || !!treeTiles || !!rangeBox || !!houseTiles;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour or the park-wide trees
-  const useDetail = foreground && !hd && hasFore && !preview;
+  const useDetail = (foreground || (!!overhead && !heavy)) && !hd && hasFore && !preview;   // from above: always (unless it proved too heavy)
   const useDetailRef = useRef(false);
   useDetailRef.current = useDetail;
   // Frozen lakes: still water drawn as snow-covered ice, rivers open. Default from the area's ground; a tap changes it in place.
@@ -465,7 +471,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       view: pageFraming(framingRef.current) ?? undefined,   // a framed shot opens on its framing (older pages ignore it)
       level: lastLevels ?? undefined,
       treeStyle: TREE_STYLE,   // how the laser trees are drawn (services/terrain.ts TREE_STYLE)
-      trees: treesRef.current,   // the foreground's trees shown or hidden (older pages ignore it)
+      trees: overhead ? true : treesRef.current,   // the foreground's trees shown or hidden (older pages ignore it)
       ...(hd && hdCfg ? { tiles: { base: hdCfg.base, draco: hdCfg.draco, root: hd } } : null),
     };
     run(`window.S3D.init(${JSON.stringify(cfg)})`);
@@ -538,6 +544,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     let m: any = null;
     try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
     if (!m || typeof m.type !== 'string') return;
+    if (oh.onMessage(m)) return;
     if (m.type === 'boot') { booted.current = true; foreSent.current = false; setPerf(null); start(); }
     else if (m.type === 'perf') {
       if (m.levels && typeof m.levels.look === 'number' && typeof m.levels.sun === 'number') lastLevels = { look: m.levels.look, sun: m.levels.sun };
@@ -567,7 +574,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         setWant(false);
       } else { setProblem(String(m.msg ?? '')); setPhase(p => (p === 'ready' ? p : 'error')); }
     }
-  }, [start, setWant, onGone]);
+  }, [start, setWant, onGone, oh.onMessage]);
 
   // The sun follows the slider; the place and the day's first / last light follow the chosen shot.
   const az = sun.az, alt = sun.alt;
@@ -743,7 +750,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
-        <View style={[styles.topRow, preview ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
+        {oh.controls}
+        <View style={[styles.topRow, preview || overhead ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
           <View style={styles.lens} accessibilityRole="tablist">
             {LENSES.map(l => (
               <TouchableOpacity
@@ -869,12 +877,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           // above the caption; while walking, above the walk arrows (bottom-left, up to 192 dp)
           <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('off')} bottom={walking ? 200 : 34} move={refMove} onMove={setRefMove} />
         ) : null}
-        {ready && look != null ? (
+        {ready && look != null && !overhead ? (
           <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format}{preview ? '' : ` · ${hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}`}</Text>
         ) : null}
       </View>
 
-      <Below full={full} max={belowMax} hide={preview}>
+      <Below full={full} max={belowMax} hide={preview || !!overhead}>
       {ready && lit ? (
         <Text style={[styles.status, pad]}>
           <Text style={lit.subjectLit ? styles.sunOn : undefined}>{subject}: {lit.subjectLit ? 'in the sun' : lit.up ? 'in shadow' : 'no sun'}</Text>
