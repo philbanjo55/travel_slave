@@ -701,7 +701,7 @@ def sun_3d():
                 if nd.get('selected') == 'true':
                     on.append(tabs[0])
         # the selected state may sit on the tab's touchable (its parent), not the text: fall back to the 3D panel itself
-        first3d = '3D' in on or (not on and (V.has(s, 'Open the 3D view full screen') or V.has(s, 'Finding the terrain') or V.has(s, 'Drawing the terrain') or V.has(s, 'Looking ')))
+        first3d = '3D' in on or (not on and (V.has(s, '3D loads here') or V.has(s, 'Open the 3D view full screen') or V.has(s, 'Finding the terrain') or V.has(s, 'Drawing the terrain') or V.has(s, 'Looking ')))
         V.check('sun3d-tab-default', first3d, f'tabs {sel} selected {on}'[:120])
     V.check('sun3d-tab', V.tap_text(s, '3D', exact=True), 'tap the 3D tab')
     # The caption under the picture ("Looking W 259 ...") is what says it has drawn; bring it onto the screen first

@@ -15,6 +15,7 @@ import MissingScreen from '../components/MissingScreen';
 import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
 import SpotFoundChip from '../components/SpotFoundChip';
 import SunPlannerSection from '../components/sun/SunPlannerSection';
+import { pingNearView } from '../components/sun/nearView';
 import StopLocationEditor from '../components/StopLocationEditor';
 import StopDurationEditor from '../components/StopDurationEditor';
 import StopPlannerSection from '../components/planner/StopPlannerSection';
@@ -205,6 +206,7 @@ export default function StopDetailScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder
+        onScroll={pingNearView} scrollEventThrottle={100}
         contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}>
         {hero ? <StopCameraHero cams={cams} weather={stop.weather ?? null} timeLabel={stop.time_label} onClosed={reloadCams} dayDate={day?.date} /> : null}
         {PLANNER_ON && !hero ? (
