@@ -14,6 +14,9 @@ import {
 } from '../../utils/sunEngine';
 import SunMapPanel from './SunMapPanel';
 import OverheadMapPanel from './OverheadMapPanel';
+import Overhead3DPanel from './Overhead3DPanel';
+
+let lastOverLook: '3d' | 'sat' = '3d';
 import SunHorizonPanel from './SunHorizonPanel';
 import VantagePhoto from './VantagePhoto';
 import FullScreenPhotoViewer from '../FullScreenPhotoViewer';
@@ -195,6 +198,40 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   const light = lightAt(pair, ms);
   const moon = moonPosition(ms, pair.v.lat, pair.v.lng);
   const lab = LABELS[light.label];
+  // Overhead's look (Phil, 16 Nov 2026: both): our 3D from above (default: offline, real shadows) or Google satellite.
+  const [overLook, setOverLookState] = useState<'3d' | 'sat'>(lastOverLook);
+  const setOverLook = (k: '3d' | 'sat') => { lastOverLook = k; setOverLookState(k); AsyncStorage.setItem('pf_overhead_look', k).catch(() => {}); };
+  useEffect(() => { AsyncStorage.getItem('pf_overhead_look').then(v => { if (v === '3d' || v === 'sat') { lastOverLook = v; setOverLookState(v); } }).catch(() => {}); }, []);
+  const pickPair = (p: Pair) => { const i = stop.pairs.indexOf(p); if (i >= 0) { chosen.current = true; setPairIdx(i); } };
+  const overBar = (
+
+            <>
+              <View style={styles.timeRow}>
+                <Text style={styles.timeText}>{fmtMinute(minute)}</Text>
+                <View style={[styles.chip, { backgroundColor: lab.bg }]}>
+                  <Text style={[styles.chipText, { color: lab.fg }]}>{lab.text}</Text>
+                </View>
+                <View style={styles.jumps}>
+                  {events.rise != null && (
+                    <TouchableOpacity onPress={() => setMinute(events.rise!)} style={styles.jump} accessibilityLabel="Jump to sunrise">
+                      <Text style={styles.jumpText}>↗ {fmtMinute(events.rise).replace(/ [AP]M$/, '')}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {events.goldenPm != null && (
+                    <TouchableOpacity onPress={() => setMinute(events.goldenPm!)} style={styles.jump} accessibilityLabel="Jump to golden hour">
+                      <Text style={[styles.jumpText, { color: '#F0B04A' }]}>● {fmtMinute(events.goldenPm).replace(/ [AP]M$/, '')}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {events.set != null && (
+                    <TouchableOpacity onPress={() => setMinute(events.set!)} style={styles.jump} accessibilityLabel="Jump to sunset">
+                      <Text style={styles.jumpText}>↘ {fmtMinute(events.set).replace(/ [AP]M$/, '')}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+              <TimeScrubber minute={minute} onChange={setMinute} phases={events.phases} />
+            </>
+  );
   const showAngle = light.delta != null && (light.label === 'front' || light.label === 'side' || light.label === 'backlit');
   const [, mo, d] = stop.date.split('-').map(Number);
 
@@ -234,42 +271,46 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
       {tab === 'map' ? (
         <SunMapPanel pair={pair} light={light} moon={moon} riseAz={events.riseAz} setAz={events.setAz} height={208} />
       ) : tab === 'overhead' ? (
-        <OverheadMapPanel
-          pairs={stop.pairs}
-          sel={pair}
-          onPick={p => { const i = stop.pairs.indexOf(p); if (i >= 0) { chosen.current = true; setPairIdx(i); } }}
-          sun={light.sun}
-          shaded={light.label === 'in shadow'}
-          height={208}
-          fullBar={(
-            <>
-              <View style={styles.timeRow}>
-                <Text style={styles.timeText}>{fmtMinute(minute)}</Text>
-                <View style={[styles.chip, { backgroundColor: lab.bg }]}>
-                  <Text style={[styles.chipText, { color: lab.fg }]}>{lab.text}</Text>
-                </View>
-                <View style={styles.jumps}>
-                  {events.rise != null && (
-                    <TouchableOpacity onPress={() => setMinute(events.rise!)} style={styles.jump} accessibilityLabel="Jump to sunrise">
-                      <Text style={styles.jumpText}>↗ {fmtMinute(events.rise).replace(/ [AP]M$/, '')}</Text>
-                    </TouchableOpacity>
-                  )}
-                  {events.goldenPm != null && (
-                    <TouchableOpacity onPress={() => setMinute(events.goldenPm!)} style={styles.jump} accessibilityLabel="Jump to golden hour">
-                      <Text style={[styles.jumpText, { color: '#F0B04A' }]}>● {fmtMinute(events.goldenPm).replace(/ [AP]M$/, '')}</Text>
-                    </TouchableOpacity>
-                  )}
-                  {events.set != null && (
-                    <TouchableOpacity onPress={() => setMinute(events.set!)} style={styles.jump} accessibilityLabel="Jump to sunset">
-                      <Text style={styles.jumpText}>↘ {fmtMinute(events.set).replace(/ [AP]M$/, '')}</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-              <TimeScrubber minute={minute} onChange={setMinute} phases={events.phases} />
-            </>
+        <View style={{ gap: 6 }}>
+          {overLook === '3d' ? (
+            <Overhead3DPanel
+              pairs={stop.pairs}
+              sel={pair}
+              onPick={pickPair}
+              sun={light.sun}
+              shaded={light.label === 'in shadow'}
+              height={208}
+              fullBar={overBar}
+              day0={day0}
+              tripId={tripId}
+              onJump={setMinute}
+            />
+          ) : (
+            <OverheadMapPanel
+              pairs={stop.pairs}
+              sel={pair}
+              onPick={pickPair}
+              sun={light.sun}
+              shaded={light.label === 'in shadow'}
+              height={208}
+              fullBar={overBar}
+            />
           )}
-        />
+          <View style={styles.lookRow} accessibilityRole="tablist">
+            {(['3d', 'sat'] as const).map(k => (
+              <TouchableOpacity
+                key={k}
+                onPress={() => setOverLook(k)}
+                style={[styles.lookBtn, overLook === k && styles.lookOn]}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: overLook === k }}
+                accessibilityLabel={k === '3d' ? 'Overhead look: 3D, works offline' : 'Overhead look: satellite'}
+              >
+                <Text style={[styles.lookText, overLook === k && styles.lookTextOn]}>{k === '3d' ? '3D' : 'Satellite'}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
       ) : tab === 'horizon' ? (
         <SunHorizonPanel pair={pair} day0={day0} light={light} moon={moon} />
       ) : tab === '3d' ? (
@@ -556,6 +597,11 @@ const styles = StyleSheet.create({
   onePairStrong: { color: '#ffffff', fontWeight: '600' },
   editLink: { marginLeft: 'auto', paddingVertical: 2 },
   walkRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  lookRow: { flexDirection: 'row', alignSelf: 'flex-start', borderWidth: 1, borderColor: '#444444', borderRadius: 8, overflow: 'hidden' },
+  lookBtn: { minHeight: 30, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: '#000000' },
+  lookOn: { backgroundColor: '#ffffff' },
+  lookText: { fontSize: 11, fontWeight: '600', color: '#ffffff' },
+  lookTextOn: { color: '#000000' },
   walkBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: '#111111' },
   walkText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
   fullWalk: { width: 44, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' },
