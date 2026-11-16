@@ -11,7 +11,7 @@ import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { framingOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
 import type { Framing, Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
-import { RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar } from './RefPhotoOverlay';
+import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
 
 // 3D view of the shot (TEST app, Phil 12 Nov 2026): the real terrain from the
 // stand spot toward the subject, lit by the sun at the slider's time. The
@@ -268,6 +268,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [topH, setTopH] = useState(40);   // the button row's height (it wraps): the card sits under it
   // Another stop's shot (next / previous) brings its own photos: start again at its first, or close when it has none.
   useEffect(() => { setRefIdx(0); if (!refKey) setRefMode('off'); }, [refKey]);
+  // "Move photo" (pinch / drag the see-through photo to match the framing): on only while see-through; where the photo
+  // sits is kept across photos and lenses and put back to fit when the photo is closed.
+  const [refMove, setRefMove] = useState(false);
+  const [refXf, setRefXf] = useState<PhotoXf>(XF0);
+  useEffect(() => { if (refMode !== 'see') setRefMove(false); if (refMode === 'off') setRefXf(XF0); }, [refMode]);
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
 
@@ -658,7 +663,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             style={styles.web}
           />
         ) : null}
-        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} /> : null}
+        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} /> : null}
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
@@ -774,7 +779,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ) : null}
         {refOn && refMode === 'see' ? (
           // above the caption; while walking, above the walk arrows (bottom-left, up to 192 dp)
-          <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('card')} bottom={walking ? 200 : 34} />
+          <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('card')} bottom={walking ? 200 : 34} move={refMove} onMove={setRefMove} />
         ) : null}
         {ready && look != null ? (
           <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format}{preview ? '' : ` · ${hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}`}</Text>
