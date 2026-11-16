@@ -566,7 +566,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     run(`window.S3D.walk(${f},${r})`);
     stepTimer.current = setInterval(() => run(`window.S3D.walk(${f},${r})`), 130);
   }, [run, stopStepping]);
-  const leaveWalk = useCallback(() => { stopStepping(); setWalking(false); setWalkNote(null); run('window.S3D.home()'); }, [run, stopStepping]);
+  // Leaving walk mode keeps the view where it walked to (Phil, 16 Nov 2026); "Back to my spot" in walk mode goes back.
+  const leaveWalk = useCallback(() => { stopStepping(); setWalking(false); setWalkNote(null); }, [stopStepping]);
   const canSaveSpot = !!(tripId && stopId && at && at.moved >= 2);
   const saveSpot = useCallback(() => {
     if (!tripId || !stopId || !at) return;
