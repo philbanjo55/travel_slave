@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert, Modal } from 'react-native';
 import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,13 +8,19 @@ import { colors } from '../theme';
 import { supabase } from '../services/supabase';
 import { addShotRemember, fetchSpotJob, isOpen, markSpotSeen, SpotJob, Lens } from '../services/photoSpot';
 import { useTripStore } from '../store/tripStore';
-import { sunPosition } from '../utils/sunEngine';
+import { dayStartMs, sunPosition } from '../utils/sunEngine';
 import type { Pair } from '../utils/sunEngine';
+import { useSunStop } from '../services/sunPlan';
+import { stopPagePhotos } from '../utils/photoGroups';
+import type { RefPhoto } from '../components/sun/RefPhotoOverlay';
 
 // Find my spot, the answer (Phil's mockup "Found" / "Lens135", 16 Nov 2026): the photo with our sky line on it,
 // its 4x5 equivalent, how sure, and a plan per lens he owns; a tap on a lens shows that view in our 3D (read only).
 // "Add as a shot" makes a framed shot at that lens's spot on the stop (and its practice copies); "Open in 3D" opens
-// the same view full screen.
+// the same view full screen as the stop page's full-screen 3D (Phil, 16 Nov 2026: "place and frame the shot there and
+// save, with the photo overlay"): walk mode, Save as my spot, Aim at subject, Save framing, and the reference photo
+// opening on the photo the spot was found from. A shot already added is edited as it now stands (the trip's sun plan);
+// one not added yet is added (photo_spot_add_shot, this lens) by the first save, which then goes onto it.
 
 const KM_PER_DEG = 111.132;
 
@@ -50,6 +56,7 @@ export default function PhotoSpotScreen() {
   const [adding, setAdding] = useState(false);
   const [full, setFull] = useState(false);
   const refresh = useTripStore((s: any) => s.refreshCurrentTrip);
+  const tripData = useTripStore((s: any) => s.currentTripData);
   const focused = useIsFocused();   // one 3D web view at a time: the small one goes while full screen is open or the screen is left
 
   useEffect(() => {
@@ -72,6 +79,57 @@ export default function PhotoSpotScreen() {
   const t = useMemo(() => noonAt(row?.lng ?? 0), [row?.lng]);
   const sun = useMemo(() => (row ? sunPosition(t, row.lat, row.lng) : null), [t, row?.lat, row?.lng]);
   const added = row ? job?.shots?.[row.id] : null;
+  // The stop's trip (the trip on the phone when it holds the stop, else asked once), its sun plan and photos, for the
+  // full screen's saves and reference photo.
+  const stopId = job?.stop_id ?? null;
+  const inStore = useMemo(() => !!(stopId && (tripData?.days ?? []).some((d: any) => (d?.stops ?? []).some((x: any) => x?.id === stopId))), [tripData, stopId]);
+  const [askedTrip, setAskedTrip] = useState<string | null>(null);
+  useEffect(() => {
+    if (!stopId || inStore) return;
+    let alive = true;
+    supabase.from('stops').select('trip_id').eq('id', stopId).maybeSingle()
+      .then(({ data }: any) => { if (alive && data?.trip_id) setAskedTrip(data.trip_id); }, () => {});
+    return () => { alive = false; };
+  }, [stopId, inStore]);
+  const tripId: string | null = inStore ? tripData?.trip?.id ?? null : askedTrip;
+  const planStop = useSunStop(tripId, stopId ?? '');
+  const livePair = added ? planStop?.pairs.find(p => p.vantage_id === added) ?? null : null;
+  // The shot the full screen edits: the added shot as it stands now (its stand spot and framing may have been saved
+  // since), else this lens's spot under the added shot's id, else the not-yet-added spot (made by the first save).
+  const fullPair = useMemo<Pair | null>(() => (!pair ? null : added ? (livePair ?? { ...pair, vantage_id: added }) : pair), [pair, added, livePair]);
+  const photos = useMemo<RefPhoto[]>(() => {
+    const own: RefPhoto[] = job?.photo_url ? [{ id: job.photo_id, storage_url: job.photo_url }] : [];
+    const rest = inStore && stopId ? stopPagePhotos(tripData, stopId).filter((p: any) => p?.id !== job?.photo_id) : [];
+    return [...own, ...rest];
+  }, [job?.photo_id, job?.photo_url, inStore, stopId, tripData]);
+  // The full screen's day: the stop's own day as the stop page has it (else today, around solar noon), noon to start.
+  const fDay0 = planStop ? dayStartMs(planStop.date, planStop.utc_offset_min) : t - 12 * 3600e3;
+  const [fMinute, setFMinute] = useState(720);
+  const fSun = useMemo(() => (fullPair ? sunPosition(fDay0 + fMinute * 60000, fullPair.v.lat, fullPair.v.lng) : null), [fDay0, fMinute, fullPair?.v.lat, fullPair?.v.lng]);
+  // Not added yet: the full screen's first save adds the shot (this lens) and saves onto it. One add at a time.
+  const jobRef = useRef(job);
+  jobRef.current = job;
+  const making = useRef<Promise<string> | null>(null);
+  const makeShot = useCallback((): Promise<string> => {
+    const j = jobRef.current, lens = row?.id;
+    if (!j || !lens) return Promise.reject(new Error('No spot to add'));
+    const have = j.shots?.[lens];
+    if (have) return Promise.resolve(have);
+    if (!making.current) {
+      making.current = (async () => {
+        const { data, error } = await supabase.rpc('photo_spot_add_shot', { p_job: j.id, p_lens: lens });
+        if (error || !data?.vantage_id) {
+          const msg = String(error?.message ?? '');
+          throw new Error(/network|fetch|timed out|offline|abort/i.test(msg) ? 'Adding the shot needs a signal' : msg || 'The shot was not added');
+        }
+        addShotRemember(j.id, lens, data.vantage_id);
+        setJob(x => (x ? { ...x, shots: { ...(x.shots ?? {}), [lens]: data.vantage_id } } : x));
+        refresh?.().catch?.(() => {});
+        return data.vantage_id as string;
+      })().finally(() => { making.current = null; });
+    }
+    return making.current;
+  }, [row?.id, refresh]);
   const conf = r?.confidence;
   const confColor = conf?.word === 'High' ? colors.signalOk : conf?.word === 'Medium' ? '#aaaaaa' : '#888888';
 
@@ -155,9 +213,14 @@ export default function PhotoSpotScreen() {
           </TouchableOpacity>
         </View>
       ) : null}
-      <Modal visible={full && !!pair && !!sun} animationType="fade" onRequestClose={() => setFull(false)} statusBarTranslucent>
+      <Modal visible={full && !!fullPair && !!fSun} animationType="fade" onRequestClose={() => setFull(false)} statusBarTranslucent>
         <View style={[styles.fullWrap, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-          {pair && sun ? <Sun3DPanel pair={pair} sun={sun} day0={t - 12 * 3600e3} full onJump={() => {}} onFull={() => setFull(false)} /> : null}
+          {full && fullPair && fSun ? (
+            <Sun3DPanel
+              pair={fullPair} tripId={tripId} stopId={stopId} sun={fSun} day0={fDay0} full onJump={setFMinute} onFull={() => setFull(false)}
+              photos={photos} addShot={added ? undefined : makeShot}
+            />
+          ) : null}
           <TouchableOpacity onPress={() => setFull(false)} style={styles.fullClose} accessibilityRole="button" accessibilityLabel="Close the 3D view">
             <Text style={styles.btnText}>Close</Text>
           </TouchableOpacity>

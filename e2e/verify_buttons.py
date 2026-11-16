@@ -1373,6 +1373,79 @@ def faroes_3d():
     V.back(); time.sleep(2)
 
 
+def spot_open_3d_edit():
+    """Your spot -> Open in 3D as an editing view (16 Nov 2026, branch claude/spot-open3d): the full screen has the stop's
+    trip and stop, so walk mode, Save framing and the reference photo are there, and the photo card opens on the job's
+    own photo. The job (T.A. Moulton Barn, 34a139a0) has no shot added: Save framing is tapped only to read its question
+    ("added to this stop as a shot first") and CANCELLED; nothing is saved (fetchGuard would refuse it). Checks spot-3d-*."""
+    def btn(st, label, exact=True):
+        return next((c for c in st.clickables if ((c['label'].split(' | ')[0].strip().lower() == label.lower()) if exact else (label.lower() in c['label'].lower()))), None)
+    t0 = time.time(); f = C.capture(1)
+    while time.time() - t0 < 120 and btn(f, 'Walk mode: move your viewpoint') is None:
+        time.sleep(4); f = C.capture(1)
+    V.check('spot-3d-walk-btn', btn(f, 'Walk mode: move your viewpoint') is not None,
+            f'walk button after {time.time() - t0:.0f} s' if btn(f, 'Walk mode: move your viewpoint') else 'no walk button in 120 s (view not drawn, or no trip / stop)')
+    print('INFO spot-3d texts: ' + ' | '.join(t for t in f.all_texts if len(t.strip()) > 2)[:500], flush=True)
+    H = 2400
+    for _ in range(4):   # the framing row may sit below the fold of the short area under the picture
+        if btn(f, 'Save framing for this shot', exact=False) is not None:
+            break
+        C.adb('shell', 'input', 'swipe', '540', str(int(0.80 * H)), '540', str(int(0.70 * H)), '500'); f = C.capture(1.2)
+    # only enabled buttons are listed as clickables, so being there = enabled
+    V.check('spot-3d-save-framing', btn(f, 'Save framing for this shot', exact=False) is not None, 'Save framing button enabled')
+    line = next((t for t in f.all_texts if t.startswith(('Framing: ', 'Not a shot yet', 'Not framed yet', 'Framed '))), None)
+    print(f'INFO spot-3d framing line: {line!r}', flush=True)
+    V.check('spot-3d-aim', btn(f, 'Aim at subject') is not None, 'Aim at subject button')
+    cut_off('spot-3d-edit', f)
+    if V.tap_text(f, 'Save framing for this shot'):
+        q = None
+        for _ in range(5):
+            q = C.capture(1.2)
+            if V.has(q, 'Save this framing?'):
+                break
+        asked = q is not None and V.has(q, 'Save this framing?')
+        V.check('spot-3d-save-asks', asked and V.has(q, 'added to this stop as a shot first') and V.has(q, 'practice'),
+                'question says the shot is added first, real trip and practice copy' if asked else 'no "Save this framing?" question')
+        if asked:
+            print('INFO spot-3d framing question: ' + ' | '.join(t for t in q.all_texts if len(t) > 3)[:400], flush=True)
+            cancelled = V.tap_text(q, 'Cancel', exact=True)
+            time.sleep(1.5); a = C.capture(1)
+            V.check('spot-3d-save-cancel', cancelled and not V.has(a, 'Save this framing?'), 'cancelled, nothing saved')
+        else:
+            V.back(); time.sleep(1)
+    # Reference photo: the button, the card on the job's photo (1 of n), see-through, close
+    f = C.capture(1)
+    b = btn(f, 'Reference photo')
+    V.check('spot-3d-refphoto-btn', b is not None, 'photo button in the full screen')
+    if b is None:
+        print('INFO spot-3d buttons: ' + ' | '.join(c['label'][:30] for c in f.clickables)[:600], flush=True); return
+    C.tap(b['xy'])
+    c = C.capture(1.2)
+    for _ in range(5):
+        if btn(c, 'Close reference photo', exact=False) is not None: break
+        c = C.capture(1.2)
+    count = next((t for t in c.all_texts if re.fullmatch(r'\d+ of \d+', t.strip())), None)
+    V.check('spot-3d-refphoto-open', btn(c, 'Close reference photo', exact=False) is not None and (count or '').startswith('1 of'),
+            f'card open on {count or "no n of m label"}')
+    V.show('spot-3d-refphoto', c)
+    card = btn(c, 'over the view', exact=False)
+    if card is not None:
+        C.tap(card['xy']); d = C.capture(1.5)
+        for _ in range(4):
+            if V.has(d, 'See-through amount'): break
+            d = C.capture(1.2)
+        V.check('spot-3d-refphoto-see', V.has(d, 'See-through amount') and V.has(d, 'Looking '), 'job photo see-through over the view, slider shown')
+        V.show('spot-3d-refphoto-see', d)
+        cut_off('spot-3d-refphoto-see', d)
+        V.tap_text(d, 'Close see-through'); time.sleep(1.2)
+    e = C.capture(1)
+    b = btn(e, 'Reference photo')
+    if btn(e, 'Close reference photo', exact=False) is not None and b is not None:
+        C.tap(b['xy']); time.sleep(1.2); e = C.capture(1)
+    V.check('spot-3d-refphoto-closed', btn(e, 'Close reference photo', exact=False) is None and btn(e, 'Close see-through', exact=False) is None
+            and V.has(e, 'Looking ') and C.app_alive(), 'card and see-through closed, view still up')
+
+
 def find_spot():
     """Find my spot (16 Nov 2026): the Find spot pill in the photo viewer, its progress card, and the Your spot screen
     for a job already done on Teton Live's T.A. Moulton Barn (job 34a139a0, photo 9ae511b2). Read only: a new request is
@@ -1475,6 +1548,9 @@ def find_spot():
         has_close = any(c['label'].split(' | ')[0] == 'Close the 3D view' for c in f.clickables)
         V.check('spot-open-3d', has_close, 'full-screen 3D with its Close button')
         V.show('spot-open-3d', f)
+        if has_close:
+            spot_open_3d_edit()
+            f = C.capture(1)
         cut_off('spot-open-3d', f)
         V.tap_text(f, 'Close the 3D view', exact=True); time.sleep(2)
     else:
