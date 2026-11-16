@@ -725,7 +725,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   ] : [];
 
   return (
-    <View style={full ? styles.fullWrap : undefined} accessibilityLabel={`3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}`}>
+    <View style={full ? styles.fullWrap : undefined} accessibilityLabel={overhead ? `Overhead 3D ${ready ? 'ready' : phase}, ${overhead.pairs.length} shots` : `3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}`}>
       <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}>
         <View style={[styles.web, glassOn ? styles.glass : null]} pointerEvents="box-none">
         {region && b64 && !holding ? (
