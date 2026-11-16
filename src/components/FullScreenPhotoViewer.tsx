@@ -13,6 +13,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { getPhotoUri } from '../services/photoCache';
+import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { isOpen, lookupSpot, markSpotSeen, requestSpot, spotProgress, useSpot } from '../services/photoSpot';
+import { useTripStore } from '../store/tripStore';
 
 const { width, height } = Dimensions.get('window');
 
@@ -30,6 +34,7 @@ export default function FullScreenPhotoViewer({
   onClose,
   onDelete,
   onMakeFirst,
+  spotStop,
 }: {
   photo: any | null;
   photos?: any[];
@@ -37,6 +42,7 @@ export default function FullScreenPhotoViewer({
   onClose: () => void;
   onDelete?: (photo: any) => void;
   onMakeFirst?: (photo: any) => Promise<boolean | void> | void;
+  spotStop?: { id: string; name?: string } | null;   // Find spot: the stop the photos are on (none = no button)
 }) {
   const list = photos && photos.length ? photos : photo ? [photo] : [];
   // Tracked by id, not position, so reordering the list (Set as first)
@@ -236,6 +242,9 @@ export default function FullScreenPhotoViewer({
           <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={12}>
             <Ionicons name="close" size={28} color="#fff" />
           </Pressable>
+          {visible && spotStop && current?.id && (current.storage_url || /^https?:/.test(String(current.url ?? ''))) ? (
+            <FindSpot photoId={current.id} stop={spotStop} onLeave={onClose} />
+          ) : null}
           {list.length > 1 && (
             <View style={styles.counter} pointerEvents="none">
               <Text style={styles.counterText}>{index + 1} / {list.length}</Text>
@@ -283,8 +292,97 @@ export default function FullScreenPhotoViewer({
   );
 }
 
+// Find spot (Phil, 16 Nov 2026): a white pill at the top; while it works, a card at the bottom with a bar.
+// The job carries on without the viewer (services/photoSpot): leaving is fine.
+function FindSpot({ photoId, stop, onLeave }: { photoId: string; stop: { id: string; name?: string }; onLeave: () => void }) {
+  const insets = useSafeAreaInsets();
+  const navigation = useNavigation<any>();
+  const offline = useTripStore((s: any) => s.isOffline);
+  const kept = useSpot(photoId, stop.id);
+  const job = kept?.job ?? null;
+  const [asking, setAsking] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [, tick] = useState(0);
+  useEffect(() => { setErr(null); lookupSpot(photoId, stop.id).catch(() => {}); }, [photoId, stop.id]);
+  const open = isOpen(job);
+  useEffect(() => {   // the bar creeps on between polls
+    if (!open) return;
+    const t = setInterval(() => tick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [open]);
+  const found = job?.status === 'done' && job.result?.ok;
+  const failed = job?.status === 'error' || (job?.status === 'done' && !job.result?.ok);
+  const see = () => {
+    if (!job) return;
+    markSpotSeen(job.id);
+    onLeave();
+    navigation.navigate('PhotoSpot', { jobId: job.id, stopName: stop.name ?? null });
+  };
+  const start = async (again = false) => {
+    if (asking) return;
+    setAsking(true); setErr(null);
+    const r = await requestSpot(stop.id, photoId, stop.name, again);
+    setAsking(false);
+    if (r.error) setErr(r.error);
+  };
+  const label = offline && !found ? 'Needs a signal' : found ? 'Your spot' : open || asking ? 'Finding…' : 'Find spot';
+  return (
+    <>
+      <Pressable
+        style={[styles.spotPill, { top: Math.max(50, insets.top + 8) }, (offline && !found) || open ? styles.spotPillDim : null]}
+        onPress={() => (found ? see() : !open && !offline ? start(failed) : undefined)}
+        disabled={(offline && !found) || open || asking}
+        hitSlop={6}
+        accessibilityRole="button"
+        accessibilityLabel={found ? 'Your spot: see where you stood' : open ? 'Finding where you stood' : offline ? 'Find spot needs a signal' : 'Find spot: where was this taken'}
+      >
+        <Ionicons name="locate-outline" size={16} color="#000" />
+        <Text style={styles.spotPillText}>{label}</Text>
+      </Pressable>
+      {open || asking ? (
+        <View style={[styles.spotCard, { bottom: insets.bottom + 100 }]} accessibilityLabel="Finding where you stood">
+          <View style={styles.spotRow}>
+            <Text style={styles.spotTitle}>Finding where you stood</Text>
+            <Text style={styles.spotSmall}>about 3 min</Text>
+          </View>
+          <View style={styles.spotBar}><View style={[styles.spotFill, { width: `${Math.round(spotProgress(job) * 100)}%` }]} /></View>
+          <Text style={styles.spotSmall}>{job?.note && /set up|did not start/.test(job.note) ? job.note[0].toUpperCase() + job.note.slice(1) : "You can leave. It tells you when it's done."}</Text>
+        </View>
+      ) : found ? (
+        <Pressable style={[styles.spotCard, { bottom: insets.bottom + 100 }]} onPress={see} accessibilityRole="button" accessibilityLabel="Spot found. See it">
+          <View style={styles.spotRow}>
+            <Text style={styles.spotTitle}>Spot found</Text>
+            <Text style={[styles.spotSmall, { color: '#5aaa7a' }]}>{job?.result?.confidence?.word ?? ''}</Text>
+          </View>
+          <Text style={styles.spotSmall}>Tap to see it</Text>
+        </Pressable>
+      ) : failed || err ? (
+        <View style={[styles.spotCard, { bottom: insets.bottom + 100 }]} accessibilityLabel="Couldn't place it">
+          <Text style={styles.spotTitle}>{err ? "Couldn't start" : "Couldn't place it"}</Text>
+          <Text style={styles.spotSmall}>{err ?? job?.result?.why ?? job?.error ?? ''}</Text>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  spotPill: {
+    position: 'absolute', right: 76, height: 32, paddingHorizontal: 12, borderRadius: 16, backgroundColor: '#fff',
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  spotPillDim: { opacity: 0.6 },
+  spotPillText: { color: '#000', fontSize: 13, fontWeight: '600' },
+  spotCard: {
+    position: 'absolute', left: 16, right: 16, backgroundColor: '#111111', borderRadius: 12,
+    paddingHorizontal: 16, paddingVertical: 14, gap: 10,
+  },
+  spotRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  spotTitle: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
+  spotSmall: { color: '#888888', fontSize: 12 },
+  spotBar: { height: 4, borderRadius: 2, backgroundColor: '#2a2a2a', overflow: 'hidden' },
+  spotFill: { height: 4, borderRadius: 2, backgroundColor: '#5aaa7a' },
   counter: {
     position: 'absolute', top: 54, left: 20, paddingHorizontal: 10, paddingVertical: 4,
     borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.45)',
