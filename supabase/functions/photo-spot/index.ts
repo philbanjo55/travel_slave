@@ -142,7 +142,10 @@ async function freshen(j: any) {
   if (!j || !(j.status in STALE_MIN)) return j;
   const since = j.status === 'queued' ? (j.dispatched_at ?? null) : j.updated_at;
   if (j.status === 'queued' && !j.dispatched_at) {
-    // the worker token may have been added since: try once more
+    // the worker token may have been added since: try once more. Not while the first dispatch may still be on its way
+    // (16 Nov 2026: the app's 5 s status poll landed between 'queued' and dispatched_at and started a second worker,
+    // whose claim then failed and GitHub emailed 'All jobs have failed').
+    if (Date.now() - new Date(j.updated_at).getTime() < 60e3) return j;
     if (Deno.env.get('GITHUB_DISPATCH_TOKEN') && j.look) { const why = await dispatch(j.id); if (!why) return (await db.from('photo_spot_jobs').select('*').eq('id', j.id).maybeSingle()).data; }
     return j;
   }
