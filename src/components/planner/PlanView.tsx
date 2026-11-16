@@ -310,7 +310,7 @@ export function ApplySheet({ apply, onClose, tripId, run, plan, mine, onAccepted
   // Accepting a single day pulls stops off other days (Phil, 3 Nov 2026): accept happens for the
   // rest of the trip at once, from the day card on the trip page. This sheet only previews.
   const writable = false;
-  const testTrip = !!tripId && canApply(tripId);
+  const testTrip = !!tripId && canApply(tripId, currentTripData?.trip);
   const accept = async () => {
     if (!run || !plan || !tripId) return;
     setBusy(true);

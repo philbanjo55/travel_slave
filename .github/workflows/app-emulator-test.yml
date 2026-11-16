@@ -1,6 +1,8 @@
 name: App emulator test (trip and day stay put)
 
-# Builds the TEST variant of the app (Philm+Frame TEST, com.philmframe.app.test)
+# MAIN-APP copy (branch claude/planner-buttons-main, 15 Nov 2026): builds the main app (Philm+Frame,
+# com.philmframe.app) with the promotion code, so the main app itself passes before it reaches Phil.
+# Was: builds the TEST variant of the app (Philm+Frame TEST, com.philmframe.app.test)
 # with every Supabase write blocked (e2e/fetchGuard.ts), installs it on an
 # Android emulator and taps through every screen (e2e/crawl.py).
 # Runs only on this branch. Starts no EAS build and publishes no update:
@@ -8,7 +10,7 @@ name: App emulator test (trip and day stay put)
 
 on:
   push:
-    branches: [claude/planner-buttons-test]
+    branches: [claude/planner-buttons-test, claude/planner-buttons-main]
   workflow_dispatch:
 
 concurrency:
@@ -44,10 +46,10 @@ jobs:
           head -3 App.tsx
           jq '.expo.updates.enabled = false' app.json > app.tmp && mv app.tmp app.json
           npm ci --no-audit --no-fund
-      - name: Prebuild Android (TEST variant)
+      - name: Prebuild Android (main app)
         if: steps.apkcache.outputs.cache-hit != 'true'
         env:
-          APP_VARIANT: test
+          APP_VARIANT: ''
           CI: 1
           # Not a real key (this repo is public). Without any key in the manifest the Google map on the stop page
           # throws "API key not found" and React Native shuts down; with a made-up one the map is blank and the page opens.
@@ -56,7 +58,7 @@ jobs:
       - name: Gradle release APK (x86_64 only)
         if: steps.apkcache.outputs.cache-hit != 'true'
         env:
-          APP_VARIANT: test
+          APP_VARIANT: ''
           NODE_ENV: production
         run: |
           cd android
@@ -89,6 +91,7 @@ jobs:
       - name: Run tap-through on a Pixel emulator
         uses: reactivecircus/android-emulator-runner@v2
         env:
+          APP_PKG: com.philmframe.app
           OUT: out
           CRAWL_MINUTES: '0'
         with:

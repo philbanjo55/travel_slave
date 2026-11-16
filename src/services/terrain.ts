@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from './supabase';
-import { IS_TEST_APP } from '../utils/variant';
+import { PLANNER_ON } from '../utils/variant';
 
 // Elevation files for the 3D sun view (TEST app). One file per area, listed in
 // public.terrain_regions and kept in the public Storage bucket `terrain`. The
@@ -526,7 +526,7 @@ async function tripAreas(shots: Shot[]): Promise<TerrainFile[][]> {
 // time, in the background; returns at once, never throws, and never holds anything else up. A file that fails (no
 // signal) is simply tried again the next time the plan loads.
 export function saveTripTerrain(tripId: string, shots: Shot[]): void {
-  if (!IS_TEST_APP || !tripId) return;
+  if (!PLANNER_ON || !tripId) return;
   const run = tripRun[tripId];
   if (run) { run.again = shots; return; }   // one run per trip; the newest pins go next
   const mine: { again: Shot[] | null } = { again: null };
