@@ -19,6 +19,7 @@ import FullScreenPhotoViewer from '../FullScreenPhotoViewer';
 import type { Pair } from '../../utils/sunEngine';
 import { LABELS, PHASE_COLORS, compassPoint, shotName, shotTitle } from './sunStyle';
 import Sun3DPanel from './Sun3DPanel';
+import WalkToShot from './WalkToShot';
 import { useNearView } from './nearView';
 import { PLANNER_ON } from '../../utils/variant';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -134,6 +135,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   const [tab, setTab] = useState<Tab>(TABS[0]);
   const [viewing, setViewing] = useState<Pair | null>(null);
   const [full3d, setFull3d] = useState(false);
+  const [walk, setWalk] = useState<null | 'page' | 'full'>(null);   // Walk to shot: from the stop page or from full-screen 3D
   const nv = useNearView();   // the inline 3D view waits until the section is scrolled to (then stays)
   const [hd3d, setHd3d] = useState(false);   // the 3D view's HD picture: off until tapped, kept when going full screen
   const pair = stop.pairs[Math.min(pairIdx, stop.pairs.length - 1)];
@@ -304,9 +306,18 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
           })}
         </ScrollView>
       )}
-      <TouchableOpacity onPress={() => onEdit()} style={styles.editLink} accessibilityRole="button" hitSlop={8}>
-        <Text style={styles.editLinkText}>Edit vantages</Text>
-      </TouchableOpacity>
+      <View style={styles.walkRow}>
+        {PLANNER_ON ? (
+          <TouchableOpacity onPress={() => setWalk('page')} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel={`Walk to shot ${pair.code ?? ''}`.trim()}>
+            <Ionicons name="walk-outline" size={16} color="#ffffff" />
+            <Text style={styles.walkText}>Walk to {pair.code || 'shot'}</Text>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity onPress={() => onEdit()} style={styles.editLink} accessibilityRole="button" hitSlop={8}>
+          <Text style={styles.editLinkText}>Edit vantages</Text>
+        </TouchableOpacity>
+      </View>
+      <WalkToShot pair={pair} visible={walk === 'page'} onClose={() => setWalk(null)} onOpen3d={PLANNER_ON ? () => { setWalk(null); setFull3d(true); } : undefined} />
       <Modal visible={full3d} animationType="fade" onRequestClose={() => setFull3d(false)}>
         <View style={[styles.fullScreen, { paddingTop: insets.top }]}>
           {full3d ? (
@@ -329,12 +340,16 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
             <View style={styles.timeRow}>
               <Text style={styles.timeText}>{fmtMinute(fMinute)}</Text>
               <Text style={styles.fullShot} numberOfLines={1}>{away ? `${MONTHS[Number(fStop.date.slice(5, 7)) - 1]} ${Number(fStop.date.slice(8, 10))}` : shotName(pair)}</Text>
+              <TouchableOpacity onPress={() => setWalk('full')} style={styles.fullWalk} accessibilityRole="button" accessibilityLabel="Walk to this shot" hitSlop={4}>
+                <Ionicons name="walk-outline" size={20} color="#ffffff" />
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => setFull3d(false)} style={styles.fullClose} accessibilityRole="button" accessibilityLabel="Close the 3D view">
                 <Text style={styles.fullCloseText}>Close</Text>
               </TouchableOpacity>
             </View>
             <TimeScrubber minute={fMinute} onChange={setFMinute} phases={fEvents.phases} />
           </View>
+          {full3d ? <WalkToShot pair={fPair} visible={walk === 'full'} onClose={() => setWalk(null)} onOpen3d={() => setWalk(null)} /> : null}
         </View>
       </Modal>
       <FullScreenPhotoViewer
@@ -500,7 +515,11 @@ const styles = StyleSheet.create({
   onePair: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: colors.border, borderRadius: 8, backgroundColor: '#111111', paddingHorizontal: 8, paddingVertical: 8 },
   onePairText: { fontSize: 12, color: '#888888' },
   onePairStrong: { color: '#ffffff', fontWeight: '600' },
-  editLink: { alignSelf: 'flex-end', paddingVertical: 2 },
+  editLink: { marginLeft: 'auto', paddingVertical: 2 },
+  walkRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  walkBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: '#111111' },
+  walkText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
+  fullWalk: { width: 44, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' },
   editLinkText: { fontSize: 12, color: '#888888', textDecorationLine: 'underline' },
   addBtn: {
     marginHorizontal: spacing.xl, marginBottom: spacing.lg, paddingVertical: 10, alignItems: 'center',
