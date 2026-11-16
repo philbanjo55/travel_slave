@@ -281,6 +281,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         loaded.current = `${r.id}|${nr && nd ? nr.id : ''}`; nearUsed.current = nr && nd ? nr : null;
         setRegion(r); setNear(nearUsed.current); setB64(d); setNearB64(nr && nd ? nd : null); setPhase('starting');
       }
+      if (preview) return;   // Find spot's small picture: the plain terrain only (no foreground files, no restarts)
       // The foreground's files come behind the plain view, never before it: the detail box for this shot (it must sit
       // inside the fine box the page really has), its mask, the tree returns and the wide water; in the Faroes also the
       // detail box's photo and buildings, and the fine box's photo (which comes even without a detail box).
@@ -319,7 +320,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       if (dt0 && dd) { setMaskB64(md); setTreesB64(td); setWaterB64(wd); setColorB64(cd); setBldB64(bd); setDetailB64(dd); setDetail(dt0); }
     })();
     return () => { alive = false; };
-  }, [vLat, vLng, sLat, sLng]);
+  }, [vLat, vLng, sLat, sLng, preview]);
 
   const dayPath = useMemo(() => {
     const out: number[][] = [];
@@ -368,7 +369,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const refOn = full && !hd && refList.length > 0;   // the photo button and card: full screen, offline view, the stop has photos
   const refPhoto = refList[Math.min(refIdx, Math.max(0, refList.length - 1))] ?? null;
   const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64 || !!treeTiles || !!rangeBox || !!houseTiles;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour or the park-wide trees
-  const useDetail = foreground && !hd && hasFore;
+  const useDetail = foreground && !hd && hasFore && !preview;
   const useDetailRef = useRef(false);
   useDetailRef.current = useDetail;
   // Frozen lakes: still water drawn as snow-covered ice, rivers open. Default from the area's ground; a tap changes it in place.
