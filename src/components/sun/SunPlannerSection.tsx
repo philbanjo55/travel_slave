@@ -13,6 +13,7 @@ import {
   dayEvents, dayStartMs, fmtMinute, lightAt, moonPosition, parseTimeLabel,
 } from '../../utils/sunEngine';
 import SunMapPanel from './SunMapPanel';
+import OverheadMapPanel from './OverheadMapPanel';
 import SunHorizonPanel from './SunHorizonPanel';
 import VantagePhoto from './VantagePhoto';
 import FullScreenPhotoViewer from '../FullScreenPhotoViewer';
@@ -100,10 +101,11 @@ function SunPlannerInner({ tripId, stopId, timeLabel, stopName, stopPhotos, stop
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-type Tab = 'map' | 'horizon' | 'photo' | '3d';
-const TAB_NAMES: Record<Tab, string> = { map: 'Map', horizon: 'Horizon', photo: 'Photo', '3d': '3D' };
+type Tab = 'map' | 'overhead' | 'horizon' | 'photo' | '3d';
+const TAB_NAMES: Record<Tab, string> = { map: 'Map', overhead: 'Overhead', horizon: 'Horizon', photo: 'Photo', '3d': '3D' };
 // 3D comes first and is what opens (Phil, 16 Nov 2026: "I want 3d to be the one that's first and opened").
-const TABS: Tab[] = PLANNER_ON ? ['3d', 'map', 'horizon', 'photo'] : ['map', 'horizon', 'photo'];
+// Overhead (Phil, 16 Nov 2026) replaces Map where the planner is on: every shot of the place from above.
+const TABS: Tab[] = PLANNER_ON ? ['3d', 'overhead', 'horizon', 'photo'] : ['map', 'horizon', 'photo'];
 
 // Every stop's starred shot as saved on the phone (starredShot keeps them), for the full-screen shot order.
 async function savedStars(stopIds: string[]): Promise<Record<string, string | null>> {
@@ -231,6 +233,14 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
 
       {tab === 'map' ? (
         <SunMapPanel pair={pair} light={light} moon={moon} riseAz={events.riseAz} setAz={events.setAz} height={208} />
+      ) : tab === 'overhead' ? (
+        <OverheadMapPanel
+          pairs={stop.pairs}
+          sel={pair}
+          onPick={p => { const i = stop.pairs.indexOf(p); if (i >= 0) { chosen.current = true; setPairIdx(i); } }}
+          sun={light.sun}
+          height={208}
+        />
       ) : tab === 'horizon' ? (
         <SunHorizonPanel pair={pair} day0={day0} light={light} moon={moon} />
       ) : tab === '3d' ? (
