@@ -1130,6 +1130,88 @@ def refphoto():
     V.check('refphoto-alive', C.app_alive())
 
 
+def stops_page(fresh=True):
+    """Stops tab on the trip page (TEST app, design FINAL, 16 Nov 2026): a first tab 'ALL <n> / Stops' before the days
+    shows every rated place once under rank headings (GOD TIER, S TIER, ...), two cards a row; a card opens its stop page
+    and Back comes back to the Stops view."""
+    h = 2400
+    m = re.search(r'(\d+)x(\d+)', C.adb('shell', 'wm', 'size') or '')
+    if m:
+        h = int(m.group(2))
+    if fresh:
+        if open_live() is None:
+            return
+    s = C.capture(1.5)
+    tab = next((c for c in s.clickables if c['label'].lower().startswith('stops: all')), None)
+    if tab is None:   # the tab row may have scrolled to today's tab: swipe it back to its start
+        for _ in range(3):
+            C.adb('shell', 'input', 'swipe', '200', '700', '1000', '700', '300'); s = C.capture(0.8)
+            tab = next((c for c in s.clickables if c['label'].lower().startswith('stops: all')), None)
+            if tab is not None:
+                break
+    if tab is None and not fresh and open_live() is not None:
+        s = C.capture(1.5)
+        tab = next((c for c in s.clickables if c['label'].lower().startswith('stops: all')), None)
+    V.check('stops-tab', tab is not None, (tab['label'] if tab else 'no Stops tab before the day tabs')[:80])
+    if tab is None:
+        print('INFO stops trip page: ' + ' | '.join(t for t in s.all_texts if len(t.strip()) > 1)[:900], flush=True); return
+    n = re.search(r'all (\d+)', tab['label'].lower())
+    V.check('stops-tab-count', bool(n and int(n.group(1)) > 0), tab['label'][:60])
+    C.tap(tab['xy'])
+    v = C.capture(2.5)
+    V.show('stops-view', v)
+    heads = [t for t in v.all_texts if re.fullmatch(r'(GOD|S|A|B|C|D|F) TIER', t.strip())]
+    order = ['GOD', 'S', 'A', 'B', 'C', 'D', 'F']
+    ranks = [t.split()[0] for t in heads]
+    V.check('stops-headings', bool(heads) and ranks == sorted(ranks, key=order.index), ', '.join(heads) or 'no rank heading')
+    tally = [t for t in v.all_texts if re.search(r'\d+ (to shoot|to redo|nailed)', t)]
+    V.check('stops-tally', bool(tally), (tally[0] if tally else 'no "N to shoot" line')[:80])
+    cards = [c for c in v.clickables if 'stop card:' in c['label'].lower()]
+    V.check('stops-cards', len(cards) > 0, f'{len(cards)} cards on screen: ' + ', '.join(c['label'].split('|')[0].replace('Stop card: ', '') for c in cards[:6])[:300])
+    xs = sorted({c['xy'][0] // 100 for c in cards})
+    V.check('stops-two-columns', len(xs) >= 2 if len(cards) > 1 else None, f'card columns at x ~{[x * 100 for x in xs]}')
+    lines = [t for t in v.all_texts if re.search(r'\d+/\d+ framed', t)]
+    V.check('stops-framed-line', bool(lines), (lines[0] if lines else 'no "n/m framed" line (sun plan not loaded?)')[:80])
+    # No day on screen while the Stops view is shown (its MAP button and timeline belong to a day)
+    V.check('stops-no-day', not V.has(v, 'MAP'), 'day header hidden' if not V.has(v, 'MAP') else 'MAP button still on screen')
+    # Open a card that sits in the middle of the screen; Back must come back to the Stops view
+    pick = next((c for c in cards if 0.25 * h <= c['xy'][1] <= 0.75 * h), cards[0] if cards else None)
+    if pick is not None:
+        name = pick['label'].split('|')[0].replace('Stop card: ', '').strip()
+        C.tap(pick['xy'])
+        t = C.capture(3)
+        V.show('stops-stop-page', t)
+        opened = V.has(t, name) and not any('stop card:' in c['label'].lower() for c in t.clickables)
+        V.check('stops-card-opens', opened, name[:60])
+        V.back(); time.sleep(1)
+        b = C.capture(2)
+        back_ok = any('stop card:' in c['label'].lower() for c in b.clickables)
+        V.check('stops-back', back_ok, 'Back returns to the Stops view' if back_ok else 'not on the Stops view after Back')
+        if not back_ok:
+            print('INFO stops after back: ' + ' | '.join(t for t in b.all_texts if len(t.strip()) > 1)[:600], flush=True); return
+    # The view's end: nothing under the Home / Back buttons once scrolled to the bottom
+    last = None
+    for _ in range(25):
+        C.swipe_up()
+        now = tuple(C.capture(0.8).all_texts)
+        if now == last:
+            break
+        last = now
+    e = C.capture(1.5)
+    V.show('stops-view-end', e)
+    cut_off('stops-view-end', e, strict=False)
+    # A day tab still works: tap the first 'Day N' tab and the day comes back
+    scroll_top(4)
+    d = C.capture(1)
+    day = next((c for c in d.clickables if re.match(r'^day \d+', c['label'].lower())), None)
+    if day is not None:
+        C.tap(day['xy'])
+        g = C.capture(2)
+        V.check('stops-day-tab-back', V.has(g, 'MAP') and not any('stop card:' in c['label'].lower() for c in g.clickables), day['label'][:40])
+    else:
+        V.check('stops-day-tab-back', None, 'no Day tab on screen')
+
+
 def offline_3d():
     """12 Nov 2026 (Phil: "add to the test an offline check as well to see what features would still work. I'm hoping
     all of the 3d ones"). Runs last: by now the trip, the sun plan and the 3D terrain are saved on the phone. Network
@@ -1154,6 +1236,7 @@ def offline_3d():
         V.back(); time.sleep(2)
         top = C.capture(2)
         print('INFO offline trip page: ' + ' | '.join(t for t in top.all_texts if len(t.strip()) > 2)[:1800], flush=True)
+        stops_page(fresh=False)
     finally:
         V.check = orig; OFFLINE = False
         C.adb('shell', 'svc', 'wifi', 'enable'); C.adb('shell', 'svc', 'data', 'enable'); time.sleep(10)
@@ -1255,7 +1338,7 @@ def faroes_3d():
 
 
 def main():
-    for st in (sun_3d, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, offline_3d):
+    for st in (sun_3d, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, offline_3d):
         try:
             st()
         except Exception as e:

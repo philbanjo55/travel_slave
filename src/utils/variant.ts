@@ -8,3 +8,8 @@ import Constants from 'expo-constants';
 const cfg: any = Constants.expoConfig ?? {};
 export const IS_TEST_APP: boolean =
   String(cfg.name ?? '').endsWith('TEST') || String(cfg.android?.package ?? '').endsWith('.test');
+
+// Every feature shows in both apps since 15 Nov 2026 (Phil: the main app gets
+// everything the TEST app had; TEST is where new things are built next).
+// IS_TEST_APP still tells the two builds apart (logs, update channel).
+export const PLANNER_ON = true;

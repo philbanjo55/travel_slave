@@ -19,7 +19,7 @@ import StopDurationEditor from '../components/StopDurationEditor';
 import StopPlannerSection from '../components/planner/StopPlannerSection';
 import StopCameraHero, { useNearbyFrames } from '../components/planner/StopCameraHero';
 import { useDayPlanner } from '../components/planner/DayPlannerHints';
-import { IS_TEST_APP } from '../utils/variant';
+import { PLANNER_ON } from '../utils/variant';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { photoGroupPhotos, photoGroupStops, splitStopPhotos } from '../utils/photoGroups';
@@ -104,12 +104,12 @@ export default function StopDetailScreen() {
 
   // TEST app only (mockup S3e): the nearest camera's picture on top with the
   // forecast over it, the planner's chance for this stop, the weather folded.
-  const planner = useDayPlanner(IS_TEST_APP ? currentTripData?.trip?.id ?? null : null, day?.date, currentTripData?.days ?? []);
-  const { cams, reload: reloadCams } = useNearbyFrames(IS_TEST_APP && stop?.lat != null && stop?.lng != null
+  const planner = useDayPlanner(PLANNER_ON ? currentTripData?.trip?.id ?? null : null, day?.date, currentTripData?.days ?? []);
+  const { cams, reload: reloadCams } = useNearbyFrames(PLANNER_ON && stop?.lat != null && stop?.lng != null
     ? { lat: stop.lat, lng: stop.lng } : null);
   // While cameras load the picture's space is kept; with none near, the full
   // weather card takes the top instead.
-  const hero = IS_TEST_APP && (cams == null || cams.length > 0);
+  const hero = PLANNER_ON && (cams == null || cams.length > 0);
 
   // Linked repeat visits (Bøur, Drangarnir, ...) share one photo pool. Every hook runs before
   // the early return below: a stop that leaves its day while open (reload, move, a practice
@@ -206,7 +206,7 @@ export default function StopDetailScreen() {
       <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder
         contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}>
         {hero ? <StopCameraHero cams={cams} weather={stop.weather ?? null} timeLabel={stop.time_label} onClosed={reloadCams} dayDate={day?.date} /> : null}
-        {IS_TEST_APP && !hero ? (
+        {PLANNER_ON && !hero ? (
           <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
         ) : null}
 
@@ -257,7 +257,7 @@ export default function StopDetailScreen() {
         )}
 
         {/* Planner chance + settings (TEST app only until the solver is signed off) */}
-        {IS_TEST_APP && (
+        {PLANNER_ON && (
           <StopPlannerSection stopId={stop.id} planner={planner} tripId={currentTripData?.trip?.id ?? null} tripDate={day?.date ?? null}
             days={currentTripData?.days ?? []} timeLabel={stop.time_label ?? null} duration={stop.duration_minutes ?? null}
             tz={currentTripData?.trip?.timezone ?? undefined} />
@@ -265,7 +265,7 @@ export default function StopDetailScreen() {
 
         {/* Weather — pinned near the top of the location. TEST: folded under the
             camera picture, which already shows the headline numbers. */}
-        {!IS_TEST_APP ? (
+        {!PLANNER_ON ? (
           <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
         ) : hero ? (
           <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} foldable hideHeadline />
@@ -278,7 +278,7 @@ export default function StopDetailScreen() {
         />
 
         {/* Info (TEST: under the map instead) */}
-        {!IS_TEST_APP && stop.info && (
+        {!PLANNER_ON && stop.info && (
           <View style={styles.infoCard}>
             <Text style={styles.infoText}>{stop.info}</Text>
           </View>
@@ -365,7 +365,7 @@ export default function StopDetailScreen() {
           </View>
         )}
 
-        {IS_TEST_APP && stop.info && (() => {
+        {PLANNER_ON && stop.info && (() => {
           const long = stop.info.length > 280 || stop.info.split('\n').length > 6;
           return (
             <View style={styles.infoCard}>

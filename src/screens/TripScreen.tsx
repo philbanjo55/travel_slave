@@ -16,7 +16,8 @@ import DayWeatherOverview from '../components/DayWeatherOverview';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
-import { IS_TEST_APP } from '../utils/variant';
+import { IS_TEST_APP, PLANNER_ON } from '../utils/variant';
+import StopsView, { StopsTab } from '../components/StopsView';
 import {
   fetchClaudeSpend, spendLine, fetchDayRuns, dayChanges, applyWeek, isPastDay, canApply, changesLine,
   labelMinutes, DayChange,
@@ -44,6 +45,9 @@ export default function TripScreen() {
   const currentTripData = useTripData(tripId);
   const tabScrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const [activeDay, setActiveDay] = useState(0);
+  // TEST app (Stops page, design "FINAL", Phil 16 Nov 2026): a first tab before the days shows every rated place
+  // once, by rank. The day tabs work as before; the main app has no such tab.
+  const [showStops, setShowStops] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [weatherUpdating, setWeatherUpdating] = useState(false);
   const [weatherProgress, setWeatherProgress] = useState<{ done: number; total: number } | null>(null);
@@ -51,10 +55,10 @@ export default function TripScreen() {
   const [deletingDay, setDeletingDay] = useState(false);
   // TEST app only: the planner's read of the shown day, and a dot on the
   // Planner icon when there's a plan newer than the last brief Phil opened.
-  const planner = useDayPlanner(IS_TEST_APP ? tripId : null, currentTripData?.days?.[activeDay]?.date, currentTripData?.days ?? []);
+  const planner = useDayPlanner(PLANNER_ON ? tripId : null, currentTripData?.days?.[activeDay]?.date, currentTripData?.days ?? []);
   const [briefNew, setBriefNew] = useState(false);
   useFocusEffect(useCallback(() => {
-    if (!IS_TEST_APP) return;
+    if (!PLANNER_ON) return;
     Promise.all([fetchDayRuns(tripId, 5), briefSeenAt(tripId)])
       .then(([runs, seen]) => setBriefNew(!!runs[0] && (!seen || runs[0].created_at > seen)))
       .catch(() => {});
@@ -78,10 +82,10 @@ export default function TripScreen() {
   const shownDay = currentTripData?.days?.[activeDay];
   const shownStops: any[] = shownDay?.stops ?? [];
   const planTz: string | undefined = planner?.run?.params?.tz ?? currentTripData?.trip?.timezone ?? undefined;
-  const changes = useMemo<DayChange[]>(() => (IS_TEST_APP && planner?.best
+  const changes = useMemo<DayChange[]>(() => (PLANNER_ON && planner?.best
     ? dayChanges(shownStops, currentTripData?.days ?? [], planner.mine, planner.best, planTz, id => planner.tiers.get(id) ?? null) : []),
     [planner, shownStops, currentTripData, planTz]);
-  const score = IS_TEST_APP && shownDay?.date ? dayScore(planner, shownDay.date, shownStops, changes) : null;
+  const score = PLANNER_ON && shownDay?.date ? dayScore(planner, shownDay.date, shownStops, changes) : null;
   const realChanges = changes.filter(c => c.kind !== 'skipped');
   const [ghost, setGhost] = useState(false);
   const [pop, setPop] = useState<string | null>(null);
@@ -134,10 +138,12 @@ export default function TripScreen() {
   }, [tripId]);
 
   const goToDay = useCallback((index: number) => {
+    setShowStops(false);
     setActiveDay(index);
     setCurrentDay(index);
-    tabScrollRef.current?.scrollTo({ x: Math.max(0, index * 72 - 100), animated: true });
+    tabScrollRef.current?.scrollTo({ x: Math.max(0, (index + (IS_TEST_APP ? 1 : 0)) * 72 - 100), animated: true });
   }, []);
+  const stopsOn = IS_TEST_APP && showStops;
 
   // Live trip (Phil, 10 Nov 2026): the trip opens on today's day (in the trip's time zone), and
   // jumps to it again when a new day starts while the page stays open. Once Phil picks another
@@ -251,7 +257,7 @@ export default function TripScreen() {
                     + `${st.biggest ? `, biggest ${st.biggest}` : ''}.`
                     + `\n${st.error ?? 'no error reported'}`
                   : 'Offline copy: no result recorded.';
-              const spend = IS_TEST_APP ? await fetchClaudeSpend().catch(() => null) : null;
+              const spend = PLANNER_ON ? await fetchClaudeSpend().catch(() => null) : null;
               Alert.alert(
                 'Weather Updated',
                 `Pulled ${res.ok} of ${res.days} days${res.failed ? ` (${res.failed} failed)` : ''}.`
@@ -373,13 +379,13 @@ export default function TripScreen() {
         <TouchableOpacity onPress={recalcDriveTimes} disabled={recalculating}>
           <Ionicons name="time-outline" size={20} color={recalculating ? colors.textTertiary : colors.textSecondary} />
         </TouchableOpacity>
-        {IS_TEST_APP && (
+        {PLANNER_ON && (
           <TouchableOpacity onPress={() => navigation.navigate('Feeds', { tripId })} style={styles.plannerBtn}
             accessibilityLabel="Open the live feeds">
             <Ionicons name="videocam-outline" size={18} color={colors.textPrimary} />
           </TouchableOpacity>
         )}
-        {IS_TEST_APP && (
+        {PLANNER_ON && (
           <TouchableOpacity onPress={() => navigation.navigate('Planner', { tripId })} style={styles.plannerBtn}
             accessibilityLabel="Open the Planner">
             <Ionicons name="sparkles-outline" size={18} color={colors.textPrimary} />
@@ -388,7 +394,7 @@ export default function TripScreen() {
         )}
       </View>
 
-      {IS_TEST_APP ? <PlanningStrip tripId={tripId} onView={() => navigation.navigate('Planner', { tripId, tab: 'plans', date: day?.date })} /> : null}
+      {PLANNER_ON ? <PlanningStrip tripId={tripId} onView={() => navigation.navigate('Planner', { tripId, tab: 'plans', date: day?.date })} /> : null}
 
       <View style={styles.tabBarWrapper}>
         <ScrollView
@@ -399,8 +405,12 @@ export default function TripScreen() {
           overScrollMode="never"
           contentContainerStyle={styles.tabBarContent}
         >
+          {IS_TEST_APP ? (
+            <StopsTab tripId={tripId} tripData={currentTripData} active={stopsOn} styles={styles}
+              onPress={() => { setShowStops(true); setGhost(false); setPop(null); }} />
+          ) : null}
           {days.map((d: any, index: number) => {
-            const isActive = index === activeDay;
+            const isActive = !stopsOn && index === activeDay;
             const isToday = index === todayIndex;
             return (
               <TouchableOpacity
@@ -424,7 +434,12 @@ export default function TripScreen() {
         </ScrollView>
       </View>
 
-      {day && (
+      {stopsOn ? (
+        <StopsView tripId={tripId} tripData={currentTripData} bottomPad={insets.bottom}
+          onOpen={p => navigation.navigate('StopDetail', { stopId: p.stopId, dayId: p.dayId })} />
+      ) : null}
+
+      {!stopsOn && day && (
         <View style={styles.dayHeader}>
           <View style={styles.dayHeaderLeft}>
             <Text style={styles.dayTitle}>{day.title}</Text>
@@ -452,19 +467,19 @@ export default function TripScreen() {
 
       {/* Real app: the day weather stays above the stops. TEST app (Phil, 1 Nov 2026: "crowded, I
           can't see the timeline"): it and the T card scroll away with the timeline instead. */}
-      {IS_TEST_APP ? null : <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />}
+      {PLANNER_ON || stopsOn ? null : <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />}
 
       {/* TEST (mockup E5): the timeline shows each drive, so no totals row. */}
-      {IS_TEST_APP ? null : <DaySummary stops={stops} />}
+      {PLANNER_ON || stopsOn ? null : <DaySummary stops={stops} />}
 
-      <FlatList
+      {stopsOn ? null : <FlatList
         data={ghostRows ? ghostRows.map(r => r.item) : stops}
         keyExtractor={(item: any) => item.id}
         showsVerticalScrollIndicator={false}
         // Tell T's sheet opens from the day card in this list's header: without this, a tap on its Send or quick
         // buttons while the keyboard is up only closes the keyboard (emulator test, 11 Nov 2026).
         keyboardShouldPersistTaps="handled"
-        ListHeaderComponent={IS_TEST_APP ? (
+        ListHeaderComponent={PLANNER_ON ? (
           <View style={styles.listHead}>
             <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />
             {day?.date ? (
@@ -474,7 +489,7 @@ export default function TripScreen() {
           </View>
         ) : undefined}
         contentContainerStyle={[styles.stopList, ghostRows ? { paddingBottom: (ghostDetails ? 260 : 130) + insets.bottom } : null]}
-        renderItem={({ item, index }: { item: any; index: number }) => IS_TEST_APP ? (
+        renderItem={({ item, index }: { item: any; index: number }) => PLANNER_ON ? (
           <TimelineRow item={item} index={index} isLast={index === (ghostRows ?? stops).length - 1} weather={dayWeather[item.id]} dayDate={day?.date}
             planner={planner} ghost={ghostRows ? ghostRows[index]?.tag : null}
             change={changes.find(c => c.stop_id === item.id && c.kind !== 'added') ?? null}
@@ -595,9 +610,9 @@ export default function TripScreen() {
             </TouchableOpacity>
           </View>
         )}
-      />
+      />}
 
-      {IS_TEST_APP && ghostRows ? (
+      {PLANNER_ON && ghostRows && !stopsOn ? (
         <View style={[styles.ghostBar, { paddingBottom: spacing.lg + insets.bottom }]}>
           {/* One line of what accepting does; the lists behind Details (the timeline stays visible). */}
           <TouchableOpacity onPress={() => setGhostDetails(v => !v)} style={styles.ghostSummary} accessibilityRole="button"
@@ -630,7 +645,7 @@ export default function TripScreen() {
             </View>
           ) : null}
           <View style={styles.ghostBtns}>
-            {canApply(tripId) ? (
+            {canApply(tripId, currentTripData?.trip) ? (
               <TouchableOpacity style={styles.ghostAccept} onPress={acceptAll} disabled={accepting || !ghostPreview || ghostPreview.nothing} accessibilityRole="button"
                 accessibilityLabel="Accept T's plan for the rest of the trip: the rest of today and every later day. Past days don't change.">
                 {accepting ? <ActivityIndicator color={colors.textInverse} /> : (
