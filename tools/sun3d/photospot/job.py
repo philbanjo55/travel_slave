@@ -103,7 +103,9 @@ def lens_rows(r, look_lms, T, grids):
         if L.get('dist_m') is None or L['dist_m'] > 1500: continue
         if fg is None or L['dist_m'] < fg['dist_m']: fg = dict(L, lat=src.get('lat'), lng=src.get('lng'))
     peaks = [L for L in r.get('landmarks', []) if any(x['name'] == L['name'] and (x.get('gtype') == 'peak' or x.get('type') == 'peak') for x in look_lms)]
-    far = min(peaks, key=lambda L: abs(L['x'] - W / 2)) if peaks else None
+    # the main far subject: the named peak standing highest in the picture (the Grand over its neighbours)
+    inside = [L for L in peaks if np.isfinite(L.get('px', np.nan)) and np.isfinite(L.get('py', np.nan)) and 0 <= L['px'] <= W]
+    far = min(inside or peaks, key=lambda L: L.get('py') if np.isfinite(L.get('py', np.nan)) else 1e9) if peaks else None
     far_word = short_name(far['name']) if far else 'mountains'
     rows = []
     for f in LENSES:
@@ -157,6 +159,76 @@ def shot_name(fg, far, lat, lng):
     return 'from your photo'
 
 
+# ------------------------------------------------------------------ the look's peaks, checked against each other
+CW = {'high': 3, 'medium': 2, 'low': 1}
+RANK = {'placed': 3, 'direction only': 2, 'weak': 1, 'not placed': 0}
+
+
+def peak_sets(lms, stop, W, H, T, grids):
+    """Which named peaks agree with each other. From the stop (the photo was taken within ~2 km of it; the peaks are
+    far), every group of peaks must fit one heading, lens width and tilt to within 3 % of the picture width in x and
+    y. Returns (keep, extra): `keep` = the best agreeing group (most confidence weight, then the tightest fit) without
+    unsure ('low') peaks unless two surer peaks agree with them; `extra` = unsure peaks left out of `keep` without
+    being proven wrong (tried only when the first answer is not good)."""
+    from itertools import combinations
+    from scipy.optimize import least_squares
+    pk = [L for L in lms if L.get('type') == 'peak' and L.get('lat') is not None and L.get('x') is not None and L.get('y') is not None]
+    if len(pk) < 2: return pk, []
+    eye = T.ground(stop[0], stop[1], grids) + 1.7
+    tmp = [dict(L) for L in pk]
+    import solve as _S
+    # where each peak really is (its snapped top), seen from the stop
+    for L in tmp: L.setdefault('known', True); L.setdefault('gtype', 'peak')
+    dirs = []
+    for L in tmp:
+        lat, lng = L['lat'], L['lng']
+        gz = json.load(open(os.path.join(HERE, 'gazetteer.json'))).get(T.region, {}).get(L['name'])
+        snap = (gz or {}).get('snap', 250)
+        k = kx(lat); n = 31
+        dN, dE = np.meshgrid(np.linspace(-snap, snap, n), np.linspace(-snap, snap, n), indexing='ij')
+        m = dN ** 2 + dE ** 2 <= snap * snap
+        la = lat + dN[m] / KZ; lo = lng + dE[m] / k
+        from terrain import stack_at
+        hh = stack_at(grids, la, lo); j = int(np.nanargmax(hh))
+        d = _S.lm_dirs([dict(L, lat=float(la[j]), lng=float(lo[j]), h=float(hh[j]))], stop[0], stop[1], eye)[0]
+        dirs.append(d)
+    tol = 0.03 * W
+    best = None
+    for n_ in range(len(pk), 1, -1):
+        for sub in combinations(range(len(pk)), n_):
+            az = np.array([dirs[i][0] for i in sub]); el = np.array([dirs[i][1] for i in sub])
+            xs = np.array([pk[i]['x'] for i in sub]); ys = np.array([pk[i]['y'] for i in sub])
+            def res(q):
+                x, y = C.project_dirs(az, el, [q[0], q[1], 0.0, q[2]], W, H)
+                return np.concatenate([np.nan_to_num(x - xs, nan=1e4), np.nan_to_num(y - ys, nan=1e4)])
+            fit = None
+            for hf in (12, 25, 45, 75):
+                y0 = float(np.degrees(np.arctan2(np.mean(np.sin(np.radians(az))), np.mean(np.cos(np.radians(az))))))
+                try: r = least_squares(res, [y0, 0.0, hf], bounds=([y0 - 90, -45, 3], [y0 + 90, 45, 110]))
+                except Exception: continue  # noqa: E722
+                if fit is None or r.cost < fit.cost: fit = r
+            if fit is None: continue
+            rr = res(fit.x).reshape(2, -1)
+            if os.environ.get("PS_DEBUG"): print("   sub", [pk[i]["name"] for i in sub], "max", round(float(np.max(np.hypot(rr[0], rr[1]))), 1), "hfov", round(float(fit.x[2]), 1))
+            if np.max(np.hypot(rr[0], rr[1])) > tol: continue
+            w = sum(CW.get(pk[i].get('conf'), 2) for i in sub)
+            sure = sum(1 for i in sub if pk[i].get('conf') != 'low')
+            lows = [i for i in sub if pk[i].get('conf') == 'low']
+            if lows and sure < 2: continue   # unsure peaks count only with two surer ones agreeing
+            key = (w, -float(np.sqrt(np.mean(rr ** 2))))
+            if best is None or key > best[0]: best = (key, set(sub))
+        if best is not None and n_ <= 2: break
+    sure_all = [i for i, L in enumerate(pk) if L.get('conf') != 'low']
+    if best is None:   # nothing agrees: keep the surest single peak
+        if not sure_all: return [], [L for L in pk]
+        i0 = max(sure_all, key=lambda i: CW.get(pk[i].get('conf'), 2))
+        keep = {i0}
+    else:
+        keep = best[1]
+    extra = [pk[i] for i in range(len(pk)) if i not in keep and pk[i].get('conf') == 'low']
+    return [pk[i] for i in sorted(keep)], extra
+
+
 # ------------------------------------------------------------------ one photo
 def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, log=print):
     t0 = time.time()
@@ -169,24 +241,41 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
     work = tempfile.mkdtemp(prefix='ps_')
     pic = os.path.join(work, 'photo.png'); cv2.imwrite(pic, im)
     lw = (look.get('size') or [W])[0]; s = W / lw
-    lms = []
+    all_lms = []
     for L in look.get('landmarks', []):
-        if L.get('type') == 'peak' and L.get('conf') == 'low': continue   # an unsure peak name does more harm than none
         o = dict(L)
         for k in ('x', 'y', 'x0', 'x1'):
             if o.get(k) is not None: o[k] = float(o[k]) * s
-        lms.append(o)
-    lmf = os.path.join(work, 'landmarks.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
+        all_lms.append(o)
     if look.get('kind') not in (None, 'ground'):
         v, why = verdict(None, look)
         return dict(ok=False, verdict=v, why=why, confidence=confidence(v, why, None), times=dict(total=time.time() - t0))
+    T = Terrain(rows_file, cache, region)
+    keep, extra = peak_sets(all_lms, stop, W, H, T, T.stack(stop[0], stop[1], 30))
+    others = [L for L in all_lms if L.get('type') != 'peak' or L.get('lat') is None or L.get('x') is None]
+    dropped = [L['name'] for L in all_lms if L.get('type') == 'peak' and L not in keep and L not in extra]
+    log(f"  peaks kept {[L['name'] for L in keep]}, unsure {[L['name'] for L in extra]}, disagreeing {dropped}")
     SV.HCACHE = hcache
-    r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log)
-    v, why = verdict(r, dict(look, landmarks=lms))
+    # 1: the peaks that agree with each other; 2: only the peaks the look was sure of; 3: every peak it named.
+    # The first answer that is placed wins, else the best of them (a wrong name can pull the search far off).
+    peaks_all = [L for L in all_lms if L not in others]
+    tries, seen_ = [], set()
+    for ps in (keep, [L for L in peaks_all if L.get('conf') == 'high'], peaks_all):
+        key_ = tuple(sorted(L['name'] for L in ps))
+        if key_ in seen_: continue
+        seen_.add(key_); tries.append(others + ps)
+    best = None
+    for i, lms in enumerate(tries):
+        lmf = os.path.join(work, f'landmarks{i}.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
+        r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log)
+        v, why = verdict(r, dict(look, landmarks=lms))
+        log(f"  try {i + 1}: {v} {why}")
+        if best is None or RANK[v] > RANK[best[1]]: best = (r, v, why, lms)
+        if v == 'placed': break
+    r, v, why, lms = best
     conf = confidence(v, why, r)
     if not r.get('ok') or v == 'not placed':
         return dict(ok=False, verdict=v, why=why, confidence=conf, times=r.get('times'))
-    T = Terrain(rows_file, cache, region)
     grids = T.stack(r['lat'], r['lng'], 30)
     fp, rows, fg, far = lens_rows(r, lms, T, grids)
     main = None
