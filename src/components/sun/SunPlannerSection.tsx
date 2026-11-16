@@ -19,7 +19,7 @@ import FullScreenPhotoViewer from '../FullScreenPhotoViewer';
 import type { Pair } from '../../utils/sunEngine';
 import { LABELS, PHASE_COLORS, compassPoint, shotName, shotTitle } from './sunStyle';
 import Sun3DPanel from './Sun3DPanel';
-import { IS_TEST_APP } from '../../utils/variant';
+import { PLANNER_ON } from '../../utils/variant';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchStopSettings } from '../../services/planner';
 import { stopPagePhotos } from '../../utils/photoGroups';
@@ -102,7 +102,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 type Tab = 'map' | 'horizon' | 'photo' | '3d';
 const TAB_NAMES: Record<Tab, string> = { map: 'Map', horizon: 'Horizon', photo: 'Photo', '3d': '3D' };
 // The 3D view is in the TEST app only until Phil has tried it.
-const TABS: Tab[] = IS_TEST_APP ? ['map', 'horizon', 'photo', '3d'] : ['map', 'horizon', 'photo'];
+const TABS: Tab[] = PLANNER_ON ? ['map', 'horizon', 'photo', '3d'] : ['map', 'horizon', 'photo'];
 
 // Every stop's starred shot as saved on the phone (starredShot keeps them), for the full-screen shot order.
 async function savedStars(stopIds: string[]): Promise<Record<string, string | null>> {
@@ -120,7 +120,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   const [pairIdx, setPairIdx] = useState(0);
   const chosen = useRef(false);   // Phil picked a shot himself: never jump away from it
   useEffect(() => {
-    if (!IS_TEST_APP || !stopId || stop.pairs.length < 2) return;
+    if (!PLANNER_ON || !stopId || stop.pairs.length < 2) return;
     let alive = true;
     starredShot(stopId).then(id => {
       if (!alive || chosen.current || !id) return;
