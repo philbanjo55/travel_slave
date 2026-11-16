@@ -26,10 +26,13 @@ sys.path.insert(0, HERE)
 from terrain import Terrain, horizon, stack_at, kx, KZ, R7, tree_grid  # noqa: E402
 import camera as C  # noqa: E402
 import skyline as SK  # noqa: E402
+import contours as CT  # noqa: E402
 
 EYE = 1.7
 HFOVS = np.geomspace(12, 100, 15)
 HCACHE = None   # folder for per-stop horizon tables (set by --hcache)
+MU_REG = 1.0    # weight of the region match (what the model says is tree / building / near ground / far land / sky)
+MU_SEARCH = 0.5  # the same inside the spot search (lighter: it steers, the sky line still leads)
 
 
 # ---------------------------------------------------------------- landmarks
@@ -251,8 +254,9 @@ def distinct(res, n, min_m):
 class Refiner:
     ND, DAZ = 600, 0.04          # horizon samples per ray, azimuth step (deg) while refining
 
-    def __init__(self, T, sky, lms, stop, fine, houses=None, use_trees=True):
+    def __init__(self, T, sky, lms, stop, fine, houses=None, use_trees=True, photo=None, rtrees=None):
         self.T, self.sky, self.lms, self.stop, self.fine = T, sky, lms, stop, fine
+        self.ps = photo; self.rtrees = rtrees
         self.use_trees = use_trees; self.trees = None
         self.W, self.H = sky['size']; self.houses = houses
         self.k0 = kx(stop[0])
@@ -352,6 +356,19 @@ class Refiner:
         n = max(len(pts), 1)
         return self.cost(rr, win) + lmc * (win ** 2) * 0.5 / n * 4, q2, rr
 
+    def region(self, s, q):
+        """how well the model's regions (sky, trees, buildings, ground by distance) explain the photo's brightness and
+        texture (correlation ratio, 0-1); 0 without a photo"""
+        if self.ps is None: return 0.0
+        lat, lng = self.spot(s[0], s[1])
+        g = float(stack_at(self.fine, np.array([lat]), np.array([lng]))[0]); eyeh = g + s[2]
+        half = q[3] / 2 * 1.45 + 6 + abs(q[2]); caz = np.arange(q[0] - half, q[0] + half, 0.15)
+        CM, CL = CT.class_columns(self.fine, lat, lng, eyeh, caz % 360, trees=self.rtrees, houses=self.houses)
+        ci = CT.class_image(caz, CM, CL, q, self.W, self.H)
+        # trees count fully once they fill a tenth of the frame (a few tree pixels say little)
+        wt = min(1.0, float((ci == 1).mean()) / 0.1)
+        return 0.7 * CT.eta2(ci, self.ps['L']) + 0.3 * CT.eta2(ci, self.ps['tex']) + 0.5 * wt * CT.tree_corr(ci, self.ps['L'])
+
     def chamfer(self, s, q, win, fscale):
         """how well the model from spot s explains the photo: the orientation is refitted to the photo steps near the
         model sky line, then every column where the model sky line is inside the frame costs its distance to the nearest
@@ -374,7 +391,7 @@ class Refiner:
             for L, dd in zip(self.named, lm_dirs(self.named, lat, lng, eyeh)):
                 rr_ = lm_res(L, dd, q2, self.W, self.H, lat, lng, eyeh)
                 lmc += sum(min(v * v, 25) for v in rr_[:1] + rr_[2:])
-        return cst + lmc * (win ** 2) * 0.5 / ni * 4, q2, rr
+        return cst + lmc * (win ** 2) * 0.5 / ni * 4 - MU_SEARCH * self.region(s, q2) * win ** 2, q2, rr
 
     def quick(self, c):
         """heading / tilt / roll / lens only, at the coarse spot, bare terrain (the screen)"""
@@ -391,11 +408,11 @@ class Refiner:
             inside = (ym > 0) & (ym < self.H)
             sol = dict(q=q.tolist(), lat=lat, lng=lng, eyeh=eyeh, s=list(s))
             return dict(q=q.tolist(), agree=float(len(pts4) / max(1, inside.sum())), rms=float(np.sqrt(np.mean(np.minimum(rr ** 2, win_px ** 2)))),
-                        lmc=lm_total(self, sol))
+                        lmc=lm_total(self, sol), reg=self.region(s, q))
         finally:
             self.trees = tr; self.cache.clear()
 
-    def refine(self, c, log=print, eye_free=(1.0, 3.0)):
+    def refine(self, c, log=print, eye_free=(1.0, 3.0), steps1=(128, 64, 32, 16, 8, 4)):
         W = self.W; s = np.array([c['dE'], c['dN'], EYE], float); q = np.array([c['yaw'], c['pitch'], c['roll'], c['hfov']], float)
         self.hf0 = q[3]
         self.set_trees(s[0], s[1])
@@ -409,7 +426,7 @@ class Refiner:
             q, rr = self.fit_q(paz, pel, pts, q, eyeh, lat, lng, fscale, pelt=pelt)
             hist.append(dict(win=win, n=len(pts), rms=float(np.sqrt(np.mean(np.minimum(rr ** 2, win_px ** 2))))))
         # B: the spot too (east, north, eye height), pattern search with the orientation refitted at every spot
-        for win, steps in ((10, [128, 64, 32, 16, 8, 4]), (6, [8, 4, 2, 1])):
+        for win, steps in ((10, list(steps1)), (6, [8, 4, 2, 1])):
             win_px = win * W / 1440; fscale = max(1.5, win_px / 3)
             best, q, rr = self.chamfer(s, q, win_px, fscale)
             if best >= 1e9: break
@@ -430,7 +447,7 @@ class Refiner:
         pts4, ym = self.snap(paz, pel, q, 4 * W / 1440, pelt)
         _, rr4 = self.fit_q(paz, pel, pts4, q, eyeh, lat, lng, 1.5, pelt=pelt) if len(pts4) >= 6 else (q, np.array([]))
         inside = (ym > 0) & (ym < self.H)
-        return dict(s=s.tolist(), q=q.tolist(), lat=lat, lng=lng, eyeh=eyeh, hist=hist,
+        return dict(s=s.tolist(), q=q.tolist(), lat=lat, lng=lng, eyeh=eyeh, hist=hist, reg=self.region(s, q),
                     agree=float(len(pts4) / max(1, inside.sum())), n_agree=int(len(pts4)),
                     rms=float(np.sqrt(np.mean(rr4 ** 2))) if len(rr4) else float('nan'), pts=pts4.tolist())
 
@@ -463,27 +480,35 @@ def lm_res(L, dd, q, W, H, lat, lng, eyeh):
     return r
 
 
-def confidence(R, sol):
+def confidence(R, sol, delta=0.05):
+    """slide the spot along the line of sight and across it; at each offset the orientation is refitted to the sky
+    line and the spot scored as in the final choice (sky line agreement and misfit, region match, named landmarks).
+    Every offset whose score comes within `delta` of the answer's counts as possible: the confidence is the span from
+    the lowest to the highest such offset, in metres ("open" when it reaches the 400 m test edge)."""
     pts = np.array(sol['pts'])
     if len(pts) < 8: return None
-    offs = [-1500, -600, -250, -100, -40, -15, 0, 15, 40, 100, 250, 600, 1500]
-    res = {}
+    offs = [-400, -200, -100, -60, -30, -15, 0, 15, 30, 60, 100, 200, 400]
+    W = R.W; res = {}
+    s0 = np.array(sol['s']); q0 = np.array(sol['q'])
     for name, ang in (('along', sol['q'][0]), ('across', sol['q'][0] + 90)):
-        r = R.slide(sol, ang, offs, pts)
-        best = r[offs.index(0)]; thr = best + max(0.5, 0.15 * best)
-        ins = [o for o, v in zip(offs, r) if v <= thr]
-        # contiguous extent around 0
-        lo = 0; hi = 0
-        for o, v in sorted(zip(offs, r)):
-            pass
-        i0 = offs.index(0); j = i0
-        while j - 1 >= 0 and r[j - 1] <= thr: j -= 1
-        lo = offs[j]
-        j = i0
-        while j + 1 < len(offs) and r[j + 1] <= thr: j += 1
-        hi = offs[j]
-        # a bound at the edge of the tested range means "at least that"
-        res[name] = dict(lo=lo, hi=hi, rms=r, offs=offs, open=(lo == offs[0] or hi == offs[-1]))
+        a = math.radians(ang); sc = []
+        for o in offs:
+            s = s0 + np.array([o * math.sin(a), o * math.cos(a), 0])
+            paz, pel, eyeh, lat, lng, pelt = R.profile(*s, q0)
+            q2, _ = R.fit_q(paz, pel, pts, q0, eyeh, lat, lng, 1.5, pelt=pelt)
+            p4, ym = R.snap(paz, pel, q2, 4 * W / 1440, pelt)
+            p8, _ = R.snap(paz, pel, q2, 8 * W / 1440, pelt)
+            if len(p8) >= 8: q2, rr = R.fit_q(paz, pel, p8, q2, eyeh, lat, lng, 1.5, pelt=pelt)
+            else: rr = np.array([10.0])
+            ins = max(1, int(((ym > 0) & (ym < R.H)).sum()))
+            lmc = lm_total(R, dict(lat=lat, lng=lng, eyeh=eyeh, q=q2))
+            sc.append(len(p4) / ins - 0.02 * min(float(np.sqrt(np.mean(np.minimum(rr ** 2, 100)))), 10) + MU_REG * R.region(s, q2)
+                      - 0.01 * min(lmc, 50))
+        thr = sc[offs.index(0)] - delta
+        ok = [o for o, v in zip(offs, sc) if v >= thr]
+        lo, hi = min(ok), max(ok)
+        res[name] = dict(lo=lo, hi=hi, score=sc, offs=offs, open=(lo == offs[0] or hi == offs[-1]),
+                         better_elsewhere=bool(max(sc) > sc[offs.index(0)] + 1e-9))
     return res
 
 
@@ -492,8 +517,8 @@ def prior(d_m):
     return 0.03 * (d_m / 1000) ** 2
 
 
-def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None, use_names=True, log=print, n_refine=3,
-          n_screen=14, use_trees=True):
+def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None, use_names=True, log=print, n_refine=2,
+          n_screen=14, use_trees=True, use_region=True):
     t0 = time.time()
     T = Terrain(rows, cache, region)
     sky = SK.extract(photo)
@@ -504,6 +529,11 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     named = [L for L in lms if L['type'] != 'span' and L.get('known')]
     hg, nh = T.house_grid(stop[0], stop[1], min(radius, 1500) + 300, 1.0, fine)
     hg = hg if nh else None
+    ps = CT.photo_small(photo) if use_region else None
+    rt = None
+    if use_region and use_trees:
+        rt, nt = tree_grid(T, stop[0], stop[1], min(radius, 1500) + 400, 3.0, fine, clear_m=0)
+        rt = rt if nt else None
     t1 = time.time()
     key = f"{region}_{stop[0]:.6f}_{stop[1]:.6f}_r{int(radius)}_s{int(step)}"
     co = coarse(T, sky, lms, stop, radius, step, use_names=use_names, log=log, region_grids=fine, extras=bool(named), houses=hg,
@@ -512,7 +542,7 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     co.sort(key=lambda r: -r['score'])
     t2 = time.time()
     # screen: the best few distinct coarse answers get a quick heading / tilt / roll / lens fit at their own spot
-    R = Refiner(T, sky, lms, stop, fine, houses=hg, use_trees=use_trees)
+    R = Refiner(T, sky, lms, stop, fine, houses=hg, use_trees=use_trees, photo=ps, rtrees=rt)
     cands = distinct(co, n_screen, 200)
     home = [c for c in co if math.hypot(c['dE'], c['dN']) <= 250]
     if home:
@@ -523,21 +553,30 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
         qk = R.quick(c)
         if qk is None: continue
         d = math.hypot(c['dE'], c['dN'])
-        c['quick'] = qk['agree'] - 0.02 * min(qk['rms'], 10) - prior(d) - 0.01 * min(qk['lmc'], 50)
+        c['quick'] = qk['agree'] - 0.02 * min(qk['rms'], 10) - prior(d) - 0.01 * min(qk['lmc'], 50) + MU_REG * qk['reg']; c['reg'] = qk['reg']
         c['q_quick'] = qk['q']; scr.append(c)
     scr.sort(key=lambda c: -c['quick'])
     log('  screen: ' + ', '.join(f"{c['dE']:.0f},{c['dN']:.0f}:{c['quick']:.2f}" for c in scr[:8]))
     todo = scr[:n_refine]
     if home and h0 in scr and h0 not in todo: todo.append(h0)
+    # the stop pin itself is always tried too (photos are filed under the stop they were taken at; a 150 m grid can miss
+    # a spot where near trees and banks fix the answer)
+    if scr and all(math.hypot(c['dE'], c['dN']) > 40 for c in todo):
+        qb = scr[0]['q_quick']; c0 = dict(scr[0], dE=0.0, dN=0.0, yaw=qb[0], pitch=qb[1], roll=qb[2], hfov=qb[3])
+        qk = R.quick(c0)
+        if qk is not None:
+            c0['quick'] = qk['agree'] - 0.02 * min(qk['rms'], 10) - 0.01 * min(qk['lmc'], 50) + MU_REG * qk['reg']
+            c0['reg'] = qk['reg']; c0['q_quick'] = qk['q']; todo.append(c0)
+    steps1 = (64, 32, 16, 8, 4)
     t3 = time.time()
     sols = []
     for c in todo:
         try:
             c2 = dict(c, yaw=c['q_quick'][0], pitch=c['q_quick'][1], roll=c['q_quick'][2], hfov=c['q_quick'][3])
-            sol = R.refine(c2, log=log)
+            sol = R.refine(c2, log=log, steps1=steps1)
             if sol is None: log('  refine: too few sky points'); continue
             sol['coarse'] = c; sols.append(sol)
-            log(f"  refine from {c['dE']:.0f},{c['dN']:.0f} quick {c['quick']:.2f}: agree {sol['agree']:.2f} rms {sol['rms']:.2f} at {sol['s'][0]:.0f},{sol['s'][1]:.0f}")
+            log(f"  refine from {c['dE']:.0f},{c['dN']:.0f} quick {c['quick']:.2f}: agree {sol['agree']:.2f} rms {sol['rms']:.2f} region {sol['reg']:.2f} at {sol['s'][0]:.0f},{sol['s'][1]:.0f}")
         except Exception as e:  # noqa: BLE001
             log('  refine failed: ' + repr(e))
     if not sols:
@@ -545,7 +584,7 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     # when two answers fit the picture about as well, the one nearer the stop wins (the photo is filed under it)
     for s_ in sols:
         s_['dist_stop'] = math.hypot(*s_['s'][:2]); s_['lmc'] = lm_total(R, s_)
-        s_['score'] = s_['agree'] - 0.02 * min(s_['rms'], 10) - prior(s_['dist_stop']) - 0.01 * min(s_['lmc'], 50)
+        s_['score'] = s_['agree'] - 0.02 * min(s_['rms'], 10) - prior(s_['dist_stop']) - 0.01 * min(s_['lmc'], 50) + MU_REG * s_['reg']
     sols.sort(key=lambda s_: -s_['score'])
     best = sols[0]
     t4 = time.time()
@@ -562,8 +601,8 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
                eye_above_ground=best['s'][2], eye_abs=best['eyeh'], yaw=best['q'][0] % 360, pitch=best['q'][1], roll=best['q'][2], hfov=best['q'][3],
                agree=best['agree'], n_agree=best['n_agree'], rms_px=best['rms'], hist=best['hist'], conf=conf, landmarks=lmchk,
                alts=[dict(lat=s['lat'], lng=s['lng'], agree=s['agree'], rms=s['rms'], yaw=s['q'][0] % 360, hfov=s['q'][3], score=s['score'],
-                          dist_m=math.hypot((s['lat'] - best['lat']) * KZ, (s['lng'] - best['lng']) * kx(best['lat']))) for s in sols[1:]],
-               score=best['score'], lm_cost=best['lmc'], dist_stop=best['dist_stop'], trees=R.trees is not None,
+                          reg=s['reg'], dist_m=math.hypot((s['lat'] - best['lat']) * KZ, (s['lng'] - best['lng']) * kx(best['lat']))) for s in sols[1:]],
+               score=best['score'], lm_cost=best['lmc'], region_match=best['reg'], dist_stop=best['dist_stop'], trees=R.trees is not None,
                coarse_top=[dict(dE=c['dE'], dN=c['dN'], score=c['score'], yaw=c['yaw'], hfov=c['hfov']) for c in co[:5]],
                screen=[dict(dE=c['dE'], dN=c['dN'], quick=c['quick']) for c in scr],
                sky_good=float(sky['good'].mean()), used_names=use_names, n_landmarks=len([L for L in lms if L.get('known')]),
@@ -595,10 +634,11 @@ if __name__ == '__main__':
     ap.add_argument('--landmarks'); ap.add_argument('--radius', type=float, default=2500); ap.add_argument('--step', type=float)
     ap.add_argument('--no-names', action='store_true'); ap.add_argument('--out'); ap.add_argument('--no-trees', action='store_true')
     ap.add_argument('--hcache', help='folder for per-stop horizon tables')
+    ap.add_argument('--no-region', action='store_true')
     a = ap.parse_args()
     stop = tuple(float(v) for v in a.stop.split(','))
     HCACHE = a.hcache
-    r = solve(a.photo, a.rows, a.cache, a.region, stop, a.landmarks, a.radius, a.step, use_names=not a.no_names, use_trees=not a.no_trees)
+    r = solve(a.photo, a.rows, a.cache, a.region, stop, a.landmarks, a.radius, a.step, use_names=not a.no_names, use_trees=not a.no_trees, use_region=not a.no_region)
     s = json.dumps(r, indent=1, default=float)
     if a.out: open(a.out, 'w').write(s)
     print(json.dumps({k: r.get(k) for k in ('lat', 'lng', 'yaw', 'pitch', 'roll', 'hfov', 'agree', 'rms_px', 'times')}, default=float))

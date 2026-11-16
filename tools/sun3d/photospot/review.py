@@ -1,7 +1,8 @@
 """Review page for "find my spot from a photo": one card per photo (photo + our sky line, our render from the solved
 spot, the spot against the stand pins, heading / lens, confidence, and for the hand-solved scans the error).
 
-  review.py <work dir>      work dir holds meta/ (rows.json, photos.json, shots.json), landmarks/, out/, scans/
+  review.py <work dir> [results dir name, default out] [rows file, default meta/rows2.json]
+  work dir holds meta/ (rows2.json, photos.json, shots.json), landmarks/, <results>/, scans/
 Writes <work>/review.html and <work>/review/*.jpg (the page uses them as relative files).
 """
 import base64, html, json, math, os, sys
@@ -14,8 +15,10 @@ import camera as C  # noqa: E402
 from render import render  # noqa: E402
 
 WD = sys.argv[1]; OUT = os.path.join(WD, 'review'); os.makedirs(OUT, exist_ok=True)
+RES = sys.argv[2] if len(sys.argv) > 2 else 'out'
+ROWS = sys.argv[3] if len(sys.argv) > 3 else 'meta/rows2.json'
 SCANS = {
-    'scan_p1': ('T.A. Moulton Barn (scan 1, 6x9 film)', (43.660995, -110.664553, 223.1, 6.2, -1.1, 48.04)),
+    'scan_p1': ('T.A. Moulton Barn (scan 1, 6x9 film)', (43.661016, -110.664522, 223.1, 6.2, -1.1, 48.04)),
     'scan_p2': ('Cunningham Cabin (scan 2, 6x9 film)', (43.778605, -110.558027, 269.5, 4.9, -0.1, 45.36)),
     'scan_p3': ('Oxbow Bend (scan 3, 6x9 film)', (43.866258, -110.548177, 259.5, 4.8, 0.1, 47.65)),
     'scan_p4': ('T.A. Moulton Barn (scan 4, 6x9 film)', (43.66085, -110.664683, 236.5, 8.1, -1.4, 47.95)),
@@ -34,7 +37,7 @@ TER = {}
 
 
 def terrain(region):
-    if region not in TER: TER[region] = Terrain(os.path.join(WD, 'meta/rows.json'), os.path.join(WD, 'terrain'), region)
+    if region not in TER: TER[region] = Terrain(os.path.join(WD, ROWS), os.path.join(WD, 'terrain'), region)
     return TER[region]
 
 
@@ -62,14 +65,16 @@ def verdict(r, lm):
     if lm.get('skip'): return 'not placed', 'skipped by the look: ' + lm['skip']
     if not r or not r.get('ok'): return 'not placed', (r or {}).get('why', 'no result')
     a, rms, lmc = r['agree'], r['rms_px'], r.get('lm_cost', 0)
-    if a < 0.3: return 'not placed', f'sky line agrees in only {a * 100:.0f}% of columns'
+    if a < 0.25: return 'not placed', f'sky line agrees in only {a * 100:.0f}% of columns'
     if lmc > 12: return 'not placed', 'named landmarks do not land where the look put them'
+    rival = [x for x in r.get('alts', []) if x['dist_m'] > 150 and x.get('score', -9) >= r['score'] - 0.05]
+    if rival: return 'direction only', f'another spot {rival[0]["dist_m"]:.0f} m away fits nearly as well'
     c = r.get('conf') or {}
-    span = (c.get('along', {}).get('hi', 0) - c.get('along', {}).get('lo', 0)) if c else 9999
-    rival = [x for x in r.get('alts', []) if x['dist_m'] > 300 and x['agree'] >= a - 0.05]
-    if rival and a >= 0.3: return 'direction only', f'another spot {rival[0]["dist_m"]:.0f} m away fits about as well'
-    if a >= 0.5 and rms <= 3 and span <= 400: return 'placed', ''
-    if a >= 0.5 and rms <= 3: return 'direction only', f'fits, but the spot can slide {span:.0f} m along the line of sight'
+    if not c: return 'weak', 'no confidence check'
+    span = max(c['along']['hi'] - c['along']['lo'], c['across']['hi'] - c['across']['lo'])
+    open_ = c['along']['open'] or c['across']['open']
+    if a >= 0.3 and not open_ and span <= 200: return 'placed', ''
+    if a >= 0.3: return 'direction only', f'fits, but the spot can slide {span:.0f} m{" or more" if open_ else ""}'
     return 'weak', f'sky line agrees in {a * 100:.0f}% of columns'
 
 
@@ -157,7 +162,7 @@ def card(name, r, lm, meta):
         if c:
             def ext(k_):
                 lo, hi = c[k_]['lo'], c[k_]['hi']
-                if lo == 0 and hi == 0: return 'under 25 m'
+                if lo == 0 and hi == 0: return 'under 15 m'
                 s_ = f'{lo:+.0f} to {hi:+.0f} m'
                 return s_ + (' (or more)' if c[k_]['open'] else '')
             rows.append(('Could slide', f'along the view {ext("along")}, sideways {ext("across")}'))
@@ -200,7 +205,7 @@ def scan_err(n, r):
 def make_summary(cards, nonames):
     rows = []
     for n in SCANS:
-        rf = os.path.join(WD, 'out', n + '.json')
+        rf = os.path.join(WD, RES, n + '.json')
         if not os.path.exists(rf): continue
         r = json.load(open(rf))
         if not r.get('ok'): rows.append(f'<tr><td>{n[5:]}</td><td colspan="7">failed</td></tr>'); continue
@@ -240,7 +245,7 @@ def main():
     nonames = {}
     for n in order:
         lm = json.load(open(os.path.join(WD, 'landmarks', n + '.json')))
-        rf = os.path.join(WD, 'out', n + '.json'); r = json.load(open(rf)) if os.path.exists(rf) else None
+        rf = os.path.join(WD, RES, n + '.json'); r = json.load(open(rf)) if os.path.exists(rf) else None
         if lm.get('idea'):
             st = [p for p in photos.values() if p['stop_id'] == IDEA_STOP]
             meta = dict(photo=r['photo'] if r else '', stop_id=IDEA_STOP, stop_name=lm.get('stop', ''), stop=(st[0]['lat'], st[0]['lng']))
@@ -248,7 +253,7 @@ def main():
             meta = dict(photo=os.path.join(WD, 'scans', n[5:] + '.png'), stop_id=SCAN_STOP[n], stop_name=SCANS[n][0])
             st = [p for p in photos.values() if p['stop_id'] == SCAN_STOP[n]]
             meta['stop'] = (st[0]['lat'], st[0]['lng']) if st else SCANS[n][1][:2]
-            rn = os.path.join(WD, 'out', n + '_nonames.json')
+            rn = os.path.join(WD, RES + '_nonames', n + '.json')
             if os.path.exists(rn): nonames[n] = json.load(open(rn))
         else:
             p = photos[lm['photo_id']]
