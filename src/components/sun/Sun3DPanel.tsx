@@ -88,6 +88,10 @@ type Props = {
   onHd?: (on: boolean) => void;
   photos?: RefPhoto[];         // full screen: the stop's photos as the stop page lists them, for the reference photo card
   preview?: boolean;           // Find spot's small per-lens picture: no buttons, no lines under it, touches pass through
+  // Find spot's full screen before "Add as a shot" (Phil, 16 Nov 2026: place, frame and save there): the shot is not on
+  // the stop yet, so the first save (stand spot or framing) makes it first and then saves onto it. Returns the new
+  // shot's vantage id; throws with a plain reason. The parent then hands the new id in as pair.vantage_id.
+  addShot?: () => Promise<string>;
 };
 
 // The package's prop types don't resolve against this React Native version's types; the props used below are its documented ones.
@@ -126,6 +130,7 @@ type Perf = { ms: number; worst: number; quality: string };
 // 17 ms is as smooth as most screens show), and the quality the page drew at while moving (it is always full when still).
 const perfLine = (p: Perf) => `${p.ms < 10 ? Math.round(p.ms * 10) / 10 : Math.round(p.ms)} ms a frame (worst ${Math.round(p.worst)}) · quality ${p.quality}`;
 const CHUNK = 240000;
+const ADD_FIRST = 'It is added to this stop as a shot first, on the real trip and its practice copy. ';
 const TREE_CHUNK = 60000;   // the park-wide tree tiles' pieces (a multiple of 4)
 // Wherever the Faroes photos / buildings are drawn (the agency's terms ask for the credit; ArcticDEM is CC-BY-4.0).
 // Grand Teton winter colour (13 Nov 2026), when the region row has no credit text of its own.
@@ -150,7 +155,7 @@ function Below({ full, max, hide, children }: { full?: boolean; max: number; hid
   return <ScrollView style={{ maxHeight: max, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
 }
 
-export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview }: Props) {
+export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview, addShot }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -182,12 +187,21 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const pickLens = LENSES.find(l => l.id === lensId) ?? LENSES[2];
   const focal = pickLens.f;
   const [frame, setFrameState] = useState<FrameMode>(lastFrame);
-  const vid = pair.vantage_id;
+  // A shot made here by the first save (addShot): its new id stands in for the placeholder until the parent passes it,
+  // so the view does not count it as another shot (no re-aim, no lens reset) when the id changes.
+  const [made, setMade] = useState<{ from: string; id: string } | null>(null);
+  const vid = made && made.from === pair.vantage_id ? made.id : pair.vantage_id;
+  const ensureShot = useCallback(async (): Promise<string> => {
+    if (!addShot) return vid;
+    const id = await addShot();
+    if (id !== pair.vantage_id) setMade({ from: pair.vantage_id, id });
+    return id;
+  }, [addShot, vid, pair.vantage_id]);
   const setLens = useCallback((id: string) => { lastLens = id; pickedFor = vid; setLensState(id); }, [vid]);
   const setFrame = useCallback((m: FrameMode) => { lastFrame = m; pickedFor = vid; setFrameState(m); }, [vid]);
   // The shot's saved framing (a save made on this phone first, sent or waiting, then the trip's sun plan).
   useShotSaves();   // re-render when a save is made, sent or dropped
-  const framing = framingOf(pair);
+  const framing = framingOf(vid === pair.vantage_id ? pair : { ...pair, vantage_id: vid });
   const framingRef = useRef<Framing | null>(framing);
   framingRef.current = framing;
   const queued = waitingFor(vid);   // saves of this shot still waiting for signal
@@ -535,14 +549,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const spot = at;
     Alert.alert(
       'Move your stand spot here?',
-      `This shot's stand spot moves ${at.moved} m to where you are standing in the view. The sun times and the planner follow. It changes the shot on every trip that uses it, practice copies included.`,
+      `${addShot ? ADD_FIRST : ''}This shot's stand spot moves ${at.moved} m to where you are standing in the view. The sun times and the planner follow. It changes the shot on every trip that uses it, practice copies included.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Move it', onPress: async () => {
             setSavingSpot(true);
             try {
-              const r = await saveShot({ kind: 'move', tripId, stopId, vantageId: pair.vantage_id, lat: spot.lat, lng: spot.lng, at: new Date().toISOString() });
+              const id = await ensureShot();
+              const r = await saveShot({ kind: 'move', tripId, stopId, vantageId: id, lat: spot.lat, lng: spot.lng, at: new Date().toISOString() });
               setWalkNote(r === 'queued' ? null : 'Saved: this is now your stand spot for the shot.');   // waiting: the line below says so
             }
             catch (e: any) { setWalkNote(`Couldn't save the spot: ${e?.message || 'try again'}`); }
@@ -551,7 +566,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         },
       ],
     );
-  }, [tripId, stopId, at, pair.vantage_id]);
+  }, [tripId, stopId, at, addShot, ensureShot]);
 
   // ---- Framing ----
   const canFrame = !!(tripId && stopId);
@@ -565,14 +580,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const tilt = Math.abs(f.pitch) < 0.5 ? 'level' : `tilted ${f.pitch > 0 ? 'up' : 'down'} ${Math.abs(f.pitch).toFixed(1)}°`;
     Alert.alert(
       'Save this framing?',
-      `The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}. It changes the shot on every trip that uses it, practice copies included.`,
+      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}. It changes the shot on every trip that uses it, practice copies included.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Save', onPress: async () => {
             setSavingFrame(true);
             try {
-              const r = await saveShot({ kind: 'frame', tripId, stopId, vantageId: vid, framing: f });
+              const id = await ensureShot();
+              const r = await saveShot({ kind: 'frame', tripId, stopId, vantageId: id, framing: f });
               run(`window.S3D.view(${JSON.stringify(pageFraming(f))})`);   // later re-aims (foreground, walk's home) keep it
               setFrameNote(null);   // the framing line says Framed, or that it waits for signal
             } catch (e: any) { setFrameNote(`Couldn't save the framing: ${e?.message || 'try again'}`); }
@@ -581,7 +597,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         },
       ],
     );
-  }, [tripId, stopId, vid, pickLens, frame, run]);
+  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot]);
   const aimAtSubject = useCallback(() => {
     run('window.S3D.view(null)');
     setFrameNote(framingRef.current ? 'Aimed at the subject. Your saved framing is kept.' : null);
@@ -602,6 +618,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     ]);
   }, [tripId, stopId, vid, run]);
   const framedLine = queued.frame ? 'Saved on the phone, sends when you have signal.'
+    : addShot ? 'Not a shot yet: saving adds it'
     : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}`
     : 'Not framed yet';
 
@@ -803,7 +820,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
               {savingFrame ? <ActivityIndicator size="small" color="#000000" /> : <Text style={styles.walkBtnMainText}>Save framing</Text>}
             </TouchableOpacity>
           </View>
-          {framing && canFrame && !queued.frame ? (
+          {framing && canFrame && !addShot && !queued.frame ? (
             <TouchableOpacity onPress={forgetFraming} accessibilityRole="button" accessibilityLabel="Forget the saved framing" hitSlop={{ top: 6, bottom: 6 }}>
               <Text style={[styles.streetLink, { marginTop: 0 }]}>Forget framing</Text>
             </TouchableOpacity>
