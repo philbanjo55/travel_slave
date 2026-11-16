@@ -2154,24 +2154,27 @@
   }
   // ---- From above (Phil, 16 Nov 2026: the stop page's Overhead tab, "3D from above") ----
   // S3D.overhead({ on, shots: [{ id, code, name, subject?, v: {lat, lng}, s?: {lat, lng}, heading_deg: number | null,
-  //   fov_deg, star, sel }], heading_up_deg?, sun?, fit? }) puts the page into a view straight down over the shots: the
-  // same terrain, colour, buildings and trees as the 3D view, lit by the sun at the slider's time (S3D.sun) with the real
-  // calculated shadows, or (sun: false) by an even light with no shadows. Drawn over it (a 2D layer): a dot per stand
-  // spot (the selected one red), its code, each shot's framing as a wedge (the selected one filled; direction = the
-  // saved framing's heading, else toward the subject; width = the lens's horizontal angle, fov_deg), the sun's
-  // direction from the selected stand spot, and, when the selected shot's subject is off screen, a tag at the edge on
-  // the line toward it ("Grand Teton · 13.6 km"). heading_up_deg: the compass heading at the top of the screen; null or
-  // 'view' (default) = the selected shot's aim, 0 / 'north' = north up. The first call (and fit: true, or a new set of
-  // shots) frames every stand spot. Full screen: one finger pans, two pinch (15 m to 20 km across) and turn; the small
+  //   fov_deg, star, sel }], heading_up_deg?, sun?, shaded?, fit? }) puts the page into a view straight down over the
+  // shots: the same terrain, colour, buildings and trees as the 3D view, lit by the sun at the slider's time (S3D.sun,
+  // live) with the real calculated shadows, or (sun: false) by an even light with no shadows. Drawn over it (a 2D layer),
+  // as the satellite Overhead (OverheadMapPanel) draws it: a dot per stand spot (the picked one red) with its code, each
+  // shot's framing as a short wedge (picked: filled, 110 px; others dashed, 70 px; direction = the saved framing's
+  // heading, else toward the subject; width = the lens's horizontal angle, fov_deg), a dashed line to the picked shot's
+  // subject (a dot where it is, or a tag at the screen's edge: "Grand Teton · 14 km"), and with the sun on a band toward
+  // the sun plus the Map tab's three arrows landing on the picked view (grey when its subject is in shade: `shaded` from
+  // the app, else this page's own check). heading_up_deg: the compass heading at the top; null / 'view' (default) = the
+  // picked shot's aim, 0 / 'north' = north up. Zoom stays on the picked stand spot (a little below the middle in my view,
+  // the middle north up; see ohHold). Full screen: one finger pans, two pinch (15 m to 20 km across) and turn; the small
   // view (inline) takes no gestures but taps. A tap on a stand dot posts { type: 'overheadTap', id }; the first picture
-  // posts { type: 'overhead', ok: true }; the end of a gesture (or a new heading) posts { type: 'overheadView', up, span,
-  // mode: 'view' | 'north' | 'turned' }. S3D.overheadSel(id), S3D.overheadUp(deg | 'view' | 'north'), S3D.overheadSun(bool), S3D.overheadZoom(k),
-  // S3D.overheadFit(); S3D.overhead({ on: false }) gives the perspective view back exactly as it was.
+  // posts { type: 'overhead', ok: true }; a gesture's end (or a new heading / zoom) posts { type: 'overheadView', up, span,
+  // mode: 'view' | 'north' | 'turned' }. S3D.overheadSel(id), S3D.overheadUp(deg | 'view' | 'north'), S3D.overheadSun(bool),
+  // S3D.overheadShade(bool | null), S3D.overheadZoom(k), S3D.overheadFit(); S3D.overhead({ on: false }) gives the
+  // perspective view back as it was.
   // The camera is a narrow (15 deg across) perspective camera high over the middle: a peak 1.5 km above the valley 10 km
   // off-centre leans ~4% of its distance. Fog, sky and sun disc are off; nothing here reaches lit() / the sun times.
   const OH_FOVH = 15 * Math.PI / 180, OH_MIN = 15, OH_MAX = 20000, OH_EVEN = { az: 180, alt: 88, k: 0.5 };   // the sun off: high and soft (k = its strength), so nothing casts a shadow and snow is not burnt out
   const OH = { on: false, shots: [], sel: null, upMode: 'view', rot: 0, cx: 0, cz: 0, span: 400, sunOn: true, posted: false, saved: null, cv: null, g2: null,
-    ptr: new Map(), tap: null, tw: 0, turning: false, shotKey: '', needFit: false };
+    ptr: new Map(), tap: null, tw: 0, turning: false, shotKey: '', needFit: false, anchored: true, ak: 0.15, shaded: null, shadeKey: '', shadeVal: false };
   const ohRad = d => d * Math.PI / 180, ohDeg = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
   const ohKx = lat => 111320 * Math.cos(lat * Math.PI / 180);
   const ohBear = (a, b) => ((Math.atan2((b.lng - a.lng) * ohKx(a.lat), (b.lat - a.lat) * 111132) * 180 / Math.PI) % 360 + 360) % 360;
@@ -2191,18 +2194,25 @@
     if (v == null || v === 'view') { OH.upMode = 'view'; OH.rot = ohRad(ohAim(ohSelShot())); }
     else if (v === 'north') { OH.upMode = 'north'; OH.rot = 0; }
     else if (Number.isFinite(+v)) { OH.upMode = +v === 0 ? 'north' : 'set'; OH.rot = ohRad(+v); }
+    ohHold();
   }
-  // every stand spot on screen with a margin, the shots a little low so the wedges ahead of them show
+  // Zoom stays on the picked shot's stand spot (Phil, 16 Nov 2026): while `anchored` the middle of the screen is worked
+  // out from that spot at every zoom and turn, so it keeps its place: a little below the middle in "my view" (ak = 15%
+  // of the screen's height, room for the wedge ahead), in the middle north up. A one-finger drag lets go of it; picking a
+  // shot, the compass, + / - and a new fit take it again. After a two-finger turn it keeps the place it had.
+  function ohHold() { OH.anchored = true; if (OH.upMode === 'view') OH.ak = 0.15; else if (OH.upMode !== 'turned') OH.ak = 0; }
+  function ohAnchor() {
+    const sel = ohSelShot(); if (!OH.anchored || !FAR || !sel) return;
+    const w = window.innerWidth || 1, h = window.innerHeight || 1, p = ohXZ(sel.v), U = ohU(), k = OH.span * h / w * OH.ak;
+    OH.cx = p.x + U.x * k; OH.cz = p.z + U.z * k; ohClamp();
+  }
+  // the start: wide enough for every stand spot of the place around the picked one (as the satellite Overhead)
   function ohFit() {
-    OH.needFit = false;
-    if (!FAR || !OH.shots.length) return;
-    const U = ohU(), Rt = ohRt(), w = window.innerWidth || 1, h = window.innerHeight || 1;
-    let r0 = Infinity, r1 = -Infinity, u0 = Infinity, u1 = -Infinity;
-    for (const s of OH.shots) { const p = ohXZ(s.v), a = p.x * Rt.x + p.z * Rt.z, b = p.x * U.x + p.z * U.z; r0 = Math.min(r0, a); r1 = Math.max(r1, a); u0 = Math.min(u0, b); u1 = Math.max(u1, b); }
-    OH.span = Math.max(200, (r1 - r0) * 1.6 + 60, ((u1 - u0) * 1.6 + 60) * w / h);
-    const rel = ohRad(ohAim(ohSelShot())) - OH.rot, hh = OH.span * h / w;
-    const cr0 = (r0 + r1) / 2 + 0.15 * OH.span * Math.sin(rel), cu = (u0 + u1) / 2 + 0.15 * hh * Math.cos(rel);
-    OH.cx = cr0 * Rt.x + cu * U.x; OH.cz = cr0 * Rt.z + cu * U.z; ohClamp();
+    OH.needFit = false; ohHold();
+    const sel = ohSelShot(); if (!FAR || !sel) return;
+    const w = window.innerWidth || 1, h = window.innerHeight || 1; let spread = 30;
+    for (const s of OH.shots) spread = Math.max(spread, ohDist(sel.v, s.v));
+    OH.span = w * (spread * 2.4 + 100) / Math.max(80, Math.min(w, h) - 70); ohClamp(); ohAnchor();
   }
   function ohCanvas() {
     if (OH.cv) return OH.cv;
@@ -2228,6 +2238,7 @@
     if (R) { aim(); relight = dirty = true; }
   }
   function placeOH() {
+    ohAnchor();
     const cam = R.cam, a = cam.aspect || 1, tH = Math.tan(OH_FOVH / 2);
     let g; try { g = groundAt(OH.cx, OH.cz); } catch (e) { g = NaN; }
     if (!Number.isFinite(g)) g = gh(FAR, OH.cx / FAR.dx - 0.5, OH.cz / FAR.dz - 0.5);
@@ -2255,7 +2266,7 @@
     p.x = e.clientX; p.y = e.clientY;
     if (inline) return;   // the small view inside the page: no pan / zoom / turn (the page scrolls), taps only
     const after = [...OH.ptr.values()].slice(0, 2);
-    if (after.length === 1) { const W = ohS2W(before[0].x, before[0].y); ohPut(W, after[0].x, after[0].y); }
+    if (after.length === 1) { OH.anchored = false; const W = ohS2W(before[0].x, before[0].y); ohPut(W, after[0].x, after[0].y); }
     else {
       const [a0, b0] = before, [a1, b1] = after, m0x = (a0.x + b0.x) / 2, m0y = (a0.y + b0.y) / 2, d0 = Math.hypot(b0.x - a0.x, b0.y - a0.y), d1 = Math.hypot(b1.x - a1.x, b1.y - a1.y);
       const W = ohS2W(m0x, m0y);
@@ -2264,7 +2275,7 @@
       OH.tw += da;
       if (!OH.turning && Math.abs(OH.tw) > ohRad(10)) { OH.turning = true; da = OH.tw; }   // a pinch is not a turn until the fingers have turned 10 degrees
       if (OH.turning) { OH.rot -= da; OH.upMode = 'turned'; }
-      ohPut(W, (a1.x + b1.x) / 2, (a1.y + b1.y) / 2);
+      if (!OH.anchored) ohPut(W, (a1.x + b1.x) / 2, (a1.y + b1.y) / 2);   // (anchored: the picked spot stays put, the pinch zooms and turns around it)
     }
     touched = true; touch('look');
   }
@@ -2276,6 +2287,15 @@
       if (best != null) post({ type: 'overheadTap', id: best });
     }
     if (OH.ptr.size === 0) { OH.tap = null; if (!inline && t && t.moved) ohSay(); if (act && act.kind === 'look') rest(); }
+  }
+  // the picked shot's subject in a ridge's shadow now (the arrows go grey): what the app said (overhead({ shaded })),
+  // else this page's own check of the subject it was given (view()), once per sun position
+  function ohShaded() {
+    if (typeof OH.shaded === 'boolean') return OH.shaded;
+    if (sun.alt <= 0) return true;
+    const k = `${sun.az}|${sun.alt}|${target && target.lat}|${target && target.lng}|${foreState}|${rangeState}`;
+    if (k !== OH.shadeKey) { OH.shadeKey = k; try { OH.shadeVal = !subjLit(sun.az, sun.alt); } catch (e) { OH.shadeVal = false; } }
+    return OH.shadeVal;
   }
   const _ohv = new THREE.Vector3();
   function ohProj(x, y, z, w, h) { _ohv.set(x, y, z).project(R.cam); return { x: (_ohv.x + 1) / 2 * w, y: (1 - _ohv.y) / 2 * h }; }
@@ -2294,9 +2314,11 @@
     const sel = ohSelShot(), K = 3 * Math.hypot(w, h); OH.dots = [];
     if (!sel) return;
     const P = OH.shots.map(s => { const q = ohXZ(s.v), y = ohH(s.v); return { s, q, y, p: ohProj(q.x, y, q.z, w, h) }; });
-    const wedge = d => {   // the two edges of a shot's framing, out to its subject (or 1.5 km)
-      const s = d.s, a = ohRad(ohAim(s)), half = ohRad(Math.max(1, Math.min(170, +s.fov_deg || 47.9)) / 2), L = s.s ? Math.max(30, ohDist(s.v, s.s)) : 1500;
-      const end = b => ohCap(d.p, ohProj(d.q.x + Math.sin(b) * L, d.y, d.q.z - Math.cos(b) * L, w, h), K);
+    // a compass direction from a ground point, as a unit vector on the screen
+    const sdir = (d, az) => { const f = ohProj(d.q.x + Math.sin(az) * 1000, d.y, d.q.z - Math.cos(az) * 1000, w, h), x = f.x - d.p.x, y = f.y - d.p.y, l = Math.hypot(x, y) || 1; return { x: x / l, y: y / l }; };
+    const wedge = d => {   // the two edges of a shot's framing, as the satellite Overhead draws them: 110 px for the picked shot, 70 for the others
+      const s = d.s, a = ohRad(ohAim(s)), half = ohRad(Math.max(1, Math.min(170, +s.fov_deg || 47.9)) / 2), L = s === sel ? 110 : 70;
+      const end = b => { const u = sdir(d, b); return { x: d.p.x + u.x * L, y: d.p.y + u.y * L }; };
       return [end(a - half), end(a + half)];
     };
     g.setLineDash([6, 5]); g.lineWidth = 1.5; g.strokeStyle = 'rgba(0,0,0,0.8)';
@@ -2305,17 +2327,24 @@
     const ds = P.find(d => d.s === sel), [s1, s2] = wedge(ds);
     g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(s1.x, s1.y); g.lineTo(s2.x, s2.y); g.closePath(); g.fillStyle = 'rgba(240,176,74,0.28)'; g.fill();
     g.beginPath(); g.moveTo(s1.x, s1.y); g.lineTo(ds.p.x, ds.p.y); g.lineTo(s2.x, s2.y); g.lineWidth = 2; g.strokeStyle = '#F0B04A'; g.stroke();
-    if (OH.sunOn && sun.alt > -0.5) {   // the sun's direction from where you stand
-      const az = ohRad(sun.az), L = 0.4 * Math.min(w, h), far = ohProj(ds.q.x + Math.sin(az) * 1000, ds.y, ds.q.z - Math.cos(az) * 1000, w, h);
-      const dx = far.x - ds.p.x, dy = far.y - ds.p.y, l = Math.hypot(dx, dy) || 1, ex = ds.p.x + dx / l * L, ey = ds.p.y + dy / l * L;
-      g.lineCap = 'round'; g.lineWidth = 9; g.strokeStyle = 'rgba(240,176,74,0.45)'; g.beginPath(); g.moveTo(ds.p.x + dx / l * 12, ds.p.y + dy / l * 12); g.lineTo(ex, ey); g.stroke(); g.lineCap = 'butt';
-      g.beginPath(); g.arc(ex, ey, 7, 0, 2 * Math.PI); g.fillStyle = '#F0B04A'; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#ffffff'; g.stroke();
+    if (OH.sunOn && sun.alt > -0.83) {   // the sun: a band from where you stand toward it, and the Map tab's three arrows landing on your view
+      const u = sdir(ds, ohRad(sun.az)), sp0 = { x: -u.y, y: u.x }, au = sdir(ds, ohRad(ohAim(sel))), T = { x: ds.p.x + au.x * 70, y: ds.p.y + au.y * 70 };
+      g.lineCap = 'round'; g.lineWidth = 10; g.strokeStyle = 'rgba(240,176,74,0.35)'; g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(ds.p.x + u.x * 260, ds.p.y + u.y * 260); g.stroke();
+      g.lineWidth = 3; g.lineJoin = 'round'; g.strokeStyle = ohShaded() ? '#9a9a9a' : '#F0B04A';
+      for (const o of [-1, 0, 1]) {
+        const bx = T.x + sp0.x * o * 16, by = T.y + sp0.y * o * 16, tx = bx + u.x * 14, ty = by + u.y * 14, kx = tx + u.x * 9, ky = ty + u.y * 9;
+        g.beginPath(); g.moveTo(bx + u.x * 70, by + u.y * 70); g.lineTo(tx, ty); g.stroke();
+        g.beginPath(); g.moveTo(kx + sp0.x * 5, ky + sp0.y * 5); g.lineTo(tx, ty); g.lineTo(kx - sp0.x * 5, ky - sp0.y * 5); g.stroke();
+      }
+      g.lineCap = 'butt';
     }
     if (sel.s) {   // the subject: a mark where it is, or a tag at the screen's edge on the line toward it
       // (a peak higher than the camera is placed at the stand spot's height: its direction is what counts)
       const sq = ohXZ(sel.s), cy = R.cam.position.y, hs0 = ohH(sel.s), hs = cy - hs0 > 0.5 * (cy - ds.y) ? hs0 : ds.y, sp = ohProj(sq.x, hs, sq.z, w, h), nm = ohShort(sel.subject || sel.name), km = ohKm(ohDist(sel.v, sel.s)), m = 8;
+      const se = ohCap(ds.p, sp, K);
+      g.save(); g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 1.5; g.setLineDash([2, 6]); g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(se.x, se.y); g.stroke(); g.restore();
       if (sp.x >= m && sp.x <= w - m && sp.y >= m && sp.y <= h - m) {
-        g.beginPath(); g.arc(sp.x, sp.y, 5, 0, 2 * Math.PI); g.fillStyle = '#000000'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#ffffff'; g.stroke();
+        g.beginPath(); g.arc(sp.x, sp.y, 7, 0, 2 * Math.PI); g.fillStyle = '#000000'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#ffffff'; g.stroke();
         if (nm) ohLabel(g, nm, sp.x + 9, sp.y, false);
       } else {
         const x0 = 26, x1 = w - 26, y0 = 26, y1 = h - 26, S = ds.p;
@@ -2324,7 +2353,6 @@
           if (dx > 0) t = Math.min(t, (x1 - S.x) / dx); if (dx < 0) t = Math.min(t, (x0 - S.x) / dx);
           if (dy > 0) t = Math.min(t, (y1 - S.y) / dy); if (dy < 0) t = Math.min(t, (y0 - S.y) / dy);
           const tx = S.x + dx * t, ty = S.y + dy * t, ang = Math.atan2(dy, dx), txt = nm ? `${nm} · ${km}` : km;
-          g.save(); g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 1; g.setLineDash([3, 4]); g.beginPath(); g.moveTo(S.x, S.y); g.lineTo(tx, ty); g.stroke(); g.restore();
           g.font = '600 12px Roboto, system-ui, sans-serif'; const tw = g.measureText(txt).width + 30, th = 22;
           const bx = Math.max(6, Math.min(w - 6 - tw, tx - tw / 2)), by = Math.max(6, Math.min(h - 6 - th, ty - th / 2));
           g.fillStyle = 'rgba(0,0,0,0.72)'; g.beginPath(); if (g.roundRect) g.roundRect(bx, by, tw, th, 11); else g.rect(bx, by, tw, th); g.fill();
@@ -2439,6 +2467,7 @@
       const flagged = shots.find(s => s.sel);
       if (o.sel != null) OH.sel = o.sel; else if (flagged) OH.sel = flagged.id; else if (!shots.some(s => s.id === OH.sel)) OH.sel = shots.length ? shots[0].id : null;
       if (o.sun != null) OH.sunOn = !!o.sun;
+      if (o.shaded !== undefined) OH.shaded = typeof o.shaded === 'boolean' ? o.shaded : null;
       const up = o.heading_up_deg !== undefined ? o.heading_up_deg : o.up;
       const first = !OH.on;
       if (up !== undefined) ohSetUp(up); else if (first || OH.upMode === 'view') ohSetUp('view');   // (my view follows the selected shot's aim)
@@ -2446,12 +2475,13 @@
       if (first) ohEnter(); else if (R && OH.needFit) ohFit();
       if (R) { relight = dirty = true; if (up !== undefined) ohSay(); }
     },
-    overheadSel(id) { OH.sel = id; if (OH.upMode === 'view') { OH.rot = ohRad(ohAim(ohSelShot())); ohSay(); } dirty = true; },
+    overheadSel(id) { OH.sel = id; if (OH.upMode === 'view') { OH.rot = ohRad(ohAim(ohSelShot())); ohSay(); } ohHold(); dirty = true; },
     overheadUp(v) { ohSetUp(v === undefined ? 'view' : v); dirty = true; ohSay(); },
+    overheadShade(v) { OH.shaded = typeof v === 'boolean' ? v : null; dirty = true; },
     overheadSun(v) { OH.sunOn = v !== false; relight = dirty = true; },
     overheadFit() { ohFit(); dirty = true; ohSay(); },
     // overheadZoom(k): k > 1 closer, < 1 farther, about the middle of the screen (the small view's + / - buttons)
-    overheadZoom(k) { if (!(k > 0)) return; OH.span = Math.max(OH_MIN, Math.min(OH_MAX, OH.span / k)); touch('look'); ohSay(); },
+    overheadZoom(k) { if (!(k > 0)) return; OH.span = Math.max(OH_MIN, Math.min(OH_MAX, OH.span / k)); ohHold(); touch('look'); ohSay(); },
     // Walk mode (12 Nov 2026): step the viewpoint f metres forward and r metres to the right of where the view is
     // looking, on the ground, at most WALK_MAX metres from the shot's own stand spot. The app is told where the
     // viewpoint now is ('eye') and whether that spot is in the sun; it asks for the day's first / last light again
