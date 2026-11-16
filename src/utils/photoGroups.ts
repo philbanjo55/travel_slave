@@ -25,3 +25,25 @@ export function photoGroupPhotos(stops: any[]): any[] {
     .sort((a, b) => ((a.p.position ?? 1e9) - (b.p.position ?? 1e9)) || (a.i - b.i))
     .map(x => x.p);
 }
+
+// The stop page's two photo lists from those photos: reference (no type, or 'reference') and field, each by position.
+export function splitStopPhotos(all: any[]): { ref: any[]; field: any[] } {
+  const byPosition = (a: any, b: any) => (a.position ?? 1e9) - (b.position ?? 1e9);
+  return {
+    ref: all.filter((p: any) => !p.photo_type || p.photo_type === 'reference').sort(byPosition),
+    field: all.filter((p: any) => p.photo_type === 'field').sort(byPosition),
+  };
+}
+
+// Every photo the stop page shows for `stopId`, in its order (reference, then field; the photo group's shared ones and,
+// on a practice trip, the borrowed ones included), from the trip as the app holds it. [] when the stop isn't listed.
+export function stopPagePhotos(tripData: any, stopId: string): any[] {
+  let stop: any = null;
+  for (const day of tripData?.days ?? []) {
+    stop = (day?.stops ?? []).find((s: any) => s?.id === stopId) ?? null;
+    if (stop) break;
+  }
+  if (!stop) return [];
+  const { ref, field } = splitStopPhotos(photoGroupPhotos(photoGroupStops(tripData, stop)));
+  return [...ref, ...field];
+}
