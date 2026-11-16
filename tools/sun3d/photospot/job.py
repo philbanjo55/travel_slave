@@ -329,7 +329,13 @@ def call(api, body, tok):
 def worker(a):
     tok = oidc_token()
     c = call(a.api, dict(action='claim', job_id=a.job, run_id=int(os.environ.get('GITHUB_RUN_ID', '0') or 0)), tok)
-    if not c.get('ok'): print('claim failed:', c); sys.exit(1)
+    if not c.get('ok'):
+        err = str(c.get('error', ''))
+        # Another run already did (or is doing) this job: a late duplicate, not a failure (16 Nov 2026, Phil: no false
+        # "All jobs have failed" emails). The server answers 409 "job is done / error / solving..." then.
+        if err.startswith('409') and 'job is ' in err:
+            print('nothing to do: this job was already handled by another run (' + err[:120] + ')'); sys.exit(0)
+        print('claim failed:', c); sys.exit(1)
     job = c['job']; work = tempfile.mkdtemp(prefix='job_')
     rows = os.path.join(work, 'rows.json'); json.dump(c['rows'], open(rows, 'w'))
     pic = os.path.join(work, 'photo.jpg'); urllib.request.urlretrieve(job['photo_url'], pic)
