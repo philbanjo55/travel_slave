@@ -48,7 +48,7 @@ export default function TripsScreen() {
   useEffect(() => { reload(); }, []);
 
   // Training trips (live-weather copies, trips.training_of) stay off the
-  // list; the TEST app shows them on their own screen.
+  // list; both apps show them on their own screen (the 🧪 row).
   const mainTrips = trips.filter((t: any) => !t.training_of);
   const activeTrips = mainTrips.filter((t: any) => !t.archived);
   const archivedTrips = mainTrips.filter((t: any) => t.archived);
