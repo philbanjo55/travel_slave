@@ -5,7 +5,7 @@ import * as Notifications from 'expo-notifications';
 
 // Find my spot (Phil, 16 Nov 2026): where was this photo taken from, and with which of his lenses can he make it?
 // The photo viewer's "Find spot" asks edge function photo-spot; Claude names the landmarks, then a worker searches
-// our terrain (about 2 minutes). Jobs are remembered on the phone, so leaving the screen (or the app) is fine:
+// our terrain (about 3-4 minutes). Jobs are remembered on the phone, so leaving the screen (or the app) is fine:
 // while the app is open every open job is asked about every 5 s; when one finishes with the app in the background
 // a notification says so (only if notifications are already allowed), and the stop page shows a "Spot found" chip.
 

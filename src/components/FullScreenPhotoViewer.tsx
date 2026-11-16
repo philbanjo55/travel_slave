@@ -343,7 +343,7 @@ function FindSpot({ photoId, stop, onLeave }: { photoId: string; stop: { id: str
         <View style={[styles.spotCard, { bottom: insets.bottom + 100 }]} accessibilityLabel="Finding where you stood">
           <View style={styles.spotRow}>
             <Text style={styles.spotTitle}>Finding where you stood</Text>
-            <Text style={styles.spotSmall}>about 2 min</Text>
+            <Text style={styles.spotSmall}>about 3 min</Text>
           </View>
           <View style={styles.spotBar}><View style={[styles.spotFill, { width: `${Math.round(spotProgress(job) * 100)}%` }]} /></View>
           <Text style={styles.spotSmall}>{job?.note && /set up|did not start/.test(job.note) ? job.note[0].toUpperCase() + job.note.slice(1) : "You can leave. It tells you when it's done."}</Text>
