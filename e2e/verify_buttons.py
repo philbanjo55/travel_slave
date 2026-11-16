@@ -1144,8 +1144,11 @@ def stops_page(fresh=True):
     s = C.capture(1.5)
     tab = next((c for c in s.clickables if c['label'].lower().startswith('stops: all')), None)
     if tab is None:   # the tab row may have scrolled to today's tab: swipe it back to its start
+        day = next((c for c in s.clickables if re.match(r'day \d', c['label'].lower())), None)
+        ty = str(day['xy'][1]) if day else '700'   # swipe on the tab row itself (it scrolls to today's tab)
+        print(f'INFO stops tab row at y {ty}', flush=True)
         for _ in range(3):
-            C.adb('shell', 'input', 'swipe', '200', '700', '1000', '700', '300'); s = C.capture(0.8)
+            C.adb('shell', 'input', 'swipe', '150', ty, '1000', ty, '300'); s = C.capture(0.8)
             tab = next((c for c in s.clickables if c['label'].lower().startswith('stops: all')), None)
             if tab is not None:
                 break
@@ -1444,7 +1447,9 @@ def find_spot():
     else:
         V.check('spot-open-3d', False, 'no Open in 3D button')
     V.show('spot-after-close', C.capture(1.5))
+    print('INFO spot before back: ' + ' | '.join(l.strip() for l in (C.adb('shell', 'dumpsys', 'activity', 'activities') or '').splitlines() if 'mResumedActivity' in l or 'topResumedActivity' in l)[:400], flush=True)
     V.back(); time.sleep(2.5)
+    print('INFO spot after back: ' + ' | '.join(t for t in C.capture(1.0).all_texts if len(t.strip()) > 1)[:400], flush=True)
     alive, focus = C.app_alive(), C.focus_pkg()
     V.check('spot-back', alive and focus == V.PKG, f'back from Your spot keeps the app open (alive {alive}, focus {focus})')
 
