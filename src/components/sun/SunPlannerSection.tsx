@@ -19,6 +19,7 @@ import FullScreenPhotoViewer from '../FullScreenPhotoViewer';
 import type { Pair } from '../../utils/sunEngine';
 import { LABELS, PHASE_COLORS, compassPoint, shotName, shotTitle } from './sunStyle';
 import Sun3DPanel from './Sun3DPanel';
+import { useNearView } from './nearView';
 import { PLANNER_ON } from '../../utils/variant';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchStopSettings } from '../../services/planner';
@@ -134,6 +135,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   const [tab, setTab] = useState<Tab>(TABS[0]);
   const [viewing, setViewing] = useState<Pair | null>(null);
   const [full3d, setFull3d] = useState(false);
+  const nv = useNearView();   // the inline 3D view waits until the section is scrolled to (then stays)
   const [hd3d, setHd3d] = useState(false);   // the 3D view's HD picture: off until tapped, kept when going full screen
   const pair = stop.pairs[Math.min(pairIdx, stop.pairs.length - 1)];
   const openPhoto = (p: Pair) => { if (p.photo_id) setViewing(p); };
@@ -242,6 +244,9 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
       ) : tab === '3d' ? (
         full3d ? (
           <View style={styles.fullNote}><Text style={styles.fullNoteText}>Showing full screen</Text></View>
+        ) : !nv.near ? (
+          // the 3D view starts once this part of the page is (nearly) on screen, never while the stop page opens
+          <View ref={nv.ref} collapsable={false} onLayout={nv.onLayout} style={styles.fullNote}><Text style={styles.fullNoteText}>3D loads here</Text></View>
         ) : (
           <Sun3DPanel pair={pair} tripId={tripId} sun={light.sun} day0={day0} height={208} onJump={setMinute} onFull={() => setFull3d(true)} hdOn={hd3d} onHd={setHd3d} />
         )
