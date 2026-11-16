@@ -688,8 +688,8 @@ def sun_3d():
     # 3D is the first tab and the one open (Phil, 16 Nov 2026, branch claude/sun-3d-first): it must be selected before
     # any tap. (The tap below stays: on a build without the change it opens the tab, here it does nothing.)
     sec = os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'SunPlannerSection.tsx')
-    if os.path.exists(sec) and "['3d', 'map'" in open(sec, encoding='utf-8').read():
-        names = ('3D', 'Map', 'Horizon', 'Photo')
+    if os.path.exists(sec) and ("['3d', 'map'" in open(sec, encoding='utf-8').read() or "['3d', 'overhead'" in open(sec, encoding='utf-8').read()):
+        names = ('3D', 'Map', 'Overhead', 'Horizon', 'Photo')
         sel, on = [], []
         for nd in (s.root.iter('node') if s.root is not None else []):
             if nd.get('package') != V.PKG:
@@ -956,6 +956,10 @@ def sun_3d():
             else:
                 print('INFO walk: no walk button in full screen (this build has no walk mode)', flush=True)
             try:
+                ground_glass()
+            except Exception as e:
+                V.check('glass-run', False, f'ground glass checks stopped: {e!r}'[:120])
+            try:
                 framing()
             except Exception as e:
                 V.check('frame-run', False, f'framing checks stopped: {e!r}'[:120])
@@ -1037,7 +1041,18 @@ def framing():
         C.adb('shell', 'input', 'swipe', '540', str(int(0.80 * H)), '540', str(int(0.70 * H)), '500'); s = C.capture(1.2)
     line = framing_row(s)
     V.check('frame-line', line is not None, (line or 'no "Not framed yet" / "Framed ..." line in full screen')[:110])
-    V.check('frame-save-button', any('Save framing for this shot' in c['label'] for c in s.clickables), 'Save framing button')
+    # Save framing greys out while the view is the saved framing (16 Nov 2026): a greyed button is not clickable, so look
+    # for the node itself; on a framed shot it must start greyed, then Aim at subject changes the view and lights it.
+    node = next((nd for nd in (s.root.iter('node') if s.root is not None else []) if nd.get('package') == V.PKG
+                 and 'Save framing for this shot' in (nd.get('content-desc') or '')), None)
+    lit = any('Save framing for this shot' in c['label'] for c in s.clickables)
+    V.check('frame-save-button', node is not None or lit, 'Save framing button')
+    if (line or '').startswith('Framed ') and not lit:
+        V.check('frame-save-grey-unchanged', True, 'greyed while the view is the saved framing')
+        if V.tap_text(s, 'Aim at subject'):
+            time.sleep(2.5); s = C.capture(1)
+        lit = any('Save framing for this shot' in c['label'] for c in s.clickables)
+        V.check('frame-save-lights-after-change', lit, 'Save framing lights up once the view moves')
     V.check('frame-aim-button', any('Aim at subject' in c['label'] for c in s.clickables), 'Aim at subject button')
     cut_off('3d-framing', s)
     # Save framing: its question, then Cancel (never Save, see above)
@@ -1102,6 +1117,130 @@ def framing():
     cut_off('3d-tour', C.capture(1))
 
 
+def ground_glass():
+    """Ground glass (16 Nov 2026): in full-screen 3D a button turns the picture (and the shot's photo) upside down and
+    left-right; the buttons stay upright and the view stays drawn. Checks glass-*."""
+    s = C.capture(1)
+    b = next((c for c in s.clickables if c['label'].split(' | ')[0].startswith('Ground glass')), None)
+    if b is None:
+        print('INFO glass: no ground glass button (this build has none)', flush=True); return
+    V.check('glass-button', True, b['label'][:60])
+    C.tap(b['xy']); time.sleep(2); g = C.capture(1)
+    on = next((c for c in g.clickables if c['label'].startswith('Ground glass on')), None)
+    V.check('glass-on', on is not None and V.has(g, 'Looking ') and C.app_alive(), 'picture turned, view still drawn')
+    V.show('glass-on', g)
+    cut_off('3d-glass', g)
+    if on is not None:
+        C.tap(on['xy']); time.sleep(1.5)
+    off = C.capture(1)
+    V.check('glass-off', any(c['label'].startswith('Ground glass: turn') for c in off.clickables) and C.app_alive(), 'back the right way up')
+
+
+def overhead_walk():
+    """Overhead tab (satellite) and Walk to shot (16 Nov 2026) on a Teton Live stop with shots. Checks over-* / walkto-*.
+    The emulator's GPS is set far away (run.sh geo fix), so Walk to shot shows a distance in km, never "You're there"."""
+    sec = os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'SunPlannerSection.tsx')
+    if os.path.exists(sec) and "'overhead'" not in open(sec, encoding='utf-8').read():
+        print('INFO overhead: this build has no Overhead tab', flush=True); return
+    if open_live() is None or open_today() is None:
+        return
+    names = ('Oxbow Bend', 'Taggart & Bradley Lakes', 'Snake River Overlook', 'Cunningham Cabin', 'Teton Point Turnout', 'Glacier View Turnout')
+    row = re.compile(r'^\d{1,2}:\d{2} [AP]M .*(' + '|'.join(re.escape(n) for n in names) + ')')
+    stop = None; s = C.capture(1.0)
+    d0 = datetime.datetime.now(ZoneInfo('America/Denver'))
+    for k in range(4):
+        if k:
+            want = d0 + datetime.timedelta(days=k); short = f"{want.strftime('%b')} {want.day}"
+            scroll_top(6); t = C.capture(1.0)
+            if not V.tap_text(t, short, exact=True):
+                C.adb('shell', 'input', 'swipe', '900', '384', '300', '384', '300'); t = C.capture(0.8)
+                if not V.tap_text(t, short, exact=True):
+                    continue
+            s = C.capture(3.0)
+        stop = sun3d_find_row(s, row)
+        if stop is not None:
+            break
+    V.check('over-stop-tap', stop is not None, (stop or 'no shot stop on the next days')[:80])
+    if stop is None:
+        return
+    time.sleep(3)
+    s = scroll_find('SUN & MOON', 14)
+    if s is None:
+        V.check('over-section', False, 'no Sun & Moon section'); return
+    for _ in range(3):   # the tabs a third of the way down
+        y = next((C.bounds(nd)[1] for nd in (s.root.iter('node') if s.root is not None else []) if (nd.get('text') or '') == 'SUN & MOON'), None)
+        if y is None or 500 <= y <= 1000:
+            break
+        C.adb('shell', 'input', 'swipe', '540', '1440', '540', str(1440 - (y - 750)), '600'); s = C.capture(1.2)
+    V.check('over-tab', V.tap_text(s, 'Overhead', exact=True), 'tap the Overhead tab')
+    def label(st):
+        if st is None or st.root is None:
+            return None
+        return next(((nd.get('content-desc') or nd.get('text') or '') for nd in st.root.iter('node')
+                     if (nd.get('content-desc') or nd.get('text') or '').startswith('Overhead satellite')), None)
+    o = None; lab = None
+    for _ in range(8):
+        o = C.capture(1.5); lab = label(o)
+        if lab:
+            break
+    V.check('over-shown', lab is not None, (lab or 'no overhead map')[:80])
+    V.show('over-inline', o)
+    sun = next((c for c in o.clickables if c['label'].split(' | ')[0] in ('Sun on', 'Sun off')), None)
+    if sun is not None:
+        before = sun['label'].split(' | ')[0]; C.tap(sun['xy']); time.sleep(1); o2 = C.capture(1)
+        after = next((c['label'].split(' | ')[0] for c in o2.clickables if c['label'].split(' | ')[0] in ('Sun on', 'Sun off')), None)
+        V.check('over-sun-toggle', after is not None and after != before, f'{before} -> {after}')
+        sun2 = next((c for c in o2.clickables if c['label'].split(' | ')[0] == after), None)
+        if sun2: C.tap(sun2['xy']); time.sleep(0.8)
+    else:
+        V.check('over-sun-toggle', False, 'no Sun button')
+    o = C.capture(1)
+    full = next((c for c in o.clickables if 'Open the overhead view full screen' in c['label']), None)
+    if full is not None:
+        C.tap(full['xy']); time.sleep(3); f = C.capture(1)
+        closer = next((c for c in f.clickables if 'Close the overhead view' in c['label']), None)
+        V.check('over-full-open', closer is not None and C.app_alive(), 'full screen overhead')
+        V.show('over-full', f); cut_off('overhead-full', f)
+        if closer is not None:
+            C.tap(closer['xy']); time.sleep(1.5)
+        else:
+            V.back(); time.sleep(1)
+    else:
+        V.check('over-full-open', False, 'no full screen button')
+    V.check('over-alive', C.app_alive())
+    # Walk to shot
+    w = C.capture(1)
+    wb = next((c for c in w.clickables if c['label'].startswith('Walk to')), None)
+    if wb is None:
+        for _ in range(4):
+            C.adb('shell', 'input', 'swipe', '540', '1500', '540', '1100', '500'); w = C.capture(1)
+            wb = next((c for c in w.clickables if c['label'].startswith('Walk to')), None)
+            if wb: break
+    V.check('walkto-button', wb is not None, (wb['label'] if wb else 'no Walk to button')[:60])
+    if wb is None:
+        return
+    C.tap(wb['xy'])
+    got = None
+    for _ in range(10):
+        got = C.capture(1.5)
+        allow = next((c for c in got.clickables if c['label'].lower().startswith(('while using the app', 'only this time'))), None)
+        if allow is not None:
+            C.tap(allow['xy']); continue
+        if any(re.fullmatch(r'[\d.]+ (km|m)', t.strip()) for t in got.all_texts) or V.has(got, "You're there") or V.has(got, 'Location is off'):
+            break
+    dist = next((t for t in got.all_texts if re.fullmatch(r'[\d.]+ (km|m)', t.strip())), None)
+    V.check('walkto-open', V.has(got, 'Walk to'), 'walk screen open')
+    V.check('walkto-distance', dist is not None, (dist or 'no distance (' + ' | '.join(got.all_texts)[:120] + ')'))
+    V.check('walkto-aim', V.has(got, 'aim ') or V.has(got, 'Aim '), 'the way to aim once there')
+    V.check('walkto-directions', any('Walking directions in Google Maps' in c['label'] for c in got.clickables), 'Directions button (not tapped)')
+    V.show('walkto', got); cut_off('walk-to-shot', got)
+    cl = next((c for c in got.clickables if 'Close walk to shot' in c['label']), None)
+    if cl: C.tap(cl['xy'])
+    else: V.back()
+    time.sleep(1.5)
+    V.check('walkto-closed', not V.has(C.capture(1), 'Walking directions') and C.app_alive(), 'back on the stop page')
+
+
 def refphoto():
     """Reference photo in the full-screen 3D view (15 Nov 2026, branch claude/sun3d-ref-photo): the photo button opens a
     small card of the stop's photos, X closes it, a tap on the card lays the photo see-through over the picture with an
@@ -1131,12 +1270,12 @@ def refphoto():
     h0 = heading(s)
     btn = clickable(s, 'Reference photo', exact=True)
     if btn is None:
-        if STOP_REF_PHOTOS:
+        if STOP_REF_PHOTOS and 'ownRef' not in open(panel, encoding='utf-8').read():
             V.check('refphoto-button', False, 'the stop page shows reference photos, but there is no photo button in full screen')
             print('INFO refphoto: panel says ' + ' | '.join(t for t in s.all_texts if '3D view' in t or 'photos ' in t)[:300], flush=True)
             print('INFO refphoto: buttons ' + ' | '.join(c['label'][:30] for c in s.clickables)[:600], flush=True)
         else:
-            V.check('refphoto-button', None, 'this stop has no reference photos: no photo button (as designed)')
+            V.check('refphoto-button', None, 'this shot has no photo of its own: no photo button (as designed)')
         return
     V.check('refphoto-button', True, f'photo button in full screen (heading {h0})')
     def tap_btn():
@@ -1147,7 +1286,8 @@ def refphoto():
     tap_btn()
     c, ok = wait_for(lambda st: clickable(st, 'Close reference photo') is not None)
     count = next((t for t in c.all_texts if re.fullmatch(r'\d+ of \d+', t.strip())), None)
-    V.check('refphoto-card-open', ok, f'card with {count or "no n of m label"}')
+    V.check('refphoto-card-open', ok, f'card with {count or "one photo (no n of m)"}')
+    V.check('refphoto-one-only', clickable(c, 'Next reference photo') is None and (count is None), "only the shot's own photo: no arrows, no count")
     if not ok:
         V.show('refphoto-card', c); return
     card = clickable(c, 'over the view')
@@ -1502,7 +1642,7 @@ def spot_open_3d_edit():
         if btn(c, 'Close reference photo', exact=False) is not None: break
         c = C.capture(1.2)
     count = next((t for t in c.all_texts if re.fullmatch(r'\d+ of \d+', t.strip())), None)
-    V.check('spot-3d-refphoto-open', btn(c, 'Close reference photo', exact=False) is not None and (count or '').startswith('1 of'),
+    V.check('spot-3d-refphoto-open', btn(c, 'Close reference photo', exact=False) is not None and (count is None or count.startswith('1 of')),
             f'card open on {count or "no n of m label"}')
     V.show('spot-3d-refphoto', c)
     card = btn(c, 'over the view', exact=False)
@@ -1642,7 +1782,13 @@ def find_spot():
 
 
 def main():
-    for st in (find_spot, sun_3d, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, offline_3d):
+    sections = (find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, offline_3d)
+    # E2E_ONLY = comma list of section names: the workflow runs the sections on several emulators at once (16 Nov 2026)
+    only = [x.strip() for x in os.environ.get('E2E_ONLY', '').split(',') if x.strip()]
+    if only:
+        sections = tuple(st for st in sections if st.__name__ in only)
+        print('INFO sections this emulator: ' + ', '.join(st.__name__ for st in sections), flush=True)
+    for st in sections:
         # Every section starts on a fresh app (16 Nov 2026): one software-graphics freeze in 3D used to leave the app hung
         # and fail every later section with 'no Training trips row'. offline_3d makes its own fresh start.
         if st is not offline_3d:

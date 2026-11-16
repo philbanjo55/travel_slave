@@ -13,17 +13,18 @@ import {
   dayEvents, dayStartMs, fmtMinute, lightAt, moonPosition, parseTimeLabel,
 } from '../../utils/sunEngine';
 import SunMapPanel from './SunMapPanel';
+import OverheadMapPanel from './OverheadMapPanel';
 import SunHorizonPanel from './SunHorizonPanel';
 import VantagePhoto from './VantagePhoto';
 import FullScreenPhotoViewer from '../FullScreenPhotoViewer';
 import type { Pair } from '../../utils/sunEngine';
 import { LABELS, PHASE_COLORS, compassPoint, shotName, shotTitle } from './sunStyle';
 import Sun3DPanel from './Sun3DPanel';
+import WalkToShot from './WalkToShot';
 import { useNearView } from './nearView';
 import { PLANNER_ON } from '../../utils/variant';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchStopSettings } from '../../services/planner';
-import { stopPagePhotos } from '../../utils/photoGroups';
 
 // The stop's starred shot, so Sun & Moon (and its 3D view) open on it rather than on the first shot in the list,
 // which for most stops is the automatic "main" shot standing on the stop's own pin (often the parking spot):
@@ -100,10 +101,11 @@ function SunPlannerInner({ tripId, stopId, timeLabel, stopName, stopPhotos, stop
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-type Tab = 'map' | 'horizon' | 'photo' | '3d';
-const TAB_NAMES: Record<Tab, string> = { map: 'Map', horizon: 'Horizon', photo: 'Photo', '3d': '3D' };
+type Tab = 'map' | 'overhead' | 'horizon' | 'photo' | '3d';
+const TAB_NAMES: Record<Tab, string> = { map: 'Map', overhead: 'Overhead', horizon: 'Horizon', photo: 'Photo', '3d': '3D' };
 // 3D comes first and is what opens (Phil, 16 Nov 2026: "I want 3d to be the one that's first and opened").
-const TABS: Tab[] = PLANNER_ON ? ['3d', 'map', 'horizon', 'photo'] : ['map', 'horizon', 'photo'];
+// Overhead (Phil, 16 Nov 2026) replaces Map where the planner is on: every shot of the place from above.
+const TABS: Tab[] = PLANNER_ON ? ['3d', 'overhead', 'horizon', 'photo'] : ['map', 'horizon', 'photo'];
 
 // Every stop's starred shot as saved on the phone (starredShot keeps them), for the full-screen shot order.
 async function savedStars(stopIds: string[]): Promise<Record<string, string | null>> {
@@ -135,6 +137,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   const [tab, setTab] = useState<Tab>(TABS[0]);
   const [viewing, setViewing] = useState<Pair | null>(null);
   const [full3d, setFull3d] = useState(false);
+  const [walk, setWalk] = useState<null | 'page' | 'full'>(null);   // Walk to shot: from the stop page or from full-screen 3D
   const nv = useNearView();   // the inline 3D view waits until the section is scrolled to (then stays)
   const [hd3d, setHd3d] = useState(false);   // the 3D view's HD picture: off until tapped, kept when going full screen
   const pair = stop.pairs[Math.min(pairIdx, stop.pairs.length - 1)];
@@ -187,15 +190,6 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
     }
   };
   const fStopName = away ? away.stopName : (tour[tourAt]?.stopName ?? stopName ?? '');
-  // The photos for the full screen's reference photo card: this stop's as its page lists them, or, on another stop's
-  // shot, that stop's own list worked out the same way from the trip on the phone.
-  const awayStopId = away ? away.stopId : null;
-  const awayPhotos = useMemo(() => (awayStopId ? stopPagePhotos(tripData, awayStopId) : null), [awayStopId, tripData]);
-  // Another entry of the same place (a repeat visit) that comes back empty (its photos not in the trip as held) shows
-  // this stop's photos: same place, same pictures.
-  const fPhotos = awayStopId
-    ? ((awayPhotos && awayPhotos.length) ? awayPhotos : (away && stopName && away.stopName === stopName ? stopPhotos ?? [] : awayPhotos ?? []))
-    : stopPhotos ?? [];
 
   const ms = day0 + minute * 60000;
   const light = lightAt(pair, ms);
@@ -239,6 +233,14 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
 
       {tab === 'map' ? (
         <SunMapPanel pair={pair} light={light} moon={moon} riseAz={events.riseAz} setAz={events.setAz} height={208} />
+      ) : tab === 'overhead' ? (
+        <OverheadMapPanel
+          pairs={stop.pairs}
+          sel={pair}
+          onPick={p => { const i = stop.pairs.indexOf(p); if (i >= 0) { chosen.current = true; setPairIdx(i); } }}
+          sun={light.sun}
+          height={208}
+        />
       ) : tab === 'horizon' ? (
         <SunHorizonPanel pair={pair} day0={day0} light={light} moon={moon} />
       ) : tab === '3d' ? (
@@ -314,13 +316,22 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
           })}
         </ScrollView>
       )}
-      <TouchableOpacity onPress={() => onEdit()} style={styles.editLink} accessibilityRole="button" hitSlop={8}>
-        <Text style={styles.editLinkText}>Edit vantages</Text>
-      </TouchableOpacity>
+      <View style={styles.walkRow}>
+        {PLANNER_ON ? (
+          <TouchableOpacity onPress={() => setWalk('page')} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel={`Walk to shot ${pair.code ?? ''}`.trim()}>
+            <Ionicons name="walk-outline" size={16} color="#ffffff" />
+            <Text style={styles.walkText}>Walk to {pair.code || 'shot'}</Text>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity onPress={() => onEdit()} style={styles.editLink} accessibilityRole="button" hitSlop={8}>
+          <Text style={styles.editLinkText}>Edit vantages</Text>
+        </TouchableOpacity>
+      </View>
+      <WalkToShot pair={pair} visible={walk === 'page'} onClose={() => setWalk(null)} onOpen3d={PLANNER_ON ? () => { setWalk(null); setFull3d(true); } : undefined} />
       <Modal visible={full3d} animationType="fade" onRequestClose={() => setFull3d(false)}>
         <View style={[styles.fullScreen, { paddingTop: insets.top }]}>
           {full3d ? (
-            <Sun3DPanel full pair={fPair} tripId={tripId} stopId={fStopId} sun={fSun ?? light.sun} day0={fDay0} onJump={setFMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} photos={fPhotos} />
+            <Sun3DPanel full pair={fPair} tripId={tripId} stopId={fStopId} sun={fSun ?? light.sun} day0={fDay0} onJump={setFMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} />
           ) : null}
           <View style={[styles.fullBar, { paddingBottom: 18 + insets.bottom }]}>
             {tour.length > 1 && tourAt >= 0 ? (
@@ -339,12 +350,16 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
             <View style={styles.timeRow}>
               <Text style={styles.timeText}>{fmtMinute(fMinute)}</Text>
               <Text style={styles.fullShot} numberOfLines={1}>{away ? `${MONTHS[Number(fStop.date.slice(5, 7)) - 1]} ${Number(fStop.date.slice(8, 10))}` : shotName(pair)}</Text>
+              <TouchableOpacity onPress={() => setWalk('full')} style={styles.fullWalk} accessibilityRole="button" accessibilityLabel="Walk to this shot" hitSlop={4}>
+                <Ionicons name="walk-outline" size={20} color="#ffffff" />
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => setFull3d(false)} style={styles.fullClose} accessibilityRole="button" accessibilityLabel="Close the 3D view">
                 <Text style={styles.fullCloseText}>Close</Text>
               </TouchableOpacity>
             </View>
             <TimeScrubber minute={fMinute} onChange={setFMinute} phases={fEvents.phases} />
           </View>
+          {full3d ? <WalkToShot pair={fPair} visible={walk === 'full'} onClose={() => setWalk(null)} onOpen3d={() => setWalk(null)} /> : null}
         </View>
       </Modal>
       <FullScreenPhotoViewer
@@ -510,7 +525,11 @@ const styles = StyleSheet.create({
   onePair: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: colors.border, borderRadius: 8, backgroundColor: '#111111', paddingHorizontal: 8, paddingVertical: 8 },
   onePairText: { fontSize: 12, color: '#888888' },
   onePairStrong: { color: '#ffffff', fontWeight: '600' },
-  editLink: { alignSelf: 'flex-end', paddingVertical: 2 },
+  editLink: { marginLeft: 'auto', paddingVertical: 2 },
+  walkRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  walkBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: '#111111' },
+  walkText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
+  fullWalk: { width: 44, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' },
   editLinkText: { fontSize: 12, color: '#888888', textDecorationLine: 'underline' },
   addBtn: {
     marginHorizontal: spacing.xl, marginBottom: spacing.lg, paddingVertical: 10, alignItems: 'center',

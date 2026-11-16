@@ -11,7 +11,6 @@ import { useTripStore } from '../store/tripStore';
 import { dayStartMs, sunPosition } from '../utils/sunEngine';
 import type { Pair } from '../utils/sunEngine';
 import { useSunStop } from '../services/sunPlan';
-import { stopPagePhotos } from '../utils/photoGroups';
 import type { RefPhoto } from '../components/sun/RefPhotoOverlay';
 
 // Find my spot, the answer (Phil's mockup "Found" / "Lens135", 16 Nov 2026): the photo with our sky line on it,
@@ -99,9 +98,8 @@ export default function PhotoSpotScreen() {
   const fullPair = useMemo<Pair | null>(() => (!pair ? null : added ? (livePair ?? { ...pair, vantage_id: added }) : pair), [pair, added, livePair]);
   const photos = useMemo<RefPhoto[]>(() => {
     const own: RefPhoto[] = job?.photo_url ? [{ id: job.photo_id, storage_url: job.photo_url }] : [];
-    const rest = inStore && stopId ? stopPagePhotos(tripData, stopId).filter((p: any) => p?.id !== job?.photo_id) : [];
-    return [...own, ...rest];
-  }, [job?.photo_id, job?.photo_url, inStore, stopId, tripData]);
+    return own;   // only the photo the spot was found from (Phil, 16 Nov 2026: one photo per shot)
+  }, [job?.photo_id, job?.photo_url]);
   // The full screen's day: the stop's own day as the stop page has it (else today, around solar noon), noon to start.
   const fDay0 = planStop ? dayStartMs(planStop.date, planStop.utc_offset_min) : t - 12 * 3600e3;
   const [fMinute, setFMinute] = useState(720);

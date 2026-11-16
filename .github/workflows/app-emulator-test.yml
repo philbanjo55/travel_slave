@@ -75,6 +75,20 @@ jobs:
     needs: apk
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    # The sections run on four emulators at once (16 Nov 2026: one emulator took ~1.5-2 h). Each starts from a fresh
+    # install; the 3D sections are the slow ones, so each heavy one has its own machine.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: a
+            only: sun_3d
+          - shard: b
+            only: offline_3d,find_spot
+          - shard: c
+            only: faroes_3d,overhead_walk,stops_page,today_auto_open
+          - shard: d
+            only: side_by_side_card,plan_check_card,replan_now_card,ghost_accept,plans_tab,tell_t,tell_t_setup
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -91,6 +105,7 @@ jobs:
         env:
           OUT: out
           CRAWL_MINUTES: '0'
+          E2E_ONLY: ${{ matrix.only }}
         with:
           api-level: 34
           target: google_apis
@@ -104,6 +119,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: tap-through-results
+          name: tap-through-results-${{ matrix.shard }}
           path: out
           retention-days: 14

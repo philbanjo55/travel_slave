@@ -69,9 +69,11 @@ export function RefPhotoCard({ photos, index, onIndex, onSee, onClose, top }: {
             </TouchableOpacity>
           </>
         ) : null}
-        <View style={styles.count} pointerEvents="none">
-          <Text style={styles.countText}>{index + 1} of {n}</Text>
-        </View>
+        {n > 1 ? (
+          <View style={styles.count} pointerEvents="none">
+            <Text style={styles.countText}>{index + 1} of {n}</Text>
+          </View>
+        ) : null}
       </View>
       <TouchableOpacity onPress={onClose} style={styles.x} accessibilityRole="button" accessibilityLabel="Close reference photo" hitSlop={8}>
         <Ionicons name="close" size={14} color="#ffffff" />

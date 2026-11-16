@@ -121,6 +121,7 @@ let lastForeground = true;
 let lastTrees = true;   // the foreground's trees (Phil, 16 Nov 2026: a "no trees" setting): kept like the foreground itself
 let lastIce: boolean | null = null;
 let pickedFor: string | null = null;   // the shot whose lens / frame box the user changed by hand: its framing's lens is not put back over that
+let lastGlass = false;
 let lastRefOpacity = 0.45;   // the see-through amount last chosen, kept while the app is open
 let foregroundTooHeavy = false;   // the web view died with the foreground on: it stays off until the user turns it on again
 // How this phone kept up the last time the view was moved: the page's quality levels while moving (0 full .. 3 low),
@@ -211,7 +212,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const queued = waitingFor(vid);   // saves of this shot still waiting for signal
   // A framed shot opens with its lens and frame box; another shot with the last ones chosen by hand.
   useEffect(() => {
-    if (pickedFor === vid) return;
+    if (pickedFor === vid) return;   // the lens was just changed by hand for this shot (e.g. small view -> full screen)
+    pickedFor = null;   // another shot: a hand pick on an earlier shot must not keep that shot from its saved lens and landscape / portrait later (Phil, 16 Nov 2026)
     const f = framingRef.current;
     if (f) {
       if (LENSES.some(l => l.id === f.lens)) setLensState(f.lens);
@@ -229,6 +231,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [moments, setMoments] = useState<Moments | null>(null);
   const [look, setLook] = useState<number | null>(null);
   const lookRef = useRef<{ yaw: number; pitch: number } | null>(null);   // where the view points now, to 0.01 deg (page's `look`)
+  const [lookTilt, setLookTilt] = useState<number | null>(null);   // the tilt to 0.1 deg, so a tilt-only change re-checks Save framing
   const [problem, setProblem] = useState<string | null>(null);
   const [perf, setPerf] = useState<Perf | null>(null);   // the last movement's frame time, as the page measured it (offline view)
   const booted = useRef(false);
@@ -263,7 +266,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const setWant = useCallback((on: boolean) => { if (onHd) onHd(on); else setWantLocal(on); }, [onHd]);
   const savedLine = tripTerrainLine(useTripTerrain(tripId));
   // Reference photo (full screen only): 'card' = the small card, 'see' = see-through over the picture.
-  const refList = full && photos ? photos.filter(p => p && (p.id || p.storage_url || p.base64_data)) : [];
+  // Phil, 16 Nov 2026: only the photo that belongs to this shot, never a pick of the stop's other photos. The shot's own
+  // photo (scout_vantages.photo_id) when it has one; else the first photo the parent hands in (Find spot: the photo the
+  // spot was found from); a shot with neither has no photo button.
+  const ownRef: RefPhoto | null = pair.photo_id ? { id: pair.photo_id, storage_url: pair.photo_url ?? null }
+    : (photos ?? []).find(p => p && (p.id || p.storage_url || p.base64_data)) ?? null;
+  const refList = full && ownRef ? [ownRef] : [];
   const refKey = refList.map(p => p.id ?? p.storage_url ?? '').join('|');
   const [refMode, setRefMode] = useState<'off' | 'card' | 'see'>('off');
   const [refIdx, setRefIdx] = useState(0);
@@ -275,6 +283,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // "Move photo" (pinch / drag the see-through photo to match the framing): on only while see-through; where the photo
   // sits is kept across photos and lenses and put back to fit when the photo is closed.
   const [refMove, setRefMove] = useState(false);
+  // Ground glass (Phil, 16 Nov 2026): the picture and the shot's photo turned upside down and left-right (a 180 degree
+  // turn), as a view camera's ground glass shows them, so he can frame without turning the phone. Buttons stay upright.
+  // Full screen only; kept while stepping between shots.
+  const [glass, setGlassState] = useState(lastGlass);
+  const setGlass = useCallback((on: boolean) => { lastGlass = on; setGlassState(on); }, []);
+  const glassOn = !!full && glass;
   const [refXf, setRefXf] = useState<PhotoXf>(XF0);
   useEffect(() => { if (refMode !== 'see') setRefMove(false); if (refMode === 'off') setRefXf(XF0); }, [refMode]);
 
@@ -520,6 +534,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     else if (m.type === 'look') {
       setLook(typeof m.deg === 'number' ? m.deg : null);
       lookRef.current = typeof m.deg === 'number' ? { yaw: typeof m.yaw === 'number' ? m.yaw : m.deg, pitch: typeof m.pitch === 'number' ? m.pitch : 0 } : null;
+      setLookTilt(typeof m.pitch === 'number' ? Math.round(m.pitch * 10) / 10 : null);
     }
     else if (m.type === 'eye') { setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); }
     else if (m.type === 'walk') setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : 'That is the edge of the saved terrain.');
@@ -569,6 +584,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // Leaving walk mode keeps the view where it walked to (Phil, 16 Nov 2026); "Back to my spot" in walk mode goes back.
   const leaveWalk = useCallback(() => { stopStepping(); setWalking(false); setWalkNote(null); }, [stopStepping]);
   const canSaveSpot = !!(tripId && stopId && at && at.moved >= 2);
+  // Save framing greys out while the view is exactly the saved framing, like Save as my spot (Phil, 16 Nov 2026).
+  const frameUnchanged = (() => {
+    const lk = lookRef.current;
+    if (!framing || addShot || !lk) return false;
+    const dh = Math.abs(((((lk.yaw - framing.heading) % 360) + 540) % 360) - 180);
+    return dh < 0.3 && Math.abs(lk.pitch - framing.pitch) < 0.3 && framing.lens === pickLens.id
+      && framing.orient === (frame === 'port' ? 'portrait' : 'landscape');
+  })();
+  void lookTilt;   // (read so the tilt state re-renders this check)
   const saveSpot = useCallback(() => {
     if (!tripId || !stopId || !at) return;
     const spot = at;
@@ -614,6 +638,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             try {
               const id = await ensureShot();
               const r = await saveShot({ kind: 'frame', tripId, stopId, vantageId: id, framing: f });
+              pickedFor = null;   // the saved framing (lens, landscape / portrait) is what this shot opens with from now on
               run(`window.S3D.view(${JSON.stringify(pageFraming(f))})`);   // later re-aims (foreground, walk's home) keep it
               setFrameNote(null);   // the framing line says Framed, or that it waits for signal
             } catch (e: any) { setFrameNote(`Couldn't save the framing: ${e?.message || 'try again'}`); }
@@ -666,6 +691,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   return (
     <View style={full ? styles.fullWrap : undefined} accessibilityLabel={`3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}`}>
       <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}>
+        <View style={[styles.web, glassOn ? styles.glass : null]} pointerEvents="box-none">
         {region && b64 && !holding ? (
           <Web
             ref={web}
@@ -684,6 +710,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           />
         ) : null}
         {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} /> : null}
+        </View>
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
@@ -758,6 +785,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
                 hitSlop={6}
               >
                 <Ionicons name="snow-outline" size={17} color={iceOn ? '#000000' : '#ffffff'} />
+              </TouchableOpacity>
+            ) : null}
+            {full ? (
+              <TouchableOpacity
+                onPress={() => setGlass(!glass)}
+                style={[styles.fullBtn, glass && styles.lensOn]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: glass }}
+                accessibilityLabel={glass ? 'Ground glass on: picture upside down' : 'Ground glass: turn the picture upside down'}
+                hitSlop={6}
+              >
+                <Ionicons name="swap-vertical" size={17} color={glass ? '#000000' : '#ffffff'} />
               </TouchableOpacity>
             ) : null}
             {refOn ? (
@@ -841,7 +880,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             <TouchableOpacity onPress={aimAtSubject} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Aim at subject">
               <Text style={styles.walkBtnText}>Aim at subject</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={saveFraming} style={[styles.walkBtn, styles.walkBtnMain, !canFrame && { opacity: 0.4 }]} accessibilityRole="button" accessibilityLabel="Save framing for this shot" disabled={!canFrame || savingFrame || look == null}>
+            <TouchableOpacity onPress={saveFraming} style={[styles.walkBtn, styles.walkBtnMain, (!canFrame || frameUnchanged) && { opacity: 0.4 }]} accessibilityRole="button" accessibilityLabel="Save framing for this shot" accessibilityState={{ disabled: !canFrame || frameUnchanged }} disabled={!canFrame || savingFrame || look == null || frameUnchanged}>
               {savingFrame ? <ActivityIndicator size="small" color="#000000" /> : <Text style={styles.walkBtnMainText}>Save framing</Text>}
             </TouchableOpacity>
           </View>
@@ -933,6 +972,7 @@ const styles = StyleSheet.create({
   frame: { borderRadius: 10, overflow: 'hidden', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   frameFull: { flex: 1, borderRadius: 0, borderWidth: 0 },
   web: { flex: 1, backgroundColor: colors.surface },
+  glass: { transform: [{ rotate: '180deg' }] },
   cover: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', padding: 16, backgroundColor: colors.surface },
   coverText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
   // The buttons wrap onto a second line when they don't fit: with HD, frame, foreground and frozen lakes the row ran past
