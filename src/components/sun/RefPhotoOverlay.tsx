@@ -165,7 +165,7 @@ export function RefPhotoGhost({ photo, opacity, xf = XF0, move = false, onXf }: 
         <Image
           source={{ uri }}
           style={[StyleSheet.absoluteFill, { opacity, transform: [{ translateX: t.x }, { translateY: t.y }, { scale: t.s }] }]}
-          resizeMode="cover"
+          resizeMode="contain"   // the whole photo, never cropped: zooming out shows all of it (Phil, 16 Nov 2026)
         />
       </View>
     </View>
