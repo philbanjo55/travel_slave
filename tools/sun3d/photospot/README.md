@@ -46,3 +46,17 @@ Needs numpy, scipy, opencv-python, Pillow. Terrain files download on first use f
 `gazetteer.json` is a stand-in: names written from general knowledge (100-400 m) or copied from the trips'
 `scout_subjects`, snapped to the terrain's high point / the largest building. A real version would use OSM / GNIS /
 Faroese place names. Results and numbers: see the review page and the commit message of this folder.
+
+## In the app (16 Nov 2026, "Find spot")
+
+The viewer's Find spot pill -> edge function `photo-spot` (`supabase/functions/photo-spot`): Claude looks at the photo
+(the stored picture through Supabase's resizer, 1280 wide, `resize=contain`) and names landmarks from the gazetteer and
+the trip's subjects with pixel spots (`look.ts`; ~2 cents) -> table `photo_spot_jobs` -> GitHub Actions
+`.github/workflows/photo-spot.yml` (workflow_dispatch with the job id, started by the function with secret
+`GITHUB_DISPATCH_TOKEN`) runs `job.py --job <id>`: it claims the job with the run's OIDC token (audience `photo-spot`; the
+function checks repo, workflow file and event), solves, and finishes with the result and `overlay.jpg` (photo + our sky
+line, bucket `photo-spot`). `job.py` checks the look's named peaks against each other from the stop (one heading /
+lens / tilt within 3 % of the width), then tries: the agreeing peaks, only the sure ones, every name; the first placed
+answer wins. Lens plans per the rule in the module docstring. Local test: `job.py --photo p.jpg --look look.json --stop
+LAT,LNG --region grand_teton --rows rows.json --cache terrain/ --out r.json --overlay o.jpg`. Each solve can take ~5 GB of
+memory: run at most two at a time on a 16 GB machine.
