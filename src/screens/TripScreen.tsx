@@ -16,7 +16,8 @@ import DayWeatherOverview from '../components/DayWeatherOverview';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
-import { PLANNER_ON } from '../utils/variant';
+import { IS_TEST_APP, PLANNER_ON } from '../utils/variant';
+import StopsView, { StopsTab } from '../components/StopsView';
 import {
   fetchClaudeSpend, spendLine, fetchDayRuns, dayChanges, applyWeek, isPastDay, canApply, changesLine,
   labelMinutes, DayChange,
@@ -44,6 +45,9 @@ export default function TripScreen() {
   const currentTripData = useTripData(tripId);
   const tabScrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const [activeDay, setActiveDay] = useState(0);
+  // TEST app (Stops page, design "FINAL", Phil 16 Nov 2026): a first tab before the days shows every rated place
+  // once, by rank. The day tabs work as before; the main app has no such tab.
+  const [showStops, setShowStops] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [weatherUpdating, setWeatherUpdating] = useState(false);
   const [weatherProgress, setWeatherProgress] = useState<{ done: number; total: number } | null>(null);
@@ -134,10 +138,12 @@ export default function TripScreen() {
   }, [tripId]);
 
   const goToDay = useCallback((index: number) => {
+    setShowStops(false);
     setActiveDay(index);
     setCurrentDay(index);
-    tabScrollRef.current?.scrollTo({ x: Math.max(0, index * 72 - 100), animated: true });
+    tabScrollRef.current?.scrollTo({ x: Math.max(0, (index + (IS_TEST_APP ? 1 : 0)) * 72 - 100), animated: true });
   }, []);
+  const stopsOn = IS_TEST_APP && showStops;
 
   // Live trip (Phil, 10 Nov 2026): the trip opens on today's day (in the trip's time zone), and
   // jumps to it again when a new day starts while the page stays open. Once Phil picks another
@@ -399,8 +405,12 @@ export default function TripScreen() {
           overScrollMode="never"
           contentContainerStyle={styles.tabBarContent}
         >
+          {IS_TEST_APP ? (
+            <StopsTab tripId={tripId} tripData={currentTripData} active={stopsOn} styles={styles}
+              onPress={() => { setShowStops(true); setGhost(false); setPop(null); }} />
+          ) : null}
           {days.map((d: any, index: number) => {
-            const isActive = index === activeDay;
+            const isActive = !stopsOn && index === activeDay;
             const isToday = index === todayIndex;
             return (
               <TouchableOpacity
@@ -424,7 +434,12 @@ export default function TripScreen() {
         </ScrollView>
       </View>
 
-      {day && (
+      {stopsOn ? (
+        <StopsView tripId={tripId} tripData={currentTripData} bottomPad={insets.bottom}
+          onOpen={p => navigation.navigate('StopDetail', { stopId: p.stopId, dayId: p.dayId })} />
+      ) : null}
+
+      {!stopsOn && day && (
         <View style={styles.dayHeader}>
           <View style={styles.dayHeaderLeft}>
             <Text style={styles.dayTitle}>{day.title}</Text>
@@ -452,12 +467,12 @@ export default function TripScreen() {
 
       {/* Real app: the day weather stays above the stops. TEST app (Phil, 1 Nov 2026: "crowded, I
           can't see the timeline"): it and the T card scroll away with the timeline instead. */}
-      {PLANNER_ON ? null : <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />}
+      {PLANNER_ON || stopsOn ? null : <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />}
 
       {/* TEST (mockup E5): the timeline shows each drive, so no totals row. */}
-      {PLANNER_ON ? null : <DaySummary stops={stops} />}
+      {PLANNER_ON || stopsOn ? null : <DaySummary stops={stops} />}
 
-      <FlatList
+      {stopsOn ? null : <FlatList
         data={ghostRows ? ghostRows.map(r => r.item) : stops}
         keyExtractor={(item: any) => item.id}
         showsVerticalScrollIndicator={false}
@@ -595,9 +610,9 @@ export default function TripScreen() {
             </TouchableOpacity>
           </View>
         )}
-      />
+      />}
 
-      {PLANNER_ON && ghostRows ? (
+      {PLANNER_ON && ghostRows && !stopsOn ? (
         <View style={[styles.ghostBar, { paddingBottom: spacing.lg + insets.bottom }]}>
           {/* One line of what accepting does; the lists behind Details (the timeline stays visible). */}
           <TouchableOpacity onPress={() => setGhostDetails(v => !v)} style={styles.ghostSummary} accessibilityRole="button"

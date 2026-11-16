@@ -161,6 +161,11 @@ export function useSunStopState(tripId: string | null | undefined, stopId: strin
   return { stop, ready, plan };   // plan: every stop's shots (the 3D view's next / previous shot)
 }
 
+// The whole trip's sun plan (the Stops view's shot counts): the same saved copy and refresh as one stop's.
+export function useSunPlan(tripId: string | null | undefined): SunPlan | null {
+  return useSunStopState(tripId, '').plan;
+}
+
 export function useSunStop(tripId: string | null | undefined, stopId: string): SunStop | null {
   return useSunStopState(tripId, stopId).stop;
 }
