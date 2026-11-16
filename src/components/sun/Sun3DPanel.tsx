@@ -230,6 +230,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [moments, setMoments] = useState<Moments | null>(null);
   const [look, setLook] = useState<number | null>(null);
   const lookRef = useRef<{ yaw: number; pitch: number } | null>(null);   // where the view points now, to 0.01 deg (page's `look`)
+  const [lookTilt, setLookTilt] = useState<number | null>(null);   // the tilt to 0.1 deg, so a tilt-only change re-checks Save framing
   const [problem, setProblem] = useState<string | null>(null);
   const [perf, setPerf] = useState<Perf | null>(null);   // the last movement's frame time, as the page measured it (offline view)
   const booted = useRef(false);
@@ -521,6 +522,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     else if (m.type === 'look') {
       setLook(typeof m.deg === 'number' ? m.deg : null);
       lookRef.current = typeof m.deg === 'number' ? { yaw: typeof m.yaw === 'number' ? m.yaw : m.deg, pitch: typeof m.pitch === 'number' ? m.pitch : 0 } : null;
+      setLookTilt(typeof m.pitch === 'number' ? Math.round(m.pitch * 10) / 10 : null);
     }
     else if (m.type === 'eye') { setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); }
     else if (m.type === 'walk') setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : 'That is the edge of the saved terrain.');
@@ -570,6 +572,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // Leaving walk mode keeps the view where it walked to (Phil, 16 Nov 2026); "Back to my spot" in walk mode goes back.
   const leaveWalk = useCallback(() => { stopStepping(); setWalking(false); setWalkNote(null); }, [stopStepping]);
   const canSaveSpot = !!(tripId && stopId && at && at.moved >= 2);
+  // Save framing greys out while the view is exactly the saved framing, like Save as my spot (Phil, 16 Nov 2026).
+  const frameUnchanged = (() => {
+    const lk = lookRef.current;
+    if (!framing || addShot || !lk) return false;
+    const dh = Math.abs(((((lk.yaw - framing.heading) % 360) + 540) % 360) - 180);
+    return dh < 0.3 && Math.abs(lk.pitch - framing.pitch) < 0.3 && framing.lens === pickLens.id
+      && framing.orient === (frame === 'port' ? 'portrait' : 'landscape');
+  })();
+  void lookTilt;   // (read so the tilt state re-renders this check)
   const saveSpot = useCallback(() => {
     if (!tripId || !stopId || !at) return;
     const spot = at;
@@ -843,7 +854,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             <TouchableOpacity onPress={aimAtSubject} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Aim at subject">
               <Text style={styles.walkBtnText}>Aim at subject</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={saveFraming} style={[styles.walkBtn, styles.walkBtnMain, !canFrame && { opacity: 0.4 }]} accessibilityRole="button" accessibilityLabel="Save framing for this shot" disabled={!canFrame || savingFrame || look == null}>
+            <TouchableOpacity onPress={saveFraming} style={[styles.walkBtn, styles.walkBtnMain, (!canFrame || frameUnchanged) && { opacity: 0.4 }]} accessibilityRole="button" accessibilityLabel="Save framing for this shot" accessibilityState={{ disabled: !canFrame || frameUnchanged }} disabled={!canFrame || savingFrame || look == null || frameUnchanged}>
               {savingFrame ? <ActivityIndicator size="small" color="#000000" /> : <Text style={styles.walkBtnMainText}>Save framing</Text>}
             </TouchableOpacity>
           </View>
