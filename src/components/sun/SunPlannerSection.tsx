@@ -101,8 +101,8 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 type Tab = 'map' | 'horizon' | 'photo' | '3d';
 const TAB_NAMES: Record<Tab, string> = { map: 'Map', horizon: 'Horizon', photo: 'Photo', '3d': '3D' };
-// The 3D view is in the TEST app only until Phil has tried it.
-const TABS: Tab[] = PLANNER_ON ? ['map', 'horizon', 'photo', '3d'] : ['map', 'horizon', 'photo'];
+// 3D comes first and is what opens (Phil, 16 Nov 2026: "I want 3d to be the one that's first and opened").
+const TABS: Tab[] = PLANNER_ON ? ['3d', 'map', 'horizon', 'photo'] : ['map', 'horizon', 'photo'];
 
 // Every stop's starred shot as saved on the phone (starredShot keeps them), for the full-screen shot order.
 async function savedStars(stopIds: string[]): Promise<Record<string, string | null>> {
@@ -131,7 +131,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   }, [stopId, stop.pairs.length]);
   // Full screen draws edge to edge: keep the picture below the status bar and the controls above Android's own buttons.
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<Tab>('map');
+  const [tab, setTab] = useState<Tab>(TABS[0]);
   const [viewing, setViewing] = useState<Pair | null>(null);
   const [full3d, setFull3d] = useState(false);
   const [hd3d, setHd3d] = useState(false);   // the 3D view's HD picture: off until tapped, kept when going full screen

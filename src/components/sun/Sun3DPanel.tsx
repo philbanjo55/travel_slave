@@ -11,7 +11,7 @@ import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { framingOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
 import type { Framing, Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
-import { RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar } from './RefPhotoOverlay';
+import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
 
 // 3D view of the shot (TEST app, Phil 12 Nov 2026): the real terrain from the
 // stand spot toward the subject, lit by the sun at the slider's time. The
@@ -118,6 +118,7 @@ const FRAME_SAY: Record<FrameMode, string> = { land: 'landscape', port: 'portrai
 let lastLens = '135';
 let lastFrame: FrameMode = 'land';
 let lastForeground = true;
+let lastTrees = true;   // the foreground's trees (Phil, 16 Nov 2026: a "no trees" setting): kept like the foreground itself
 let lastIce: boolean | null = null;
 let pickedFor: string | null = null;   // the shot whose lens / frame box the user changed by hand: its framing's lens is not put back over that
 let lastRefOpacity = 0.45;   // the see-through amount last chosen, kept while the app is open
@@ -183,6 +184,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [shapes, setShapes] = useState(false);   // the page says it is drawing the detail box
   const [foreBusy, setForeBusy] = useState(false);   // the foreground has been sent and the page has not answered yet
   const [foreground, setForegroundState] = useState(lastForeground);
+  const [treesOn, setTreesState] = useState(lastTrees);
+  const treesRef = useRef(lastTrees);
+  treesRef.current = treesOn;
   const [lensId, setLensState] = useState(lastLens);
   const pickLens = LENSES.find(l => l.id === lensId) ?? LENSES[2];
   const focal = pickLens.f;
@@ -268,6 +272,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [topH, setTopH] = useState(40);   // the button row's height (it wraps): the card sits under it
   // Another stop's shot (next / previous) brings its own photos: start again at its first, or close when it has none.
   useEffect(() => { setRefIdx(0); if (!refKey) setRefMode('off'); }, [refKey]);
+  // "Move photo" (pinch / drag the see-through photo to match the framing): on only while see-through; where the photo
+  // sits is kept across photos and lenses and put back to fit when the photo is closed.
+  const [refMove, setRefMove] = useState(false);
+  const [refXf, setRefXf] = useState<PhotoXf>(XF0);
+  useEffect(() => { if (refMode !== 'see') setRefMove(false); if (refMode === 'off') setRefXf(XF0); }, [refMode]);
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
 
@@ -380,6 +389,20 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     setLit(null); setMoments(null); setLook(null); setShapes(false); setWideTrees(0); setRangeIn(false); setHousesIn(0); setPhotoFore(false); setForeBusy(false); setProblem(null);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p)); setGen(g => g + 1);
   }, []);
+  // Trees shown / hidden inside the foreground: the page only switches their visibility (no restart, no rebuild);
+  // the sun times never use them, so first / last light stay exactly as they are.
+  const setTrees = useCallback((on: boolean) => {
+    lastTrees = on; treesRef.current = on; setTreesState(on);
+    run(`window.S3D.trees && window.S3D.trees(${on ? 'true' : 'false'})`);
+  }, [run]);
+  // The foreground button's three states, in turn: everything -> buildings only (no trees) -> off -> everything.
+  const cycleForeground = useCallback(() => {
+    if (!foreground) { setForeground(true); return; }   // (trees are already back on: see below)
+    if (treesOn) { setTrees(false); return; }
+    lastTrees = true; treesRef.current = true; setTreesState(true);   // off; the next "on" is everything again
+    setForeground(false);
+  }, [foreground, treesOn, setForeground, setTrees]);
+  const foreSay = !foreground ? 'off' : treesOn ? 'on' : 'buildings only, no trees';
   const refOn = full && !hd && refList.length > 0;   // the photo button and card: full screen, offline view, the stop has photos
   const refPhoto = refList[Math.min(refIdx, Math.max(0, refList.length - 1))] ?? null;
   const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64 || !!treeTiles || !!rangeBox || !!houseTiles;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour or the park-wide trees
@@ -408,6 +431,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       view: pageFraming(framingRef.current) ?? undefined,   // a framed shot opens on its framing (older pages ignore it)
       level: lastLevels ?? undefined,
       treeStyle: TREE_STYLE,   // how the laser trees are drawn (services/terrain.ts TREE_STYLE)
+      trees: treesRef.current,   // the foreground's trees shown or hidden (older pages ignore it)
       ...(hd && hdCfg ? { tiles: { base: hdCfg.base, draco: hdCfg.draco, root: hd } } : null),
     };
     run(`window.S3D.init(${JSON.stringify(cfg)})`);
@@ -658,7 +682,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             style={styles.web}
           />
         ) : null}
-        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} /> : null}
+        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} /> : null}
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
@@ -713,14 +737,14 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             </TouchableOpacity>
             {hasFore && !hd ? (
               <TouchableOpacity
-                onPress={() => setForeground(!foreground)}
+                onPress={cycleForeground}
                 style={[styles.fullBtn, foreground && styles.lensOn]}
                 accessibilityRole="switch"
                 accessibilityState={{ checked: foreground }}
-                accessibilityLabel={`Foreground (trees and buildings near you): ${foreground ? 'on' : 'off'}${foreground ? (shapes ? ', showing' : foreBusy ? ', loading' : '') : ''}. Tap to change.`}
+                accessibilityLabel={`Foreground (trees and buildings near you): ${foreSay}${foreground ? (shapes ? ', showing' : foreBusy ? ', loading' : '') : ''}. Tap to change.`}
                 hitSlop={6}
               >
-                <Ionicons name="leaf-outline" size={17} color={foreground ? '#000000' : '#ffffff'} />
+                <Ionicons name={foreground && !treesOn ? 'business-outline' : 'leaf-outline'} size={17} color={foreground ? '#000000' : '#ffffff'} />
               </TouchableOpacity>
             ) : null}
             {useDetail && ready && shapes && region?.ground === 'snow' ? (
@@ -774,7 +798,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ) : null}
         {refOn && refMode === 'see' ? (
           // above the caption; while walking, above the walk arrows (bottom-left, up to 192 dp)
-          <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('card')} bottom={walking ? 200 : 34} />
+          <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('card')} bottom={walking ? 200 : 34} move={refMove} onMove={setRefMove} />
         ) : null}
         {ready && look != null ? (
           <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format}{preview ? '' : ` · ${hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}`}</Text>
@@ -791,7 +815,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       ) : phase === 'error' && problem ? (
         <Text style={[styles.status, pad]}>{problem}</Text>
       ) : null}
-      {foreLost && foreground && !shapes && !hd ? <Text style={[styles.note, pad]}>Foreground didn't load. Tap Foreground twice to retry.</Text> : null}
+      {foreLost && foreground && !shapes && !hd ? <Text style={[styles.note, pad]}>Foreground didn't load. Turn it off and on to retry.</Text> : null}
       {heavy && !foreground && !hd ? <Text style={[styles.note, pad]}>Foreground too heavy for this phone: off.</Text> : null}
       {hdNote && !hd ? <Text style={[styles.note, pad]}>{hdNote}</Text> : null}
       {walking && full && !hd ? (

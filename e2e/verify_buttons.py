@@ -685,6 +685,24 @@ def sun_3d():
         d = max(-600, min(600, int(y - 0.33 * H)))
         C.adb('shell', 'input', 'swipe', '540', str(int(0.6 * H)), '540', str(int(0.6 * H) - d), '600')
         s = C.capture(1.2)
+    # 3D is the first tab and the one open (Phil, 16 Nov 2026, branch claude/sun-3d-first): it must be selected before
+    # any tap. (The tap below stays: on a build without the change it opens the tab, here it does nothing.)
+    sec = os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'SunPlannerSection.tsx')
+    if os.path.exists(sec) and "['3d', 'map'" in open(sec, encoding='utf-8').read():
+        names = ('3D', 'Map', 'Horizon', 'Photo')
+        sel, on = [], []
+        for nd in (s.root.iter('node') if s.root is not None else []):
+            if nd.get('package') != V.PKG:
+                continue
+            here = [(x.get('text') or x.get('content-desc') or '').strip() for x in nd.iter('node')]
+            tabs = [t for t in here if t in names]
+            if len(tabs) == 1 and len([t for t in here if t]) == 1:   # a tab (the text itself, or its touchable)
+                sel.append(tabs[0])
+                if nd.get('selected') == 'true':
+                    on.append(tabs[0])
+        # the selected state may sit on the tab's touchable (its parent), not the text: fall back to the 3D panel itself
+        first3d = '3D' in on or (not on and (V.has(s, 'Open the 3D view full screen') or V.has(s, 'Finding the terrain') or V.has(s, 'Drawing the terrain') or V.has(s, 'Looking ')))
+        V.check('sun3d-tab-default', first3d, f'tabs {sel} selected {on}'[:120])
     V.check('sun3d-tab', V.tap_text(s, '3D', exact=True), 'tap the 3D tab')
     # The caption under the picture ("Looking W 259 ...") is what says it has drawn; bring it onto the screen first
     # (run 6 drew fine, but the caption sat below the fold while this loop waited).
@@ -775,6 +793,25 @@ def sun_3d():
                 V.check('fg-in', False, f'no foreground and no fallback line after {took:.0f} s: {(lab or "button gone")[:90]}'); fg_say(c)
             V.check('fg-view-alive', V.has(c, 'Looking '), 'the picture is still up')
             if lab is not None and ', showing' in lab:
+                # Three states (16 Nov 2026): on -> buildings only, no trees (no restart; sun times unchanged) -> off -> on
+                three = 'buildings only, no trees' in open(os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'Sun3DPanel.tsx'), encoding='utf-8').read()
+                if three:
+                    def moments_now(st):
+                        return sorted(t for t in st.all_texts if t.startswith(('First sun on', 'Sun reaches you', 'You lose the sun', 'Last sun on')) and ':' in t)
+                    m0 = moments_now(c)
+                    V.tap_text(c, fg_label); time.sleep(2.5)
+                    c, lab, took = fg_wait(lambda c, lab: lab is not None and 'no trees' in lab, 30)
+                    if lab is not None and ': on' in lab:   # the tap missed: once more
+                        V.tap_text(c, fg_label); time.sleep(2.5)
+                        c, lab, took = fg_wait(lambda c, lab: lab is not None and 'no trees' in lab, 30)
+                    ok_nt = lab is not None and 'buildings only, no trees' in lab and ', showing' in lab and V.has(c, 'Looking ')
+                    V.check('fg-notrees', ok_nt, f'{(lab or "button gone")[:90]} after {took:.0f} s')
+                    time.sleep(3); m1 = moments_now(C.capture(1))
+                    if m0 and m1:
+                        V.check('fg-notrees-moments', m0 == m1, f'before {m0} | after {m1}'[:150])
+                    else:
+                        print(f'INFO fg-notrees moments not on screen (before {m0}, after {m1})', flush=True)
+                    V.check('fg-notrees-alive', C.app_alive() and V.has(C.capture(1), 'Looking '), 'view still up with trees hidden')
                 tapped = fg_tap(': off')
                 c, lab, took = fg_wait(lambda c, lab: lab is not None and ': off' in lab and V.has(c, 'Looking '), 90)
                 ok_off = tapped and lab is not None and ': off' in lab and V.has(c, 'Looking ')
@@ -1141,6 +1178,9 @@ def refphoto():
     if ok:
         V.show('refphoto-see', c)
         cut_off('3d-refphoto-see', c)
+        if 'Move photo' in open(os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'RefPhotoOverlay.tsx'), encoding='utf-8').read():
+            V.check('refphoto-move-btn', any((nd.get('content-desc') or '').startswith('Move photo') for nd in (c.root.iter('node') if c.root is not None else [])),
+                    'Move photo toggle on the see-through bar')
         # move the amount: a tap near the slider's right end; the bar and the picture stay
         node = next((n for n in (c.root.iter('node') if c.root is not None else []) if (n.get('content-desc') or '') == 'See-through amount'), None)
         if node is not None:
@@ -1373,6 +1413,43 @@ def faroes_3d():
     V.back(); time.sleep(2)
 
 
+def move_photo_checks(d, tag):
+    """"Move photo" on the see-through bar (Phil, 16 Nov 2026: zoom the photo to match the framing). On: the photo takes
+    the touches (a drag over the picture must NOT turn the 3D view: same heading after), double tap = fit; off again.
+    A real two-finger pinch can't be made with adb input, so only one-finger drag and the double tap are tried."""
+    look = re.compile(r'Looking (\S+ \d+)°')
+    def heading(st):
+        return next((m.group(1) for t in st.all_texts for m in [look.search(t)] if m), None)
+    def node(st):
+        return next((n for n in (st.root.iter('node') if st.root is not None else [])
+                     if n.get('package') == V.PKG and (n.get('content-desc') or '').startswith('Move photo')), None)
+    n = node(d)
+    V.check(f'{tag}-move-photo-btn', n is not None, 'Move photo toggle on the see-through bar')
+    if n is None:
+        print('INFO move photo: buttons ' + ' | '.join(c['label'][:30] for c in d.clickables)[:600], flush=True); return
+    h0 = heading(d)
+    x1, y1, x2, y2 = C.bounds(n); C.tap(((x1 + x2) // 2, (y1 + y2) // 2)); time.sleep(1.2)
+    e = C.capture(1); n = node(e)
+    on = n is not None and n.get('checked') == 'true'
+    V.check(f'{tag}-move-photo-on', on, f'toggle on (checked {n.get("checked") if n is not None else None})')
+    H = 2400
+    # one finger over the picture (upper middle, clear of the buttons and the bar): moves the photo, not the view
+    C.adb('shell', 'input', 'swipe', '300', str(int(0.30 * H)), '700', str(int(0.34 * H)), '400'); time.sleep(1.2)
+    # double tap: back to fit
+    C.adb('shell', 'input', 'tap', '540', str(int(0.30 * H))); time.sleep(0.12)
+    C.adb('shell', 'input', 'tap', '540', str(int(0.30 * H))); time.sleep(1.2)
+    f = C.capture(1); h1 = heading(f)
+    V.show(f'{tag}-move-photo', f)
+    V.check(f'{tag}-move-photo-drag', C.app_alive() and V.has(f, 'See-through amount') and h0 is not None and h1 == h0,
+            f'after drag + double tap: bar still up, view heading {h0} -> {h1}')
+    n = node(f)
+    if n is not None:
+        x1, y1, x2, y2 = C.bounds(n); C.tap(((x1 + x2) // 2, (y1 + y2) // 2)); time.sleep(1.2)
+    g = C.capture(1); n = node(g)
+    V.check(f'{tag}-move-photo-off', n is not None and n.get('checked') != 'true', 'toggle off again')
+    cut_off(f'{tag}-move-photo', g)
+
+
 def spot_open_3d_edit():
     """Your spot -> Open in 3D as an editing view (16 Nov 2026, branch claude/spot-open3d): the full screen has the stop's
     trip and stop, so walk mode, Save framing and the reference photo are there, and the photo card opens on the job's
@@ -1437,6 +1514,7 @@ def spot_open_3d_edit():
         V.check('spot-3d-refphoto-see', V.has(d, 'See-through amount') and V.has(d, 'Looking '), 'job photo see-through over the view, slider shown')
         V.show('spot-3d-refphoto-see', d)
         cut_off('spot-3d-refphoto-see', d)
+        move_photo_checks(d, 'spot-3d')
         V.tap_text(d, 'Close see-through'); time.sleep(1.2)
     e = C.capture(1)
     b = btn(e, 'Reference photo')
