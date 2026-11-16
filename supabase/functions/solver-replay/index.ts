@@ -3,6 +3,14 @@ import postgres from 'npm:postgres@3.4.4';
 import { calChance, CAL_FALLBACK, regionOf, LIGHT_WORD, reasonText, goodShotsOf, moveWhyText } from './t2.ts';
 
 // SOLVER REPLAY (test bench, backend only; Phil 25 Oct 2026)
+// v103 (16 Nov 2026, Faroes boat trips not booked yet: "somewhere 18-21 May"): place day windows. A place may only be
+// planned on the trip dates in its window: solver_stop_settings.window_from / window_to (trip-local dates, either end
+// open; migration 20261116050000), or the bench fixture run config windows {stop_id: [from, to]} (wins over the
+// table). Every search leaves a stop out on a date outside its window (night plan, drafts, Monte Carlo candidates,
+// polish, every re-plan; a visit already begun stays); the every-place rule sees a place only on its window's dates,
+// so a window in the future is not forced earlier, its last date is its last chance, and a window that has passed
+// no longer makes the place required (nor a Monte Carlo miss). A window beats a Tell T note that wants the place
+// that day. No window anywhere = byte-identical to v102 (one extra read with the settings).
 // v102 (15 Nov 2026, Phil: "if my initial plan has stop A on it but when I replan stop A is no longer there I want that
 // to trickle down to the rest of the week so it gets planned somewhere automatically, at the same time"): one-pass
 // Re-plan, planner version BH. Run config one_pass (live publish T runs): a finished Re-plan now (button, Tell T note,
@@ -637,8 +645,17 @@ Deno.serve(async (req) => {
     const groupW = new Map<number, number>();
     rated.forEach((r, i) => groupW.set(find(i), Math.max(groupW.get(find(i)) ?? 0, TIER_W[r.tier])));
     // Keep together (stops that go on one day) and the trip's middle (done by dark).
-    const { data: tg } = await db.from('solver_stop_settings').select('stop_id, together, once')
-      .in('stop_id', rated.map(r => r.stop_id)).or('together.not.is.null,once.eq.true');
+    // v103 place day windows (read apart: before the migration the columns are missing and the read just fails = none).
+    const [{ data: tg }, { data: wn, error: wnErr }] = await Promise.all([
+      db.from('solver_stop_settings').select('stop_id, together, once')
+        .in('stop_id', rated.map(r => r.stop_id)).or('together.not.is.null,once.eq.true'),
+      db.from('solver_stop_settings').select('stop_id, window_from, window_to')
+        .in('stop_id', rated.map(r => r.stop_id)).or('window_from.not.is.null,window_to.not.is.null'),
+    ]);
+    const winById = new Map<string, [string | null, string | null]>(
+      (wnErr ? [] : (wn ?? []) as any[]).map(r => [r.stop_id as string, [r.window_from ?? null, r.window_to ?? null] as [string | null, string | null]]));
+    for (const [id, w] of Object.entries((cfg.windows ?? {}) as Record<string, [string | null, string | null]>))
+      if (Array.isArray(w)) winById.set(id, [w[0] ?? null, w[1] ?? null]);
     tLoaded = performance.now();
     await mark('loaded');
     // Proof-step switches (run config, Phil 27 Oct 2026: how much each input matters):
@@ -762,6 +779,13 @@ Deno.serve(async (req) => {
       };
     });
     const freeNodes = nodes.map((n, i) => (n.free ? i : -1)).filter(i => i >= 0);
+    // v103 place day windows: may node n be planned on trip date td? (no window, or no date = yes)
+    const winOf = new Map<number, [string | null, string | null]>(nodes.map((x, i) => [i, winById.get(x.id)] as [number, [string | null, string | null] | undefined])
+      .filter((e): e is [number, [string | null, string | null]] => !!e[1]));
+    const inWin = (n: number, td: string | null | undefined) => { const w = winOf.get(n);
+      return !w || !td || ((!w[0] || td >= w[0]) && (!w[1] || td <= w[1])); };
+    // A place (cover unit): a keep-together group needs every stop's window to hold the date, a subject any one stop's.
+    const unitInWin = (u: number[], td: string) => (nodes[u[0]].together ? u.every(x => inWin(x, td)) : u.some(x => inWin(x, td)));
     // Tell T: a trip day's rules on the plan's nodes (null = no note that day: nothing changes).
     const lockedIds = new Set<string>(lockedInputs.map(r => r.stop_id));
     const notesCache = new Map<string, DayNotes | null>();
@@ -872,9 +896,16 @@ Deno.serve(async (req) => {
       const wantN = R && !only ? nodes.map((x, i) => (R.mustG.has(x.group) && x.w > 0 && !lockedIds.has(x.id) ? i : -1)).filter(i => i >= 0) : [];
       const wantKeys = new Set(wantN.map(n => nodes[n].together).filter(k => !!k));
       const wantPair = wantKeys.size ? freeNodes.filter(n => wantKeys.has(nodes[n].together) && !noteOut(n) && !lockedIds.has(nodes[n].id)) : [];
-      const cand = !R ? cand0 : [...new Set([...cand0.filter(n => !noteOut(n)), ...wantN, ...wantPair])];
+      const candN = !R ? cand0 : [...new Set([...cand0.filter(n => !noteOut(n)), ...wantN, ...wantPair])];
+      // v103 place day windows: a stop is no candidate (nor required) on a date outside its window, whatever the
+      // caller's lists or the day's notes say; a visit already begun (from) stays.
+      // Keep together holds: a pair whose partner is outside its window that day goes neither.
+      const winDate = day.tripDate ?? day.date;
+      const winOutKeys = winOf.size ? new Set(candN.filter(n => nodes[n].together && !inWin(n, winDate)).map(n => nodes[n].together!)) : null;
+      const cand = winOutKeys ? candN.filter(n => inWin(n, winDate) && !(nodes[n].together && winOutKeys.has(nodes[n].together!))) : candN;
+      const candWin = winOutKeys ? new Set(cand) : null;
       let nExt = 0, capped = false;
-      const mustSet = new Set((must ?? []).filter(n => !noteOut(n) && !R?.optG.has(nodes[n].group)));
+      const mustSet = new Set((must ?? []).filter(n => !noteOut(n) && !R?.optG.has(nodes[n].group) && (!candWin || candWin.has(n))));
       const H0 = pos.get(day.startId!)!, H = pos.get(day.endId!)!;
       const anchors = day.anchors.map(a => ({ n: pos.get(a.id)!, startMs: a.startMs, dur: a.dur }));
       const slotMs = scores.map(r => r.ms);
@@ -1929,7 +1960,9 @@ Deno.serve(async (req) => {
         const noteOk = (u: number[], td: string) => { const R = notesFor(td); return !R || u.some(x => R.mustG.has(nodes[x].group))
           || !(R.off || u.some(x => R.skipG.has(nodes[x].group)) || (R.noGear && u.some(x => gear.has(nodes[x].id))) || (R.minW != null && allOf(u)(x => nodes[x].w < R.minW!)) || (R.maxVisit != null && allOf(u)(x => (R.stay.get(x) ?? nodes[x].dur) > R.maxVisit!))
                || (R.maxLeg != null && u.some(x => farOn(x, td, R.maxLeg!)))); };
-        const okOn = (u: number[], td: string) => noteOk(u, td) && (!u.some(x => gear.has(nodes[x].id)) || ((!gFrom || td >= gFrom) && (!gTo || td <= gTo)));
+        // v103: and only on its window's dates (a window in the future is not forced earlier; its last date is its last
+        // chance; a window that has passed leaves the place with no day, so it is no longer required).
+        const okOn = (u: number[], td: string) => noteOk(u, td) && (!winOf.size || unitInWin(u, td)) && (!u.some(x => gear.has(nodes[x].id)) || ((!gFrom || td >= gFrom) && (!gTo || td <= gTo)));
         const lastDay = (u: number[]) => { for (let i = remaining.length - 1; i >= 0; i--) if (okOn(u, remaining[i])) return i; return -1; };
         const durOf = (u: number[]) => nodes[u[0]].together ? u.reduce((t, x) => t + nodes[x].dur, 0) : Math.min(...u.map(x => nodes[x].dur));
         // Daylight minutes on a remaining trip day, after landing / before the flight; 70% of it for stops (drives).
@@ -2039,7 +2072,17 @@ Deno.serve(async (req) => {
           want = open.filter(u => !req.includes(u) && okOn(u, remaining[0]) && durOf(u) >= 90 && val(u, 0) > 0 && val(u, 0) >= Math.max(val(u, 1), val(u, 2)))
             .sort((a, b) => (val(b, 0) - Math.max(val(b, 1), val(b, 2))) - (val(a, 0) - Math.max(val(a, 1), val(a, 2))));
         }
-        const mustOf = (u: number[]) => nodes[u[0]].together ? u : [u.reduce((a, b) => (best(b, 0) > best(a, 0) ? b : a))];
+        // v103: a subject's stop for tomorrow is picked among those whose window holds tomorrow.
+        const inWin0 = (u: number[]) => { if (!winOf.size) return u; const w = u.filter(x => inWin(x, remaining[0])); return w.length ? w : u; };
+        const mustOf = (u: number[]) => nodes[u[0]].together ? u : [inWin0(u).reduce((a, b) => (best(b, 0) > best(a, 0) ? b : a))];
+        // v103: each windowed place on this night (stats.windows, only when a window is set): its window, where it stands
+        // (done / no day left / not tomorrow / last day / open), whether tomorrow's plan requires it and visits it.
+        const winStatsOf = (l: number[][], s: State | null) => [...unitsAll.values()].filter(u => u.some(x => winOf.has(x))).map(u => {
+          const w = winOf.get(u.find(x => winOf.has(x))!)!, ld = lastDay(u);
+          return { name: u.map(x => nodes[x].name).filter((x, i, a) => a.indexOf(x) === i).join(' + '), from: w[0], to: w[1], date: remaining[0],
+                   state: covered(u) ? 'done' : ld < 0 ? 'no day left' : !okOn(u, remaining[0]) ? 'not tomorrow' : ld === 0 ? 'last day' : 'open',
+                   required: l.some(k => k.some(x => u.includes(x))), planned: !!s && s.route.some(v => u.includes(v.n)) };
+        });
         lastChance = days[0].notes ? open.filter(u => lastDay(u) === 0 && !u.some(x => days[0].notes!.optG.has(nodes[x].group))).map(u => ({ name: u.map(x => nodes[x].name).filter((x, i, a) => a.indexOf(x) === i).join(' + '), ids: u.map(x => nodes[x].id) })) : [];
         // mustfix (v87, worksheet b6, 7 Nov 2026): when the beam finds no day with every required place,
         // try the exact search over just those places (as the audit tool does) before dropping one. On 2 of
@@ -2303,7 +2346,7 @@ Deno.serve(async (req) => {
             return m;
           });
           const cap = days.map((_, h) => freeNodes.map(x => (h === 0 ? 0 : winOn(h, [x]))));
-          const onceUnits = [...unitsAll.values()].filter(u => u.some(x => nodes[x].once) && !covered(u));
+          const onceUnits = [...unitsAll.values()].filter(u => u.some(x => nodes[x].once) && !covered(u) && (!winOf.size || remaining.some(td => unitInWin(u, td))));
           // Z, week brute force (run config week_exact, v59, Phil 3 Nov 2026: "start building the
           // week brute force"): in each weather version the rest of the week is solved exactly
           // instead of by the quick stand-in below. Same model as the stand-in: every open place
@@ -2415,7 +2458,8 @@ Deno.serve(async (req) => {
           // more outings than the days after it can hold is out (Phil: every place
           // is a must-do), whatever the weather says.
           const fitsLater = (st: State) => {
-            const left = longs.filter(u => !u.every(x => st.visited[x]));
+            // v103: a place whose window has closed (no date left from tomorrow's on) cannot be fitted anywhere: not counted.
+            const left = longs.filter(u => !u.every(x => st.visited[x]) && (!winOf.size || remaining.some(td => unitInWin(u, td))));
             const used = remaining.map(() => 0);
             // Same 200k cap as the outing-day search (run config mc_fit_steps); past it, keep the candidate.
             let steps = 0;
@@ -2820,7 +2864,7 @@ Deno.serve(async (req) => {
         return record(st ? routeOf(p0, st) : [], {
           predicted: st ? r3(st.mean) : null, drive_minutes: st ? Math.round(st.drive) : null, visits: st ? visitsOf(p0, st) : [],
           stats: { members: fcB[0]?.members ?? 51, required: req.length, wanted: want.length, kept: list.length, open: open.length,
-                   ms: p0.ms, ...(mustRescued ? { must_rescued: mustRescued } : {}), ...(exStats ? { exact: exStats } : {}), ...(polStats ? { polish: polStats } : {}), ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route', why: whyNot(days[0]) }) },
+                   ms: p0.ms, ...(winOf.size ? { windows: winStatsOf(list, st) } : {}), ...(mustRescued ? { must_rescued: mustRescued } : {}), ...(exStats ? { exact: exStats } : {}), ...(polStats ? { polish: polStats } : {}), ...(mcStats ? { mc: mcStats } : {}), ...(mrStats ? { mr: mrStats } : {}), ...(st ? {} : { error: 'no route', why: whyNot(days[0]) }) },
         });
       };
       let shot: Record<string, number>;
