@@ -98,7 +98,10 @@ def rel_x(az, yaw, fp, W):
 
 
 # ---------------------------------------------------------------- coarse search
-def coarse(T, sky, lms, stop, radius, step, use_names=True, log=print, region_grids=None, extras=True, houses=None, cache_key=None):
+def coarse(T, sky, lms, stop, radius, step, use_names=True, log=print, region_grids=None, extras=True, houses=None, cache_key=None,
+           aim=None, aim_tol=30.0):
+    """aim = (lat, lng) of what the user says the photo aims at: only headings within aim_tol deg of the bearing from
+    each spot to it are tried"""
     W, H = sky['size']
     lat0, lng0 = stop; k0 = kx(lat0)
     # positions on a grid within the radius
@@ -160,6 +163,7 @@ def coarse(T, sky, lms, stop, radius, step, use_names=True, log=print, region_gr
         dirs = lm_dirs(named, lat, lng, eyeh) if named else []
         sdirs = lm_dirs([dict(L, type='peak', h=0) for L in spans], lat, lng, eyeh) if spans else []
         best = None
+        ab = math.degrees(math.atan2((aim[1] - lng) * kx(lat), (aim[0] - lat) * KZ)) % 360 if aim is not None else None
         for hf in (HFOVS if (dirs or extras) else HFOVS[::2]):
             fp = C.fpx(hf, W); dx = cx - W / 2
             rel = np.degrees(np.arctan2(dx, fp)); cosf = fp / np.hypot(fp, dx)
@@ -172,6 +176,9 @@ def coarse(T, sky, lms, stop, radius, step, use_names=True, log=print, region_gr
                 yaws = y0 + np.arange(-sig, sig + 1e-9, 0.25)
             else:
                 yaws = np.arange(0, 360, 0.5)
+            if ab is not None:   # the user's aim pin: headings near it only
+                yaws = yaws[np.abs(((yaws - ab + 180) % 360) - 180) <= aim_tol]
+                if not len(yaws): continue
             # pitch bins in PIXELS (so a narrow lens is not favoured by chance): 4 px at 1440 wide
             BIN = 4.0 * W / 1440 * hf / W
             NB = int(30 / BIN) + 3
@@ -415,8 +422,11 @@ class Refiner:
         finally:
             self.trees = tr; self.cache.clear()
 
-    def refine(self, c, log=print, eye_free=(1.0, 3.0), steps1=(128, 64, 32, 16, 8, 4)):
-        W = self.W; s = np.array([c['dE'], c['dN'], EYE], float); q = np.array([c['yaw'], c['pitch'], c['roll'], c['hfov']], float)
+    def refine(self, c, log=print, eye_free=(1.0, 3.0), steps1=(128, 64, 32, 16, 8, 4), steps2=(8, 4, 2, 1), dh=None, xy_max=1200):
+        """dh(st) = the eye-height step for a spot step st (default min(0.5, st / 8): a person on the ground); the air
+        search passes a larger one and a wider eye_free; c['eye'] starts the eye somewhere else than 1.7 m"""
+        dh = dh or (lambda st: min(0.5, st / 8))
+        W = self.W; s = np.array([c['dE'], c['dN'], c.get('eye', EYE)], float); q = np.array([c['yaw'], c['pitch'], c['roll'], c['hfov']], float)
         self.hf0 = q[3]
         self.set_trees(s[0], s[1])
         hist = []
@@ -429,7 +439,7 @@ class Refiner:
             q, rr = self.fit_q(paz, pel, pts, q, eyeh, lat, lng, fscale, pelt=pelt)
             hist.append(dict(win=win, n=len(pts), rms=float(np.sqrt(np.mean(np.minimum(rr ** 2, win_px ** 2))))))
         # B: the spot too (east, north, eye height), pattern search with the orientation refitted at every spot
-        for win, steps in ((10, list(steps1)), (6, [8, 4, 2, 1])):
+        for win, steps in ((10, list(steps1)), (6, list(steps2))):
             win_px = win * W / 1440; fscale = max(1.5, win_px / 3)
             best, q, rr = self.chamfer(s, q, win_px, fscale)
             if best >= 1e9: break
@@ -437,10 +447,10 @@ class Refiner:
                 improved = True; it = 0
                 while improved and it < 6:
                     improved = False; it += 1
-                    for d in ((st, 0, 0), (-st, 0, 0), (0, st, 0), (0, -st, 0), (0, 0, min(0.5, st / 8)), (0, 0, -min(0.5, st / 8))):
+                    for d in ((st, 0, 0), (-st, 0, 0), (0, st, 0), (0, -st, 0), (0, 0, dh(st)), (0, 0, -dh(st))):
                         s2 = s + np.array(d)
                         if not (eye_free[0] <= s2[2] <= eye_free[1]): continue
-                        if math.hypot(s2[0] - c['dE'], s2[1] - c['dN']) > 1200: continue
+                        if math.hypot(s2[0] - c['dE'], s2[1] - c['dN']) > xy_max: continue
                         c2, q2, rr2 = self.chamfer(s2, q, win_px, fscale)
                         if c2 < best - 1e-9:
                             best, s, q, rr = c2, s2, q2, rr2; improved = True
@@ -515,13 +525,111 @@ def confidence(R, sol, delta=0.05):
     return res
 
 
-def prior(d_m):
-    """the photo is filed under this stop: a spot far from it needs a clearly better fit"""
-    return 0.03 * (d_m / 1000) ** 2
+# ---------------------------------------------------------------- camera height (17 Nov 2026: drones, walls, bridges)
+HEIGHTS = (0.5, 1.0, 1.7, 2.5, 4, 6, 10, 15, 25, 40, 60, 90, 120)   # eye above the ground tried by the height profile, m
+AIR_MAX = 122.0       # US drone limit, 400 ft above the ground
+AERIAL_M = 8.0        # an eye higher than this is called a raised / drone camera
+AIR_MARGIN = 0.05     # an air answer must beat the ground one by the confidence delta: the ground answer is then no longer
+AIR_MARGIN_HINT = 0.02   # "possible"; when the look itself said 'drone' a smaller lead is enough
+AIR_SKY_GAIN = 0.02   # ... and (without a drone look) the sky line alone must fit better too: the far skyline barely moves
+                      # with height, so only near ridges / trees pin it; the region picture alone can be fooled by a wrong
+                      # height (scan 3, Oxbow Bend: 10 m over the water won 0.11 on region only, the sky line got worse)
+
+
+def spot_score(R, s, q0, pts, robust=False):
+    """the score confidence() gives one spot (east, north, eye above ground) with the orientation refitted; robust = first
+    re-snap the photo's steps near this spot's own model sky line (for an eye far from the one the points came from)"""
+    W = R.W
+    paz, pel, eyeh, lat, lng, pelt = R.profile(*s, q0)
+    q2, _ = R.fit_q(paz, pel, pts, q0, eyeh, lat, lng, 1.5, pelt=pelt)
+    if robust:
+        for win in (20, 12):
+            pw, _ = R.snap(paz, pel, q2, win * W / 1440, pelt)
+            if len(pw) >= 8: q2, _ = R.fit_q(paz, pel, pw, q2, eyeh, lat, lng, max(1.5, win * W / 1440 / 3), pelt=pelt)
+    p4, ym = R.snap(paz, pel, q2, 4 * W / 1440, pelt)
+    p8, _ = R.snap(paz, pel, q2, 8 * W / 1440, pelt)
+    if len(p8) >= 8: q2, rr = R.fit_q(paz, pel, p8, q2, eyeh, lat, lng, 1.5, pelt=pelt)
+    else: rr = np.array([10.0])
+    ins = max(1, int(((ym > 0) & (ym < R.H)).sum()))
+    lmc = lm_total(R, dict(lat=lat, lng=lng, eyeh=eyeh, q=q2))
+    return (len(p4) / ins - 0.02 * min(float(np.sqrt(np.mean(np.minimum(rr ** 2, 100)))), 10) + MU_REG * R.region(s, q2)
+            - 0.01 * min(lmc, 50)), q2
+
+
+def height_profile(R, sol, heights=HEIGHTS, delta=0.05):
+    """the spot kept, the eye moved up and down (orientation refitted each time, scored as in confidence()): every eye
+    height whose score comes within `delta` of the answer's own counts as possible -> lo..hi, the camera height's
+    confidence. `top` = the height that scores best (it can differ from the answer's: the spot search did not reach it)"""
+    pts = np.array(sol['pts'])
+    if len(pts) < 8: return None
+    s0 = np.array(sol['s'], float); q0 = np.array(sol['q'], float); e0 = float(s0[2])
+    hs = sorted(set([round(float(h), 3) for h in heights] + [round(e0, 3)]))
+    sc = []
+    for h in hs:
+        s = np.array([s0[0], s0[1], h])
+        v, _ = spot_score(R, s, q0, pts)
+        if abs(h - e0) > 2:
+            v = max(v, spot_score(R, s, q0, pts, robust=True)[0])
+        sc.append(float(v))
+    ref = sc[hs.index(round(e0, 3))]
+    ok = [h for h, v in zip(hs, sc) if v >= ref - delta]
+    j = int(np.argmax(sc))
+    return dict(best=e0, lo=min(ok), hi=max(ok), top=hs[j], top_gain=sc[j] - ref, heights=hs, scores=[round(v, 4) for v in sc],
+                open=max(ok) >= hs[-1])
+
+
+def sky_score(sol):
+    """the sky-line part of the final score (no region match, no distance pull)"""
+    return sol['agree'] - 0.02 * min(sol['rms'], 10) - 0.01 * min(sol.get('lmc', 0.0), 50)
+
+
+def final_score(R, sol):
+    sol['dist_stop'] = math.hypot(*sol['s'][:2]); sol['lmc'] = lm_total(R, sol)
+    sol['dist_anchor'] = math.hypot(sol['s'][0] - R.anchor[0], sol['s'][1] - R.anchor[1])
+    sol['score'] = (sol['agree'] - 0.02 * min(sol['rms'], 10) - prior(sol['dist_anchor'], R.prior_scale) - 0.01 * min(sol['lmc'], 50)
+                    + MU_REG * sol['reg'])
+    return sol['score']
+
+
+def air_search(R, best, hp, sols, log=print):
+    """refine again from the ground answer (and a rival spot) with the eye free up to 122 m; height steps scale with the
+    spot step (st / 2 down to 0.25 m). A drone can hover over river, trees or cliff air, so the spot is not kept on
+    walkable ground. The start eye is the best-scoring height of the profile above 3 m."""
+    up = [(h, v) for h, v in zip(hp['heights'], hp['scores']) if h > 3.0] if hp else []
+    eye0 = max(up, key=lambda x: x[1])[0] if up else 6.0
+    seeds = [(best, eye0)]
+    if eye0 > 10: seeds.append((best, 6.0))   # also from just above the ground (a wall, a bank, a low drone)
+    for o in sols[1:2]:
+        if math.hypot(o['s'][0] - best['s'][0], o['s'][1] - best['s'][1]) > 150 and o['score'] >= best['score'] - 0.15:
+            seeds.append((o, eye0))
+    out = []
+    for sd, e in seeds:
+        c = dict(dE=sd['s'][0], dN=sd['s'][1], eye=e, yaw=sd['q'][0], pitch=sd['q'][1], roll=sd['q'][2], hfov=sd['q'][3])
+        try:
+            sol = R.refine(c, log=log, eye_free=(1.0, AIR_MAX), steps1=(64, 32, 16, 8, 4), steps2=(8, 4, 2, 1, 0.5),
+                           dh=lambda st: max(0.25, st / 2), xy_max=600)
+        except Exception as e_:  # noqa: BLE001
+            log('  air refine failed: ' + repr(e_)); continue
+        if sol is None: continue
+        final_score(R, sol); sol['seed_eye'] = e
+        log(f"  air from {sd['s'][0]:.0f},{sd['s'][1]:.0f} eye {e:.0f}: eye {sol['s'][2]:.1f} at {sol['s'][0]:.0f},{sol['s'][1]:.0f}"
+            f" agree {sol['agree']:.2f} rms {sol['rms']:.2f} region {sol['reg']:.2f} score {sol['score']:.3f}")
+        out.append(sol)
+    out.sort(key=lambda x: -x['score'])
+    return out
+
+
+def prior(d_m, scale=1000.0):
+    """the photo is filed under this stop (or the user put a pin where they stood: scale = twice the pin's radius): a
+    spot far from it needs a clearly better fit"""
+    return 0.03 * (d_m / scale) ** 2
 
 
 def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None, use_names=True, log=print, n_refine=2,
-          n_screen=14, use_trees=True, use_region=True):
+          n_screen=14, use_trees=True, use_region=True, kind=None, air=True, hint=None):
+    """hint = {lat, lng, radius_m (300), aim_lat?, aim_lng?}: the user's "I stood about here" pin (and "aiming at"): the
+    spot search is centred on it with its radius, the pull toward a spot is toward it, and with an aim pin only headings
+    within 30 deg of it are tried in the coarse search and the screen. The terrain is still loaded round the stop."""
     t0 = time.time()
     T = Terrain(rows, cache, region)
     sky = SK.extract(photo)
@@ -538,16 +646,38 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
         rt, nt = tree_grid(T, stop[0], stop[1], min(radius, 1500) + 400, 3.0, fine, clear_m=0)
         rt = rt if nt else None
     t1 = time.time()
-    key = f"{region}_{stop[0]:.6f}_{stop[1]:.6f}_r{int(radius)}_s{int(step)}"
-    co = coarse(T, sky, lms, stop, radius, step, use_names=use_names, log=log, region_grids=fine, extras=bool(named), houses=hg,
-                cache_key=key)
-    for c in co: c['vote'] = c['score']; c['score'] = c['vote'] * math.exp(-0.5 * (math.hypot(c['dE'], c['dN']) / 1500) ** 2)
+    k0 = kx(stop[0]); aim = None; aim_tol = 30.0
+    if hint:
+        hrad = float(hint.get('radius_m') or 300)
+        center = (float(hint['lat']), float(hint['lng']))
+        anchor = ((center[1] - stop[1]) * k0, (center[0] - stop[0]) * KZ)
+        crad = max(100.0, hrad); cstep = float(min(150, max(25, round(crad / 6 / 5) * 5)))
+        pscale = max(300.0, 2 * hrad); psig = max(300.0, 1.5 * hrad)
+        if hint.get('aim_lat') is not None and hint.get('aim_lng') is not None: aim = (float(hint['aim_lat']), float(hint['aim_lng']))
+        log(f"  hint: {anchor[0]:.0f},{anchor[1]:.0f} m from the stop, radius {hrad:.0f} m, grid {cstep:.0f} m" + (', aim pin' if aim else ''))
+    else:
+        center, anchor, crad, cstep, pscale, psig = stop, (0.0, 0.0), radius, step, 1000.0, 1500.0
+    key = f"{region}_{center[0]:.6f}_{center[1]:.6f}_r{int(crad)}_s{int(cstep)}"
+    co = coarse(T, sky, lms, center, crad, cstep, use_names=use_names, log=log, region_grids=fine, extras=bool(named), houses=hg,
+                cache_key=key, aim=aim, aim_tol=aim_tol)
+    if hint:   # spots relative to the stop, as everywhere else
+        for c in co: c['dE'] = (c['lng'] - stop[1]) * k0; c['dN'] = (c['lat'] - stop[0]) * KZ
+
+    def dA(c): return math.hypot(c['dE'] - anchor[0], c['dN'] - anchor[1])
+
+    def aim_ok(yaw, lat, lng):
+        if aim is None: return True
+        b = math.degrees(math.atan2((aim[1] - lng) * kx(lat), (aim[0] - lat) * KZ)) % 360
+        return abs(((yaw - b + 180) % 360) - 180) <= aim_tol
+    for c in co: c['vote'] = c['score']; c['score'] = c['vote'] * math.exp(-0.5 * (dA(c) / psig) ** 2)
     co.sort(key=lambda r: -r['score'])
     t2 = time.time()
     # screen: the best few distinct coarse answers get a quick heading / tilt / roll / lens fit at their own spot
     R = Refiner(T, sky, lms, stop, fine, houses=hg, use_trees=use_trees, photo=ps, rtrees=rt)
-    cands = distinct(co, n_screen, 200)
-    home = [c for c in co if math.hypot(c['dE'], c['dN']) <= 250]
+    R.anchor, R.prior_scale = anchor, pscale
+    # distinct candidates: 200 m apart, closer inside a small hint area (else one candidate covers the whole pin area)
+    cands = distinct(co, n_screen, max(50.0, min(200.0, crad / 3)) if hint else 200)
+    home = [c for c in co if dA(c) <= min(250, crad)]
     if home:
         h0 = max(home, key=lambda c: c['vote'])
         if all(math.hypot(h0['dE'] - c['dE'], h0['dN'] - c['dN']) > 100 for c in cands): cands.append(h0)
@@ -555,8 +685,10 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     for c in cands:
         qk = R.quick(c)
         if qk is None: continue
-        d = math.hypot(c['dE'], c['dN'])
-        c['quick'] = qk['agree'] - 0.02 * min(qk['rms'], 10) - prior(d) - 0.01 * min(qk['lmc'], 50) + MU_REG * qk['reg']; c['reg'] = qk['reg']
+        d = dA(c)
+        lat_, lng_ = R.spot(c['dE'], c['dN'])
+        if not aim_ok(qk['q'][0], lat_, lng_): continue   # the fit turned away from the user's aim pin
+        c['quick'] = qk['agree'] - 0.02 * min(qk['rms'], 10) - prior(d, pscale) - 0.01 * min(qk['lmc'], 50) + MU_REG * qk['reg']; c['reg'] = qk['reg']
         c['q_quick'] = qk['q']; scr.append(c)
     scr.sort(key=lambda c: -c['quick'])
     log('  screen: ' + ', '.join(f"{c['dE']:.0f},{c['dN']:.0f}:{c['quick']:.2f}" for c in scr[:8]))
@@ -564,10 +696,15 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     if home and h0 in scr and h0 not in todo: todo.append(h0)
     # the stop pin itself is always tried too (photos are filed under the stop they were taken at; a 150 m grid can miss
     # a spot where near trees and banks fix the answer)
-    if scr and all(math.hypot(c['dE'], c['dN']) > 40 for c in todo):
-        qb = scr[0]['q_quick']; c0 = dict(scr[0], dE=0.0, dN=0.0, yaw=qb[0], pitch=qb[1], roll=qb[2], hfov=qb[3])
+    # (with a hint: the hint pin instead)
+    # (with a hint: the hint pin, and the stop pin too when it lies inside the hint area: a hint pin is rough, and
+    # the refine from it stops at the nearest good spot, 17 Nov 2026 scan 6: 55 m off from a pin 57 m from the truth)
+    pins = [anchor] + ([(0.0, 0.0)] if hint and math.hypot(*anchor) <= crad else [])
+    for pE, pN in pins:
+        if not scr or any(math.hypot(c['dE'] - pE, c['dN'] - pN) <= 40 for c in todo): continue
+        qb = scr[0]['q_quick']; c0 = dict(scr[0], dE=pE, dN=pN, yaw=qb[0], pitch=qb[1], roll=qb[2], hfov=qb[3])
         qk = R.quick(c0)
-        if qk is not None:
+        if qk is not None and aim_ok(qk['q'][0], *R.spot(pE, pN)):
             c0['quick'] = qk['agree'] - 0.02 * min(qk['rms'], 10) - 0.01 * min(qk['lmc'], 50) + MU_REG * qk['reg']
             c0['reg'] = qk['reg']; c0['q_quick'] = qk['q']; todo.append(c0)
     steps1 = (64, 32, 16, 8, 4)
@@ -583,15 +720,42 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
         except Exception as e:  # noqa: BLE001
             log('  refine failed: ' + repr(e))
     if not sols:
-        return dict(ok=False, why='no candidate could be refined', sky_good=float(sky['good'].mean()), times=dict(total=time.time() - t0))
+        return dict(ok=False, why='no candidate could be refined' if scr or not aim else 'nothing fits facing the aim pin', sky_good=float(sky['good'].mean()), times=dict(total=time.time() - t0))
     # when two answers fit the picture about as well, the one nearer the stop wins (the photo is filed under it)
-    for s_ in sols:
-        s_['dist_stop'] = math.hypot(*s_['s'][:2]); s_['lmc'] = lm_total(R, s_)
-        s_['score'] = s_['agree'] - 0.02 * min(s_['rms'], 10) - prior(s_['dist_stop']) - 0.01 * min(s_['lmc'], 50) + MU_REG * s_['reg']
+    for s_ in sols: final_score(R, s_)
     sols.sort(key=lambda s_: -s_['score'])
     best = sols[0]
     t4 = time.time()
+    # camera height: profile at the ground answer; an air search when the eye sits at the old 3 m cap, a higher eye
+    # scores better, or the look said drone. The air answer is kept only with a clear lead (AIR_MARGIN).
     R.set_trees(best['s'][0], best['s'][1])
+    hp = height_profile(R, best)
+    air_info = None; ground_alt = None
+    why_air = [w for w, c_ in (('look says drone', kind == 'drone'), ('eye at the 3 m cap', best['s'][2] >= 2.8),
+                                ('higher eye scores better', bool(hp) and hp['top'] > 3.0 and hp['top_gain'] > 0.005)) if c_]
+    t_air = time.time()
+    # Tested 17 Nov 2026: run on its own (cap / higher-scores reasons) the air search changed no answer (from the Snake
+    # River rim, higher and further back look the same) and cost up to 40 s a try, so it runs only when the look said drone.
+    if air and kind == 'drone':
+        log('  air search: ' + ', '.join(why_air))
+        ab = air_search(R, best, hp, sols, log=log)
+        margin = AIR_MARGIN_HINT if kind == 'drone' else AIR_MARGIN
+        air_info = dict(why=why_air, margin=margin, ground_score=best['score'],
+                        ground_sky=sky_score(best),
+                        tried=[dict(eye=a['s'][2], dE=a['s'][0], dN=a['s'][1], score=a['score'], agree=a['agree'], rms=a['rms'], reg=a['reg'],
+                                    sky=sky_score(a), seed_eye=a['seed_eye']) for a in ab])
+        if ab and ab[0]['score'] > best['score'] + margin and (kind == 'drone' or sky_score(ab[0]) >= sky_score(best) + AIR_SKY_GAIN):
+            a0 = ab[0]
+            ground_alt = dict(lat=best['lat'], lng=best['lng'], eye=best['s'][2], score=best['score'], agree=best['agree'],
+                              dist_m=math.hypot(a0['s'][0] - best['s'][0], a0['s'][1] - best['s'][1]))
+            best['ground_alt'] = True; a0['coarse'] = best.get('coarse'); sols.insert(0, a0); best = a0
+            air_info['kept'] = True
+            R.set_trees(best['s'][0], best['s'][1])
+            hp = height_profile(R, best)
+        else:
+            air_info['kept'] = False
+            R.set_trees(best['s'][0], best['s'][1])
+    t_air = time.time() - t_air
     conf = confidence(R, best)
     t5 = time.time()
     lmchk = []
@@ -604,12 +768,14 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
                eye_above_ground=best['s'][2], eye_abs=best['eyeh'], yaw=best['q'][0] % 360, pitch=best['q'][1], roll=best['q'][2], hfov=best['q'][3],
                agree=best['agree'], n_agree=best['n_agree'], rms_px=best['rms'], hist=best['hist'], conf=conf, landmarks=lmchk,
                alts=[dict(lat=s['lat'], lng=s['lng'], agree=s['agree'], rms=s['rms'], yaw=s['q'][0] % 360, hfov=s['q'][3], score=s['score'],
-                          reg=s['reg'], dist_m=math.hypot((s['lat'] - best['lat']) * KZ, (s['lng'] - best['lng']) * kx(best['lat']))) for s in sols[1:]],
-               score=best['score'], lm_cost=best['lmc'], region_match=best['reg'], dist_stop=best['dist_stop'], trees=R.trees is not None,
+                          reg=s['reg'], ground_alt=bool(s.get('ground_alt')), dist_m=math.hypot((s['lat'] - best['lat']) * KZ, (s['lng'] - best['lng']) * kx(best['lat']))) for s in sols[1:]],
+               score=best['score'], lm_cost=best['lmc'], region_match=best['reg'], dist_stop=best['dist_stop'],
+               hint=dict(hint, dist_m=best['dist_anchor']) if hint else None, fit=best['score'] + prior(best['dist_anchor'], pscale), trees=R.trees is not None,
                coarse_top=[dict(dE=c['dE'], dN=c['dN'], score=c['score'], yaw=c['yaw'], hfov=c['hfov']) for c in co[:5]],
                screen=[dict(dE=c['dE'], dN=c['dN'], quick=c['quick']) for c in scr],
                sky_good=float(sky['good'].mean()), used_names=use_names, n_landmarks=len([L for L in lms if L.get('known')]),
-               times=dict(sky_and_load=t1 - t0, coarse=t2 - t1, screen=t3 - t2, refine=t4 - t3, confidence=t5 - t4, total=t5 - t0),
+               height=hp, aerial=bool(best['s'][2] > AERIAL_M), ground_alt=ground_alt, air=air_info, kind=kind,
+               times=dict(sky_and_load=t1 - t0, coarse=t2 - t1, screen=t3 - t2, refine=t4 - t3, air=t_air, confidence=t5 - t4 - t_air, total=t5 - t0),
                pts=best['pts'])
     return out
 
@@ -630,6 +796,14 @@ def coarse_local(T, sky, lms, stop, c, use_names, fine, extras, houses=None):
     return sub[:3]
 
 
+def parse_hint(txt):
+    if not txt: return None
+    v = [float(x) for x in txt.split(',')]
+    h = dict(lat=v[0], lng=v[1], radius_m=v[2] if len(v) > 2 else 300)
+    if len(v) >= 5: h.update(aim_lat=v[3], aim_lng=v[4])
+    return h
+
+
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('photo'); ap.add_argument('--rows', required=True); ap.add_argument('--cache', required=True)
@@ -638,10 +812,13 @@ if __name__ == '__main__':
     ap.add_argument('--no-names', action='store_true'); ap.add_argument('--out'); ap.add_argument('--no-trees', action='store_true')
     ap.add_argument('--hcache', help='folder for per-stop horizon tables')
     ap.add_argument('--no-region', action='store_true')
+    ap.add_argument('--hint', help='LAT,LNG[,RADIUS_M[,AIM_LAT,AIM_LNG]]: the user\'s "I stood about here" pin')
+    ap.add_argument('--kind', help="the look's kind (a 'drone' hint starts the air search)"); ap.add_argument('--no-air', action='store_true')
     a = ap.parse_args()
     stop = tuple(float(v) for v in a.stop.split(','))
     HCACHE = a.hcache
-    r = solve(a.photo, a.rows, a.cache, a.region, stop, a.landmarks, a.radius, a.step, use_names=not a.no_names, use_trees=not a.no_trees, use_region=not a.no_region)
+    r = solve(a.photo, a.rows, a.cache, a.region, stop, a.landmarks, a.radius, a.step, use_names=not a.no_names, use_trees=not a.no_trees, use_region=not a.no_region,
+              kind=a.kind, air=not a.no_air, hint=parse_hint(a.hint))
     s = json.dumps(r, indent=1, default=float)
     if a.out: open(a.out, 'w').write(s)
     print(json.dumps({k: r.get(k) for k in ('lat', 'lng', 'yaw', 'pitch', 'roll', 'hfov', 'agree', 'rms_px', 'times')}, default=float))
