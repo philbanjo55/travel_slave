@@ -5,7 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import type { Pair } from '../../utils/sunEngine';
 import { bearingDeg, distanceM } from '../../utils/sunEngine';
-import { compassPoint, shotName } from './sunStyle';
+import { compassPoint, shortName, shotName } from './sunStyle';
+import { declinationDeg } from '../../utils/declination';
 
 // Walk to shot (Phil, 16 Nov 2026: "directions to the exact lat/long and then also the bearing of where to view").
 // A live arrow to the shot's stand spot from the phone's GPS and compass, the distance, and Google Maps walking
@@ -35,6 +36,7 @@ export default function WalkToShot({ pair, visible, onClose, onOpen3d }: Props) 
   const [heading, setHeading] = useState<number | null>(null);
   const [perm, setPerm] = useState<'asking' | 'ok' | 'no'>('asking');
   const smooth = useRef<{ x: number; y: number } | null>(null);
+  const posRef = useRef<{ lat: number; lng: number } | null>(null);   // for true north from the compass's magnetic heading
   const [tries, setTries] = useState(0);
 
   useEffect(() => {
@@ -51,12 +53,17 @@ export default function WalkToShot({ pair, visible, onClose, onOpen3d }: Props) 
         setPerm('ok');
         subs.push(await Location.watchPositionAsync(
           { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 1000, distanceInterval: 0 },
-          l => { if (alive) setPos({ lat: l.coords.latitude, lng: l.coords.longitude, acc: l.coords.accuracy ?? null }); },
+          l => { if (!alive) return; posRef.current = { lat: l.coords.latitude, lng: l.coords.longitude }; setPos({ lat: l.coords.latitude, lng: l.coords.longitude, acc: l.coords.accuracy ?? null }); },
         ));
         try {
           subs.push(await Location.watchHeadingAsync(h => {
             if (!alive) return;
-            const deg = h.trueHeading != null && h.trueHeading >= 0 ? h.trueHeading : h.magHeading;
+            // True north from the magnetic heading plus the declination where the phone is now (World Magnetic Model):
+            // Android's own true heading uses its last known fix, which can be from home (about 20 deg wrong in Jackson
+            // after a flight from the east). Without a position yet, Android's true heading, else magnetic.
+            const p = posRef.current, dec = p ? declinationDeg(p.lat, p.lng) : null;
+            const deg = h.magHeading != null && h.magHeading >= 0 && dec != null ? norm(h.magHeading + dec)
+              : h.trueHeading != null && h.trueHeading >= 0 ? h.trueHeading : h.magHeading;
             if (deg == null || deg < 0) return;
             // a little smoothing so the arrow doesn't shake (on the circle, so 359 -> 1 doesn't swing round)
             const r = (deg * Math.PI) / 180, s = smooth.current;
@@ -85,6 +92,11 @@ export default function WalkToShot({ pair, visible, onClose, onOpen3d }: Props) 
   const target = there ? aim : to;
   const turn = target != null && heading != null ? norm(target - heading) : null;
   const title = `${pair.code ? `${pair.code} · ` : ''}${shotName(pair)}`;
+  // the aim said against the subject you can see (17 Nov 2026: far more exact than a phone compass): "3° left of Grand Teton"
+  const toSubj = pair.bearing ?? bearingDeg(pair.v, pair.s);
+  const off = aim != null ? ((aim - toSubj + 540) % 360) - 180 : null;
+  const subj = shortName(pair.subject_name) || 'the subject';
+  const vsSubject = off == null ? null : Math.abs(off) < 0.5 ? `Straight at ${subj}` : `${Math.abs(off) < 10 ? Math.abs(off).toFixed(1) : Math.round(Math.abs(off))}° ${off < 0 ? 'left' : 'right'} of ${subj}`;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -121,12 +133,13 @@ export default function WalkToShot({ pair, visible, onClose, onOpen3d }: Props) 
                 <>
                   <Text style={[styles.big, { color: '#5aaa7a' }]} accessibilityLabel="You're there">You're there</Text>
                   {aim != null ? <Text style={styles.aim}>Aim {Math.round(norm(aim))}° {compassPoint(aim)}</Text> : null}
+                  {vsSubject ? <Text style={styles.sub} accessibilityLabel={`Aim ${vsSubject}`}>{vsSubject}</Text> : null}
                 </>
               ) : (
                 <>
                   <Text style={styles.big} accessibilityLabel={`Distance ${fmtDist(dist!)}`}>{fmtDist(dist!)}</Text>
                   {heading == null && to != null ? <Text style={styles.sub}>Head {Math.round(to)}° {compassPoint(to)}</Text> : null}
-                  {aim != null ? <Text style={styles.sub}>Then aim {Math.round(norm(aim))}° {compassPoint(aim)}</Text> : null}
+                  {aim != null ? <Text style={styles.sub}>Then aim {Math.round(norm(aim))}° {compassPoint(aim)}{vsSubject ? ` · ${vsSubject.charAt(0).toLowerCase()}${vsSubject.slice(1)}` : ''}</Text> : null}
                 </>
               )}
               <Text style={styles.small}>

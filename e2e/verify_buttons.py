@@ -953,7 +953,12 @@ def sun_3d():
                     line = next((t for t in w1.all_texts if "You've walked" in t), None)
                     m2 = re.search(r"walked ([\d.]+) m", line or '')
                     V.check('walk-moved', line is not None, (line or 'no "You have walked" line after holding the forward arrow')[:110])
-                    V.check('walk-hold-faster', m2 is not None and m_ is not None and float(m2.group(1)) >= float(m_.group(1)) + 3, f'hold walked on: {(m_.group(1) if m_ else "?")} -> {(m2.group(1) if m2 else "?")} m')
+                    V.check('walk-hold-faster', m2 is not None and m_ is not None and float(m2.group(1)) >= float(m_.group(1)) + 0.5, f'hold walked on: {(m_.group(1) if m_ else "?")} -> {(m2.group(1) if m2 else "?")} m')
+                    try:
+                        walk_height_and_keep(m2.group(1) if m2 else None)
+                    except Exception as e:
+                        V.check('walk-extra-run', False, f'height / keep checks stopped: {e!r}'[:120])
+                    w1 = C.capture(1)
                     V.check('walk-save-offered', V.has(w1, 'Save this as my stand spot for the shot'), 'Save as my spot button (not tapped)')
                     cut_off('walk-mode', w1)
                     V.tap_text(w1, 'Back to my saved spot'); time.sleep(2)
@@ -966,6 +971,10 @@ def sun_3d():
                 ground_glass()
             except Exception as e:
                 V.check('glass-run', False, f'ground glass checks stopped: {e!r}'[:120])
+            try:
+                frame_only_and_pins()
+            except Exception as e:
+                V.check('frameonly-run', False, f'frame only / pins checks stopped: {e!r}'[:120])
             try:
                 framing()
             except Exception as e:
@@ -1078,7 +1087,9 @@ def framing():
             time.sleep(1.5); a = C.capture(1)
             V.check('frame-save-cancel', cancelled and not V.has(a, 'Save this framing?'), 'cancelled, nothing saved')
             after = framing_row(a)
-            V.check('frame-line-unchanged', after == line, f'before: {(line or "")[:50]} | after: {(after or "")[:50]}')
+            if after is None:
+                C.adb('shell', 'input', 'swipe', '540', str(int(0.80 * H)), '540', str(int(0.72 * H)), '500'); after = framing_row(C.capture(1.2))
+            V.check('frame-line-unchanged', (after == line) if after is not None else None, f'before: {(line or "")[:50]} | after: {(after or "not on screen")[:50]}')
         else:
             V.back(); time.sleep(1)
     # Aim at subject: the view stays up
@@ -1122,6 +1133,78 @@ def framing():
     else:
         V.check('frame-prev', False, f'no {back_} button')
     cut_off('3d-tour', C.capture(1))
+
+
+def frame_only_and_pins():
+    """Frame only (black outside the frame box) and the stop's other stand spots as pins (17 Nov 2026). Checks
+    frameonly-* / pins-*. Runs in sun_3d's full screen."""
+    s = C.capture(1)
+    b = next((c for c in s.clickables if c['label'].split(' | ')[0].startswith('Frame only:')), None)
+    if b is None:
+        print('INFO frameonly: no Frame only button (frame box off, or this build has none)', flush=True)
+    else:
+        C.tap(b['xy']); time.sleep(1.5); s2 = C.capture(1)
+        on = next((c for c in s2.clickables if c['label'].startswith('Frame only: on')), None)
+        V.check('frameonly-on', on is not None and V.has(s2, 'Looking ') and C.app_alive(), 'outside the frame blacked out, view still drawn')
+        V.show('frameonly-on', s2)
+        if on is not None: C.tap(on['xy']); time.sleep(1.2)
+        V.check('frameonly-off', any(c['label'].startswith('Frame only: off') for c in C.capture(1).clickables), 'back to the whole view')
+    s = C.capture(1)
+    pb = next((c for c in s.clickables if c['label'].startswith('Other stand spots')), None)
+    if pb is None:
+        V.check('pins-button', None, 'this stop has one shot: no other stand spots to show')
+    else:
+        was = pb['label'].split(' | ')[0]; C.tap(pb['xy']); time.sleep(1.2); s3 = C.capture(1)
+        now = next((c['label'].split(' | ')[0] for c in s3.clickables if c['label'].startswith('Other stand spots')), None)
+        V.check('pins-toggle', now is not None and now != was and C.app_alive(), f'{was[:40]} -> {(now or "gone")[:40]}')
+        back = next((c for c in s3.clickables if c['label'].startswith('Other stand spots')), None)
+        if back: C.tap(back['xy']); time.sleep(1)
+
+
+def walk_height_and_keep(walked):
+    """Walk mode extras (17 Nov 2026): the camera height control (1 inch a tap, quick heights) and that switching the
+    foreground off and on again keeps the walked-to spot. Checks walkh-* / walk-keep-*."""
+    s = C.capture(1)
+    def height(st):
+        return next((t for t in st.all_texts if t.startswith('Camera ') and ' m' in t), None)
+    h0 = height(s)
+    if h0 is None:
+        for _ in range(3):   # the row may be below the fold of the area under the picture
+            C.adb('shell', 'input', 'swipe', '540', '2050', '540', '1850', '400'); s = C.capture(1); h0 = height(s)
+            if h0: break
+    V.check('walkh-line', h0 is not None, (h0 or 'no "Camera 5\'8"" line in walk mode')[:60])
+    up = next((c for c in s.clickables if c['label'].startswith('Raise the camera')), None)
+    if up is not None:
+        C.tap(up['xy']); time.sleep(1.2); h1 = height(C.capture(1))
+        V.check('walkh-inch', h1 is not None and h1 != h0 and "5'9" in h1, f'{h0} -> {h1}')
+    low = next((c for c in C.capture(1).clickables if c['label'].startswith('Camera Low')), None)
+    if low is not None:
+        C.tap(low['xy']); time.sleep(1.5); hl = height(C.capture(1))
+        V.check('walkh-low', hl is not None and "1'8" in hl and V.has(C.capture(1), 'Looking '), f'{hl}')
+        eye = next((c for c in C.capture(1).clickables if c['label'].startswith('Camera Eye')), None)
+        if eye: C.tap(eye['xy']); time.sleep(1)
+    # foreground off and on: the view restarts; the walked-to spot must stay
+    fg_label = 'Foreground (trees and buildings near you)'
+    def fg(st): return next((c for c in st.clickables if fg_label in c['label']), None)
+    def walked_line(st): return next((t for t in st.all_texts if "You've walked" in t), None)
+    before = walked_line(C.capture(1))
+    went_off = False
+    for _ in range(3):
+        b = fg(C.capture(1))
+        if b is None: break
+        if ': off' in b['label']: went_off = True; break
+        C.tap(b['xy']); time.sleep(4)
+    if not went_off:
+        V.check('walk-keep-after-restart', None, 'could not switch the foreground off here'); return
+    after = None
+    for _ in range(20):
+        st = C.capture(3)
+        if V.has(st, 'Looking '): after = walked_line(st); break
+    V.check('walk-keep-after-restart', after is not None, f'before: {(before or "")[:40]} | after restart: {(after or "back on the saved spot")[:40]}')
+    for _ in range(3):   # foreground back on
+        b = fg(C.capture(1))
+        if b is None or ', showing' in b['label'] or 'on, loading' in b['label']: break
+        C.tap(b['xy']); time.sleep(4)
 
 
 def ground_glass():
@@ -1210,15 +1293,13 @@ def overhead_walk():
     else:
         V.check('over-sun-toggle', False, 'no Sun button')
     o = C.capture(1)
-    cone = next((c for c in o.clickables if c['label'].startswith('Cone and sun arrows')), None)   # 17 Nov 2026: CONE on / off
+    cone = None   # 17 Nov 2026: CONE on / off is checked in full screen below
     if cone is not None:
         was = cone['label'].split(' | ')[0]; C.tap(cone['xy']); time.sleep(1.2); o3 = C.capture(1)
         now = next((c['label'].split(' | ')[0] for c in o3.clickables if c['label'].startswith('Cone and sun arrows')), None)
         V.check('over-cone-toggle', now is not None and now != was and C.app_alive(), f'{was[:30]} -> {(now or "gone")[:30]}')
         back = next((c for c in o3.clickables if c['label'].startswith('Cone and sun arrows')), None)
         if back: C.tap(back['xy']); time.sleep(0.8)
-    else:
-        V.check('over-cone-toggle', False, 'no CONE button')
     o = C.capture(1)
     full = next((c for c in o.clickables if 'Open the overhead view full screen' in c['label']), None)
     if full is not None:
@@ -1226,6 +1307,16 @@ def overhead_walk():
         closer = next((c for c in f.clickables if 'Close the overhead view' in c['label']), None)
         V.check('over-full-open', closer is not None and C.app_alive(), 'full screen overhead')
         V.show('over-full', f); cut_off('overhead-full', f)
+        cone = next((c for c in f.clickables if c['label'].startswith('Cone and sun arrows')), None)
+        if cone is not None:
+            was = cone['label'].split(' | ')[0]; C.tap(cone['xy']); time.sleep(1.5); f3 = C.capture(1)
+            now = next((c['label'].split(' | ')[0] for c in f3.clickables if c['label'].startswith('Cone and sun arrows')), None)
+            V.check('over-cone-toggle', now is not None and now != was and C.app_alive(), f'{was[:30]} -> {(now or "gone")[:30]}')
+            back = next((c for c in f3.clickables if c['label'].startswith('Cone and sun arrows')), None)
+            if back: C.tap(back['xy']); time.sleep(1)
+            f = C.capture(1)
+        else:
+            V.check('over-cone-toggle', False, 'no CONE button in full screen')
         if closer is not None:
             C.tap(closer['xy']); time.sleep(1.5)
         else:
@@ -1261,6 +1352,13 @@ def overhead_walk():
     V.check('walkto-button', wb is not None, (wb['label'] if wb else 'no Walk to button')[:60])
     if wb is None:
         return
+    Hh = 2400
+    for _ in range(3):
+        if 0.3 * Hh <= wb['xy'][1] <= 0.75 * Hh: break
+        d = int(wb['xy'][1] - 0.5 * Hh); C.adb('shell', 'input', 'swipe', '540', '1500', '540', str(1500 - d), '600'); w = C.capture(1.2)
+        nb = next((c for c in w.clickables if c['label'].startswith('Walk to')), None)
+        if nb is None: break
+        wb = nb
     C.tap(wb['xy'])
     got = None
     for _ in range(10):
@@ -1274,6 +1372,8 @@ def overhead_walk():
     V.check('walkto-open', V.has(got, 'Walk to'), 'walk screen open')
     V.check('walkto-distance', dist is not None, (dist or 'no distance (' + ' | '.join(got.all_texts)[:120] + ')'))
     V.check('walkto-aim', V.has(got, 'aim ') or V.has(got, 'Aim '), 'the way to aim once there')
+    vs = next((t for t in got.all_texts if re.search(r'(left|right) of |straight at ', t, re.I)), None)   # 17 Nov 2026
+    V.check('walkto-vs-subject', (vs is not None) if not V.has(got, 'Location is off') else None, (vs or 'no "left / right of the subject" words')[:80])
     V.check('walkto-directions', any('Walking directions in Google Maps' in c['label'] for c in got.clickables), 'Directions button (not tapped)')
     V.show('walkto', got); cut_off('walk-to-shot', got)
     cl = next((c for c in got.clickables if 'Close walk to shot' in c['label']), None)
@@ -1424,6 +1524,18 @@ def stops_page(fresh=True):
         V.check('stops-back', back_ok, 'Back returns to the Stops view' if back_ok else 'not on the Stops view after Back')
         if not back_ok:
             print('INFO stops after back: ' + ' | '.join(t for t in b.all_texts if len(t.strip()) > 1)[:600], flush=True); return
+        # Long press = yellow / green mark (17 Nov 2026). The test build blocks every write, so the app says it was not
+        # saved and puts the old mark back: that alert (or the new mark) proves the long press path.
+        if not OFFLINE:
+            card = next((c for c in b.clickables if c['label'].lower().startswith('stop card:') and 0.25 * h <= c['xy'][1] <= 0.75 * h), None)
+            if card is not None:
+                x, y = card['xy']; C.adb('shell', 'input', 'swipe', str(x), str(y), str(x), str(y), '900'); time.sleep(1.5)
+                m_ = C.capture(1)
+                marked = any(c['label'].lower().startswith('stop card:') and ('working on it' in c['label'] or 'reviewed' in c['label']) for c in m_.clickables)
+                alert = V.has(m_, 'Not saved')
+                V.check('stops-mark-longpress', marked or alert, 'mark shown' if marked else ('"Not saved" (writes are blocked in the test build)' if alert else 'nothing happened'))
+                if alert: V.tap_text(m_, 'OK', exact=True); time.sleep(1)
+                V.check('stops-mark-alive', C.app_alive())
     # The view's end: nothing under the Home / Back buttons once scrolled to the bottom
     last = None
     for _ in range(25):

@@ -104,7 +104,13 @@
   let cnparts = {}, cnbytes = {}, cnlast = -1, wideTiles = null, wideState = 0, wideRun = 0;   // park-wide trees: tile pieces by index, each tile's packed bytes once its pieces are in, the tile coming in, the packed files, 0 none 1 building 2 in -1 dropped
   const cnAny = () => Object.keys(cnparts).length > 0 || Object.keys(cnbytes).length > 0;   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
   let R = null;   // everything three.js, once built
-  const OHU = { value: 0 };   // the view from above is on (S3D.overhead): shaders draw trees as crowns seen from over them
+  const OHU = { value: 0 };
+  // The tree shaders' from-above drawing is compiled in only while the view from above is on (17 Nov 2026: as a run-time
+  // branch it made every tree pixel of the normal 3D view dearer, and the test emulator's software graphics froze):
+  // these materials get the OH define on entering it and lose it on leaving.
+  const OHM = new Set();
+  function ohMat(m) { OHM.add(m); if (OHU.value) { m.defines = Object.assign({}, m.defines, { OH: 1 }); m.needsUpdate = true; } return m; }
+  function ohDefines(on) { for (const m of OHM) { const d = Object.assign({}, m.defines); if (on) d.OH = 1; else delete d.OH; m.defines = d; m.needsUpdate = true; } }   // the view from above is on (S3D.overhead): shaders draw trees as crowns seen from over them
   let eye = null, eye0 = null, target = null, framed = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true;
   const G = 768;  // mesh points per side
 
@@ -192,7 +198,10 @@
   // where the camera stands: eye height EYE m (Phil, 13 Nov 2026: "Do 5,8" = 1.73 m, the height his own photos are taken from; was 2 m on the
   // detail grid, 3 m elsewhere). On the near grid the highest ground within a step and a half, so a pin on a steep slope does not
   // put the eye inside the hill; on the wide grid the ground there; on the detail grid the survey's ground is exact.
-  const EYE = 1.73;
+  // Camera height above the ground (Phil, 17 Nov 2026: raise it to see over trees, lower it for low shots): 1 ft up, no real top,
+  // S3D.eyeHeight(m). Measured from the ground under the camera: exact on the survey's bare ground (detail grid), else
+  // the local high point as above. The sun times are not moved by it (they test the ground spot).
+  let EYE = 1.73;
   const eyeH = e => { if (e.g === DT) return gh(e.g, e.c, e.r) + EYE; let h = gh(e.g, e.c, e.r); if (e.g === NR || e.g === RG) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + EYE; };
   // First / last direct light. Measured 12 Nov 2026 against 102 webcam pictures (27 events, tools/sun3d/README.md): with
   // the first rule (whole disc clear of a soft skyline, never below the flat horizon) ridge-blocked events were right to
@@ -820,10 +829,15 @@
     uniform sampler2D kmap; uniform sampler2D lmap; uniform vec4 rect; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform float fogD; uniform float pscale;
     uniform float oh;   // 1 = the view from above: each tree is its crown seen from over it (a flat quad at the tree's top)
     attribute vec3 tpos; attribute vec4 tsz;   // ground point; height m, drawn width m, 2 = bare else the crown's shape a / 2.5, random
-    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx; varying vec3 vOh;
+    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx;
+#ifdef OH
+    varying vec3 vOh;
+#endif
     void main() {
       vec2 rg = vec2(viewMatrix[0][0], viewMatrix[2][0]); rg = length(rg) > 1e-5 ? normalize(rg) : vec2(1., 0.);
+#ifdef OH
       vec2 fw = vec2(viewMatrix[0][1], viewMatrix[2][1]); fw = length(fw) > 1e-5 ? normalize(fw) : vec2(0., -1.);   // the screen's up, on the ground (from above)
+#endif
       // A2: a crown close to the eye is a flat quad seen from inside its own width (a striped slab at a frame edge): a tree
       // whose crown (a cylinder: the drawn half-width round the stem, foot to top) is within NEAR_DROP m of the eye in 3D is
       // not drawn. Per frame in the shader, so it follows the eye while walking. (A dithered fade over 8-12 m was tried:
@@ -831,7 +845,9 @@
       vec2 dxz = tpos.xz - cameraPosition.xz; float dh = max(length(dxz) - .5 * tsz.y, 0.), dv = max(max(tpos.y - cameraPosition.y, cameraPosition.y - tpos.y - tsz.x), 0.);
       if (length(vec2(dh, dv)) < ${NEAR_DROP.toFixed(1)}) { gl_Position = vec4(2., 2., 2., 1.); return; }
       vec3 p = vec3(tpos.x + rg.x * position.x * tsz.y, tpos.y - .4 + position.y * (tsz.x + .4), tpos.z + rg.y * position.x * tsz.y);   // the foot a little into the ground (slopes)
+#ifdef OH
       if (oh > .5) p = vec3(tpos.x + (rg.x * position.x + fw.x * (position.y - .5)) * tsz.y, tpos.y + tsz.x, tpos.z + (rg.y * position.x + fw.y * (position.y - .5)) * tsz.y);
+#endif
       vec4 mv = modelViewMatrix * vec4(p, 1.); gl_Position = projectionMatrix * mv; float dist = length(mv.xyz);
       vQ = position.xy; vT = tsz;
       vec2 uv = (tpos.xz - rect.xy) / rect.zw; float sh = 0., hl = length(sunDir.xz);
@@ -839,14 +855,19 @@
         for (int k = 1; k <= 6; k++) { float d = .5 * tsz.y + 1.6 * float(k); if (y0 + tanA * d < texture2D(kmap, uv + dir * d).a * 51.) sh += .22; } }
       vSun = sunCol * texture2D(lmap, uv).a * (1. - .8 * min(sh, 1.)); vAmb = amb;
       vSide = hl > 1e-4 ? dot(sunDir.xz / hl, rg) : 0.;
+#ifdef OH
       vOh = vec3(oh, hl > 1e-4 ? dot(sunDir.xz / hl, rg) : 0., hl > 1e-4 ? dot(sunDir.xz / hl, fw) : 0.);
+#endif
       vFog = 1. - exp(-pow(fogD * dist, 2.)); vPx = dist / pscale;
     }`;
   // A draws the outline solid; B (STIPPLE) fills the same outline with soft dots (a point cloud with no gaps however
   // near the tree is: the dots are cut in the fragment shader, a few cm apart close by, a pixel and a half far off).
   const SHAPE_FS = `
     precision highp float; uniform float snowMode; uniform vec3 fogCol;
-    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx; varying vec3 vOh;
+    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx;
+#ifdef OH
+    varying vec3 vOh;
+#endif
     float h1(float x) { return fract(sin(x * 78.233) * 43758.5453); }
     float h2(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     float sg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float t = clamp(dot(pa, ba) / dot(ba, ba), 0., 1.); return length(pa - ba * t); }
@@ -857,6 +878,7 @@
       return h2(cell + r + 11.) < keep && length(f - .75 * off) < .3 + .2 * h2(cell + r + 7.);   // dots off the grid, of uneven size
     }
     void main() {
+#ifdef OH
       if (vOh.x > .5) {   // from above: an evergreen is a dark round crown (snow on its boughs), a bare tree a lace of limbs
         vec2 d = vec2(vQ.x, vQ.y - .5) * 2.; float rr = length(d), rw = vT.w, ww = vT.y, pxo = max(vPx, .01), lt = .5 + .5 * clamp(dot(d, vOh.yz), -1., 1.);
         vec3 co;
@@ -875,6 +897,7 @@
         cl = pow(min(cl * .9, vec3(1.)), vec3(.62));
         gl_FragColor = vec4(mix(cl, fogCol, vFog), 1.); return;
       }
+#endif
       float H = vT.x, W = vT.y, r = vT.w, x = vQ.x * W, y = vQ.y * H, px = max(vPx, .01), lit, sh = .5;
       vec3 c;
       if (vT.z < 1.) {   // evergreen: a spire of tiered boughs from just over the snow to the top, as full as its survey crown
@@ -1337,7 +1360,7 @@
       const mesh = new THREE.Mesh(dgeo, [mat]); mesh.frustumCulled = false; made.push(dLight, dlo, dhi, mat);
       det = { lightMat: dLight, lo: dlo, hi: dhi, lite: [], mat, mesh, dmap, kmap, points: null, count: 0, houses: null };
       if (tp && tp.inst) {   // A / B: one quad a tree
-        const smat = new THREE.ShaderMaterial({ defines: STYLE === 'cloud' ? { STIPPLE: 1 } : {}, uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, oh: OHU }, vertexShader: SHAPE_VS, fragmentShader: SHAPE_FS });
+        const smat = new THREE.ShaderMaterial({ defines: STYLE === 'cloud' ? { STIPPLE: 1 } : {}, uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, oh: OHU }, vertexShader: SHAPE_VS, fragmentShader: SHAPE_FS }); ohMat(smat);
         det.points = new THREE.Mesh(tp.inst, smat); det.points.frustumCulled = false; det.inst = true; det.count = tp.count; made.push(tp.inst, smat);
         const drop = function () { free(this.array); this.array = null; }; tp.inst.attributes.tpos.onUpload(drop); tp.inst.attributes.tsz.onUpload(drop);
       } else if (tp) {
@@ -1386,7 +1409,7 @@
       }
       if (det) {
         R.det = det; R.scene.add(det.mesh); if (det.points) R.scene.add(det.points); if (det.houses) R.scene.add(det.houses);
-        R.cam.near = 1;
+        R.cam.near = 1; R.nearBase = 1;
       }
       if (oldT) oldT.dispose(); if (oldN) oldN.dispose();
       if (touched) focus(); else { aim(); heading(); }
@@ -1619,7 +1642,10 @@
     uniform float pscale; uniform float snowMode; uniform float share; uniform float clearR; uniform float psMax;
     uniform float oh;   // 1 = from above: the point is the crown seen from over the tree's top
     attribute vec4 tw;
-    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide; varying vec3 vOh;
+    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide;
+#ifdef OH
+    varying vec3 vOh;
+#endif
     void main() {
       float S = max(tw.x, tw.y);
       vec4 mv = modelViewMatrix * vec4(position.x, position.y + (oh > .5 ? tw.x : S * .5), position.z, 1.); float dist = length(mv.xyz);
@@ -1636,15 +1662,21 @@
       vSun = sunCol * vis;
       vec2 rgt = vec2(viewMatrix[0][0], viewMatrix[2][0]), sh = sunDir.xz;
       vSide = length(rgt) > 1e-4 && length(sh) > 1e-4 ? dot(normalize(sh), normalize(rgt)) : 0.;
+#ifdef OH
       vec2 upg = vec2(viewMatrix[0][1], viewMatrix[2][1]);
       vOh = vec3(oh, vSide, length(upg) > 1e-4 && length(sh) > 1e-4 ? dot(normalize(sh), normalize(upg)) : 0.);
+#endif
       vFog = 1. - exp(-pow(fogD * dist, 2.)); vFogC = fogCol;
     }`;
   const WTREE_FS = `
     precision highp float; uniform vec3 amb; uniform float snowMode;
-    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide; varying vec3 vOh;
+    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide;
+#ifdef OH
+    varying vec3 vOh;
+#endif
     float h1(float x) { return fract(sin(x * 78.233) * 43758.5453); }
     void main() {
+#ifdef OH
       if (vOh.x > .5) {   // from above: a round crown (an evergreen), or a see-through lace (bare in winter)
         vec2 qo = gl_PointCoord, d = vec2(qo.x - .5, .5 - qo.y) * 2.; float rr = length(d), ro = fract(vS.w), lt = .5 + .5 * clamp(dot(d, vOh.yz), -1., 1.);
         vec3 co;
@@ -1658,6 +1690,7 @@
         cl = pow(min(cl * .9, vec3(1.)), vec3(.62));
         gl_FragColor = vec4(mix(cl, vFogC, vFog), 1.); return;
       }
+#endif
       vec2 q = gl_PointCoord; float yb = (1. - q.y) / vS.x, u = (q.x - .5) / vS.y;   // yb 0 at the ground .. 1 at the crown's top; u -.5 .. .5 across it
       if (yb > 1. || abs(u) > .5) discard;
       if (vS.w >= 2.) {   // bare in winter (A / B): a trunk and a lace of twigs in an oval crown, see-through, grey-brown
@@ -1896,7 +1929,7 @@
       let psMax = 256; try { psMax = Math.max(16, Math.min(512, gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] || 64)); } catch (e) { psMax = 64; }
       const mat = new THREE.ShaderMaterial({ uniforms: { lmapF: { value: R.lo.texture }, lmapN: { value: R.near ? R.near.lo.texture : R.lo.texture }, nrect: { value: NR ? new THREE.Vector4(NR.x0, NR.z0, NR.w, NR.d) : new THREE.Vector4(0, 0, 1, 1) }, hasN: { value: NR && R.near ? 1 : 0 }, size: { value: C.size },
         sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, share: { value: 1 }, clearR: { value: 30 }, psMax: { value: psMax }, oh: OHU },
-        vertexShader: WTREE_VS, fragmentShader: WTREE_FS });
+        vertexShader: WTREE_VS, fragmentShader: WTREE_FS }); ohMat(mat);
       made.push(mat);
       const pts = new THREE.Points(wp.geo, [mat]); pts.frustumCulled = false;
       const drop = function () { free(this.array); this.array = null; }; wp.geo.attributes.position.onUpload(drop); wp.geo.attributes.tw.onUpload(drop);
@@ -2028,14 +2061,21 @@
     const th = lens.fw / (2 * lens.f), tv = lens.fh / (2 * lens.f), k = Math.max(th / (a * 0.9), tv / 0.9);
     const el = document.getElementById('frame');
     if (el) {   // written only when it changes: this runs every frame, and a style write makes the web view lay the page out again
-      const disp = lens.box ? 'block' : 'none', wd = (th / (k * a) * 100) + '%', ht = (tv / k * 100) + '%', key = disp + wd + ht;
-      if (key !== lensKey) { lensKey = key; el.style.display = disp; el.style.width = wd; el.style.height = ht; }
+      const only = !!(lens.box && lens.only), disp = lens.box ? 'block' : 'none', wd = (th / (k * a) * 100) + '%', ht = (tv / k * 100) + '%', key = disp + wd + ht + only;
+      if (key !== lensKey) {
+        lensKey = key; el.style.display = disp; el.style.width = wd; el.style.height = ht;
+        // frame only (17 Nov 2026): a huge black shadow round the box hides everything outside it
+        el.style.boxShadow = only ? '0 0 0 1px rgba(0,0,0,.55), 0 0 0 4000px #000' : '';
+      }
     }
     return 2 * Math.atan(k);
   }
   function place() {
     const q = cr(eye), e = pick(eye), cam = R.cam;
     cam.position.set((q.c + 0.5) * FAR.dx, eyeH(e), (q.r + 0.5) * FAR.dz); cam.rotation.set(pitch, -yaw, 0);
+    // a low camera (0.3-1 m) must not cut the ground in front of it: the near plane comes in with the eye height
+    if (R.nearBase == null) R.nearBase = cam.near;
+    cam.near = Math.min(R.nearBase, Math.max(0.15, EYE * 0.4));
     cam.fov = lensFov() * 180 / Math.PI; cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
     if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360)) / (R.det.inst ? 1 : Math.sqrt(R.thin));   // a point's metres -> pixels at 1 m
     if (R.wide) R.wide.mat.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360));
@@ -2140,7 +2180,7 @@
     R.halo.position.copy(R.disc.position); R.halo.lookAt(cam.position);
     if (OH.on) R.disc.visible = R.halo.visible = false;
     R.renderer.render(R.scene, cam); dirty = false; frames++;
-    if (OH.on) ohOverlay();
+    if (OH.on) ohOverlay(); else othOverlay();
     owe = quick || q !== QL[0]; sharp = false;
     if (owe && restTimer == null && !resting) restTimer = setTimeout(rested, REST.sun);   // a light change nobody touched for (the foreground coming in, ice on / off)
     if (a) { a.px = cw * ch; a.pts = pts; a.wpts = wpts; }
@@ -2172,8 +2212,8 @@
   // perspective view back as it was.
   // The camera is a narrow (15 deg across) perspective camera high over the middle: a peak 1.5 km above the valley 10 km
   // off-centre leans ~4% of its distance. Fog, sky and sun disc are off; nothing here reaches lit() / the sun times.
-  const OH_FOVH = 15 * Math.PI / 180, OH_MIN = 15, OH_MAX = 20000, OH_EVEN = { az: 180, alt: 88, k: 0.5 };   // the sun off: high and soft (k = its strength), so nothing casts a shadow and snow is not burnt out
-  const OH = { on: false, shots: [], sel: null, upMode: 'view', rot: 0, cx: 0, cz: 0, span: 400, sunOn: true, posted: false, saved: null, cv: null, g2: null,
+  const OH_FOVH = 15 * Math.PI / 180, OH_MIN = 15, OH_MAX = 60000, OH_EVEN = { az: 180, alt: 88, k: 0.5 };   // the sun off: high and soft (k = its strength), so nothing casts a shadow and snow is not burnt out
+  const OH = { on: false, marks: true, shots: [], sel: null, upMode: 'view', rot: 0, cx: 0, cz: 0, span: 400, sunOn: true, posted: false, saved: null, cv: null, g2: null,
     ptr: new Map(), tap: null, tw: 0, turning: false, shotKey: '', needFit: false, anchored: true, ak: 0.15, shaded: null, shadeKey: '', shadeVal: false };
   const ohRad = d => d * Math.PI / 180, ohDeg = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
   const ohKx = lat => 111320 * Math.cos(lat * Math.PI / 180);
@@ -2224,14 +2264,14 @@
     if (!OH.saved) OH.saved = { near: cam.near, far: cam.far, fogD: F.fogD.value };
     F.fogD.value = 0; R.sky.visible = false; R.renderer.setClearColor(0x111111, 1);
     const fr = document.getElementById('frame'); if (fr) fr.style.display = 'none'; lensKey = '';
-    ohCanvas().style.display = 'block';
+    ohCanvas().style.display = 'block'; if (OTH.cv) OTH.cv.style.display = 'none';
     if (OH.needFit || !OH.shotKey) ohFit();
     relight = dirty = true;
   }
-  function ohEnter() { OH.on = true; OHU.value = 1; OH.posted = false; OH.ptr.clear(); OH.tap = null; if (R) ohApplyR(); }
+  function ohEnter() { OH.on = true; if (!OHU.value) { OHU.value = 1; ohDefines(true); } OH.posted = false; OH.ptr.clear(); OH.tap = null; if (R) ohApplyR(); }
   function ohLeave() {
     if (!OH.on) return;
-    OH.on = false; OHU.value = 0; OH.ptr.clear();
+    OH.on = false; if (OHU.value) { OHU.value = 0; ohDefines(false); } OH.ptr.clear();
     if (R && OH.saved) { const cam = R.cam; cam.near = OH.saved.near; cam.far = OH.saved.far; R.ctx.fog.fogD.value = OH.saved.fogD; R.sky.visible = true; R.renderer.setClearColor(0x000000, 1); }
     OH.saved = null; lensKey = '';
     if (OH.cv) { OH.cv.style.display = 'none'; OH.g2.clearRect(0, 0, OH.cv.width, OH.cv.height); }
@@ -2300,6 +2340,55 @@
   const _ohv = new THREE.Vector3();
   function ohProj(x, y, z, w, h) { _ohv.set(x, y, z).project(R.cam); return { x: (_ohv.x + 1) / 2 * w, y: (1 - _ohv.y) / 2 * h }; }
   // a screen vector no longer than k (a ray drawn toward a point km away stays a sane number of pixels)
+  // The stop's other stand spots in the normal 3D view (Phil, 17 Nov 2026: "how far, treacherous"): a marker on each,
+  // labelled with the distance, how much higher / lower, and the steepest ground on the straight line from where you
+  // stand (6 m steps, the finest terrain there). S3D.others([{id, code, name, lat, lng}]), S3D.othersOn(bool); a tap on
+  // a marker posts {type: 'otherTap', id}. Drawn on its own canvas over the picture; never in the sun times.
+  const OTH = { list: [], on: true, cv: null, g2: null, calc: [], dots: [] };
+  function othCanvas() {
+    if (OTH.cv) return OTH.cv;
+    const c = document.createElement('canvas'); c.id = 'oth'; c.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none';
+    document.body.insertBefore(c, document.getElementById('msg')); OTH.cv = c; OTH.g2 = c.getContext('2d'); return c;
+  }
+  function othCalc() {
+    OTH.calc = [];
+    if (!R || !eye || !OTH.list.length) return;
+    let h0; try { h0 = ohH(eye); } catch (e) { return; }
+    for (const o of OTH.list) {
+      const p = { lat: +o.lat, lng: +o.lng }; if (!inside(p)) continue;
+      const d = ohDist(eye, p); if (d < 1) continue;
+      let h1; try { h1 = ohH(p); } catch (e) { continue; }
+      const n = Math.min(240, Math.max(2, Math.ceil(d / 3))), hs = [];
+      for (let i = 0; i <= n; i++) { const t = i / n; try { hs.push(ohH({ lat: eye.lat + (p.lat - eye.lat) * t, lng: eye.lng + (p.lng - eye.lng) * t })); } catch (e) { hs.push(NaN); } }
+      const step = d / n, k = Math.max(1, Math.round(6 / step)); let steep = 0;
+      for (let i = 0; i + k < hs.length; i++) { const dh = hs[i + k] - hs[i]; if (Number.isFinite(dh)) steep = Math.max(steep, Math.atan(Math.abs(dh) / (k * step)) * 180 / Math.PI); }
+      OTH.calc.push({ o, p, d, up: h1 - h0, steep, h1 });
+    }
+  }
+  function othOverlay() {
+    if (!OTH.cv && !OTH.list.length) return;
+    const c = othCanvas(), w = window.innerWidth || 1, h = window.innerHeight || 1, dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cw = Math.round(w * dpr), ch = Math.round(h * dpr); if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+    const g = OTH.g2; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h); OTH.dots = [];
+    c.style.display = OTH.on && OTH.calc.length ? 'block' : 'none';
+    if (!OTH.on || !OTH.calc.length || !R) return;
+    const fmt = m => m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+    const items = OTH.calc.map(x => { const q = ohXZ(x.p); _ohv.set(q.x, x.h1 + 1.7, q.z).project(R.cam); return { x, sx: (_ohv.x + 1) / 2 * w, sy: (1 - _ohv.y) / 2 * h, z: _ohv.z }; })
+      .filter(t => t.z > -1 && t.z < 1).sort((a, b) => b.x.d - a.x.d);   // in front of the camera; far ones first (near on top)
+    for (const t of items) {
+      const { x, sx, sy } = t; if (sx < -40 || sx > w + 40 || sy < -40 || sy > h + 40) continue;
+      g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,0.6)'; g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx, sy - 18); g.stroke();
+      g.beginPath(); g.arc(sx, sy - 22, 6, 0, 2 * Math.PI); g.fillStyle = '#ffffff'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#000000'; g.stroke();
+      const up = Math.round(x.up), lines = [`${x.o.code || x.o.name || 'Spot'} · ${fmt(x.d)}`, `${up === 0 ? 'level' : up > 0 ? `${up} m up` : `${-up} m down`}${x.steep >= 20 ? ` · steep ${Math.round(x.steep)}°` : ''}`];
+      g.font = '700 12px Roboto, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'bottom'; g.lineJoin = 'round';
+      for (let i = 0; i < lines.length; i++) {
+        const ly = sy - 32 - (lines.length - 1 - i) * 15; g.font = `${i ? 600 : 700} ${i ? 11 : 12}px Roboto, system-ui, sans-serif`;
+        g.lineWidth = 3.5; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(lines[i], sx, ly);
+        g.fillStyle = i && x.steep >= 30 ? '#ffb4a8' : '#ffffff'; g.fillText(lines[i], sx, ly);
+      }
+      OTH.dots.push({ id: x.o.id, x: sx, y: sy - 22 });
+    }
+  }
   const ohCap = (a, b, k) => { const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy); return l > k ? { x: a.x + dx / l * k, y: a.y + dy / l * k } : b; };
   const ohShort = n => { let t = String(n || '').replace(/\s*\(.*?\)\s*/g, ' ').trim(); if (t.length > 14) t = t.replace(/^(Mount|Mt\.?)\s+/i, ''); if (t.length > 14) t = t.split(/\s+/)[0]; return t; };
   const ohKm = m => m >= 1000 ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : `${Math.round(m / 10) * 10} m`;
@@ -2316,19 +2405,47 @@
     const P = OH.shots.map(s => { const q = ohXZ(s.v), y = ohH(s.v); return { s, q, y, p: ohProj(q.x, y, q.z, w, h) }; });
     // a compass direction from a ground point, as a unit vector on the screen
     const sdir = (d, az) => { const f = ohProj(d.q.x + Math.sin(az) * 1000, d.y, d.q.z - Math.cos(az) * 1000, w, h), x = f.x - d.p.x, y = f.y - d.p.y, l = Math.hypot(x, y) || 1; return { x: x / l, y: y / l }; };
-    const wedge = d => {   // the two edges of a shot's framing, as the satellite Overhead draws them: 110 px for the picked shot, 70 for the others
-      const s = d.s, a = ohRad(ohAim(s)), half = ohRad(Math.max(1, Math.min(170, +s.fov_deg || 47.9)) / 2), L = s === sel ? 110 : 70;
+    const wedgeTo = (d, L) => {   // the two edges of a shot's framing, L px long
+      const s = d.s, a = ohRad(ohAim(s)), half = ohRad(Math.max(1, Math.min(170, +s.fov_deg || 47.9)) / 2);
+      const end = b => { const u = sdir(d, b); return { x: d.p.x + u.x * L, y: d.p.y + u.y * L }; };
+      return [end(a - half), end(a + half)];
+    };
+    const wedge = d => {   // the other shots: 70 px, dashed
+      const s = d.s, a = ohRad(ohAim(s)), half = ohRad(Math.max(1, Math.min(170, +s.fov_deg || 47.9)) / 2), L = 70;
       const end = b => { const u = sdir(d, b); return { x: d.p.x + u.x * L, y: d.p.y + u.y * L }; };
       return [end(a - half), end(a + half)];
     };
     g.setLineDash([6, 5]); g.lineWidth = 1.5; g.strokeStyle = 'rgba(0,0,0,0.8)';
-    for (const d of P) { if (d.s === sel) continue; const [e1, e2] = wedge(d); g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(d.p.x, d.p.y); g.lineTo(e2.x, e2.y); g.stroke(); }
+    if (OH.marks) for (const d of P) { if (d.s === sel) continue; const [e1, e2] = wedge(d); g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(d.p.x, d.p.y); g.lineTo(e2.x, e2.y); g.stroke(); }
     g.setLineDash([]);
-    const ds = P.find(d => d.s === sel), [s1, s2] = wedge(ds);
-    g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(s1.x, s1.y); g.lineTo(s2.x, s2.y); g.closePath(); g.fillStyle = 'rgba(240,176,74,0.28)'; g.fill();
-    g.beginPath(); g.moveTo(s1.x, s1.y); g.lineTo(ds.p.x, ds.p.y); g.lineTo(s2.x, s2.y); g.lineWidth = 2; g.strokeStyle = '#F0B04A'; g.stroke();
-    if (OH.sunOn && sun.alt > -0.83) {   // the sun: a band from where you stand toward it, and the Map tab's three arrows landing on your view
-      const u = sdir(ds, ohRad(sun.az)), sp0 = { x: -u.y, y: u.x }, au = sdir(ds, ohRad(ohAim(sel))), T = { x: ds.p.x + au.x * 70, y: ds.p.y + au.y * 70 };
+    const ds = P.find(d => d.s === sel);
+    // the picked shot's subject on the screen (17 Nov 2026, Phil: the line, the cone and the sun arrows reach the subject,
+    // as the Map tab drew them); a peak higher than the camera is placed at the stand spot's height (its direction counts)
+    let SP = null;
+    if (sel.s) { const sq = ohXZ(sel.s), cy = R.cam.position.y, hs0 = ohH(sel.s), hs = cy - hs0 > 0.5 * (cy - ds.y) ? hs0 : ds.y; SP = ohProj(sq.x, hs, sq.z, w, h); }
+    const toS = SP ? Math.hypot(SP.x - ds.p.x, SP.y - ds.p.y) : 0;
+    const [s1, s2] = wedgeTo(ds, SP ? Math.min(Math.max(toS, 40), K) : 110);
+    if (OH.marks) {
+      g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(s1.x, s1.y); g.lineTo(s2.x, s2.y); g.closePath(); g.fillStyle = 'rgba(240,176,74,0.22)'; g.fill();
+      g.beginPath(); g.moveTo(s1.x, s1.y); g.lineTo(ds.p.x, ds.p.y); g.lineTo(s2.x, s2.y); g.lineWidth = 2; g.strokeStyle = '#F0B04A'; g.stroke();
+    }
+    if (SP) {   // the line from where you stand to the subject: white with a dark edge, as the Map tab drew it
+      const se = ohCap(ds.p, SP, K);
+      g.lineCap = 'round';
+      for (const [lw, col] of [[4.5, 'rgba(0,0,0,0.55)'], [2.5, '#ffffff']]) { g.lineWidth = lw; g.strokeStyle = col; g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(se.x, se.y); g.stroke(); }
+      g.lineCap = 'butt';
+    }
+    if (OH.marks && OH.sunOn && sun.alt > -0.83) {   // the sun: a band from where you stand toward it, and the Map tab's three arrows landing on your view
+      const u = sdir(ds, ohRad(sun.az)), sp0 = { x: -u.y, y: u.x }, au = sdir(ds, ohRad(ohAim(sel)));
+      let T = { x: ds.p.x + au.x * 70, y: ds.p.y + au.y * 70 };
+      if (SP) {   // on the subject; when it is off the screen, on the line where it leaves the screen
+        const mg = 40, inS = SP.x >= mg && SP.x <= w - mg && SP.y >= mg && SP.y <= h - mg;
+        if (inS) T = { x: SP.x, y: SP.y };
+        else { const dx = SP.x - ds.p.x, dy = SP.y - ds.p.y; let t = 1;
+          if (dx > 0) t = Math.min(t, (w - mg - ds.p.x) / dx); if (dx < 0) t = Math.min(t, (mg - ds.p.x) / dx);
+          if (dy > 0) t = Math.min(t, (h - mg - ds.p.y) / dy); if (dy < 0) t = Math.min(t, (mg - ds.p.y) / dy);
+          if (t > 0) T = { x: ds.p.x + dx * t, y: ds.p.y + dy * t }; }
+      }
       g.lineCap = 'round'; g.lineWidth = 10; g.strokeStyle = 'rgba(240,176,74,0.35)'; g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(ds.p.x + u.x * 260, ds.p.y + u.y * 260); g.stroke();
       g.lineJoin = 'round'; const shd = ohShaded();
       for (const [lw, col] of [[5, 'rgba(0,0,0,0.45)'], [3, shd ? '#9a9a9a' : '#F0B04A']]) {   // a dark edge under each, so grey arrows show on snow in shade too
@@ -2345,7 +2462,6 @@
       // (a peak higher than the camera is placed at the stand spot's height: its direction is what counts)
       const sq = ohXZ(sel.s), cy = R.cam.position.y, hs0 = ohH(sel.s), hs = cy - hs0 > 0.5 * (cy - ds.y) ? hs0 : ds.y, sp = ohProj(sq.x, hs, sq.z, w, h), nm = ohShort(sel.subject || sel.name), km = ohKm(ohDist(sel.v, sel.s)), m = 8;
       const se = ohCap(ds.p, sp, K);
-      g.save(); g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 1.5; g.setLineDash([2, 6]); g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(se.x, se.y); g.stroke(); g.restore();
       if (sp.x >= m && sp.x <= w - m && sp.y >= m && sp.y <= h - m) {
         g.beginPath(); g.arc(sp.x, sp.y, 7, 0, 2 * Math.PI); g.fillStyle = '#000000'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#ffffff'; g.stroke();
         if (nm) ohLabel(g, nm, sp.x + 9, sp.y, false);
@@ -2401,23 +2517,32 @@
 
   const WALK_MAX = 400;
   function told() {
+    othCalc();
     const kz = 111132, kx = 111320 * Math.cos(eye.lat * Math.PI / 180);
-    post({ type: 'eye', lat: eye.lat, lng: eye.lng, moved: Math.round(Math.hypot((eye.lat - eye0.lat) * kz, (eye.lng - eye0.lng) * kx) * 10) / 10 });   // 0.1 m: fine steps are 25 cm
+    let fine = false; try { fine = pick(eye).g === DT; } catch (e) { /* not built */ }
+    post({ type: 'eye', lat: eye.lat, lng: eye.lng, moved: Math.round(Math.hypot((eye.lat - eye0.lat) * kz, (eye.lng - eye0.lng) * kx) * 10) / 10, height: EYE, fine });   // 0.1 m: fine steps are 25 cm
     post({ type: 'state', subjectLit: subjLit(sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
   }
   let drag = null;
   function wire() {
     const c = R.canvas;
-    c.addEventListener('pointerdown', e => { if (OH.on) return ohDown(e); drag = { x: e.clientX, y: e.clientY }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
+    c.addEventListener('pointerdown', e => { if (OH.on) return ohDown(e); drag = { x: e.clientX, y: e.clientY }; OTH.tap = { x: e.clientX, y: e.clientY, t: performance.now() }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
     c.addEventListener('webglcontextlost', e => { e.preventDefault(); if (R) R.lost = true; post({ type: 'lost', fore: foreState > 0 }); });
     c.addEventListener('pointermove', e => { if (OH.on) return ohMove(e); if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; touch('look'); });
-    const drop = e => { if (OH.on) return ohUp(e); if (drag) { drag = null; heading(); if (act && act.kind === 'look') rest(); } };   // finger up: the sharp frame now
+    const drop = e => {
+      if (OH.on) return ohUp(e);
+      const tp = OTH.tap; OTH.tap = null;
+      if (tp && e && e.type === 'pointerup' && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) < 10 && performance.now() - tp.t < 600 && OTH.on) {   // a tap on another stand spot's marker
+        let best = null, bd = 26; for (const d of OTH.dots) { const dd = Math.hypot(d.x - e.clientX, d.y - e.clientY); if (dd < bd) { bd = dd; best = d; } }
+        if (best) post({ type: 'otherTap', id: best.id });
+      }
+      if (drag) { drag = null; heading(); if (act && act.kind === 'look') rest(); } };   // finger up: the sharp frame now
     c.addEventListener('pointerup', drop); c.addEventListener('pointercancel', drop);
     window.addEventListener('resize', resize);
   }
 
   window.S3D = {
-    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; bldNear = []; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; treesOn = c.trees !== false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; framed = toFraming(c.view); act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; bldNear = []; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; treesOn = c.trees !== false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye0 = c.eye; eye = c.start && Number.isFinite(+c.start.lat) && Number.isFinite(+c.start.lng) ? { lat: +c.start.lat, lng: +c.start.lng } : c.eye; target = c.target;   /* start: a walked-to spot kept through a restart (17 Nov 2026) */ framed = toFraming(c.view); act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
     chunk(s, which) {
       if (typeof which === 'string' && which.startsWith('canopy:')) {   // a tree tile: packed as soon as the next one starts, so its text is let go at once
         const i = +which.slice(7);
@@ -2434,6 +2559,8 @@
         if (OH.on) ohApplyR();
         const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length || (cfg.canopy && cnAny()) || (cfg.range && rparts.length) || (cfg.houses && hsAny()));
         post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: 0, fore }); heading();
+        othCalc();
+        if (eye !== eye0) told();   // a restart that kept a walked-to spot: the app hears where it stands again
         if (fore) queueFore();
       } catch (e) { fail("The 3D view couldn't start on this phone."); post({ type: 'error', msg: String(e && e.message || e) }); }
     },
@@ -2471,6 +2598,7 @@
       const flagged = shots.find(s => s.sel), was = OH.sel;
       if (o.sel != null) OH.sel = o.sel; else if (flagged) OH.sel = flagged.id; else if (!shots.some(s => s.id === OH.sel)) OH.sel = shots.length ? shots[0].id : null;
       if (o.sun != null) OH.sunOn = !!o.sun;
+      if (o.marks != null) OH.marks = !!o.marks;
       if (o.shaded !== undefined) OH.shaded = typeof o.shaded === 'boolean' ? o.shaded : null;
       const up = o.heading_up_deg !== undefined ? o.heading_up_deg : o.up;
       const first = !OH.on;
@@ -2485,6 +2613,10 @@
     overheadUp(v) { ohSetUp(v === undefined ? 'view' : v); dirty = true; ohSay(); },
     overheadShade(v) { OH.shaded = typeof v === 'boolean' ? v : null; dirty = true; },
     overheadSun(v) { OH.sunOn = v !== false; relight = dirty = true; },
+    others(list) { OTH.list = Array.isArray(list) ? list.filter(o => o && Number.isFinite(+o.lat) && Number.isFinite(+o.lng)) : []; othCalc(); dirty = true; },
+    eyeHeight(m) { const v = Math.max(0.3048, Math.min(10000, +m)); if (!Number.isFinite(v)) return; EYE = v; touch('walk'); if (eye) told(); },
+    othersOn(v) { OTH.on = v !== false; dirty = true; },
+    overheadMarks(v) { OH.marks = v !== false; dirty = true; },   // the cone, the other shots' wedges and the sun arrows / band on or off
     overheadFit() { ohFit(); dirty = true; ohSay(); },
     // overheadZoom(k): k > 1 closer, < 1 farther, about the middle of the screen (the small view's + / - buttons)
     overheadZoom(k) { if (!(k > 0)) return; OH.span = Math.max(OH_MIN, Math.min(OH_MAX, OH.span / k)); ohHold(); touch('look'); ohSay(); },

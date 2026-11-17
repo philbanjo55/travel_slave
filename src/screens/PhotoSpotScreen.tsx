@@ -195,7 +195,7 @@ export default function PhotoSpotScreen() {
           ) : null}
           {pair && sun && focused && !full ? (
             <View style={styles.view3d} accessibilityLabel={`The view with the ${row?.f} mm from where it says to stand`}>
-              <Sun3DPanel pair={pair} sun={sun} day0={t - 12 * 3600e3} height={200} preview onJump={() => {}} onFull={() => setFull(true)} />
+              <Sun3DPanel pair={pair} sun={sun} day0={t - 12 * 3600e3} height={200} preview onJump={() => {}} onFull={() => setFull(true)} others={planStop?.pairs} />
             </View>
           ) : null}
         </ScrollView>
@@ -217,6 +217,7 @@ export default function PhotoSpotScreen() {
             <Sun3DPanel
               pair={fullPair} tripId={tripId} stopId={stopId} sun={fSun} day0={fDay0} full onJump={setFMinute} onFull={() => setFull(false)}
               photos={photos} addShot={added ? undefined : makeShot}
+              others={planStop?.pairs}   // the stop's other shots as pins (Phil, 17 Nov 2026)
             />
           ) : null}
           <TouchableOpacity onPress={() => setFull(false)} style={styles.fullClose} accessibilityRole="button" accessibilityLabel="Close the 3D view">

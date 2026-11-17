@@ -94,6 +94,10 @@ type Props = {
   // the stop yet, so the first save (stand spot or framing) makes it first and then saves onto it. Returns the new
   // shot's vantage id; throws with a plain reason. The parent then hands the new id in as pair.vantage_id.
   addShot?: () => Promise<string>;
+  // The stop's other shots (Phil, 17 Nov 2026): their stand spots stand in the picture as markers with the distance, the
+  // height difference and the steepest ground on the way; a tap on one picks that shot.
+  others?: Pair[];
+  onPickOther?: (vantageId: string) => void;
   // Overhead tab, our 3D look (16 Nov 2026; Overhead3DPanel): the same page looking straight down over every shot of the
   // place. The perspective controls (lens, frame box, walk, framing, HD, photo, Street View, the lines under the picture)
   // are hidden and overhead3d.tsx's are shown; the foreground is always on. `pair` must be the picked shot.
@@ -123,11 +127,16 @@ const FRAME_SAY: Record<FrameMode, string> = { land: 'landscape', port: 'portrai
 // The last lens and frame chosen, kept while the app is open so full screen and the next stop start the same way.
 let lastLens = '135';
 let lastFrame: FrameMode = 'land';
+let lastFrameOnly = false;
 let lastForeground = true;
 let lastTrees = true;   // the foreground's trees (Phil, 16 Nov 2026: a "no trees" setting): kept like the foreground itself
 let lastIce: boolean | null = null;
 let pickedFor: string | null = null;   // the shot whose lens / frame box the user changed by hand: its framing's lens is not put back over that
 let lastGlass = false;
+let lastOthersOn = true;
+const EYE_H = 1.73, CAM_MIN = 0.3048, CAM_MAX = 10000;   // camera height above the ground, metres (5'8" = 1.73; min 1 ft, no real top)
+const INCH = 0.0254;
+const feetIn = (m: number) => { const t = Math.round(m / 0.0254); return t >= 1200 ? `${Math.round(t / 12)} ft` : `${Math.floor(t / 12)}'${t % 12}"`; };   // the stop's other stand spots shown in the 3D view (kept while the app is open)
 const FINE_STEP = 0.25, WALK_STEP = 2;   // metres: a tap, and the most a held arrow moves per step
 const REF_OPACITY_KEY = 'pf_ref_opacity';
 let refOpacityRead = false;
@@ -167,7 +176,7 @@ function Below({ full, max, hide, children }: { full?: boolean; max: number; hid
   return <ScrollView style={{ maxHeight: max, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
 }
 
-export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview, addShot, overhead }: Props) {
+export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview, addShot, overhead, others, onPickOther }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -231,16 +240,26 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     } else { setLensState(lastLens); setFrameState(lastFrame); }
   }, [vid]);
   // What the page needs for the lens: focal length, the film's width and height as the camera is turned, box on / off.
+  // Frame only (Phil, 17 Nov 2026): just what the lens sees, the rest of the picture black. Kept while the app is open.
+  const [frameOnly, setFrameOnlyState] = useState(lastFrameOnly);
+  const setFrameOnly = useCallback((v: boolean) => { lastFrameOnly = v; setFrameOnlyState(v); }, []);
   const lens = useMemo(() => ({
     f: pickLens.f,
     fw: frame === 'port' ? pickLens.short : pickLens.long,
     fh: frame === 'port' ? pickLens.long : pickLens.short,
     box: frame !== 'off',
-  }), [pickLens, frame]);
+    only: frame !== 'off' && frameOnly,   // everything outside the frame box blacked out (older pages ignore it)
+  }), [pickLens, frame, frameOnly]);
   const [lit, setLit] = useState<{ subjectLit: boolean; hereLit: boolean; up: boolean; trees: boolean } | null>(null);
   const [moments, setMoments] = useState<Moments | null>(null);
   const [look, setLook] = useState<number | null>(null);
+  const pairIdRef = useRef(pair.vantage_id);
+  pairIdRef.current = pair.vantage_id;
   const lookRef = useRef<{ yaw: number; pitch: number } | null>(null);   // where the view points now, to 0.01 deg (page's `look`)
+  // Where you stand and look, kept through a restart of the view (Phil, 17 Nov 2026: switching the foreground off / on
+  // restarts the page and put him back on the saved spot): per shot, cleared when another shot is shown.
+  const placedRef = useRef<string | null>(null);   // the shot and pins last sent to the page (see the place effect)
+  const keepRef = useRef<{ id: string; eye: { lat: number; lng: number } | null; view: { yaw: number; pitch: number } | null } | null>(null);
   const [lookTilt, setLookTilt] = useState<number | null>(null);   // the tilt to 0.1 deg, so a tilt-only change re-checks Save framing
   const [problem, setProblem] = useState<string | null>(null);
   const [perf, setPerf] = useState<Perf | null>(null);   // the last movement's frame time, as the page measured it (offline view)
@@ -319,6 +338,49 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
   const oh = useOverhead3D({ overhead, ready, run, full, onFull });
+  // the stop's other stand spots in the picture (not from above: Overhead draws its own)
+  const [othersOn, setOthersOnState] = useState(lastOthersOn);
+  const setOthersOn = useCallback((v: boolean) => { lastOthersOn = v; setOthersOnState(v); }, []);
+  const otherList = useMemo(() => (overhead ? [] : (others ?? []).filter(p => p.vantage_id !== pair.vantage_id && (Math.abs(p.v.lat - pair.v.lat) > 1e-6 || Math.abs(p.v.lng - pair.v.lng) > 1e-6))
+    .map(p => ({ id: p.vantage_id, code: p.code ?? null, name: p.shot_name ?? null, lat: p.v.lat, lng: p.v.lng }))), [overhead, others, pair.vantage_id, pair.v.lat, pair.v.lng]);
+  const otherKey = JSON.stringify(otherList);
+  useEffect(() => {
+    if (!ready || hd) return;
+    run(`window.S3D.others && window.S3D.others(${otherKey})`);
+    run(`window.S3D.othersOn && window.S3D.othersOn(${othersOn ? 'true' : 'false'})`);
+  }, [ready, hd, otherKey, othersOn, run]);
+  const pickOtherRef = useRef(onPickOther); pickOtherRef.current = onPickOther;
+  // Camera height above the ground (Phil, 17 Nov 2026): walk mode raises it (over the trees, on the wall) or lowers it (low
+  // shots), 0.3 to 3 m. Kept through restarts of the view; back to eye height (1.73 m, 5'8") on another shot.
+  const [camH, setCamH] = useState(EYE_H);
+  const [groundFine, setGroundFine] = useState<boolean | null>(null);
+  useEffect(() => { setCamH(EYE_H); }, [pair.vantage_id]);
+  // sent at most every 150 ms while a button is held (a slow phone's view is not flooded), the last value always
+  const camSent = useRef<{ t: number; timer: ReturnType<typeof setTimeout> | null }>({ t: 0, timer: null });
+  useEffect(() => {
+    if (!ready || hd || overhead) return;
+    const send = () => { camSent.current.t = Date.now(); camSent.current.timer = null; run(`window.S3D.eyeHeight && window.S3D.eyeHeight(${camH.toFixed(3)})`); };
+    const c = camSent.current, wait = 150 - (Date.now() - c.t);
+    if (c.timer) clearTimeout(c.timer);
+    if (wait <= 0) send(); else c.timer = setTimeout(send, wait);
+  }, [ready, hd, overhead, camH, run]);
+  const nudgeCamH = useCallback((d: number) => setCamH(h => Math.round(Math.max(CAM_MIN, Math.min(CAM_MAX, h + d)) * 10000) / 10000), []);
+  // a tap = 1 inch; held, it keeps going and speeds up (Phil, 17 Nov 2026)
+  const camTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopCamHold = useCallback(() => { if (camTimer.current) { clearInterval(camTimer.current); camTimer.current = null; } }, []);
+  useEffect(() => stopCamHold, [stopCamHold]);
+  useEffect(() => { if (camH <= CAM_MIN) stopCamHold(); }, [camH, stopCamHold]);
+  const startCamHold = useCallback((dir: number) => {
+    stopCamHold();
+    nudgeCamH(dir * INCH);
+    let held = 0, step = INCH;
+    camTimer.current = setInterval(() => {
+      held += 80;
+      if (held < 400) return;
+      step = Math.min(25, step * 1.12);   // from an inch up to 25 m a step after a few seconds
+      nudgeCamH(dir * step);
+    }, 80);
+  }, [nudgeCamH, stopCamHold]);
 
   // Which terrain files this shot needs (the wide one for the stand spot, plus a fine box around the
   // stand spot when there is one), then the files themselves (from the phone when saved).
@@ -468,7 +530,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ? { n: near.n, north: near.north, south: near.south, west: near.west, east: near.east, base: near.base_m, step: near.step_m }
         : undefined,
       ice: iceOn,
-      view: pageFraming(framingRef.current) ?? undefined,   // a framed shot opens on its framing (older pages ignore it)
+      view: (keepRef.current?.id === pair.vantage_id && keepRef.current.view ? { yaw_deg: keepRef.current.view.yaw, pitch_deg: keepRef.current.view.pitch } : null)
+        ?? pageFraming(framingRef.current) ?? undefined,   // a restart keeps the view; else a framed shot opens on its framing
+      start: keepRef.current?.id === pair.vantage_id && keepRef.current.eye ? keepRef.current.eye : undefined,   // a walked-to spot
       level: lastLevels ?? undefined,
       treeStyle: TREE_STYLE,   // how the laser trees are drawn (services/terrain.ts TREE_STYLE)
       trees: overhead ? true : treesRef.current,   // the foreground's trees shown or hidden (older pages ignore it)
@@ -563,9 +627,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     else if (m.type === 'look') {
       setLook(typeof m.deg === 'number' ? m.deg : null);
       lookRef.current = typeof m.deg === 'number' ? { yaw: typeof m.yaw === 'number' ? m.yaw : m.deg, pitch: typeof m.pitch === 'number' ? m.pitch : 0 } : null;
+      if (lookRef.current && !overhead) keepRef.current = { id: pairIdRef.current, eye: keepRef.current?.id === pairIdRef.current ? keepRef.current.eye : null, view: lookRef.current };
       setLookTilt(typeof m.pitch === 'number' ? Math.round(m.pitch * 10) / 10 : null);
     }
-    else if (m.type === 'eye') { setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); walkAnsweredRef.current(); }
+    else if (m.type === 'eye') {
+      setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); walkAnsweredRef.current();
+      if (typeof m.fine === 'boolean') setGroundFine(m.fine);
+      if (!overhead) keepRef.current = { id: pairIdRef.current, eye: (m.moved || 0) > 0 ? { lat: m.lat, lng: m.lng } : null, view: keepRef.current?.id === pairIdRef.current ? keepRef.current.view : null };
+    }
+    else if (m.type === 'otherTap') { if (typeof m.id === 'string' && pickOtherRef.current) pickOtherRef.current(m.id); }
     else if (m.type === 'walk') { walkQ.current.busy = 0; walkQ.current.f = 0; walkQ.current.r = 0; setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : 'That is the edge of the saved terrain.'); }
     else if (m.type === 'hd') setHdLoading(!!m.loading);
     else if (m.type === 'error') {
@@ -584,7 +654,13 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   useEffect(() => {
     if (!ready) return;
     setMoments(null);
-    run(`window.S3D.view(${vLat},${vLng},${sLat},${sLng},${JSON.stringify(pageFraming(framingRef.current))})`);
+    // After a restart of the view for the same shot and the same pins (foreground off / on), the page was started where
+    // you had walked to and looking where you looked (keepRef in start()): sending the shot's spot again would put you
+    // back on the saved spot (Phil, 17 Nov 2026), so only the day's path goes.
+    const placed = `${vid}|${vLat}|${vLng}|${sLat}|${sLng}`;
+    const kept = keepRef.current?.id === vid && (keepRef.current.eye || keepRef.current.view);
+    if (!(kept && placedRef.current === placed)) run(`window.S3D.view(${vLat},${vLng},${sLat},${sLng},${JSON.stringify(pageFraming(framingRef.current))})`);
+    placedRef.current = placed;
     run(`window.S3D.path(${JSON.stringify(dayPath)})`);
   }, [ready, vid, vLat, vLng, sLat, sLng, dayPath, run]);
   useEffect(() => { if (ready) run(`window.S3D.lens(${JSON.stringify(lens)})`); }, [ready, lens, run]);
@@ -592,6 +668,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // ---- Walk mode ----
   // A new shot (or a saved move) puts the viewpoint back on the stand pin.
   useEffect(() => { setAt(null); setWalkNote(null); }, [vLat, vLng, sLat, sLng]);
+  useEffect(() => { if (keepRef.current && keepRef.current.id !== pair.vantage_id) keepRef.current = null; }, [pair.vantage_id]);
   useEffect(() => { setFrameNote(null); }, [vid]);
   // A save of this shot that waited for signal and was then refused by the server: said once.
   useEffect(() => { const r = takeRefusal(vid); if (r) setFrameNote(`A save made with no signal was refused: ${r}`); });
@@ -817,6 +894,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             >
               <Ionicons name={frame === 'port' ? 'tablet-portrait-outline' : frame === 'land' ? 'tablet-landscape-outline' : 'scan-outline'} size={17} color={frame !== 'off' ? '#000000' : '#ffffff'} />
             </TouchableOpacity>
+            {frame !== 'off' && !hd ? (
+              <TouchableOpacity
+                onPress={() => setFrameOnly(!frameOnly)}
+                style={[styles.fullBtn, frameOnly && styles.lensOn]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: frameOnly }}
+                accessibilityLabel={frameOnly ? 'Frame only: on. Tap to see around the frame' : 'Frame only: off. Tap to black out everything outside the frame'}
+                hitSlop={6}
+              >
+                <Ionicons name="crop-outline" size={17} color={frameOnly ? '#000000' : '#ffffff'} />
+              </TouchableOpacity>
+            ) : null}
             {hasFore && !hd ? (
               <TouchableOpacity
                 onPress={cycleForeground}
@@ -839,6 +928,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
                 hitSlop={6}
               >
                 <Ionicons name="snow-outline" size={17} color={iceOn ? '#000000' : '#ffffff'} />
+              </TouchableOpacity>
+            ) : null}
+            {otherList.length && !hd ? (
+              <TouchableOpacity
+                onPress={() => setOthersOn(!othersOn)}
+                style={[styles.fullBtn, othersOn && styles.lensOn]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: othersOn }}
+                accessibilityLabel={othersOn ? `Other stand spots shown (${otherList.length}). Tap to hide` : `Other stand spots hidden (${otherList.length}). Tap to show`}
+                hitSlop={6}
+              >
+                <Ionicons name="location-outline" size={17} color={othersOn ? '#000000' : '#ffffff'} />
               </TouchableOpacity>
             ) : null}
             {full ? (
@@ -917,6 +1018,24 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           <Text style={styles.walkText}>
             {queued.move ? 'Saved on the phone, sends when you have signal.' : walkNote ?? (at && at.moved > 0 ? `You've walked ${at.moved < 10 ? at.moved.toFixed(1) : Math.round(at.moved)} m from your saved spot. The times below are for here.` : 'Hold an arrow to walk, tap for 25 cm. Drag the picture to turn.')}
           </Text>
+          <View style={styles.heightRow}>
+            <Text style={styles.heightLabel} accessibilityLabel={`Camera height ${feetIn(camH)}, ${camH.toFixed(2)} metres`}>
+              Camera {feetIn(camH)} · {camH < 10 ? camH.toFixed(2) : Math.round(camH)} m{groundFine === false ? ' · ground ±2 m here' : ''}
+            </Text>
+            <TouchableOpacity onPressIn={() => startCamHold(-1)} onPressOut={stopCamHold} disabled={camH <= CAM_MIN} style={[styles.heightBtn, camH <= CAM_MIN && { opacity: 0.35 }]} accessibilityRole="button" accessibilityLabel="Lower the camera" hitSlop={4}>
+              <Ionicons name="remove" size={18} color="#ffffff" />
+            </TouchableOpacity>
+            <TouchableOpacity onPressIn={() => startCamHold(1)} onPressOut={stopCamHold} style={styles.heightBtn} accessibilityRole="button" accessibilityLabel="Raise the camera" hitSlop={4}>
+              <Ionicons name="add" size={18} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.heightRow}>
+            {([['Low', 0.5], ['Eye', EYE_H], ['On the wall', 2.7]] as const).map(([t, v]) => (
+              <TouchableOpacity key={t} onPress={() => setCamH(v)} style={[styles.heightChip, Math.abs(camH - v) < 0.01 && styles.heightChipOn]} accessibilityRole="button" accessibilityLabel={`Camera ${t}: ${feetIn(v)}`}>
+                <Text style={[styles.heightChipText, Math.abs(camH - v) < 0.01 && { color: '#000000' }]}>{t} {feetIn(v)}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
           <View style={styles.walkBtns}>
             <TouchableOpacity onPress={() => { stopStepping(); run('window.S3D.home()'); }} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Back to my saved spot" disabled={!at || at.moved === 0}>
               <Text style={[styles.walkBtnText, (!at || at.moved === 0) && { opacity: 0.4 }]}>Back to my spot</Text>
@@ -1053,6 +1172,12 @@ const styles = StyleSheet.create({
   padRight: { left: 100, top: 50 },
   padDown: { left: 50, top: 100 },
   walkRow: { marginTop: 8, gap: 8 },
+  heightRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  heightLabel: { flex: 1, color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
+  heightBtn: { width: 44, height: 36, borderRadius: 8, borderWidth: 1, borderColor: '#444444', alignItems: 'center', justifyContent: 'center' },
+  heightChip: { minHeight: 32, paddingHorizontal: 10, borderRadius: 16, borderWidth: 1, borderColor: '#444444', justifyContent: 'center' },
+  heightChipOn: { backgroundColor: '#ffffff', borderColor: '#ffffff' },
+  heightChipText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   walkText: { color: colors.textSecondary, fontSize: 13 },
   walkBtns: { flexDirection: 'row', gap: 8 },
   walkBtn: { flex: 1, minHeight: 40, borderRadius: 8, borderWidth: 1, borderColor: '#444444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
