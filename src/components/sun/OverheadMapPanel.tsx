@@ -18,9 +18,7 @@ type Props = {
   sel: Pair;
   onPick: (p: Pair) => void;
   sun: SkyPos;
-  shaded?: boolean;   // a ridge shades the picked shot's subject at this time (grey arrows)
   height: number;
-  fullBar?: React.ReactNode;   // full screen: the time and slider under the map (Phil, 16 Nov 2026: move the sun there too)
 };
 
 const coord = (p: LatLng) => ({ latitude: p.lat, longitude: p.lng });
@@ -41,14 +39,13 @@ export default function OverheadMapPanel(props: Props) {
       <Modal visible={full} animationType="fade" onRequestClose={() => setFull(false)}>
         <View style={[styles.fullScreen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           {full ? <OverheadMap {...props} full sunOn={sunOn} onSun={setSunOn} onFull={() => setFull(false)} /> : null}
-          {full && props.fullBar ? <View style={styles.fullBar}>{props.fullBar}</View> : null}
         </View>
       </Modal>
     </>
   );
 }
 
-function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onSun, onFull }: Props & {
+function OverheadMap({ pairs, sel, onPick, sun, height, full, sunOn, onSun, onFull }: Props & {
   full: boolean; sunOn: boolean; onSun: (v: boolean) => void; onFull: () => void;
 }) {
   const mapRef = useRef<MapView>(null);
@@ -61,29 +58,27 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
   const selFov = shotFov(sel);
   const heading = myView && selFov.aim != null ? selFov.aim : 0;
 
-  // Start wide enough for every stand spot of the place, centred on the picked shot's stand spot (Phil, 16 Nov 2026:
-  // zooming has to stay on where he stands). In "my view" the spot sits a little below the middle so its wedge has room;
-  // it keeps that place on screen at every zoom (the middle is worked out again for each zoom).
-  const cosl0 = Math.cos((sel.v.lat * Math.PI) / 180);
-  const hh = size.h || height;
+  // Frame every stand spot of the place (subjects can be km away: the edge tag points to them).
   const frame = useMemo(() => {
-    let spread = 30;
-    for (const p of pairs) spread = Math.max(spread, Math.hypot((p.v.lat - sel.v.lat) * MPD_LAT, (p.v.lng - sel.v.lng) * 111320 * cosl0));
-    const w = size.w || 342;
-    const mpp = (spread * 2.4 + 100) / Math.max(80, Math.min(w, hh) - 70);
-    const zoom = Math.log2((156543.03392 * cosl0) / mpp);
-    return { zoom: Math.min(21, Math.max(3, zoom)) };
-  }, [pairs.map(p => p.vantage_id).join('|'), sel.vantage_id, size.w, hh]);
+    const pts = pairs.map(p => p.v);
+    const lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length;
+    const lng0 = pts.reduce((a, p) => a + p.lng, 0) / pts.length;
+    const cosl = Math.cos((lat0 * Math.PI) / 180);
+    let spread = 40;
+    for (const p of pts) spread = Math.max(spread, Math.hypot((p.lat - lat0) * MPD_LAT, (p.lng - lng0) * 111320 * cosl) * 2);
+    const w = size.w || 342, h = size.h || height;
+    const mpp = (spread * 1.25 + 120) / Math.max(80, Math.min(w, h) - 70);
+    // nudge the middle back from the aim, so the wedges have room in front of the spots
+    const mid = heading !== 0 || myView ? destination({ lat: lat0, lng: lng0 }, heading + 180, mpp * h * 0.18) : { lat: lat0, lng: lng0 };
+    const zoom = Math.log2((156543.03392 * cosl) / mpp);
+    return { mid, zoom: Math.min(21, Math.max(3, zoom)) };
+  }, [pairs.map(p => p.vantage_id).join('|'), size.w, size.h, height, heading, myView]);
+
   const targetZoom = Math.min(21, Math.max(3, frame.zoom + zoomStep));
-  const centreFor = (zoom: number) => {
-    const m = (156543.03392 * cosl0) / Math.pow(2, zoom);
-    return myView ? destination(sel.v, heading, m * hh * 0.15) : sel.v;
-  };
-  const mid = centreFor(targetZoom);
   useEffect(() => {
-    mapRef.current?.animateCamera({ center: coord(mid), heading, pitch: 0, zoom: targetZoom }, { duration: 350 });
-  }, [mid.lat, mid.lng, targetZoom, heading]);
-  useEffect(() => { setZoomStep(0); }, [heading, sel.vantage_id]);
+    mapRef.current?.animateCamera({ center: coord(frame.mid), heading, pitch: 0, zoom: targetZoom }, { duration: 350 });
+  }, [frame.mid.lat, frame.mid.lng, targetZoom, heading]);
+  useEffect(() => { setZoomStep(0); }, [heading]);
   useEffect(() => {
     setLabelsTrack(true);
     const t = setTimeout(() => setLabelsTrack(false), 700);
@@ -96,33 +91,12 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
       setCam({ lat: c.center.latitude, lng: c.center.longitude, heading: c.heading ?? 0, zoom: c.zoom ?? targetZoom });
     }).catch(() => {});
   };
-  const zoomBy = (d: number) => {
-    const from = cam?.zoom ?? targetZoom;
-    setCam(null);
-    setZoomStep(Math.min(21, Math.max(3, from + d)) - frame.zoom);
-  };
+  const zoomBy = (d: number) => setZoomStep(prev => Math.min(21, Math.max(3, frame.zoom + prev + d)) - frame.zoom);
 
-  const shown = cam ?? { lat: mid.lat, lng: mid.lng, heading, zoom: targetZoom };
+  const shown = cam ?? { lat: frame.mid.lat, lng: frame.mid.lng, heading, zoom: targetZoom };
   const cosl = Math.cos((shown.lat * Math.PI) / 180);
   const px = (156543.03392 * cosl) / Math.pow(2, shown.zoom);   // metres per screen point
   const sunUp = sun.geo >= SUN_UP_GEO;
-
-  // Three sun arrows coming from the sun's side and landing on the picked shot's view, as the Map tab drew them on the
-  // subject (grey when a ridge shades the subject).
-  const arrows = useMemo(() => {
-    if (!sunUp) return [] as { latitude: number; longitude: number }[][];
-    const az = sun.az;
-    const target = selFov.aim != null ? destination(sel.v, selFov.aim, 70 * px) : sel.v;
-    const out: { latitude: number; longitude: number }[][] = [];
-    for (const o of [-1, 0, 1]) {
-      const base = destination(target, az + 90, o * 16 * px);
-      const tip = destination(base, az, 14 * px);
-      out.push([coord(destination(base, az, 70 * px)), coord(tip)]);
-      const back = destination(tip, az, 9 * px);
-      out.push([coord(destination(back, az + 90, 5 * px)), coord(tip), coord(destination(back, az - 90, 5 * px))]);
-    }
-    return out;
-  }, [sunUp, sun.az, sel.vantage_id, selFov.aim, px]);
 
   const shapes = useMemo(() => pairs.map(p => {
     const f = shotFov(p);
@@ -164,9 +138,7 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
         provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFill}
         mapType="satellite"
-        initialCamera={{ center: coord(mid), heading, pitch: 0, zoom: targetZoom, altitude: 0 }}
-        showsUserLocation
-        showsMyLocationButton={false}
+        initialCamera={{ center: coord(frame.mid), heading, pitch: 0, zoom: targetZoom, altitude: 0 }}
         onRegionChangeComplete={onRegionChangeComplete}
         scrollEnabled={full}
         zoomEnabled={full}
@@ -177,11 +149,8 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
         moveOnMarkerPress={false}
       >
         {sunOn && sunUp ? (
-          <Polyline coordinates={[coord(sel.v), coord(destination(sel.v, sun.az, 260 * px))]} strokeColor="rgba(240,176,74,0.35)" strokeWidth={10} />
+          <Polyline coordinates={[coord(sel.v), coord(destination(sel.v, sun.az, 260 * px))]} strokeColor="rgba(240,176,74,0.45)" strokeWidth={12} />
         ) : null}
-        {sunOn && sunUp ? arrows.map((r, i) => (
-          <Polyline key={`sa-${i}`} coordinates={r} strokeColor={shaded ? '#9a9a9a' : SUN} strokeWidth={3} lineCap="round" />
-        )) : null}
         {shapes.map(({ p, on, wedge }) => (wedge ? (
           on
             ? <Polygon key={`w-${p.vantage_id}`} coordinates={wedge} fillColor="rgba(240,176,74,0.28)" strokeColor={SUN} strokeWidth={2} />
@@ -263,7 +232,6 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
 
 const styles = StyleSheet.create({
   fullScreen: { flex: 1, backgroundColor: '#000000' },
-  fullBar: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 14, gap: 8, backgroundColor: '#000000' },
   wrap: { borderRadius: 8, overflow: 'hidden', backgroundColor: '#0b0e0c' },
   wrapFull: { flex: 1, borderRadius: 0 },
   spotWrap: { alignItems: 'center' },
