@@ -1900,6 +1900,19 @@ def find_spot():
     if not ok: return
     V.check('spot-confidence', V.has(r, 'CONFIDENCE') and (V.has(r, 'High') or V.has(r, 'Medium') or V.has(r, 'Low')), 'confidence tile')
     V.check('spot-best-fit', V.has(r, 'BEST FIT'), 'a lens row marked best fit')
+    # Camera height and Your pin tiles (17 Nov 2026; the newest job on this photo was made with a pin on the stop)
+    def tile(st, start):
+        return next(((nd.get('content-desc') or nd.get('text') or '') for nd in (st.root.iter('node') if st is not None and st.root is not None else [])
+                     if (nd.get('content-desc') or nd.get('text') or '').startswith(start)), None)
+    th = tile(r, 'Camera height'); tp = tile(r, 'Your pin')
+    if th is None or tp is None:
+        C.adb('shell', 'input', 'swipe', '540', '1500', '540', '1000', '400'); r2 = C.capture(1.2)
+        th = th or tile(r2, 'Camera height'); tp = tp or tile(r2, 'Your pin')
+        if (th is None or tp is None) and V.has(r2, 'CAMERA HEIGHT'): th = th or 'CAMERA HEIGHT (text)'
+        if tp is None and V.has(r2, 'YOUR PIN'): tp = 'YOUR PIN (text)'
+        V.show('spot-tiles', r2); scroll_top(2); r = C.capture(1)
+    V.check('spot-height-tile', th is not None, (th or 'no Camera height tile')[:80])
+    V.check('spot-pin-tile', tp is not None, (tp or 'no Your pin tile')[:80])
     cut_off('spot-result', r)
     # The 3D picture of the chosen lens: its caption says it has drawn.
     t0 = time.time(); drawn = False

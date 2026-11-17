@@ -58,7 +58,7 @@ def sky_line(T, lat, lng, eyeh, q, W, H, houses=None):
 
 def verdict(r, look):
     """placed / direction only / weak / not placed, as the prototype's review page judged them"""
-    if look.get('kind') and look['kind'] != 'ground': return 'not placed', {'drone': 'drone photo', 'close_up': 'close-up, no sky line', 'screenshot': 'not a photo', 'no_sky': 'sky line hidden'}.get(look['kind'], look['kind'])
+    if look.get('kind') and look['kind'] not in ('ground', 'drone'): return 'not placed', {'drone': 'drone photo', 'close_up': 'close-up, no sky line', 'screenshot': 'not a photo', 'no_sky': 'sky line hidden'}.get(look['kind'], look['kind'])
     if not r or not r.get('ok'): return 'not placed', 'too little sky line'
     a = r['agree']
     if a < 0.25: return 'not placed', 'sky line does not match'
@@ -66,7 +66,7 @@ def verdict(r, look):
     W = (r.get('size') or [1440])[0]
     off = [L for L in r.get('landmarks', []) if L['name'] in peaks and not (np.isfinite(L['px']) and abs(L['px'] - L['x']) <= 0.08 * W)]
     if off: return 'not placed', f"{short_name(off[0]['name'])} does not fit"
-    rival = [x for x in r.get('alts', []) if x['dist_m'] > 150 and x.get('score', -9) >= r['score'] - 0.05]
+    rival = [x for x in r.get('alts', []) if not x.get('ground_alt') and x['dist_m'] > 150 and x.get('score', -9) >= r['score'] - 0.05]
     if rival: return 'direction only', f"another spot {rival[0]['dist_m']:.0f} m away fits too"
     c = r.get('conf') or {}
     if not c: return 'weak', 'not checked'
@@ -150,6 +150,15 @@ def lens_rows(r, look_lms, T, grids):
     best = max(crops, key=lambda x: x['f']) if crops else min((x for x in rows if x['possible']), key=lambda x: abs(1 - x['f'] / fp), default=None)
     for x in rows: x['best'] = x is best
     return fp, rows, fg, far
+
+
+def height_summary(r):
+    """the camera height with its confidence: best, lo..hi (every height within the spot confidence's delta), the
+    heights tried and their scores"""
+    h = r.get('height')
+    if not h: return dict(best=r.get('eye_above_ground'), lo=None, hi=None)
+    return dict(best=round(h['best'], 2), lo=h['lo'], hi=h['hi'], open=h.get('open', False), top=h.get('top'),
+                heights=h['heights'], scores=h['scores'])
 
 
 def shot_name(fg, far, lat, lng):
@@ -257,11 +266,15 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
         for k in ('x', 'y', 'x0', 'x1'):
             if o.get(k) is not None: o[k] = float(o[k]) * s
         all_lms.append(o)
-    if look.get('kind') not in (None, 'ground'):
+    if look.get('kind') not in (None, 'ground', 'drone'):   # a drone photo is solved too (17 Nov 2026): the kind is a hint
         v, why = verdict(None, look)
         return dict(ok=False, verdict=v, why=why, confidence=confidence(v, why, None), times=dict(total=time.time() - t0))
     T = Terrain(rows_file, cache, region)
-    keep, extra = peak_sets(all_lms, stop, W, H, T, T.stack(stop[0], stop[1], 30))
+    hint = look.get('hint') or None   # the user's "I stood about here" pin (17 Nov 2026): {lat, lng, radius_m?, aim_lat?, aim_lng?}
+    if hint and (hint.get('lat') is None or hint.get('lng') is None): hint = None
+    if hint: hint = dict(hint, radius_m=float(hint.get('radius_m') or 300))
+    pin = (hint['lat'], hint['lng']) if hint else tuple(stop)
+    keep, extra = peak_sets(all_lms, pin, W, H, T, T.stack(stop[0], stop[1], 30))
     others = [L for L in all_lms if L.get('type') != 'peak' or L.get('lat') is None or L.get('x') is None]
     dropped = [L['name'] for L in all_lms if L.get('type') == 'peak' and L not in keep and L not in extra]
     log(f"  peaks kept {[L['name'] for L in keep]}, unsure {[L['name'] for L in extra]}, disagreeing {dropped}")
@@ -280,15 +293,45 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
     best = None
     for i, lms in enumerate(tries):
         lmf = os.path.join(work, f'landmarks{i}.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
-        r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log)
+        r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'), hint=hint)
         v, why = verdict(r, dict(look, landmarks=lms))
         log(f"  try {i + 1}: {v} {why}")
         if best is None or RANK[v] > RANK[best[1]]: best = (r, v, why, lms)
         if v == 'placed': break
     r, v, why, lms = best
+    open_fit = None; open_check = None
+    if hint and v != 'placed':
+        # nothing sure near the user's pin: the open search round the stop says whether the photo fits clearly better
+        # elsewhere (a wrong pin still gets 'direction only' when only far peaks show: scan 6 with a pin 1.6 km off)
+        log('  hint: no good answer near the pin, open search round the stop')
+        lmf = os.path.join(work, 'landmarks_open.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
+        r2 = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'))
+        v2, why2 = verdict(r2, dict(look, landmarks=lms))
+        if r2.get('ok'):
+            d2 = bearing(hint['lat'], hint['lng'], r2['lat'], r2['lng'])[1]
+            open_fit = dict(lat=r2['lat'], lng=r2['lng'], verdict=v2, dist_from_hint_m=round(d2), eye=r2['eye_above_ground'], yaw=r2['yaw'] % 360)
+            log(f"  open search: {v2} {why2}, {d2:.0f} m from the pin")
+            fit1 = r.get('fit', -9) if r.get('ok') else -9; fit2 = r2.get('fit', -9)
+            open_fit.update(fit=fit2, fit_pin=fit1)
+            flagged = False
+            # The open answer wins only when it really fits better: a better verdict alone is not enough (17 Nov 2026,
+            # Oxbow Bend under pink cloud: the pin answer fit 1.08, the open one 0.80, yet 'direction only' beat 'weak'
+            # and the screen said "doesn't fit near your pin" while the line sat on the peaks only at the pin).
+            if fit1 >= fit2 + 0.05:
+                if v == 'direction only' and str(why).startswith('another spot'):
+                    v, why = 'placed', 'fits near your pin better than anywhere else'
+            elif (RANK[v2] > RANK[v] and fit2 >= fit1) or fit2 > fit1 + 0.05:
+                if d2 <= 1.5 * hint['radius_m']: r, v, why = r2, v2, why2   # it is near the pin after all: take it
+                else:   # the answer near the pin stays, marked weak, and says where the photo fits
+                    why = f"doesn't fit near your pin; best fit {d2:.0f} m away"
+                    if v != 'not placed': v = 'weak'
+                    flagged = True
+            if not flagged:   # the app shows "doesn't fit near your pin" whenever open_fit is set
+                open_check, open_fit = open_fit, None
     conf = confidence(v, why, r)
     if not r.get('ok') or v == 'not placed':
-        return dict(ok=False, verdict=v, why=why, confidence=conf, times=r.get('times'))
+        return dict(ok=False, verdict=v, why=why, confidence=conf, times=dict(r.get('times') or {}, all=time.time() - t0),
+                    hint=hint, open_fit=open_fit)
     grids = T.stack(r['lat'], r['lng'], 30)
     fp, rows, fg, far = lens_rows(r, lms, T, grids)
     main = None
@@ -301,6 +344,9 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
                foreground=dict(name=fg['name'], dist_m=round(fg['dist_m'])) if fg else None,
                main_landmark=main, shot_name=shot_name(fg, far, r['lat'], r['lng']),
                landmarks=[dict(name=L['name'], x=L['x'], px=L['px'], dist_m=round(L['dist_m'])) for L in r.get('landmarks', [])],
+               height=height_summary(r), aerial=bool(r.get('aerial')), ground_alt=r.get('ground_alt'), air=r.get('air'),
+               hint=hint, open_fit=open_fit, open_check=open_check,
+               dist_from_hint_m=round(bearing(hint['lat'], hint['lng'], r['lat'], r['lng'])[1]) if hint else None,
                times=r.get('times'))
     when = time.strftime('%d %b %Y')
     for x in rows:
