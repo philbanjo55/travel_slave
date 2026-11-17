@@ -2367,6 +2367,9 @@
   }
   function othOverlay() {
     if (!OTH.cv && !OTH.list.length) return;
+    // pins sent while the ground was not ready to be read (or none could be placed yet): try again every 2 s
+    // (17 Nov 2026: offline the stop page's pins never showed although the app had sent them)
+    if (OTH.list.length && !OTH.calc.length && R && eye && (performance.now() - (OTH.tried || 0)) > 2000) { OTH.tried = performance.now(); othCalc(); }
     const c = othCanvas(), w = window.innerWidth || 1, h = window.innerHeight || 1, dpr = Math.min(2, window.devicePixelRatio || 1);
     const cw = Math.round(w * dpr), ch = Math.round(h * dpr); if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
     const g = OTH.g2; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h); OTH.dots = [];
