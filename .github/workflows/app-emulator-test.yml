@@ -8,7 +8,7 @@ name: App emulator test (trip and day stay put)
 
 on:
   push:
-    branches: [claude/planner-buttons-test, claude/planner-buttons-ctl]
+    branches: [claude/planner-buttons-test, claude/planner-buttons-ctl, 'claude/emu-bisect-*']
   workflow_dispatch:
 
 concurrency:
@@ -84,11 +84,7 @@ jobs:
           - shard: a
             only: sun_3d
           - shard: b
-            only: offline_3d,find_spot
-          - shard: c
-            only: faroes_3d,overhead_walk,stops_page,today_auto_open
-          - shard: d
-            only: side_by_side_card,plan_check_card,replan_now_card,ghost_accept,plans_tab,tell_t,tell_t_setup
+            only: offline_3d
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
