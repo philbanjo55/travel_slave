@@ -22,7 +22,17 @@ export type Overhead3D = {
 };
 
 type Mode = 'view' | 'north' | 'turned';
-let lastMode: Mode = 'view';   // kept while the app is open, so full screen opens the way the small view was
+let lastMode: Mode = 'view';
+// The cone, the other shots' wedges and the sun arrows on or off (Phil, 17 Nov 2026: hide them to see the ground);
+// shared by the 3D and satellite looks, kept while the app is open.
+let marksOn = true;
+const marksSubs = new Set<(v: boolean) => void>();
+export function useOverheadMarks(): [boolean, (v: boolean) => void] {
+  const [v, setV] = useState(marksOn);
+  useEffect(() => { marksSubs.add(setV); return () => { marksSubs.delete(setV); }; }, []);
+  const set = useCallback((x: boolean) => { marksOn = x; marksSubs.forEach(f => f(x)); }, []);
+  return [v, set];
+}   // kept while the app is open, so full screen opens the way the small view was
 
 // The page's shot list: stand spot, subject, framing heading (null = toward the subject) and the lens's angle across.
 export function overheadShots(pairs: Pair[], selId: string) {
@@ -52,15 +62,16 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
   const shots = useMemo(() => (overhead ? overheadShots(overhead.pairs, overhead.selId) : []), [overhead?.pairs, overhead?.selId]);
   const shotsKey = JSON.stringify(shots);
   const sunOn = overhead?.sunOn ?? true, shaded = overhead?.shaded;
+  const [marks, setMarks] = useOverheadMarks();
   const firstSent = useRef(false);
   useEffect(() => { if (!ready) firstSent.current = false; }, [ready]);
   useEffect(() => {
     if (!on || !ready) return;
-    const msg: Record<string, unknown> = { on: true, shots, sun: sunOn, shaded: typeof shaded === 'boolean' ? shaded : null };
+    const msg: Record<string, unknown> = { on: true, shots, sun: sunOn, marks, shaded: typeof shaded === 'boolean' ? shaded : null };
     if (!firstSent.current) { msg.heading_up_deg = lastMode === 'north' ? 'north' : 'view'; firstSent.current = true; }
     run(`window.S3D.overhead && window.S3D.overhead(${JSON.stringify(msg)})`);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [on, ready, shotsKey, sunOn, shaded, run]);
+  }, [on, ready, shotsKey, sunOn, shaded, marks, run]);
 
   // true = the page's message was for the overhead view
   const onMessage = useCallback((m: any): boolean => {
@@ -87,6 +98,7 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
       >
         <Text style={[styles.sunText, sunOn && { color: '#000000' }]}>☀ SUN</Text>
       </TouchableOpacity>
+      <MarksButton on={marks} onPress={() => setMarks(!marks)} />
       <TouchableOpacity
         style={styles.compassBtn}
         onPress={compass}
@@ -119,11 +131,30 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
   return { onMessage, controls };
 }
 
+// Cone and sun arrows on / off, under the Sun button (both looks)
+export function MarksButton({ on, onPress }: { on: boolean; onPress: () => void }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={[styles.marksBtn, on && styles.marksBtnOn]}
+      accessibilityRole="button"
+      accessibilityState={{ selected: on }}
+      accessibilityLabel={on ? 'Cone and sun arrows shown. Tap to hide' : 'Cone and sun arrows hidden. Tap to show'}
+      hitSlop={6}
+    >
+      <Ionicons name={on ? 'triangle' : 'triangle-outline'} size={11} color={on ? '#000000' : '#ffffff'} style={{ transform: [{ rotate: '180deg' }] }} />
+      <Text style={[styles.sunText, on && { color: '#000000' }]}>CONE</Text>
+    </TouchableOpacity>
+  );
+}
+
 // The same look as OverheadMapPanel's buttons.
 const styles = StyleSheet.create({
   sunBtn: { position: 'absolute', left: 8, top: 8, borderRadius: 6, borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.85)', paddingHorizontal: 9, paddingVertical: 6 },
   sunBtnOn: { backgroundColor: SUN, borderColor: SUN },
   sunText: { color: '#ffffff', fontSize: 11, fontWeight: '700', letterSpacing: 0.8 },
+  marksBtn: { position: 'absolute', left: 8, top: 46, flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 6, borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.85)', paddingHorizontal: 9, paddingVertical: 6 },
+  marksBtnOn: { backgroundColor: '#ffffff', borderColor: '#ffffff' },
   compassBtn: { position: 'absolute', right: 6, top: 6, alignItems: 'center', width: 60 },
   compass: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.85)', borderWidth: 1, borderColor: '#444444', alignItems: 'center', justifyContent: 'center' },
   compassNorth: { borderColor: '#ffffff', borderWidth: 1.5 },

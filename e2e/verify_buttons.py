@@ -1193,6 +1193,8 @@ def overhead_walk():
         o = C.capture(2); lab = label(o)
         if lab and (lab.startswith('Overhead satellite') or ' ready' in lab or 'failed' in lab or 'error' in lab):
             break
+    if lab is None and o is not None and any(c['label'].startswith('Picture faces the shot') or c['label'].startswith('Tap to face the shot') for c in o.clickables):
+        lab = 'Overhead 3D (its compass is up)'
     V.check('over-shown', lab is not None, (lab or 'no overhead view')[:80])
     if lab and lab.startswith('Overhead 3D'):
         V.check('over-3d-ready', ' ready' in lab, f'{lab[:60]} after {time.time() - t0:.0f} s')
@@ -1207,6 +1209,16 @@ def overhead_walk():
         if sun2: C.tap(sun2['xy']); time.sleep(0.8)
     else:
         V.check('over-sun-toggle', False, 'no Sun button')
+    o = C.capture(1)
+    cone = next((c for c in o.clickables if c['label'].startswith('Cone and sun arrows')), None)   # 17 Nov 2026: CONE on / off
+    if cone is not None:
+        was = cone['label'].split(' | ')[0]; C.tap(cone['xy']); time.sleep(1.2); o3 = C.capture(1)
+        now = next((c['label'].split(' | ')[0] for c in o3.clickables if c['label'].startswith('Cone and sun arrows')), None)
+        V.check('over-cone-toggle', now is not None and now != was and C.app_alive(), f'{was[:30]} -> {(now or "gone")[:30]}')
+        back = next((c for c in o3.clickables if c['label'].startswith('Cone and sun arrows')), None)
+        if back: C.tap(back['xy']); time.sleep(0.8)
+    else:
+        V.check('over-cone-toggle', False, 'no CONE button')
     o = C.capture(1)
     full = next((c for c in o.clickables if 'Open the overhead view full screen' in c['label']), None)
     if full is not None:
