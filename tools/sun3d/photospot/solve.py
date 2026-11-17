@@ -649,11 +649,30 @@ def sky_score(sol):
     return sol['agree'] - 0.02 * min(sol['rms'], 10) - 0.01 * min(sol.get('lmc', 0.0), 50)
 
 
+# Tie-break toward where people stand (17 Nov 2026, Glacier View again: with the look's peaks 5 px apart from the first
+# look, a spot 615 m north on the same sage flat fit 0.10 better than the turnout, then 0.02 worse: open views far
+# from the camera fit about as well from anywhere along a terrace). A spot far from every place people stand here (the
+# stop pin, the user's hint pin, the stop's own stand pins) costs up to TIE_W, half of it at ~1.2 x TIE_SIG; spots within
+# ~100 m of one barely pay. TIE_W is about the score's noise between two looks of one photo (0.07-0.10): an answer that
+# fits clearly better still wins far away. The confidence (job.verdict) still says when such a far spot fits as well.
+TIE_W, TIE_SIG = 0.15, 200.0
+
+
+def tie_pen(R, sol):
+    pins = getattr(R, 'stand', None) or []
+    if not pins: return 0.0
+    d = min(math.hypot(sol['s'][0] - e, sol['s'][1] - n) for e, n in pins)
+    return TIE_W * (1.0 - math.exp(-0.5 * (d / TIE_SIG) ** 2))
+
+
 def final_score(R, sol):
     sol['dist_stop'] = math.hypot(*sol['s'][:2]); sol['lmc'] = lm_total(R, sol)
     sol['dist_anchor'] = math.hypot(sol['s'][0] - R.anchor[0], sol['s'][1] - R.anchor[1])
-    sol['score'] = (sol['agree'] - 0.02 * min(sol['rms'], 10) - prior(sol['dist_anchor'], R.prior_scale) - 0.01 * min(sol['lmc'], 50)
-                    + MU_REG * sol['reg'] - ((sol.get('view') or {}).get('cost') or 0.0))
+    sol['tie'] = tie_pen(R, sol)
+    # fit = the photo alone (no pull toward the stop / pins): what the confidence compares
+    sol['fit'] = (sol['agree'] - 0.02 * min(sol['rms'], 10) - 0.01 * min(sol['lmc'], 50) + MU_REG * sol['reg']
+                  - ((sol.get('view') or {}).get('cost') or 0.0))
+    sol['score'] = sol['fit'] - prior(sol['dist_anchor'], R.prior_scale) - sol['tie']
     return sol['score']
 
 
@@ -692,10 +711,12 @@ def prior(d_m, scale=1000.0):
 
 
 def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None, use_names=True, log=print, n_refine=2,
-          n_screen=14, use_trees=True, use_region=True, kind=None, air=True, hint=None):
+          n_screen=14, use_trees=True, use_region=True, kind=None, air=True, hint=None, stand_pins=None):
     """hint = {lat, lng, radius_m (300), aim_lat?, aim_lng?}: the user's "I stood about here" pin (and "aiming at"): the
     spot search is centred on it with its radius, the pull toward a spot is toward it, and with an aim pin only headings
-    within 30 deg of it are tried in the coarse search and the screen. The terrain is still loaded round the stop."""
+    within 30 deg of it are tried in the coarse search and the screen. The terrain is still loaded round the stop.
+    stand_pins = [(lat, lng), ...]: the stop's own stand spots (its shots' stand pins, not ones Find spot placed): each
+    inside the search area is refined too, and they join the stop / hint pin in the tie-break (TIE_W)."""
     t0 = time.time()
     T = Terrain(rows, cache, region)
     sky = SK.extract(photo)
@@ -741,6 +762,9 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     # screen: the best few distinct coarse answers get a quick heading / tilt / roll / lens fit at their own spot
     R = Refiner(T, sky, lms, stop, fine, houses=hg, use_trees=use_trees, photo=ps, rtrees=rt)
     R.anchor, R.prior_scale = anchor, pscale
+    sp = [((p_[1] - stop[1]) * k0, (p_[0] - stop[0]) * KZ) for p_ in (stand_pins or [])]
+    sp = [p_ for p_ in sp if math.hypot(p_[0] - anchor[0], p_[1] - anchor[1]) <= crad]
+    R.stand = [(0.0, 0.0), anchor] + sp
     # distinct candidates: 200 m apart, closer inside a small hint area (else one candidate covers the whole pin area)
     cands = distinct(co, n_screen, max(50.0, min(200.0, crad / 3)) if hint else 200)
     home = [c for c in co if dA(c) <= min(250, crad)]
@@ -766,6 +790,7 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     # (with a hint: the hint pin, and the stop pin too when it lies inside the hint area: a hint pin is rough, and
     # the refine from it stops at the nearest good spot, 17 Nov 2026 scan 6: 55 m off from a pin 57 m from the truth)
     pins = [anchor] + ([(0.0, 0.0)] if hint and math.hypot(*anchor) <= crad else [])
+    pins += sorted(sp, key=lambda p_: math.hypot(p_[0] - anchor[0], p_[1] - anchor[1]))[:3]   # the stop's stand pins
     for pE, pN in pins:
         if not scr or any(math.hypot(c['dE'] - pE, c['dN'] - pN) <= 40 for c in todo): continue
         # the pin's orientation starts from each of the best three screen answers' (17 Nov 2026, Glacier View: from the
@@ -803,6 +828,9 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     sols.sort(key=lambda s_: -s_['score'])
     best = sols[0]
     t4 = time.time()
+    # the lens-width bounds of later fits come from the answer's own lens, not the last candidate refined (17 Nov 2026:
+    # an extra stand-pin refine at a 0.21 start changed the Chapel's confidence from +-15 m to +-100 m, same answer)
+    R.hf0 = float(best['q'][3])
     # camera height: profile at the ground answer; an air search when the eye sits at the old 3 m cap, a higher eye
     # scores better, or the look said drone. The air answer is kept only with a clear lead (AIR_MARGIN).
     R.set_trees(best['s'][0], best['s'][1])
@@ -845,11 +873,11 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     out = dict(ok=True, photo=photo, size=[W, H], region=region, stop=list(stop), lat=best['lat'], lng=best['lng'],
                eye_above_ground=best['s'][2], eye_abs=best['eyeh'], yaw=best['q'][0] % 360, pitch=best['q'][1], roll=best['q'][2], hfov=best['q'][3],
                agree=best['agree'], n_agree=best['n_agree'], rms_px=best['rms'], hist=best['hist'], conf=conf, landmarks=lmchk,
-               alts=[dict(lat=s['lat'], lng=s['lng'], agree=s['agree'], rms=s['rms'], yaw=s['q'][0] % 360, hfov=s['q'][3], score=s['score'],
+               alts=[dict(lat=s['lat'], lng=s['lng'], agree=s['agree'], rms=s['rms'], yaw=s['q'][0] % 360, hfov=s['q'][3], score=s['score'], fit=s.get('fit'),
                           view_blocked=(s.get('view') or {}).get('blocked_frac'),
                           reg=s['reg'], ground_alt=bool(s.get('ground_alt')), dist_m=math.hypot((s['lat'] - best['lat']) * KZ, (s['lng'] - best['lng']) * kx(best['lat']))) for s in sols[1:]],
                score=best['score'], lm_cost=best['lmc'], region_match=best['reg'], dist_stop=best['dist_stop'],
-               hint=dict(hint, dist_m=best['dist_anchor']) if hint else None, fit=best['score'] + prior(best['dist_anchor'], pscale), trees=R.trees is not None,
+               hint=dict(hint, dist_m=best['dist_anchor']) if hint else None, fit=best['fit'], tie=best.get('tie', 0.0), trees=R.trees is not None,
                coarse_top=[dict(dE=c['dE'], dN=c['dN'], score=c['score'], yaw=c['yaw'], hfov=c['hfov']) for c in co[:5]],
                screen=[dict(dE=c['dE'], dN=c['dN'], quick=c['quick']) for c in scr],
                sky_good=float(sky['good'].mean()), used_names=use_names, n_landmarks=len([L for L in lms if L.get('known')]),
@@ -875,6 +903,11 @@ def coarse_local(T, sky, lms, stop, c, use_names, fine, extras, houses=None):
     return sub[:3]
 
 
+def parse_pins(txt):
+    if not txt: return None
+    return [tuple(float(v) for v in p_.split(',')[:2]) for p_ in txt.split(';') if p_.strip()]
+
+
 def parse_hint(txt):
     if not txt: return None
     v = [float(x) for x in txt.split(',')]
@@ -893,11 +926,12 @@ if __name__ == '__main__':
     ap.add_argument('--no-region', action='store_true')
     ap.add_argument('--hint', help='LAT,LNG[,RADIUS_M[,AIM_LAT,AIM_LNG]]: the user\'s "I stood about here" pin')
     ap.add_argument('--kind', help="the look's kind (a 'drone' hint starts the air search)"); ap.add_argument('--no-air', action='store_true')
+    ap.add_argument('--pins', help='LAT,LNG;LAT,LNG...: the stop\'s stand pins (tie-break, extra refines)')
     a = ap.parse_args()
     stop = tuple(float(v) for v in a.stop.split(','))
     HCACHE = a.hcache
     r = solve(a.photo, a.rows, a.cache, a.region, stop, a.landmarks, a.radius, a.step, use_names=not a.no_names, use_trees=not a.no_trees, use_region=not a.no_region,
-              kind=a.kind, air=not a.no_air, hint=parse_hint(a.hint))
+              kind=a.kind, air=not a.no_air, hint=parse_hint(a.hint), stand_pins=parse_pins(a.pins))
     s = json.dumps(r, indent=1, default=float)
     if a.out: open(a.out, 'w').write(s)
     print(json.dumps({k: r.get(k) for k in ('lat', 'lng', 'yaw', 'pitch', 'roll', 'hfov', 'agree', 'rms_px', 'times')}, default=float))

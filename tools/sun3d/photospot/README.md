@@ -51,6 +51,16 @@ forest clearings just under the free share and moved scan 6 (taken among the Sna
 After (17 Nov 2026): Glacier View at the turnout (45 m from the stop, 76 m from stand pin G1, was 551 m); scans 5, 0,
 30, 2, 5, 2 m (were 8, 0, 32, 2, 5, 2); same run time.
 
+**Tie-break and confidence (17 Nov 2026, second Glacier View look):** the live rerun (Claude's look put the peaks 5 px
+apart from the first look) came back placed / High +-15 m 615 m north of the turnout on the same sage flat: there it fit
+0.10 better, with the first look 0.02 worse; open views fit about as well from anywhere along a terrace. The +-15 m came
+from the slide (13 offsets, +-400 m, along and across the line of sight only) and a rival check on final scores only.
+Now: the stop's own stand pins (`stand_pins`: claim's job, `--pins` locally; Find spot's own pins left out) are refined
+too; a spot far from the stop / hint / stand pins costs up to `TIE_W` 0.15 (`TIE_SIG` 200 m); results carry `fit` (the
+photo alone) and `job.verdict` calls an answer 'direction only, spot could be N m off' when a refined spot 150 m+ away
+is within 0.05 by score or by fit. Second look: turnout, direction only, 638 m; first look and the 6 scans unchanged and
+placed; runs +15-35 s (one more refine per stand pin; a 'direction only' first try also runs the other peak sets).
+
 Without the named landmarks all six go wrong (heading 25-160 deg off): the vision step's names are needed.
 `--no-region` turns the region match off; `--no-names` ignores the landmark file.
 3. `review.py` builds the review page (photo + our sky line, our numpy render from the solved spot, a map sketch with
