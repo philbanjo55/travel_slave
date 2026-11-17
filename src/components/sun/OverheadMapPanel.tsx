@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Pair, LatLng, SkyPos, SUN_UP_GEO, destination, distanceM } from '../../utils/sunEngine';
 import { SUN, shortName } from './sunStyle';
 import { shotFov } from './shotFov';
+import { MarksButton, useOverheadMarks } from './overhead3d';
 
 // Overhead, satellite look (Phil, 16 Nov 2026): every shot of the place from above on Google's satellite map: each
 // stand spot, its framing as a wedge (saved heading, lens and landscape / portrait; else the line to the subject at
@@ -59,6 +60,7 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
   const [cam, setCam] = useState<{ lat: number; lng: number; heading: number; zoom: number } | null>(null);
 
   const selFov = shotFov(sel);
+  const [marks, setMarks] = useOverheadMarks();
   const heading = myView && selFov.aim != null ? selFov.aim : 0;
 
   // Start wide enough for every stand spot of the place, centred on the picked shot's stand spot (Phil, 16 Nov 2026:
@@ -112,7 +114,10 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
   const arrows = useMemo(() => {
     if (!sunUp) return [] as { latitude: number; longitude: number }[][];
     const az = sun.az;
-    const target = selFov.aim != null ? destination(sel.v, selFov.aim, 70 * px) : sel.v;
+    // on the subject (17 Nov 2026, Phil: as the Map tab did); when the subject is far off the screen, on the line toward it
+    // about where it leaves the view
+    const dS = distanceM(sel.v, sel.s), reach = 0.4 * Math.min(size.w || 342, size.h || height) * px;
+    const target = dS <= reach * 1.6 ? sel.s : destination(sel.v, sel.bearing ?? selFov.aim ?? 0, reach);
     const out: { latitude: number; longitude: number }[][] = [];
     for (const o of [-1, 0, 1]) {
       const base = destination(target, az + 90, o * 16 * px);
@@ -122,13 +127,13 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
       out.push([coord(destination(back, az + 90, 5 * px)), coord(tip), coord(destination(back, az - 90, 5 * px))]);
     }
     return out;
-  }, [sunUp, sun.az, sel.vantage_id, selFov.aim, px]);
+  }, [sunUp, sun.az, sel.vantage_id, selFov.aim, px, size.w, size.h]);
 
   const shapes = useMemo(() => pairs.map(p => {
     const f = shotFov(p);
     const on = p.vantage_id === sel.vantage_id;
     if (f.aim == null) return { p, on, wedge: null as null | { latitude: number; longitude: number }[] };
-    const L = (on ? 110 : 70) * px;
+    const L = on ? Math.max(distanceM(p.v, p.s), 20 * px) : 70 * px;   // the picked shot's cone reaches its subject
     return { p, on, wedge: [coord(p.v), coord(destination(p.v, f.aim - f.fov / 2, L)), coord(destination(p.v, f.aim + f.fov / 2, L))] };
   }), [pairs, sel.vantage_id, px]);
 
@@ -176,18 +181,19 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
         showsCompass={false}
         moveOnMarkerPress={false}
       >
-        {sunOn && sunUp ? (
+        {marks && sunOn && sunUp ? (
           <Polyline coordinates={[coord(sel.v), coord(destination(sel.v, sun.az, 260 * px))]} strokeColor="rgba(240,176,74,0.35)" strokeWidth={10} />
         ) : null}
-        {sunOn && sunUp ? arrows.map((r, i) => (
+        {marks && sunOn && sunUp ? arrows.map((r, i) => (
           <Polyline key={`sa-${i}`} coordinates={r} strokeColor={shaded ? '#9a9a9a' : SUN} strokeWidth={3} lineCap="round" />
         )) : null}
-        {shapes.map(({ p, on, wedge }) => (wedge ? (
+        {marks && shapes.map(({ p, on, wedge }) => (wedge ? (
           on
-            ? <Polygon key={`w-${p.vantage_id}`} coordinates={wedge} fillColor="rgba(240,176,74,0.28)" strokeColor={SUN} strokeWidth={2} />
+            ? <Polygon key={`w-${p.vantage_id}`} coordinates={wedge} fillColor="rgba(240,176,74,0.22)" strokeColor={SUN} strokeWidth={2} />
             : <Polyline key={`w-${p.vantage_id}`} coordinates={[wedge[1], wedge[0], wedge[2]]} strokeColor="rgba(0,0,0,0.75)" strokeWidth={2} lineDashPattern={[6, 5]} />
         ) : null))}
-        <Polyline coordinates={[coord(sel.v), coord(sel.s)]} strokeColor="rgba(255,255,255,0.5)" strokeWidth={1.5} lineDashPattern={[2, 6]} />
+        <Polyline coordinates={[coord(sel.v), coord(sel.s)]} strokeColor="rgba(0,0,0,0.55)" strokeWidth={4.5} />
+        <Polyline coordinates={[coord(sel.v), coord(sel.s)]} strokeColor="#ffffff" strokeWidth={2.5} />
         <Circle center={coord(sel.s)} radius={7 * px} fillColor="#000000" strokeColor="#ffffff" strokeWidth={2} />
         {shapes.map(({ p, on }) => (
           <Marker
@@ -222,6 +228,8 @@ function OverheadMap({ pairs, sel, onPick, sun, shaded, height, full, sunOn, onS
       >
         <Text style={[styles.sunText, sunOn && { color: '#000000' }]}>☀ SUN</Text>
       </TouchableOpacity>
+
+      <MarksButton on={marks} onPress={() => setMarks(!marks)} />
 
       <View pointerEvents="none" style={styles.scale}>
         <View style={[styles.scaleBar, { width: scaleM / px }]} />

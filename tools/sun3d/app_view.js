@@ -2202,8 +2202,8 @@
   // perspective view back as it was.
   // The camera is a narrow (15 deg across) perspective camera high over the middle: a peak 1.5 km above the valley 10 km
   // off-centre leans ~4% of its distance. Fog, sky and sun disc are off; nothing here reaches lit() / the sun times.
-  const OH_FOVH = 15 * Math.PI / 180, OH_MIN = 15, OH_MAX = 20000, OH_EVEN = { az: 180, alt: 88, k: 0.5 };   // the sun off: high and soft (k = its strength), so nothing casts a shadow and snow is not burnt out
-  const OH = { on: false, shots: [], sel: null, upMode: 'view', rot: 0, cx: 0, cz: 0, span: 400, sunOn: true, posted: false, saved: null, cv: null, g2: null,
+  const OH_FOVH = 15 * Math.PI / 180, OH_MIN = 15, OH_MAX = 60000, OH_EVEN = { az: 180, alt: 88, k: 0.5 };   // the sun off: high and soft (k = its strength), so nothing casts a shadow and snow is not burnt out
+  const OH = { on: false, marks: true, shots: [], sel: null, upMode: 'view', rot: 0, cx: 0, cz: 0, span: 400, sunOn: true, posted: false, saved: null, cv: null, g2: null,
     ptr: new Map(), tap: null, tw: 0, turning: false, shotKey: '', needFit: false, anchored: true, ak: 0.15, shaded: null, shadeKey: '', shadeVal: false };
   const ohRad = d => d * Math.PI / 180, ohDeg = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
   const ohKx = lat => 111320 * Math.cos(lat * Math.PI / 180);
@@ -2346,19 +2346,47 @@
     const P = OH.shots.map(s => { const q = ohXZ(s.v), y = ohH(s.v); return { s, q, y, p: ohProj(q.x, y, q.z, w, h) }; });
     // a compass direction from a ground point, as a unit vector on the screen
     const sdir = (d, az) => { const f = ohProj(d.q.x + Math.sin(az) * 1000, d.y, d.q.z - Math.cos(az) * 1000, w, h), x = f.x - d.p.x, y = f.y - d.p.y, l = Math.hypot(x, y) || 1; return { x: x / l, y: y / l }; };
-    const wedge = d => {   // the two edges of a shot's framing, as the satellite Overhead draws them: 110 px for the picked shot, 70 for the others
-      const s = d.s, a = ohRad(ohAim(s)), half = ohRad(Math.max(1, Math.min(170, +s.fov_deg || 47.9)) / 2), L = s === sel ? 110 : 70;
+    const wedgeTo = (d, L) => {   // the two edges of a shot's framing, L px long
+      const s = d.s, a = ohRad(ohAim(s)), half = ohRad(Math.max(1, Math.min(170, +s.fov_deg || 47.9)) / 2);
+      const end = b => { const u = sdir(d, b); return { x: d.p.x + u.x * L, y: d.p.y + u.y * L }; };
+      return [end(a - half), end(a + half)];
+    };
+    const wedge = d => {   // the other shots: 70 px, dashed
+      const s = d.s, a = ohRad(ohAim(s)), half = ohRad(Math.max(1, Math.min(170, +s.fov_deg || 47.9)) / 2), L = 70;
       const end = b => { const u = sdir(d, b); return { x: d.p.x + u.x * L, y: d.p.y + u.y * L }; };
       return [end(a - half), end(a + half)];
     };
     g.setLineDash([6, 5]); g.lineWidth = 1.5; g.strokeStyle = 'rgba(0,0,0,0.8)';
-    for (const d of P) { if (d.s === sel) continue; const [e1, e2] = wedge(d); g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(d.p.x, d.p.y); g.lineTo(e2.x, e2.y); g.stroke(); }
+    if (OH.marks) for (const d of P) { if (d.s === sel) continue; const [e1, e2] = wedge(d); g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(d.p.x, d.p.y); g.lineTo(e2.x, e2.y); g.stroke(); }
     g.setLineDash([]);
-    const ds = P.find(d => d.s === sel), [s1, s2] = wedge(ds);
-    g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(s1.x, s1.y); g.lineTo(s2.x, s2.y); g.closePath(); g.fillStyle = 'rgba(240,176,74,0.28)'; g.fill();
-    g.beginPath(); g.moveTo(s1.x, s1.y); g.lineTo(ds.p.x, ds.p.y); g.lineTo(s2.x, s2.y); g.lineWidth = 2; g.strokeStyle = '#F0B04A'; g.stroke();
-    if (OH.sunOn && sun.alt > -0.83) {   // the sun: a band from where you stand toward it, and the Map tab's three arrows landing on your view
-      const u = sdir(ds, ohRad(sun.az)), sp0 = { x: -u.y, y: u.x }, au = sdir(ds, ohRad(ohAim(sel))), T = { x: ds.p.x + au.x * 70, y: ds.p.y + au.y * 70 };
+    const ds = P.find(d => d.s === sel);
+    // the picked shot's subject on the screen (17 Nov 2026, Phil: the line, the cone and the sun arrows reach the subject,
+    // as the Map tab drew them); a peak higher than the camera is placed at the stand spot's height (its direction counts)
+    let SP = null;
+    if (sel.s) { const sq = ohXZ(sel.s), cy = R.cam.position.y, hs0 = ohH(sel.s), hs = cy - hs0 > 0.5 * (cy - ds.y) ? hs0 : ds.y; SP = ohProj(sq.x, hs, sq.z, w, h); }
+    const toS = SP ? Math.hypot(SP.x - ds.p.x, SP.y - ds.p.y) : 0;
+    const [s1, s2] = wedgeTo(ds, SP ? Math.min(Math.max(toS, 40), K) : 110);
+    if (OH.marks) {
+      g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(s1.x, s1.y); g.lineTo(s2.x, s2.y); g.closePath(); g.fillStyle = 'rgba(240,176,74,0.22)'; g.fill();
+      g.beginPath(); g.moveTo(s1.x, s1.y); g.lineTo(ds.p.x, ds.p.y); g.lineTo(s2.x, s2.y); g.lineWidth = 2; g.strokeStyle = '#F0B04A'; g.stroke();
+    }
+    if (SP) {   // the line from where you stand to the subject: white with a dark edge, as the Map tab drew it
+      const se = ohCap(ds.p, SP, K);
+      g.lineCap = 'round';
+      for (const [lw, col] of [[4.5, 'rgba(0,0,0,0.55)'], [2.5, '#ffffff']]) { g.lineWidth = lw; g.strokeStyle = col; g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(se.x, se.y); g.stroke(); }
+      g.lineCap = 'butt';
+    }
+    if (OH.marks && OH.sunOn && sun.alt > -0.83) {   // the sun: a band from where you stand toward it, and the Map tab's three arrows landing on your view
+      const u = sdir(ds, ohRad(sun.az)), sp0 = { x: -u.y, y: u.x }, au = sdir(ds, ohRad(ohAim(sel)));
+      let T = { x: ds.p.x + au.x * 70, y: ds.p.y + au.y * 70 };
+      if (SP) {   // on the subject; when it is off the screen, on the line where it leaves the screen
+        const mg = 40, inS = SP.x >= mg && SP.x <= w - mg && SP.y >= mg && SP.y <= h - mg;
+        if (inS) T = { x: SP.x, y: SP.y };
+        else { const dx = SP.x - ds.p.x, dy = SP.y - ds.p.y; let t = 1;
+          if (dx > 0) t = Math.min(t, (w - mg - ds.p.x) / dx); if (dx < 0) t = Math.min(t, (mg - ds.p.x) / dx);
+          if (dy > 0) t = Math.min(t, (h - mg - ds.p.y) / dy); if (dy < 0) t = Math.min(t, (mg - ds.p.y) / dy);
+          if (t > 0) T = { x: ds.p.x + dx * t, y: ds.p.y + dy * t }; }
+      }
       g.lineCap = 'round'; g.lineWidth = 10; g.strokeStyle = 'rgba(240,176,74,0.35)'; g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(ds.p.x + u.x * 260, ds.p.y + u.y * 260); g.stroke();
       g.lineJoin = 'round'; const shd = ohShaded();
       for (const [lw, col] of [[5, 'rgba(0,0,0,0.45)'], [3, shd ? '#9a9a9a' : '#F0B04A']]) {   // a dark edge under each, so grey arrows show on snow in shade too
@@ -2375,7 +2403,6 @@
       // (a peak higher than the camera is placed at the stand spot's height: its direction is what counts)
       const sq = ohXZ(sel.s), cy = R.cam.position.y, hs0 = ohH(sel.s), hs = cy - hs0 > 0.5 * (cy - ds.y) ? hs0 : ds.y, sp = ohProj(sq.x, hs, sq.z, w, h), nm = ohShort(sel.subject || sel.name), km = ohKm(ohDist(sel.v, sel.s)), m = 8;
       const se = ohCap(ds.p, sp, K);
-      g.save(); g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 1.5; g.setLineDash([2, 6]); g.beginPath(); g.moveTo(ds.p.x, ds.p.y); g.lineTo(se.x, se.y); g.stroke(); g.restore();
       if (sp.x >= m && sp.x <= w - m && sp.y >= m && sp.y <= h - m) {
         g.beginPath(); g.arc(sp.x, sp.y, 7, 0, 2 * Math.PI); g.fillStyle = '#000000'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#ffffff'; g.stroke();
         if (nm) ohLabel(g, nm, sp.x + 9, sp.y, false);
@@ -2501,6 +2528,7 @@
       const flagged = shots.find(s => s.sel), was = OH.sel;
       if (o.sel != null) OH.sel = o.sel; else if (flagged) OH.sel = flagged.id; else if (!shots.some(s => s.id === OH.sel)) OH.sel = shots.length ? shots[0].id : null;
       if (o.sun != null) OH.sunOn = !!o.sun;
+      if (o.marks != null) OH.marks = !!o.marks;
       if (o.shaded !== undefined) OH.shaded = typeof o.shaded === 'boolean' ? o.shaded : null;
       const up = o.heading_up_deg !== undefined ? o.heading_up_deg : o.up;
       const first = !OH.on;
@@ -2515,6 +2543,7 @@
     overheadUp(v) { ohSetUp(v === undefined ? 'view' : v); dirty = true; ohSay(); },
     overheadShade(v) { OH.shaded = typeof v === 'boolean' ? v : null; dirty = true; },
     overheadSun(v) { OH.sunOn = v !== false; relight = dirty = true; },
+    overheadMarks(v) { OH.marks = v !== false; dirty = true; },   // the cone, the other shots' wedges and the sun arrows / band on or off
     overheadFit() { ohFit(); dirty = true; ohSay(); },
     // overheadZoom(k): k > 1 closer, < 1 farther, about the middle of the screen (the small view's + / - buttons)
     overheadZoom(k) { if (!(k > 0)) return; OH.span = Math.max(OH_MIN, Math.min(OH_MAX, OH.span / k)); ohHold(); touch('look'); ohSay(); },
