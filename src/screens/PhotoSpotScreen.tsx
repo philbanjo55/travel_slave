@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Sun3DPanel from '../components/sun/Sun3DPanel';
 import { colors } from '../theme';
 import { supabase } from '../services/supabase';
-import { addShotRemember, fetchSpotJob, isOpen, markSpotSeen, SpotJob, Lens } from '../services/photoSpot';
+import { addShotRemember, fetchSpotJob, isOpen, markSpotSeen, requestSpot, SpotJob, Lens } from '../services/photoSpot';
 import { useTripStore } from '../store/tripStore';
 import { dayStartMs, sunPosition } from '../utils/sunEngine';
 import type { Pair } from '../utils/sunEngine';
@@ -147,13 +147,30 @@ export default function PhotoSpotScreen() {
     ]);
   };
 
+  // Run the search again on a finished photo (Phil, 17 Nov 2026: only a failed one could be redone): a new job, this
+  // screen follows it.
+  const [again, setAgain] = useState(false);
+  const findAgain = async () => {
+    if (!job?.stop_id || !job.photo_id || again) return;
+    setAgain(true);
+    const res = await requestSpot(job.stop_id, job.photo_id, route.params?.stopName ?? undefined, true);
+    setAgain(false);
+    if (res.error || !res.job) { Alert.alert('Not started', res.error ?? 'Check your connection and try again.'); return; }
+    navigation.replace('PhotoSpot', { jobId: res.job.id, stopName: route.params?.stopName ?? null });
+  };
+
   return (
     <View style={[styles.wrap, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={22} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.title}>Your spot</Text>
+        <Text style={[styles.title, { flex: 1 }]}>Your spot</Text>
+        {job && !isOpen(job) && job.stop_id && job.photo_id ? (
+          <TouchableOpacity onPress={findAgain} disabled={again} hitSlop={10} accessibilityRole="button" accessibilityLabel="Find this spot again">
+            {again ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Find again</Text>}
+          </TouchableOpacity>
+        ) : null}
       </View>
       {loading ? (
         <ActivityIndicator color="#fff" style={{ marginTop: 40 }} />
