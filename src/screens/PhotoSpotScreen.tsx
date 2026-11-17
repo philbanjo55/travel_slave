@@ -11,7 +11,7 @@ import FindSpotSheet from '../components/FindSpotSheet';
 import { useTripStore } from '../store/tripStore';
 import { dayStartMs, sunPosition } from '../utils/sunEngine';
 import type { Pair } from '../utils/sunEngine';
-import { useSunStop } from '../services/sunPlan';
+import { useSunStop, tripForStop } from '../services/sunPlan';
 import type { RefPhoto } from '../components/sun/RefPhotoOverlay';
 
 // Find my spot, the answer (Phil's mockup "Found" / "Lens135", 16 Nov 2026): the photo with our sky line on it,
@@ -87,6 +87,8 @@ export default function PhotoSpotScreen() {
   useEffect(() => {
     if (!stopId || inStore) return;
     let alive = true;
+    // the plans saved on the phone first (works with no signal), then the server
+    tripForStop(stopId).then(t => { if (alive && t) setAskedTrip(t); }, () => {});
     supabase.from('stops').select('trip_id').eq('id', stopId).maybeSingle()
       .then(({ data }: any) => { if (alive && data?.trip_id) setAskedTrip(data.trip_id); }, () => {});
     return () => { alive = false; };
