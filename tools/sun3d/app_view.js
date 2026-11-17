@@ -198,7 +198,7 @@
   // where the camera stands: eye height EYE m (Phil, 13 Nov 2026: "Do 5,8" = 1.73 m, the height his own photos are taken from; was 2 m on the
   // detail grid, 3 m elsewhere). On the near grid the highest ground within a step and a half, so a pin on a steep slope does not
   // put the eye inside the hill; on the wide grid the ground there; on the detail grid the survey's ground is exact.
-  // Camera height above the ground (Phil, 17 Nov 2026: raise it to see over trees, lower it for low shots): 0.3 to 3 m,
+  // Camera height above the ground (Phil, 17 Nov 2026: raise it to see over trees, lower it for low shots): 1 ft up, no real top,
   // S3D.eyeHeight(m). Measured from the ground under the camera: exact on the survey's bare ground (detail grid), else
   // the local high point as above. The sun times are not moved by it (they test the ground spot).
   let EYE = 1.73;
@@ -2614,7 +2614,7 @@
     overheadShade(v) { OH.shaded = typeof v === 'boolean' ? v : null; dirty = true; },
     overheadSun(v) { OH.sunOn = v !== false; relight = dirty = true; },
     others(list) { OTH.list = Array.isArray(list) ? list.filter(o => o && Number.isFinite(+o.lat) && Number.isFinite(+o.lng)) : []; othCalc(); dirty = true; },
-    eyeHeight(m) { const v = Math.max(0.3, Math.min(3, +m)); if (!Number.isFinite(v)) return; EYE = v; touch('walk'); if (eye) told(); },
+    eyeHeight(m) { const v = Math.max(0.3048, Math.min(10000, +m)); if (!Number.isFinite(v)) return; EYE = v; touch('walk'); if (eye) told(); },
     othersOn(v) { OTH.on = v !== false; dirty = true; },
     overheadMarks(v) { OH.marks = v !== false; dirty = true; },   // the cone, the other shots' wedges and the sun arrows / band on or off
     overheadFit() { ohFit(); dirty = true; ohSay(); },

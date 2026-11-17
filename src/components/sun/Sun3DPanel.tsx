@@ -134,8 +134,9 @@ let lastIce: boolean | null = null;
 let pickedFor: string | null = null;   // the shot whose lens / frame box the user changed by hand: its framing's lens is not put back over that
 let lastGlass = false;
 let lastOthersOn = true;
-const EYE_H = 1.73, CAM_MIN = 0.3, CAM_MAX = 3;   // camera height above the ground, metres (5'8" = 1.73)
-const feetIn = (m: number) => { const t = Math.round(m / 0.0254); return `${Math.floor(t / 12)}'${t % 12}"`; };   // the stop's other stand spots shown in the 3D view (kept while the app is open)
+const EYE_H = 1.73, CAM_MIN = 0.3048, CAM_MAX = 10000;   // camera height above the ground, metres (5'8" = 1.73; min 1 ft, no real top)
+const INCH = 0.0254;
+const feetIn = (m: number) => { const t = Math.round(m / 0.0254); return t >= 1200 ? `${Math.round(t / 12)} ft` : `${Math.floor(t / 12)}'${t % 12}"`; };   // the stop's other stand spots shown in the 3D view (kept while the app is open)
 const FINE_STEP = 0.25, WALK_STEP = 2;   // metres: a tap, and the most a held arrow moves per step
 const REF_OPACITY_KEY = 'pf_ref_opacity';
 let refOpacityRead = false;
@@ -354,8 +355,32 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [camH, setCamH] = useState(EYE_H);
   const [groundFine, setGroundFine] = useState<boolean | null>(null);
   useEffect(() => { setCamH(EYE_H); }, [pair.vantage_id]);
-  useEffect(() => { if (ready && !hd && !overhead) run(`window.S3D.eyeHeight && window.S3D.eyeHeight(${camH.toFixed(2)})`); }, [ready, hd, overhead, camH, run]);
-  const nudgeCamH = useCallback((d: number) => setCamH(h => Math.round(Math.max(CAM_MIN, Math.min(CAM_MAX, h + d)) * 100) / 100), []);
+  // sent at most every 150 ms while a button is held (a slow phone's view is not flooded), the last value always
+  const camSent = useRef<{ t: number; timer: ReturnType<typeof setTimeout> | null }>({ t: 0, timer: null });
+  useEffect(() => {
+    if (!ready || hd || overhead) return;
+    const send = () => { camSent.current.t = Date.now(); camSent.current.timer = null; run(`window.S3D.eyeHeight && window.S3D.eyeHeight(${camH.toFixed(3)})`); };
+    const c = camSent.current, wait = 150 - (Date.now() - c.t);
+    if (c.timer) clearTimeout(c.timer);
+    if (wait <= 0) send(); else c.timer = setTimeout(send, wait);
+  }, [ready, hd, overhead, camH, run]);
+  const nudgeCamH = useCallback((d: number) => setCamH(h => Math.round(Math.max(CAM_MIN, Math.min(CAM_MAX, h + d)) * 10000) / 10000), []);
+  // a tap = 1 inch; held, it keeps going and speeds up (Phil, 17 Nov 2026)
+  const camTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopCamHold = useCallback(() => { if (camTimer.current) { clearInterval(camTimer.current); camTimer.current = null; } }, []);
+  useEffect(() => stopCamHold, [stopCamHold]);
+  useEffect(() => { if (camH <= CAM_MIN) stopCamHold(); }, [camH, stopCamHold]);
+  const startCamHold = useCallback((dir: number) => {
+    stopCamHold();
+    nudgeCamH(dir * INCH);
+    let held = 0, step = INCH;
+    camTimer.current = setInterval(() => {
+      held += 80;
+      if (held < 400) return;
+      step = Math.min(25, step * 1.12);   // from an inch up to 25 m a step after a few seconds
+      nudgeCamH(dir * step);
+    }, 80);
+  }, [nudgeCamH, stopCamHold]);
 
   // Which terrain files this shot needs (the wide one for the stand spot, plus a fine box around the
   // stand spot when there is one), then the files themselves (from the phone when saved).
@@ -995,12 +1020,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           </Text>
           <View style={styles.heightRow}>
             <Text style={styles.heightLabel} accessibilityLabel={`Camera height ${feetIn(camH)}, ${camH.toFixed(2)} metres`}>
-              Camera {feetIn(camH)} · {camH.toFixed(2)} m{groundFine === false ? ' · ground ±2 m here' : ''}
+              Camera {feetIn(camH)} · {camH < 10 ? camH.toFixed(2) : Math.round(camH)} m{groundFine === false ? ' · ground ±2 m here' : ''}
             </Text>
-            <TouchableOpacity onPress={() => nudgeCamH(-0.25)} disabled={camH <= CAM_MIN} style={[styles.heightBtn, camH <= CAM_MIN && { opacity: 0.35 }]} accessibilityRole="button" accessibilityLabel="Lower the camera" hitSlop={4}>
+            <TouchableOpacity onPressIn={() => startCamHold(-1)} onPressOut={stopCamHold} disabled={camH <= CAM_MIN} style={[styles.heightBtn, camH <= CAM_MIN && { opacity: 0.35 }]} accessibilityRole="button" accessibilityLabel="Lower the camera" hitSlop={4}>
               <Ionicons name="remove" size={18} color="#ffffff" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => nudgeCamH(0.25)} disabled={camH >= CAM_MAX} style={[styles.heightBtn, camH >= CAM_MAX && { opacity: 0.35 }]} accessibilityRole="button" accessibilityLabel="Raise the camera" hitSlop={4}>
+            <TouchableOpacity onPressIn={() => startCamHold(1)} onPressOut={stopCamHold} style={styles.heightBtn} accessibilityRole="button" accessibilityLabel="Raise the camera" hitSlop={4}>
               <Ionicons name="add" size={18} color="#ffffff" />
             </TouchableOpacity>
           </View>
