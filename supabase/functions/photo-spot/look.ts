@@ -44,14 +44,18 @@ Name only things you can actually recognise in the photo, using names from the l
 - span: a named hill or ridge that fills part of the sky line without a clear top. x0, x1 = the columns it covers; x, y null.
 Pixel coordinates are in the photo as given (x from the left edge, y from the top edge). Use the bearings to check yourself: from one spot, a place with a larger bearing sits further right in the photo. Peaks far away look small; the highest point in the picture is often not the highest mountain. If you are not sure which peak is which, leave it out. Usually 1-4 landmarks are enough.
 
-kind: ground = taken by a person standing on the ground; drone = from the air; close_up = a detail with no land sky line; screenshot = a phone screenshot, map or collage; no_sky = the sky line is hidden (fog, cloud, trees, indoors).`;
+kind: ground = taken by a person standing on the ground; drone = from the air; close_up = a detail with no land sky line; screenshot = a map, a collage, or a screen with no usable photo on it; no_sky = the sky line is hidden (fog, cloud, trees, indoors).
+
+Screenshots of a photo are fine (the photographer saves most reference photos as phone screenshots of web pages or apps): when the picture is a phone screen showing one landscape photo with bars, buttons, captions or a black border around it, set photo_box to that photo's rectangle (x0, y0 = its top-left pixel, x1, y1 = its bottom-right pixel, the photo only, none of the screen around it) and set kind for the photo itself (usually ground). Give landmark pixels in the whole picture as given, as always. When the picture is the photo itself, photo_box is null.`;
 
 export function schema(names: string[]) {
   const NULLNUM = { type: ['number', 'null'] };
   return {
-    type: 'object', additionalProperties: false, required: ['kind', 'skyline', 'landmarks', 'note'],
+    type: 'object', additionalProperties: false, required: ['kind', 'photo_box', 'skyline', 'landmarks', 'note'],
     properties: {
       kind: { type: 'string', enum: ['ground', 'drone', 'close_up', 'screenshot', 'no_sky'] },
+      photo_box: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, required: ['x0', 'y0', 'x1', 'y1'],
+        properties: { x0: { type: 'number' }, y0: { type: 'number' }, x1: { type: 'number' }, y1: { type: 'number' } } }] },
       skyline: { type: 'string', description: 'a few words: what forms the sky line' },
       landmarks: { type: 'array', items: { type: 'object', additionalProperties: false,
         required: ['name', 'type', 'x', 'y', 'x0', 'x1', 'confidence'],
@@ -108,5 +112,24 @@ export function toLook(parsed: any, named: Named[], w: number, h: number) {
     if (type !== 'span' && (o.x == null || o.y == null)) return null;
     return o;
   }).filter(Boolean);
+  // A screenshot of a photo (17 Nov 2026): the search works on the photo alone. Landmarks move into the photo's own
+  // pixels, size becomes the photo's, and crop says where it sits in the picture (the worker cuts it out the same way).
+  const b = parsed.photo_box;
+  if (b && [b.x0, b.y0, b.x1, b.y1].every((v: any) => Number.isFinite(v))) {
+    const x0 = Math.max(0, Math.min(b.x0, b.x1)), x1 = Math.min(w, Math.max(b.x0, b.x1)), y0 = Math.max(0, Math.min(b.y0, b.y1)), y1 = Math.min(h, Math.max(b.y0, b.y1));
+    const cw = x1 - x0, ch = y1 - y0;
+    if (cw >= 0.25 * w && ch >= 0.15 * h && (cw < w - 4 || ch < h - 4)) {
+      const inBox = (L: any) => L.type === 'span' ? L.x1 >= x0 && L.x0 <= x1 : L.x >= x0 && L.x <= x1 && L.y >= y0 && L.y <= y1;
+      const moved = lms.filter(inBox).map((L: any) => {
+        const o = { ...L };
+        if (o.x != null) o.x = o.x - x0; if (o.y != null) o.y = o.y - y0;
+        if (o.x0 != null) o.x0 = Math.max(0, o.x0 - x0); if (o.x1 != null) o.x1 = Math.min(cw, o.x1 - x0);
+        return o;
+      });
+      const kind = parsed.kind === 'screenshot' ? 'ground' : parsed.kind;
+      return { kind, skyline: parsed.skyline, note: parsed.note, size: [Math.round(cw), Math.round(ch)], landmarks: moved,
+        crop: { x0: Math.round(x0), y0: Math.round(y0), x1: Math.round(x1), y1: Math.round(y1), w, h } };
+    }
+  }
   return { kind: parsed.kind, skyline: parsed.skyline, note: parsed.note, size: [w, h], landmarks: lms };
 }
