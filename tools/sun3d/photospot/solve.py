@@ -33,6 +33,21 @@ HFOVS = np.geomspace(12, 100, 15)
 HCACHE = None   # folder for per-stop horizon tables (set by --hcache)
 MU_REG = 1.0    # weight of the region match (what the model says is tree / building / near ground / far land / sky)
 MU_SEARCH = 0.5  # the same inside the spot search (lighter: it steers, the sky line still leads)
+# Clear view (17 Nov 2026, Glacier View: the search put the camera 550 m away in the Snake River forest, where 20 m
+# conifers 50-90 m off stand in front of the range; the sky line above the tree tops fits about as well from there, and
+# the region match liked it: its "trees are darker than the rest" term compared the trees with the snowy range, fixed in
+# contours.tree_corr, and its coarse depth bins let a forest clearing stand in for the photo's bands, fixed by finer
+# bins). Refiner.view() gives each refined answer the share of the far land in the frame (render without trees, beyond
+# CV_FAR) that trees closer than CV_NEAR stand in front of (1 m laser trees where there are any), and the share of the
+# whole frame that is (blocked_frame_frac); the final choice between refined answers takes CV_W per unit of the frame
+# share above CV_FREE. Frame shares at true spots (1 m trees): Snake River Overlook 0.04 (two photos taken over firs on
+# purpose), Chapel 0.05, Oxbow 0.01; the Glacier View forest spot 0.16, a Moulton barn answer with cottonwoods filling
+# the frame 0.19. The share of the far land alone does not separate them (true spots up to 0.28, Oxbow answers 30 m
+# off 0.8-0.98 behind shore trees while the range is a thin strip of the frame). Only the final choice: as a cost
+# inside the spot search (tried on the far-land share, 0.20 and 0.35 free) the search slid to forest clearings just
+# under the free share and film scan 6, taken among the Snake River firs, went from 2 m to 55 m off.
+CV_NEAR, CV_FAR, CV_FREE, CV_W = 400.0, 3000.0, 0.10, 5.0
+SOLID_TREES = True   # evergreens are part of the model sky line (bare winter crowns stay optional)
 
 
 # ---------------------------------------------------------------- landmarks
@@ -285,12 +300,16 @@ class Refiner:
         return self.stop[0] + dN / KZ, self.stop[1] + dE / self.k0
 
     def set_trees(self, dE, dN):
-        """tree tops within 700 m of a spot (laser boxes at 1 m, else the 7 m canopy layer); a second model sky line"""
-        self.trees = None
+        """tree tops within 700 m of a spot (laser boxes at 1 m, else the 7 m canopy layer); a second model sky line.
+        Evergreens (self.trees_ev) are always part of the sky line: they hide what is behind them in any season."""
+        self.trees = None; self.trees_ev = None
         if not self.use_trees: return
         lat, lng = self.spot(dE, dN)
         g, nt = tree_grid(self.T, lat, lng, 700, 1.0, self.fine, clear_m=0)
         if nt: self.trees = g; self.tree_c = (dE, dN)
+        if nt and SOLID_TREES:
+            ge, ne = tree_grid(self.T, lat, lng, 700, 1.0, self.fine, clear_m=0, kind='evergreen')
+            if ne: self.trees_ev = ge
         self.cache.clear()
 
     def profile(self, dE, dN, dh, q):
@@ -302,6 +321,8 @@ class Refiner:
         paz = np.arange(q[0] - half, q[0] + half, self.DAZ)
         pel = horizon(G, lat, lng, eyeh, paz % 360, dmin=6, nd=self.ND)
         pelt = None
+        if self.trees is not None and getattr(self, 'trees_ev', None) is not None:   # evergreens: always in the sky line
+            pel = np.maximum(pel, horizon([self.trees_ev], lat, lng, eyeh, paz % 360, dmin=8, dmax=700, nd=260))
         if self.trees is not None:   # trees from 8 m out (the camera is not in a tree); taller of trees and ground
             pt = horizon([self.trees], lat, lng, eyeh, paz % 360, dmin=8, dmax=700, nd=260)
             pelt = np.maximum(pel, pt)
@@ -376,8 +397,25 @@ class Refiner:
         CM, CL = CT.class_columns(self.fine, lat, lng, eyeh, caz % 360, trees=self.rtrees, houses=self.houses)
         ci = CT.class_image(caz, CM, CL, q, self.W, self.H)
         # trees count fully once they fill a tenth of the frame (a few tree pixels say little)
-        wt = min(1.0, float((ci == 1).mean()) / 0.1)
+        wt = min(1.0, float(np.isin(ci, CT.TREE_CLASSES).mean()) / 0.1)
         return 0.7 * CT.eta2(ci, self.ps['L']) + 0.3 * CT.eta2(ci, self.ps['tex']) + 0.5 * wt * CT.tree_corr(ci, self.ps['L'])
+
+    def view(self, s, q, eyeh=None):
+        """clear view at a spot: share of the far land in the frame (render without trees, beyond CV_FAR) that trees
+        closer than CV_NEAR stand in front of, with the finest trees there are (self.trees: 1 m laser boxes, else the
+        7 m canopy layer, within 700 m of the refine's start; else the 3 m region grid)"""
+        tr = self.trees if self.trees is not None else self.rtrees
+        if tr is None: return None
+        lat, lng = self.spot(s[0], s[1])
+        if eyeh is None: eyeh = float(stack_at(self.fine, np.array([lat]), np.array([lng]))[0]) + s[2]
+        q = np.asarray(q, float)
+        half = q[3] / 2 * 1.45 + 6 + abs(q[2]); caz = np.arange(q[0] - half, q[0] + half, 0.1)
+        _, _, CMb, dd, CMv, TV = CT.class_columns(self.fine, lat, lng, eyeh, caz % 360, trees=None, houses=self.houses, bare=True,
+                                                  vtrees=tr, vnear=CV_NEAR)
+        hid, hid_frame, farf = CT.view_block(caz, CMv, TV, CMb, dd, q, self.W, self.H, gw=240, near=CV_NEAR, far=CV_FAR)
+        return dict(blocked_frac=round(hid, 3), blocked_frame_frac=round(hid_frame, 3), far_frame_frac=round(farf, 3),
+                    near_m=CV_NEAR, far_m=CV_FAR, ok=bool(hid_frame <= CV_FREE), cost=round(CV_W * max(0.0, hid_frame - CV_FREE), 3),
+                    trees='laser 1 m, else canopy 7 m' if self.trees is not None else 'canopy 3 m')
 
     def chamfer(self, s, q, win, fscale):
         """how well the model from spot s explains the photo: the orientation is refitted to the photo steps near the
@@ -460,7 +498,9 @@ class Refiner:
         pts4, ym = self.snap(paz, pel, q, 4 * W / 1440, pelt)
         _, rr4 = self.fit_q(paz, pel, pts4, q, eyeh, lat, lng, 1.5, pelt=pelt) if len(pts4) >= 6 else (q, np.array([]))
         inside = (ym > 0) & (ym < self.H)
-        return dict(s=s.tolist(), q=q.tolist(), lat=lat, lng=lng, eyeh=eyeh, hist=hist, reg=self.region(s, q),
+        reg = self.region(s, q)
+        if self.use_trees and math.hypot(s[0] - c['dE'], s[1] - c['dN']) > 300: self.set_trees(s[0], s[1])   # trees reach 700 m from the start
+        return dict(s=s.tolist(), q=q.tolist(), lat=lat, lng=lng, eyeh=eyeh, hist=hist, reg=reg, view=self.view(s, q, eyeh),
                     agree=float(len(pts4) / max(1, inside.sum())), n_agree=int(len(pts4)),
                     rms=float(np.sqrt(np.mean(rr4 ** 2))) if len(rr4) else float('nan'), pts=pts4.tolist())
 
@@ -478,6 +518,32 @@ class Refiner:
                     tot += sum(min((v * 0.03 * self.W) ** 2, 400.0) for v in lm_res(L, dd, q2, self.W, self.H, lat, lng, eyeh))
             out.append(float(np.sqrt(tot / max(1, len(rr)))))
         return out
+
+
+def lm_orient(R, dE, dN, q0):
+    """heading / tilt / roll / lens from the named peaks alone (at least two with a height in the picture) at a spot,
+    started from q0; None without them"""
+    pk = [L for L in R.named if L.get('gtype') == 'peak' and L.get('y') is not None]
+    if len(pk) < 2: return None
+    lat, lng = R.spot(dE, dN)
+    eyeh = float(stack_at(R.fine, np.array([lat]), np.array([lng]))[0]) + EYE
+    dd = lm_dirs(pk, lat, lng, eyeh)
+    az = np.array([d[0] for d in dd]); el = np.array([d[1] for d in dd])
+    xs = np.array([L['x'] for L in pk]); ys = np.array([L['y'] for L in pk])
+
+    def res(q):
+        x, y = C.project_dirs(az, el, q, R.W, R.H)
+        return np.concatenate([np.nan_to_num(x - xs, nan=1e4), np.nan_to_num(y - ys, nan=1e4)])
+    q0 = np.array(q0, float)
+    free = len(pk) >= 3   # roll and lens need a third peak
+    try:
+        if free:
+            r = least_squares(res, q0, bounds=([q0[0] - 30, -45, -10, 3], [q0[0] + 30, 45, 10, 110]))
+            return r.x
+        r = least_squares(lambda v: res(np.r_[v, 0.0, q0[3]]), q0[:2], bounds=([q0[0] - 30, -45], [q0[0] + 30, 45]))
+        return np.r_[r.x, 0.0, q0[3]]
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def lm_res(L, dd, q, W, H, lat, lng, eyeh):
@@ -587,7 +653,7 @@ def final_score(R, sol):
     sol['dist_stop'] = math.hypot(*sol['s'][:2]); sol['lmc'] = lm_total(R, sol)
     sol['dist_anchor'] = math.hypot(sol['s'][0] - R.anchor[0], sol['s'][1] - R.anchor[1])
     sol['score'] = (sol['agree'] - 0.02 * min(sol['rms'], 10) - prior(sol['dist_anchor'], R.prior_scale) - 0.01 * min(sol['lmc'], 50)
-                    + MU_REG * sol['reg'])
+                    + MU_REG * sol['reg'] - ((sol.get('view') or {}).get('cost') or 0.0))
     return sol['score']
 
 
@@ -702,11 +768,20 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     pins = [anchor] + ([(0.0, 0.0)] if hint and math.hypot(*anchor) <= crad else [])
     for pE, pN in pins:
         if not scr or any(math.hypot(c['dE'] - pE, c['dN'] - pN) <= 40 for c in todo): continue
-        qb = scr[0]['q_quick']; c0 = dict(scr[0], dE=pE, dN=pN, yaw=qb[0], pitch=qb[1], roll=qb[2], hfov=qb[3])
-        qk = R.quick(c0)
-        if qk is not None and aim_ok(qk['q'][0], *R.spot(pE, pN)):
+        # the pin's orientation starts from each of the best three screen answers' (17 Nov 2026, Glacier View: from the
+        # best one alone, a spot 670 m off, the fit at the turnout pin stuck at a 0.14 sky line agreement)
+        best_c = None
+        starts = [sc_['q_quick'] for sc_ in scr[:3]]
+        ql = lm_orient(R, pE, pN, scr[0]['q_quick'])   # and from the named peaks themselves, seen from the pin
+        if ql is not None: starts.append(list(ql))
+        for qb in starts:
+            c0 = dict(scr[0], dE=pE, dN=pN, yaw=qb[0], pitch=qb[1], roll=qb[2], hfov=qb[3])
+            qk = R.quick(c0)
+            if qk is None or not aim_ok(qk['q'][0], *R.spot(pE, pN)): continue
             c0['quick'] = qk['agree'] - 0.02 * min(qk['rms'], 10) - 0.01 * min(qk['lmc'], 50) + MU_REG * qk['reg']
-            c0['reg'] = qk['reg']; c0['q_quick'] = qk['q']; todo.append(c0)
+            c0['reg'] = qk['reg']; c0['q_quick'] = qk['q']
+            if best_c is None or c0['quick'] > best_c['quick']: best_c = c0
+        if best_c is not None: todo.append(best_c)
     steps1 = (64, 32, 16, 8, 4)
     t3 = time.time()
     sols = []
@@ -716,7 +791,9 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
             sol = R.refine(c2, log=log, steps1=steps1)
             if sol is None: log('  refine: too few sky points'); continue
             sol['coarse'] = c; sols.append(sol)
-            log(f"  refine from {c['dE']:.0f},{c['dN']:.0f} quick {c['quick']:.2f}: agree {sol['agree']:.2f} rms {sol['rms']:.2f} region {sol['reg']:.2f} at {sol['s'][0]:.0f},{sol['s'][1]:.0f}")
+            vw = sol.get('view') or {}
+            log(f"  refine from {c['dE']:.0f},{c['dN']:.0f} quick {c['quick']:.2f}: agree {sol['agree']:.2f} rms {sol['rms']:.2f} region {sol['reg']:.2f}"
+                f" (far land hidden by near trees {vw.get('blocked_frac', 0):.2f}, cost {vw.get('cost', 0):.2f}) at {sol['s'][0]:.0f},{sol['s'][1]:.0f}")
         except Exception as e:  # noqa: BLE001
             log('  refine failed: ' + repr(e))
     if not sols:
@@ -757,6 +834,7 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
             R.set_trees(best['s'][0], best['s'][1])
     t_air = time.time() - t_air
     conf = confidence(R, best)
+    cview = R.view(best['s'], best['q'], best['eyeh']) if use_trees else None
     t5 = time.time()
     lmchk = []
     if R.named:
@@ -768,13 +846,14 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
                eye_above_ground=best['s'][2], eye_abs=best['eyeh'], yaw=best['q'][0] % 360, pitch=best['q'][1], roll=best['q'][2], hfov=best['q'][3],
                agree=best['agree'], n_agree=best['n_agree'], rms_px=best['rms'], hist=best['hist'], conf=conf, landmarks=lmchk,
                alts=[dict(lat=s['lat'], lng=s['lng'], agree=s['agree'], rms=s['rms'], yaw=s['q'][0] % 360, hfov=s['q'][3], score=s['score'],
+                          view_blocked=(s.get('view') or {}).get('blocked_frac'),
                           reg=s['reg'], ground_alt=bool(s.get('ground_alt')), dist_m=math.hypot((s['lat'] - best['lat']) * KZ, (s['lng'] - best['lng']) * kx(best['lat']))) for s in sols[1:]],
                score=best['score'], lm_cost=best['lmc'], region_match=best['reg'], dist_stop=best['dist_stop'],
                hint=dict(hint, dist_m=best['dist_anchor']) if hint else None, fit=best['score'] + prior(best['dist_anchor'], pscale), trees=R.trees is not None,
                coarse_top=[dict(dE=c['dE'], dN=c['dN'], score=c['score'], yaw=c['yaw'], hfov=c['hfov']) for c in co[:5]],
                screen=[dict(dE=c['dE'], dN=c['dN'], quick=c['quick']) for c in scr],
                sky_good=float(sky['good'].mean()), used_names=use_names, n_landmarks=len([L for L in lms if L.get('known')]),
-               height=hp, aerial=bool(best['s'][2] > AERIAL_M), ground_alt=ground_alt, air=air_info, kind=kind,
+               height=hp, aerial=bool(best['s'][2] > AERIAL_M), clear_view=cview, ground_alt=ground_alt, air=air_info, kind=kind,
                times=dict(sky_and_load=t1 - t0, coarse=t2 - t1, screen=t3 - t2, refine=t4 - t3, air=t_air, confidence=t5 - t4 - t_air, total=t5 - t0),
                pts=best['pts'])
     return out

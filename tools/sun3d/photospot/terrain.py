@@ -165,10 +165,13 @@ def _png8(path):
     return np.asarray(Image.open(path).convert('L'))
 
 
-def tree_grid(T, lat, lng, rad_m, cell_m=1.0, grids=None, clear_m=8.0):
+def tree_grid(T, lat, lng, rad_m, cell_m=1.0, grids=None, clear_m=8.0, kind='all'):
     """tree tops (ground + crown height) as a height grid, nan where there is no tree, so the stack falls through.
     1 m laser boxes (mask v6: 8 + 3 x round(h / 0.6) + class) where a stop has one, else the park-wide 7 m canopy
     tiles (value x step_m over the ground). Trees within clear_m of the spot are left out (the camera is not in a tree).
+    kind 'evergreen' keeps only the trees that hide what is behind them in every season: mask class 0 (evergreen) and
+    2 (bare by the summer photo only, but as dark as the evergreen forest on the winter picture); in the park-wide tiles
+    the leaf file's value under 128 (128 = bare). 'all' = every tree (as before).
     Returns (Grid, number of tree cells); None when the region has no trees."""
     if not T.detail_rows and not T.tree_rows: return None, 0
     n = int(2 * rad_m / cell_m); k = kx(lat)
@@ -185,6 +188,7 @@ def tree_grid(T, lat, lng, rad_m, cell_m=1.0, grids=None, clear_m=8.0):
         if not ins.any(): continue
         v = m[ri[ins], ci[ins]].astype(np.int32)
         h = np.where(v >= 8, ((v - 8) // 3) * 0.6, 0.0)
+        if kind == 'evergreen': h = np.where((v >= 8) & ((v - 8) % 3 == 1), 0.0, h)
         g = Grid(read_png(T.file(r['path']), r['base_m'], r['step_m']).astype(np.float32), r['north'], r['south'], r['west'], r['east'])
         idx = np.nonzero(ins)[0]; tr = h > 2.0
         top[idx[tr]] = g.at(la[idx[tr]], lo[idx[tr]]) + h[tr]
@@ -193,11 +197,14 @@ def tree_grid(T, lat, lng, rad_m, cell_m=1.0, grids=None, clear_m=8.0):
     for r in T.tree_rows:
         if not todo.any(): break
         if not (r['north'] > south and r['south'] < north and r['east'] > west and r['west'] < east): continue
-        m = _png8(T.file(r['path'])); nm = m.shape[0]
+        leaf = kind == 'evergreen' and r.get('leaf_path')
+        m = _png8(T.file(r['leaf_path'] if leaf else r['path'])); nm = m.shape[0]
         ri = ((r['north'] - la) / (r['north'] - r['south']) * nm).astype(np.int64); ci = ((lo - r['west']) / (r['east'] - r['west']) * m.shape[1]).astype(np.int64)
         ins = (ri >= 0) & (ri < nm) & (ci >= 0) & (ci < m.shape[1]) & todo
         if not ins.any(): continue
-        idx = np.nonzero(ins)[0]; h = m[ri[ins], ci[ins]].astype(np.float32) * r['step_m']; tr = h > 2.0
+        idx = np.nonzero(ins)[0]; v = m[ri[ins], ci[ins]].astype(np.int32)
+        if leaf: v = np.where(v >= 128, 0, v)     # bare cells dropped
+        h = v.astype(np.float32) * r['step_m']; tr = h > 2.0
         top[idx[tr]] = stack_at(grids, la[idx[tr]], lo[idx[tr]]) + h[tr]
         todo[idx] = False
     d = np.hypot((la - lat) * KZ, (lo - lng) * k); top[d < clear_m] = np.nan
