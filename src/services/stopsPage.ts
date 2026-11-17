@@ -27,6 +27,9 @@ export type Place = {
   framed: number;
   shotsKnown: boolean;          // false until the sun plan (or its saved copy) is in
   minutes: number | null;
+  stopIds: string[];            // every visit of the place (the Stops page marks set all of them)
+  checked: boolean;             // green: reviewed, good to go (stops.checked)
+  review: boolean;              // yellow: working on it (stops.review)
 };
 export type RankGroup = { tier: string; places: Place[]; todo: number; redo: number; nailed: number };
 
@@ -76,6 +79,8 @@ export function tripPlaces(tripData: any, settings: Map<string, TripSetting>, pa
       key: first.s.id, name: first.s.name ?? '', tier, status, stopId: first.s.id, dayId: first.dayId, photo,
       shots: pairs.length, framed: pairs.filter(p => !!framingOf(p)).length, shotsKnown: known,
       minutes: first.s.duration_minutes ?? null,
+      stopIds: g.map(v => v.s.id),
+      checked: g.some(v => !!v.s.checked), review: !g.some(v => !!v.s.checked) && g.some(v => !!v.s.review),
     });
   }
   return out;
