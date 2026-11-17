@@ -345,6 +345,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
                main_landmark=main, shot_name=shot_name(fg, far, r['lat'], r['lng']),
                landmarks=[dict(name=L['name'], x=L['x'], px=L['px'], dist_m=round(L['dist_m'])) for L in r.get('landmarks', [])],
                height=height_summary(r), aerial=bool(r.get('aerial')), ground_alt=r.get('ground_alt'), air=r.get('air'),
+               clear_view=r.get('clear_view'),
                hint=hint, open_fit=open_fit, open_check=open_check,
                dist_from_hint_m=round(bearing(hint['lat'], hint['lng'], r['lat'], r['lng'])[1]) if hint else None,
                times=r.get('times'))

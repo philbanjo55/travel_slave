@@ -101,16 +101,30 @@ def outline_score(paz, cel, q, edges, W, H, tol=3.0, step=4):
 
 
 # ---------------------------------------------------------------- region classes (a cheap column render)
-CLASSES = ('sky', 'tree', 'building', 'ground <150 m', 'ground 150 m-1 km', 'ground 1-5 km', 'ground > 5 km')
+# Depth classes (17 Nov 2026: finer than the first 7, ground < 150 m / to 1 km / to 5 km / beyond, tree, building).
+# With the coarse bins a decoy spot in the Snake River forest below Glacier View explained the photo's bands about as
+# well as the real turnout (its near tree wall stood for the range's forested foot, the flats and the tree band all at
+# once); with the bands apart, the turnout's exact layering wins (eta 0.77 vs 0.71-0.74 for three decoys).
+GROUND_BINS = (50, 150, 400, 1000, 2000, 5000, 10000)
+CLASSES = ('sky', 'tree <150 m', 'tree 150-800 m', 'building', 'ground <50 m', 'ground 50-150 m', 'ground 150-400 m',
+           'ground 400 m-1 km', 'ground 1-2 km', 'ground 2-5 km', 'ground 5-10 km', 'ground > 10 km')
+TREE_CLASSES = (1, 2)
+FAR_CLASS = 10   # ground from 5 km: the far range (left out of tree_corr)
 
 
 def class_columns(ground, lat, lng, eyeh, azs, trees=None, houses=None, dmin=4.0, dmax=60000.0, nd=500, tree_min=8.0, tree_max=800.0,
-                  chunk=256):
+                  chunk=256, bare=False, vtrees=None, vnear=400.0):
     """per azimuth: the running highest elevation seen (rad, nondecreasing along the ray) and the class of each sample.
-    A pixel at elevation e shows the first sample whose running max reaches e."""
+    A pixel at elevation e shows the first sample whose running max reaches e.
+    bare=True also returns, for view_block(), the running max without the trees (ground and buildings only), the
+    sample distances, and the running max with the trees of `vtrees` closer than `vnear` m (a finer tree grid than
+    `trees`; `trees` when None) plus which samples are such trees: (CM, CL, CMb, d, CMv, TV)."""
     azs = np.asarray(azs, np.float64); d = np.geomspace(dmin, dmax, nd); k = kx(lat); drop = d * d / (2 * R7)
     A = len(azs); CM = np.empty((A, nd), np.float32); CL = np.empty((A, nd), np.int8)
-    dcl = np.where(d < 150, 3, np.where(d < 1000, 4, np.where(d < 5000, 5, 6))).astype(np.int8)
+    CMb = np.empty((A, nd), np.float32) if bare else None
+    CMv = np.empty((A, nd), np.float32) if bare else None; TV = np.zeros((A, nd), bool) if bare else None
+    vt = vtrees if vtrees is not None else trees; nv = int(np.searchsorted(d, vnear))
+    dcl = (np.searchsorted(GROUND_BINS, d, side='right') + 4).astype(np.int8)
     for s in range(0, A, chunk):
         a = np.radians(azs[s:s + chunk])[:, None]
         la = (lat + d[None] * np.cos(a) / KZ).ravel(); lo = (lng + d[None] * np.sin(a) / k).ravel()
@@ -119,30 +133,68 @@ def class_columns(ground, lat, lng, eyeh, azs, trees=None, houses=None, dmin=4.0
         cl = np.broadcast_to(dcl[None], sh).copy()
         if houses is not None:
             hh = houses.at(la, lo).reshape(sh); m = np.isfinite(hh) & ~(hh < h)
-            h = np.where(m, hh, h); cl[m] = 2
+            h = np.where(m, hh, h); cl[m] = 3
+        if bare:
+            eb = np.arctan2(h - drop[None] - eyeh, d[None]); eb = np.where(np.isnan(eb), -1.5, eb)
+            CMb[s:s + chunk] = np.maximum.accumulate(eb, 1)
+            if vt is not None and nv > 0:
+                hv = vt.at(la.reshape(sh)[:, :nv].ravel(), lo.reshape(sh)[:, :nv].ravel()).reshape(len(a), nv)
+                hv[:, d[:nv] < tree_min] = np.nan
+                ev = np.arctan2(hv - drop[None, :nv] - eyeh, d[None, :nv])
+                mv = np.isfinite(ev) & (ev > eb[:, :nv]); ev = np.where(mv, ev, eb[:, :nv])
+                CMv[s:s + chunk] = np.maximum.accumulate(np.concatenate([ev, eb[:, nv:]], 1), 1)
+                TV[s:s + chunk, :nv] = mv
+            else:
+                CMv[s:s + chunk] = CMb[s:s + chunk]
         if trees is not None:
             ht = trees.at(la, lo).reshape(sh); ht[:, (d < tree_min) | (d > tree_max)] = np.nan   # far forest reads as hillside
             m = np.isfinite(ht) & ~(ht < h)
-            h = np.where(m, ht, h); cl[m] = 1
+            h = np.where(m, ht, h); cl[m & (d[None] < 150)] = 1; cl[m & (d[None] >= 150)] = 2
         el = np.arctan2(h - drop[None] - eyeh, d[None]); el = np.where(np.isnan(el), -1.5, el)
         CM[s:s + chunk] = np.maximum.accumulate(el, 1); CL[s:s + chunk] = cl
-    return CM, CL
+    return (CM, CL, CMb, d, CMv, TV) if bare else (CM, CL)
 
 
-def class_image(azs, CM, CL, q, W, H, gw=180):
-    """class of each pixel on a gw-wide grid"""
+def _rays_grid(azs, q, W, H, gw):
     gh = int(round(gw * H / W))
     xs = (np.arange(gw) + 0.5) * W / gw; ys = (np.arange(gh) + 0.5) * H / gh
     X, Y = np.meshgrid(xs, ys)
     az, el = C.rays(X.ravel(), Y.ravel(), q, W, H); az = C.unwrap(az, q[0]); el = np.radians(el)
     ai = np.clip(np.round((az - azs[0]) / (azs[1] - azs[0])).astype(int), 0, len(azs) - 1)
+    return gh, az, el, ai
+
+
+def _first_hit(CM, el, ai):
+    """index of the first sample whose running max reaches el (searchsorted per row via row offsets); nd = sky"""
     nd = CM.shape[1]
-    # first sample whose running max reaches el (searchsorted per row via row offsets)
-    flat = (CM + 10.0 * np.arange(len(azs))[:, None]).ravel()
-    j = np.searchsorted(flat, el + 10.0 * ai) - ai * nd
+    flat = (CM + 10.0 * np.arange(CM.shape[0])[:, None]).ravel()
+    return np.searchsorted(flat, el + 10.0 * ai) - ai * nd
+
+
+def class_image(azs, CM, CL, q, W, H, gw=180):
+    """class of each pixel on a gw-wide grid"""
+    gh, az, el, ai = _rays_grid(azs, q, W, H, gw)
+    nd = CM.shape[1]
+    j = _first_hit(CM, el, ai)
     out = np.where(j >= nd, 0, CL[ai, np.clip(j, 0, nd - 1)])
     out = np.where((az < azs[0]) | (az > azs[-1]), -1, out)
     return out.reshape(gh, gw)
+
+
+def view_block(azs, CMv, TV, CMb, d, q, W, H, gw=180, near=400.0, far=3000.0):
+    """clear view (17 Nov 2026, Glacier View): how much of the far land in the frame (ground beyond `far` m: the
+    mountains and the valley under them, from the render without trees) near trees (closer than `near` m: class_columns'
+    vnear) stand in front of. Returns (share of the far land hidden, share of the frame hidden, share of the frame that
+    is far land)."""
+    gh, az, el, ai = _rays_grid(azs, q, W, H, gw)
+    nd = CMv.shape[1]
+    ins = (az >= azs[0]) & (az <= azs[-1])
+    jb = _first_hit(CMb, el, ai); jt = _first_hit(CMv, el, ai)
+    farl = ins & (jb < nd) & (d[np.clip(jb, 0, nd - 1)] > far)
+    jt_ = np.clip(jt, 0, nd - 1)
+    hid = farl & (jt < nd) & TV[ai, jt_] & (d[jt_] < near)
+    nf = int(farl.sum()); n = max(1, int(ins.sum()))
+    return (float(hid.sum()) / nf if nf else 0.0), float(hid.sum()) / n, nf / n
 
 
 def photo_small(path, gw=180):
@@ -160,7 +212,7 @@ def eta2(cls, feat):
     m = cls >= 0
     if m.sum() < 50: return 0.0
     c = cls[m].astype(int); x = feat[m].astype(np.float64)
-    n = np.bincount(c, minlength=8); s = np.bincount(c, x, minlength=8)
+    n = np.bincount(c, minlength=len(CLASSES)); s = np.bincount(c, x, minlength=len(CLASSES))
     mu = x.mean(); tot = ((x - mu) ** 2).sum()
     ok = n > 0
     return float((n[ok] * (s[ok] / n[ok] - mu) ** 2).sum() / max(tot, 1e-9))
@@ -168,10 +220,13 @@ def eta2(cls, feat):
 
 def tree_corr(cls, L):
     """trees are darker than the open ground around them (snow, grass, sage): correlation between the model's tree
-    pixels and the photo's darkness, over the model's land pixels; 0 when the model shows no trees there"""
-    m = cls >= 1
+    pixels and the photo's darkness, over the model's trees, buildings and ground nearer than 5 km; 0 when the model
+    shows no trees there. The far range (FAR_CLASS: ground from 5 km) is left out (17 Nov 2026, Glacier View): a snowy range is brighter
+    than its own forested foot whatever stands in front, so with it the term paid a spot in the river forest, where
+    the model's trees cover the photo's darker lower half, more than the real open turnout (0.66 vs 0.47)."""
+    m = (cls >= 1) & (cls < FAR_CLASS)
     if m.sum() < 50: return 0.0
-    t = (cls[m] == 1).astype(np.float64); x = -L[m].astype(np.float64)
+    t = np.isin(cls[m], TREE_CLASSES).astype(np.float64); x = -L[m].astype(np.float64)
     if t.sum() < 5 or t.sum() > len(t) - 5: return 0.0
     t -= t.mean(); x -= x.mean()
     return float((t * x).sum() / math.sqrt((t * t).sum() * (x * x).sum() + 1e-12))
