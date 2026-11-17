@@ -6,7 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import Sun3DPanel from '../components/sun/Sun3DPanel';
 import { colors } from '../theme';
 import { supabase } from '../services/supabase';
-import { addShotRemember, fetchSpotJob, isOpen, markSpotSeen, requestSpot, SpotJob, Lens } from '../services/photoSpot';
+import { addShotRemember, fetchSpotJob, isOpen, markSpotSeen, requestSpot, SpotJob, SpotResult, SpotHint, Lens } from '../services/photoSpot';
+import FindSpotSheet from '../components/FindSpotSheet';
 import { useTripStore } from '../store/tripStore';
 import { dayStartMs, sunPosition } from '../utils/sunEngine';
 import type { Pair } from '../utils/sunEngine';
@@ -95,7 +96,15 @@ export default function PhotoSpotScreen() {
   const livePair = added ? planStop?.pairs.find(p => p.vantage_id === added) ?? null : null;
   // The shot the full screen edits: the added shot as it stands now (its stand spot and framing may have been saved
   // since), else this lens's spot under the added shot's id, else the not-yet-added spot (made by the first save).
-  const fullPair = useMemo<Pair | null>(() => (!pair ? null : added ? (livePair ?? { ...pair, vantage_id: added }) : pair), [pair, added, livePair]);
+  const editPair = useMemo<Pair | null>(() => (!pair ? null : added ? (livePair ?? { ...pair, vantage_id: added }) : pair), [pair, added, livePair]);
+  // Camera height (17 Nov 2026): the 3D views open at the height the photo was found at when the range is tight; "Show the
+  // ground spot" (a drone shot) opens full screen at the nearest spot on the ground, at eye height.
+  const [ground, setGround] = useState(false);
+  const ga = r?.ok && r.aerial ? r.ground_alt ?? null : null;
+  const fullPair = useMemo<Pair | null>(() => (editPair && ground && ga ? { ...editPair, v: { lat: ga.lat, lng: ga.lng } } : editPair), [editPair, ground, ga?.lat, ga?.lng]);
+  const foundH = r?.ok ? heightRead(r).eye : undefined;
+  const fullH = ground && ga ? ga.eye : foundH;
+  useEffect(() => { if (!full) setGround(false); }, [full]);
   const photos = useMemo<RefPhoto[]>(() => {
     const own: RefPhoto[] = job?.photo_url ? [{ id: job.photo_id, storage_url: job.photo_url }] : [];
     return own;   // only the photo the spot was found from (Phil, 16 Nov 2026: one photo per shot)
@@ -149,11 +158,15 @@ export default function PhotoSpotScreen() {
 
   // Run the search again on a finished photo (Phil, 17 Nov 2026: only a failed one could be redone): a new job, this
   // screen follows it.
+  // Find again opens the Find your spot sheet first (17 Nov 2026); "Use the best fit" searches again without pins.
   const [again, setAgain] = useState(false);
-  const findAgain = async () => {
+  const [sheet, setSheet] = useState(false);
+  const [keepPin, setKeepPin] = useState(false);
+  const findAgain = async (hint?: SpotHint | null) => {
     if (!job?.stop_id || !job.photo_id || again) return;
+    setSheet(false);
     setAgain(true);
-    const res = await requestSpot(job.stop_id, job.photo_id, route.params?.stopName ?? undefined, true);
+    const res = await requestSpot(job.stop_id, job.photo_id, route.params?.stopName ?? undefined, true, hint);
     setAgain(false);
     if (res.error || !res.job) { Alert.alert('Not started', res.error ?? 'Check your connection and try again.'); return; }
     navigation.replace('PhotoSpot', { jobId: res.job.id, stopName: route.params?.stopName ?? null });
@@ -167,7 +180,7 @@ export default function PhotoSpotScreen() {
         </TouchableOpacity>
         <Text style={[styles.title, { flex: 1 }]}>Your spot</Text>
         {job && !isOpen(job) && job.stop_id && job.photo_id ? (
-          <TouchableOpacity onPress={findAgain} disabled={again} hitSlop={10} accessibilityRole="button" accessibilityLabel="Find this spot again">
+          <TouchableOpacity onPress={() => setSheet(true)} disabled={again} hitSlop={10} accessibilityRole="button" accessibilityLabel="Find this spot again">
             {again ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Find again</Text>}
           </TouchableOpacity>
         ) : null}
@@ -194,6 +207,8 @@ export default function PhotoSpotScreen() {
               <Text style={styles.small} numberOfLines={2}>{conf?.line ?? job.error ?? ''}</Text>
             </View>
           </View>
+          {r?.ok ? <HeightTile r={r} onGround={ga ? () => { setGround(true); setFull(true); } : undefined} /> : null}
+          {r?.ok && r.hint ? <PinTile r={r} kept={keepPin} busy={again} onBestFit={() => findAgain(null)} onKeep={() => setKeepPin(true)} /> : null}
           {rows.length ? (
             <View style={{ gap: 6 }}>
               <Text style={styles.cap}>WITH YOUR LENSES</Text>
@@ -212,7 +227,7 @@ export default function PhotoSpotScreen() {
           ) : null}
           {pair && sun && focused && !full ? (
             <View style={styles.view3d} accessibilityLabel={`The view with the ${row?.f} mm from where it says to stand`}>
-              <Sun3DPanel pair={pair} sun={sun} day0={t - 12 * 3600e3} height={200} preview onJump={() => {}} onFull={() => setFull(true)} others={planStop?.pairs} />
+              <Sun3DPanel pair={pair} sun={sun} day0={t - 12 * 3600e3} height={200} preview onJump={() => {}} onFull={() => setFull(true)} others={planStop?.pairs} eyeHeight={foundH} />
             </View>
           ) : null}
         </ScrollView>
@@ -235,6 +250,7 @@ export default function PhotoSpotScreen() {
               pair={fullPair} tripId={tripId} stopId={stopId} sun={fSun} day0={fDay0} full onJump={setFMinute} onFull={() => setFull(false)}
               photos={photos} addShot={added ? undefined : makeShot}
               others={planStop?.pairs}   // the stop's other shots as pins (Phil, 17 Nov 2026)
+              eyeHeight={fullH}
             />
           ) : null}
           <TouchableOpacity onPress={() => setFull(false)} style={styles.fullClose} accessibilityRole="button" accessibilityLabel="Close the 3D view">
@@ -242,9 +258,120 @@ export default function PhotoSpotScreen() {
           </TouchableOpacity>
         </View>
       </Modal>
+      {job?.stop_id ? (
+        <FindSpotSheet
+          visible={sheet}
+          onClose={() => setSheet(false)}
+          stopId={job.stop_id}
+          stopName={route.params?.stopName ?? null}
+          tripId={tripId}
+          photoUri={job.photo_url}
+          centre={planStop?.pairs?.[0]?.v ?? null}
+          onFind={(hint) => findAgain(hint)}
+        />
+      ) : null}
     </View>
   );
 }
+
+// Metres as the tile shows them: 0.1 under 10 m, whole metres above.
+const fmtM = (m: number) => (m < 10 ? (Math.round(m * 10) / 10).toFixed(1) : String(Math.round(m)));
+
+// How the camera-height tile reads, and the height the 3D views open at (undefined = eye height).
+function heightRead(r: SpotResult): { kind: 'none' | 'air' | 'open' | 'tight'; eye?: number } {
+  const h = r.height;
+  if (!h || !isFinite(h.best)) return { kind: 'none' };
+  const tight = !h.open && isFinite(h.lo) && isFinite(h.hi) && h.hi - h.lo <= 10;
+  if (r.aerial) return { kind: 'air', eye: tight ? h.best : undefined };
+  return tight ? { kind: 'tight', eye: h.best } : { kind: 'open' };
+}
+
+function standLine(m: number): string {
+  if (m < 2.2) return 'Standing, camera at eye level';
+  if (m < 4) return 'Standing, camera a little above eye level';
+  if (m < 8) return 'Raised: a wall, bank or tripod on a rise';
+  return 'Well above the ground: a roof, tower or rock';
+}
+
+function HeightTile({ r, onGround }: { r: SpotResult; onGround?: () => void }) {
+  const read = heightRead(r);
+  const h = r.height;
+  if (read.kind === 'none' || !h) return null;
+  const range = <Text style={styles.small}> · {fmtM(h.lo)}–{fmtM(h.hi)} m</Text>;
+  if (read.kind === 'air') {
+    const g = r.ground_alt;
+    return (
+      <View style={styles.wideTile} accessibilityLabel={`Camera height: from the air, about ${fmtM(h.best)} metres up`}>
+        <Text style={styles.cap}>CAMERA HEIGHT</Text>
+        <Text style={styles.big}>From the air · about {fmtM(h.best)} m up{range}</Text>
+        <Text style={styles.small}>
+          Looks like a drone shot.{g ? ` On the ground: ${Math.round(g.dist_m)} m away, eye height.` : ''} Drones aren't allowed in the park.
+        </Text>
+        {g && onGround ? (
+          <TouchableOpacity style={styles.tileBtn} onPress={onGround} accessibilityRole="button" accessibilityLabel="Show the ground spot">
+            <Text style={styles.tileBtnText}>Show the ground spot</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  }
+  if (read.kind === 'open') {
+    return (
+      <View style={styles.wideTile} accessibilityLabel="Camera height: can't tell from this photo">
+        <Text style={styles.cap}>CAMERA HEIGHT</Text>
+        <Text style={styles.big}>Can't tell from this photo</Text>
+        <Text style={styles.small}>Higher up and further back look the same here. 3D opens at eye height.</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.wideTile} accessibilityLabel={`Camera height: about ${fmtM(h.best)} metres`}>
+      <Text style={styles.cap}>CAMERA HEIGHT</Text>
+      <Text style={styles.big}>About {fmtM(h.best)} m{range}</Text>
+      <Text style={styles.small}>{standLine(h.best)}</Text>
+    </View>
+  );
+}
+
+function PinTile({ r, kept, busy, onBestFit, onKeep }: { r: SpotResult; kept: boolean; busy: boolean; onBestFit: () => void; onKeep: () => void }) {
+  const o = r.open_fit;
+  const near = r.dist_from_hint_m != null && isFinite(r.dist_from_hint_m) ? Math.round(r.dist_from_hint_m) : null;
+  if (o && !kept) {
+    return (
+      <View style={styles.wideTile} accessibilityLabel="Your pin: doesn't fit near your pin">
+        <Text style={styles.cap}>YOUR PIN</Text>
+        <Text style={[styles.big, { color: AMBER }]}>Doesn't fit near your pin</Text>
+        <Text style={styles.small}>Best fit {Math.round(o.dist_from_hint_m)} m away.</Text>
+        <View style={styles.tileBtnRow}>
+          <TouchableOpacity style={[styles.tileBtn, { flex: 1 }]} onPress={onBestFit} disabled={busy} accessibilityRole="button" accessibilityLabel="Use the best fit">
+            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.tileBtnText}>Use the best fit</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.tileBtn, { flex: 1 }]} onPress={onKeep} accessibilityRole="button" accessibilityLabel="Keep near my pin">
+            <Text style={styles.tileBtnText}>Keep near my pin</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+  if (o) {
+    return (
+      <View style={styles.wideTile} accessibilityLabel="Your pin: kept near your pin">
+        <Text style={styles.cap}>YOUR PIN</Text>
+        <Text style={styles.big}>Kept near your pin</Text>
+        <Text style={styles.small}>{near != null ? `${near} m from your pin. ` : ''}The best fit was {Math.round(o.dist_from_hint_m)} m away.</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.wideTile} accessibilityLabel={`Your pin: ${near != null ? `${near} metres from your pin` : 'near your pin'}`}>
+      <Text style={styles.cap}>YOUR PIN</Text>
+      <Text style={styles.big}>{near != null ? `${near} m from your pin` : 'Near your pin'}</Text>
+      <Text style={styles.small}>Fits where you said.</Text>
+    </View>
+  );
+}
+
+const AMBER = '#e2b25a';
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#000' },
@@ -255,6 +382,10 @@ const styles = StyleSheet.create({
   photo: { width: '100%', height: 200, borderRadius: 10, backgroundColor: '#111' },
   tiles: { flexDirection: 'row', gap: 10 },
   tile: { flex: 1, backgroundColor: '#111', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, gap: 3 },
+  wideTile: { backgroundColor: '#111', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, gap: 3 },
+  tileBtnRow: { flexDirection: 'row', gap: 8 },
+  tileBtn: { height: 36, marginTop: 6, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  tileBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   cap: { color: '#888', fontSize: 10, fontWeight: '700', letterSpacing: 1.2 },
   big: { color: '#fff', fontSize: 18, fontWeight: '600' },
   small: { color: '#888', fontSize: 12, fontWeight: '400' },

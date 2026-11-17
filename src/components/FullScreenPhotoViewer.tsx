@@ -17,6 +17,8 @@ import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isOpen, lookupSpot, markSpotSeen, requestSpot, spotProgress, useSpot } from '../services/photoSpot';
 import { useTripStore } from '../store/tripStore';
+import FindSpotSheet from './FindSpotSheet';
+import type { SpotHint } from '../services/photoSpot';
 
 const { width, height } = Dimensions.get('window');
 
@@ -42,7 +44,8 @@ export default function FullScreenPhotoViewer({
   onClose: () => void;
   onDelete?: (photo: any) => void;
   onMakeFirst?: (photo: any) => Promise<boolean | void> | void;
-  spotStop?: { id: string; name?: string } | null;   // Find spot: the stop the photos are on (none = no button)
+  // Find spot: the stop the photos are on (none = no button); trip and pin feed the Find your spot sheet's chips and map
+  spotStop?: { id: string; name?: string; tripId?: string | null; lat?: number | null; lng?: number | null } | null;
 }) {
   const list = photos && photos.length ? photos : photo ? [photo] : [];
   // Tracked by id, not position, so reordering the list (Set as first)
@@ -243,7 +246,7 @@ export default function FullScreenPhotoViewer({
             <Ionicons name="close" size={28} color="#fff" />
           </Pressable>
           {visible && spotStop && current?.id && (current.storage_url || /^https?:/.test(String(current.url ?? ''))) ? (
-            <FindSpot photoId={current.id} stop={spotStop} onLeave={onClose} />
+            <FindSpot photoId={current.id} photoUri={uris[current.id] ?? null} stop={spotStop} onLeave={onClose} />
           ) : null}
           {list.length > 1 && (
             <View style={styles.counter} pointerEvents="none">
@@ -294,7 +297,9 @@ export default function FullScreenPhotoViewer({
 
 // Find spot (Phil, 16 Nov 2026): a white pill at the top; while it works, a card at the bottom with a bar.
 // The job carries on without the viewer (services/photoSpot): leaving is fine.
-function FindSpot({ photoId, stop, onLeave }: { photoId: string; stop: { id: string; name?: string }; onLeave: () => void }) {
+function FindSpot({ photoId, photoUri, stop, onLeave }: {
+  photoId: string; photoUri: string | null; stop: { id: string; name?: string; tripId?: string | null; lat?: number | null; lng?: number | null }; onLeave: () => void;
+}) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const offline = useTripStore((s: any) => s.isOffline);
@@ -318,19 +323,26 @@ function FindSpot({ photoId, stop, onLeave }: { photoId: string; stop: { id: str
     onLeave();
     navigation.navigate('PhotoSpot', { jobId: job.id, stopName: stop.name ?? null });
   };
-  const start = async (again = false) => {
+  // Find spot / Find again open the Find your spot sheet first (Phil, 17 Nov 2026): optional pins, or Skip = as before.
+  const [sheet, setSheet] = useState<{ again: boolean } | null>(null);
+  const start = async (again = false, hint?: SpotHint | null) => {
     if (asking) return;
     setAsking(true); setErr(null);
-    const r = await requestSpot(stop.id, photoId, stop.name, again);
+    const r = await requestSpot(stop.id, photoId, stop.name, again, hint);
     setAsking(false);
     if (r.error) setErr(r.error);
+  };
+  const onFind = async (hint: SpotHint | null) => {
+    const again = sheet?.again ?? false;
+    setSheet(null);
+    await start(again, hint);
   };
   const label = offline && !found ? 'Needs a signal' : found ? 'Your spot' : open || asking ? 'Finding…' : 'Find spot';
   return (
     <>
       <Pressable
         style={[styles.spotPill, { top: Math.max(50, insets.top + 8) }, (offline && !found) || open ? styles.spotPillDim : null]}
-        onPress={() => (found ? see() : !open && !offline ? start(failed) : undefined)}
+        onPress={() => (found ? see() : !open && !offline ? setSheet({ again: failed }) : undefined)}
         disabled={(offline && !found) || open || asking}
         hitSlop={6}
         accessibilityRole="button"
@@ -357,7 +369,7 @@ function FindSpot({ photoId, stop, onLeave }: { photoId: string; stop: { id: str
           <View style={styles.spotRow}>
             <Text style={styles.spotSmall}>Tap to see it</Text>
             {!offline ? (
-              <Pressable onPress={() => start(true)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Find this spot again">
+              <Pressable onPress={() => setSheet({ again: true })} hitSlop={10} accessibilityRole="button" accessibilityLabel="Find this spot again">
                 <Text style={[styles.spotSmall, { color: '#ffffff', fontWeight: '700' }]}>Find again</Text>
               </Pressable>
             ) : null}
@@ -369,6 +381,16 @@ function FindSpot({ photoId, stop, onLeave }: { photoId: string; stop: { id: str
           <Text style={styles.spotSmall}>{err ?? job?.result?.why ?? job?.error ?? ''}</Text>
         </View>
       ) : null}
+      <FindSpotSheet
+        visible={!!sheet}
+        onClose={() => setSheet(null)}
+        stopId={stop.id}
+        stopName={stop.name ?? null}
+        tripId={stop.tripId ?? null}
+        photoUri={photoUri}
+        centre={stop.lat != null && stop.lng != null ? { lat: stop.lat, lng: stop.lng } : null}
+        onFind={onFind}
+      />
     </>
   );
 }
