@@ -415,8 +415,11 @@ class Refiner:
         finally:
             self.trees = tr; self.cache.clear()
 
-    def refine(self, c, log=print, eye_free=(1.0, 3.0), steps1=(128, 64, 32, 16, 8, 4)):
-        W = self.W; s = np.array([c['dE'], c['dN'], EYE], float); q = np.array([c['yaw'], c['pitch'], c['roll'], c['hfov']], float)
+    def refine(self, c, log=print, eye_free=(1.0, 3.0), steps1=(128, 64, 32, 16, 8, 4), steps2=(8, 4, 2, 1), dh=None, xy_max=1200):
+        """dh(st) = the eye-height step for a spot step st (default min(0.5, st / 8): a person on the ground); the air
+        search passes a larger one and a wider eye_free; c['eye'] starts the eye somewhere else than 1.7 m"""
+        dh = dh or (lambda st: min(0.5, st / 8))
+        W = self.W; s = np.array([c['dE'], c['dN'], c.get('eye', EYE)], float); q = np.array([c['yaw'], c['pitch'], c['roll'], c['hfov']], float)
         self.hf0 = q[3]
         self.set_trees(s[0], s[1])
         hist = []
@@ -429,7 +432,7 @@ class Refiner:
             q, rr = self.fit_q(paz, pel, pts, q, eyeh, lat, lng, fscale, pelt=pelt)
             hist.append(dict(win=win, n=len(pts), rms=float(np.sqrt(np.mean(np.minimum(rr ** 2, win_px ** 2))))))
         # B: the spot too (east, north, eye height), pattern search with the orientation refitted at every spot
-        for win, steps in ((10, list(steps1)), (6, [8, 4, 2, 1])):
+        for win, steps in ((10, list(steps1)), (6, list(steps2))):
             win_px = win * W / 1440; fscale = max(1.5, win_px / 3)
             best, q, rr = self.chamfer(s, q, win_px, fscale)
             if best >= 1e9: break
@@ -437,10 +440,10 @@ class Refiner:
                 improved = True; it = 0
                 while improved and it < 6:
                     improved = False; it += 1
-                    for d in ((st, 0, 0), (-st, 0, 0), (0, st, 0), (0, -st, 0), (0, 0, min(0.5, st / 8)), (0, 0, -min(0.5, st / 8))):
+                    for d in ((st, 0, 0), (-st, 0, 0), (0, st, 0), (0, -st, 0), (0, 0, dh(st)), (0, 0, -dh(st))):
                         s2 = s + np.array(d)
                         if not (eye_free[0] <= s2[2] <= eye_free[1]): continue
-                        if math.hypot(s2[0] - c['dE'], s2[1] - c['dN']) > 1200: continue
+                        if math.hypot(s2[0] - c['dE'], s2[1] - c['dN']) > xy_max: continue
                         c2, q2, rr2 = self.chamfer(s2, q, win_px, fscale)
                         if c2 < best - 1e-9:
                             best, s, q, rr = c2, s2, q2, rr2; improved = True
@@ -515,13 +518,97 @@ def confidence(R, sol, delta=0.05):
     return res
 
 
+# ---------------------------------------------------------------- camera height (17 Nov 2026: drones, walls, bridges)
+HEIGHTS = (0.5, 1.0, 1.7, 2.5, 4, 6, 10, 15, 25, 40, 60, 90, 120)   # eye above the ground tried by the height profile, m
+AIR_MAX = 122.0       # US drone limit, 400 ft above the ground
+AERIAL_M = 8.0        # an eye higher than this is called a raised / drone camera
+AIR_MARGIN = 0.05     # an air answer must beat the ground one by the confidence delta: the ground answer is then no longer
+AIR_MARGIN_HINT = 0.02   # "possible"; when the look itself said 'drone' a smaller lead is enough
+
+
+def spot_score(R, s, q0, pts, robust=False):
+    """the score confidence() gives one spot (east, north, eye above ground) with the orientation refitted; robust = first
+    re-snap the photo's steps near this spot's own model sky line (for an eye far from the one the points came from)"""
+    W = R.W
+    paz, pel, eyeh, lat, lng, pelt = R.profile(*s, q0)
+    q2, _ = R.fit_q(paz, pel, pts, q0, eyeh, lat, lng, 1.5, pelt=pelt)
+    if robust:
+        for win in (20, 12):
+            pw, _ = R.snap(paz, pel, q2, win * W / 1440, pelt)
+            if len(pw) >= 8: q2, _ = R.fit_q(paz, pel, pw, q2, eyeh, lat, lng, max(1.5, win * W / 1440 / 3), pelt=pelt)
+    p4, ym = R.snap(paz, pel, q2, 4 * W / 1440, pelt)
+    p8, _ = R.snap(paz, pel, q2, 8 * W / 1440, pelt)
+    if len(p8) >= 8: q2, rr = R.fit_q(paz, pel, p8, q2, eyeh, lat, lng, 1.5, pelt=pelt)
+    else: rr = np.array([10.0])
+    ins = max(1, int(((ym > 0) & (ym < R.H)).sum()))
+    lmc = lm_total(R, dict(lat=lat, lng=lng, eyeh=eyeh, q=q2))
+    return (len(p4) / ins - 0.02 * min(float(np.sqrt(np.mean(np.minimum(rr ** 2, 100)))), 10) + MU_REG * R.region(s, q2)
+            - 0.01 * min(lmc, 50)), q2
+
+
+def height_profile(R, sol, heights=HEIGHTS, delta=0.05):
+    """the spot kept, the eye moved up and down (orientation refitted each time, scored as in confidence()): every eye
+    height whose score comes within `delta` of the answer's own counts as possible -> lo..hi, the camera height's
+    confidence. `top` = the height that scores best (it can differ from the answer's: the spot search did not reach it)"""
+    pts = np.array(sol['pts'])
+    if len(pts) < 8: return None
+    s0 = np.array(sol['s'], float); q0 = np.array(sol['q'], float); e0 = float(s0[2])
+    hs = sorted(set([round(float(h), 3) for h in heights] + [round(e0, 3)]))
+    sc = []
+    for h in hs:
+        s = np.array([s0[0], s0[1], h])
+        v, _ = spot_score(R, s, q0, pts)
+        if abs(h - e0) > 2:
+            v = max(v, spot_score(R, s, q0, pts, robust=True)[0])
+        sc.append(float(v))
+    ref = sc[hs.index(round(e0, 3))]
+    ok = [h for h, v in zip(hs, sc) if v >= ref - delta]
+    j = int(np.argmax(sc))
+    return dict(best=e0, lo=min(ok), hi=max(ok), top=hs[j], top_gain=sc[j] - ref, heights=hs, scores=[round(v, 4) for v in sc],
+                open=max(ok) >= hs[-1])
+
+
+def final_score(R, sol):
+    sol['dist_stop'] = math.hypot(*sol['s'][:2]); sol['lmc'] = lm_total(R, sol)
+    sol['score'] = sol['agree'] - 0.02 * min(sol['rms'], 10) - prior(sol['dist_stop']) - 0.01 * min(sol['lmc'], 50) + MU_REG * sol['reg']
+    return sol['score']
+
+
+def air_search(R, best, hp, sols, log=print):
+    """refine again from the ground answer (and a rival spot) with the eye free up to 122 m; height steps scale with the
+    spot step (st / 2 down to 0.25 m). A drone can hover over river, trees or cliff air, so the spot is not kept on
+    walkable ground. The start eye is the best-scoring height of the profile above 3 m."""
+    up = [(h, v) for h, v in zip(hp['heights'], hp['scores']) if h > 3.0] if hp else []
+    eye0 = max(up, key=lambda x: x[1])[0] if up else 6.0
+    seeds = [(best, eye0)]
+    if eye0 > 10: seeds.append((best, 6.0))   # also from just above the ground (a wall, a bank, a low drone)
+    for o in sols[1:2]:
+        if math.hypot(o['s'][0] - best['s'][0], o['s'][1] - best['s'][1]) > 150 and o['score'] >= best['score'] - 0.15:
+            seeds.append((o, eye0))
+    out = []
+    for sd, e in seeds:
+        c = dict(dE=sd['s'][0], dN=sd['s'][1], eye=e, yaw=sd['q'][0], pitch=sd['q'][1], roll=sd['q'][2], hfov=sd['q'][3])
+        try:
+            sol = R.refine(c, log=log, eye_free=(1.0, AIR_MAX), steps1=(64, 32, 16, 8, 4), steps2=(8, 4, 2, 1, 0.5),
+                           dh=lambda st: max(0.25, st / 2), xy_max=600)
+        except Exception as e_:  # noqa: BLE001
+            log('  air refine failed: ' + repr(e_)); continue
+        if sol is None: continue
+        final_score(R, sol); sol['seed_eye'] = e
+        log(f"  air from {sd['s'][0]:.0f},{sd['s'][1]:.0f} eye {e:.0f}: eye {sol['s'][2]:.1f} at {sol['s'][0]:.0f},{sol['s'][1]:.0f}"
+            f" agree {sol['agree']:.2f} rms {sol['rms']:.2f} region {sol['reg']:.2f} score {sol['score']:.3f}")
+        out.append(sol)
+    out.sort(key=lambda x: -x['score'])
+    return out
+
+
 def prior(d_m):
     """the photo is filed under this stop: a spot far from it needs a clearly better fit"""
     return 0.03 * (d_m / 1000) ** 2
 
 
 def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None, use_names=True, log=print, n_refine=2,
-          n_screen=14, use_trees=True, use_region=True):
+          n_screen=14, use_trees=True, use_region=True, kind=None, air=True):
     t0 = time.time()
     T = Terrain(rows, cache, region)
     sky = SK.extract(photo)
@@ -585,13 +672,37 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     if not sols:
         return dict(ok=False, why='no candidate could be refined', sky_good=float(sky['good'].mean()), times=dict(total=time.time() - t0))
     # when two answers fit the picture about as well, the one nearer the stop wins (the photo is filed under it)
-    for s_ in sols:
-        s_['dist_stop'] = math.hypot(*s_['s'][:2]); s_['lmc'] = lm_total(R, s_)
-        s_['score'] = s_['agree'] - 0.02 * min(s_['rms'], 10) - prior(s_['dist_stop']) - 0.01 * min(s_['lmc'], 50) + MU_REG * s_['reg']
+    for s_ in sols: final_score(R, s_)
     sols.sort(key=lambda s_: -s_['score'])
     best = sols[0]
     t4 = time.time()
+    # camera height: profile at the ground answer; an air search when the eye sits at the old 3 m cap, a higher eye
+    # scores better, or the look said drone. The air answer is kept only with a clear lead (AIR_MARGIN).
     R.set_trees(best['s'][0], best['s'][1])
+    hp = height_profile(R, best)
+    air_info = None; ground_alt = None
+    why_air = [w for w, c_ in (('look says drone', kind == 'drone'), ('eye at the 3 m cap', best['s'][2] >= 2.8),
+                                ('higher eye scores better', bool(hp) and hp['top'] > 3.0 and hp['top_gain'] > 0.005)) if c_]
+    t_air = time.time()
+    if air and why_air:
+        log('  air search: ' + ', '.join(why_air))
+        ab = air_search(R, best, hp, sols, log=log)
+        margin = AIR_MARGIN_HINT if kind == 'drone' else AIR_MARGIN
+        air_info = dict(why=why_air, margin=margin, ground_score=best['score'],
+                        tried=[dict(eye=a['s'][2], dE=a['s'][0], dN=a['s'][1], score=a['score'], agree=a['agree'], rms=a['rms'], reg=a['reg'],
+                                    seed_eye=a['seed_eye']) for a in ab])
+        if ab and ab[0]['score'] > best['score'] + margin:
+            a0 = ab[0]
+            ground_alt = dict(lat=best['lat'], lng=best['lng'], eye=best['s'][2], score=best['score'], agree=best['agree'],
+                              dist_m=math.hypot(a0['s'][0] - best['s'][0], a0['s'][1] - best['s'][1]))
+            best['ground_alt'] = True; a0['coarse'] = best.get('coarse'); sols.insert(0, a0); best = a0
+            air_info['kept'] = True
+            R.set_trees(best['s'][0], best['s'][1])
+            hp = height_profile(R, best)
+        else:
+            air_info['kept'] = False
+            R.set_trees(best['s'][0], best['s'][1])
+    t_air = time.time() - t_air
     conf = confidence(R, best)
     t5 = time.time()
     lmchk = []
@@ -604,12 +715,13 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
                eye_above_ground=best['s'][2], eye_abs=best['eyeh'], yaw=best['q'][0] % 360, pitch=best['q'][1], roll=best['q'][2], hfov=best['q'][3],
                agree=best['agree'], n_agree=best['n_agree'], rms_px=best['rms'], hist=best['hist'], conf=conf, landmarks=lmchk,
                alts=[dict(lat=s['lat'], lng=s['lng'], agree=s['agree'], rms=s['rms'], yaw=s['q'][0] % 360, hfov=s['q'][3], score=s['score'],
-                          reg=s['reg'], dist_m=math.hypot((s['lat'] - best['lat']) * KZ, (s['lng'] - best['lng']) * kx(best['lat']))) for s in sols[1:]],
+                          reg=s['reg'], ground_alt=bool(s.get('ground_alt')), dist_m=math.hypot((s['lat'] - best['lat']) * KZ, (s['lng'] - best['lng']) * kx(best['lat']))) for s in sols[1:]],
                score=best['score'], lm_cost=best['lmc'], region_match=best['reg'], dist_stop=best['dist_stop'], trees=R.trees is not None,
                coarse_top=[dict(dE=c['dE'], dN=c['dN'], score=c['score'], yaw=c['yaw'], hfov=c['hfov']) for c in co[:5]],
                screen=[dict(dE=c['dE'], dN=c['dN'], quick=c['quick']) for c in scr],
                sky_good=float(sky['good'].mean()), used_names=use_names, n_landmarks=len([L for L in lms if L.get('known')]),
-               times=dict(sky_and_load=t1 - t0, coarse=t2 - t1, screen=t3 - t2, refine=t4 - t3, confidence=t5 - t4, total=t5 - t0),
+               height=hp, aerial=bool(best['s'][2] > AERIAL_M), ground_alt=ground_alt, air=air_info, kind=kind,
+               times=dict(sky_and_load=t1 - t0, coarse=t2 - t1, screen=t3 - t2, refine=t4 - t3, air=t_air, confidence=t5 - t4 - t_air, total=t5 - t0),
                pts=best['pts'])
     return out
 
@@ -638,10 +750,12 @@ if __name__ == '__main__':
     ap.add_argument('--no-names', action='store_true'); ap.add_argument('--out'); ap.add_argument('--no-trees', action='store_true')
     ap.add_argument('--hcache', help='folder for per-stop horizon tables')
     ap.add_argument('--no-region', action='store_true')
+    ap.add_argument('--kind', help="the look's kind (a 'drone' hint starts the air search)"); ap.add_argument('--no-air', action='store_true')
     a = ap.parse_args()
     stop = tuple(float(v) for v in a.stop.split(','))
     HCACHE = a.hcache
-    r = solve(a.photo, a.rows, a.cache, a.region, stop, a.landmarks, a.radius, a.step, use_names=not a.no_names, use_trees=not a.no_trees, use_region=not a.no_region)
+    r = solve(a.photo, a.rows, a.cache, a.region, stop, a.landmarks, a.radius, a.step, use_names=not a.no_names, use_trees=not a.no_trees, use_region=not a.no_region,
+              kind=a.kind, air=not a.no_air)
     s = json.dumps(r, indent=1, default=float)
     if a.out: open(a.out, 'w').write(s)
     print(json.dumps({k: r.get(k) for k in ('lat', 'lng', 'yaw', 'pitch', 'roll', 'hfov', 'agree', 'rms_px', 'times')}, default=float))

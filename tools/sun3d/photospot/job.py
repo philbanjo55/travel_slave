@@ -58,7 +58,7 @@ def sky_line(T, lat, lng, eyeh, q, W, H, houses=None):
 
 def verdict(r, look):
     """placed / direction only / weak / not placed, as the prototype's review page judged them"""
-    if look.get('kind') and look['kind'] != 'ground': return 'not placed', {'drone': 'drone photo', 'close_up': 'close-up, no sky line', 'screenshot': 'not a photo', 'no_sky': 'sky line hidden'}.get(look['kind'], look['kind'])
+    if look.get('kind') and look['kind'] not in ('ground', 'drone'): return 'not placed', {'drone': 'drone photo', 'close_up': 'close-up, no sky line', 'screenshot': 'not a photo', 'no_sky': 'sky line hidden'}.get(look['kind'], look['kind'])
     if not r or not r.get('ok'): return 'not placed', 'too little sky line'
     a = r['agree']
     if a < 0.25: return 'not placed', 'sky line does not match'
@@ -66,7 +66,7 @@ def verdict(r, look):
     W = (r.get('size') or [1440])[0]
     off = [L for L in r.get('landmarks', []) if L['name'] in peaks and not (np.isfinite(L['px']) and abs(L['px'] - L['x']) <= 0.08 * W)]
     if off: return 'not placed', f"{short_name(off[0]['name'])} does not fit"
-    rival = [x for x in r.get('alts', []) if x['dist_m'] > 150 and x.get('score', -9) >= r['score'] - 0.05]
+    rival = [x for x in r.get('alts', []) if not x.get('ground_alt') and x['dist_m'] > 150 and x.get('score', -9) >= r['score'] - 0.05]
     if rival: return 'direction only', f"another spot {rival[0]['dist_m']:.0f} m away fits too"
     c = r.get('conf') or {}
     if not c: return 'weak', 'not checked'
@@ -150,6 +150,15 @@ def lens_rows(r, look_lms, T, grids):
     best = max(crops, key=lambda x: x['f']) if crops else min((x for x in rows if x['possible']), key=lambda x: abs(1 - x['f'] / fp), default=None)
     for x in rows: x['best'] = x is best
     return fp, rows, fg, far
+
+
+def height_summary(r):
+    """the camera height with its confidence: best, lo..hi (every height within the spot confidence's delta), the
+    heights tried and their scores"""
+    h = r.get('height')
+    if not h: return dict(best=r.get('eye_above_ground'), lo=None, hi=None)
+    return dict(best=round(h['best'], 2), lo=h['lo'], hi=h['hi'], open=h.get('open', False), top=h.get('top'),
+                heights=h['heights'], scores=h['scores'])
 
 
 def shot_name(fg, far, lat, lng):
@@ -257,7 +266,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
         for k in ('x', 'y', 'x0', 'x1'):
             if o.get(k) is not None: o[k] = float(o[k]) * s
         all_lms.append(o)
-    if look.get('kind') not in (None, 'ground'):
+    if look.get('kind') not in (None, 'ground', 'drone'):   # a drone photo is solved too (17 Nov 2026): the kind is a hint
         v, why = verdict(None, look)
         return dict(ok=False, verdict=v, why=why, confidence=confidence(v, why, None), times=dict(total=time.time() - t0))
     T = Terrain(rows_file, cache, region)
@@ -280,7 +289,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
     best = None
     for i, lms in enumerate(tries):
         lmf = os.path.join(work, f'landmarks{i}.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
-        r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log)
+        r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'))
         v, why = verdict(r, dict(look, landmarks=lms))
         log(f"  try {i + 1}: {v} {why}")
         if best is None or RANK[v] > RANK[best[1]]: best = (r, v, why, lms)
@@ -301,6 +310,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
                foreground=dict(name=fg['name'], dist_m=round(fg['dist_m'])) if fg else None,
                main_landmark=main, shot_name=shot_name(fg, far, r['lat'], r['lng']),
                landmarks=[dict(name=L['name'], x=L['x'], px=L['px'], dist_m=round(L['dist_m'])) for L in r.get('landmarks', [])],
+               height=height_summary(r), aerial=bool(r.get('aerial')), ground_alt=r.get('ground_alt'), air=r.get('air'),
                times=r.get('times'))
     when = time.strftime('%d %b %Y')
     for x in rows:
