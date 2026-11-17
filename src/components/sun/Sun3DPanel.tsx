@@ -102,6 +102,9 @@ type Props = {
   // place. The perspective controls (lens, frame box, walk, framing, HD, photo, Street View, the lines under the picture)
   // are hidden and overhead3d.tsx's are shown; the foreground is always on. `pair` must be the picked shot.
   overhead?: Overhead3D;
+  // Find my spot (17 Nov 2026): the camera height the photo was found at (metres above the ground), used as the starting
+  // camera height instead of eye height. Clamped to the height control's range.
+  eyeHeight?: number;
 };
 
 // The package's prop types don't resolve against this React Native version's types; the props used below are its documented ones.
@@ -176,7 +179,7 @@ function Below({ full, max, hide, children }: { full?: boolean; max: number; hid
   return <ScrollView style={{ maxHeight: max, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
 }
 
-export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview, addShot, overhead, others, onPickOther }: Props) {
+export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview, addShot, overhead, others, onPickOther, eyeHeight }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -352,9 +355,10 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const pickOtherRef = useRef(onPickOther); pickOtherRef.current = onPickOther;
   // Camera height above the ground (Phil, 17 Nov 2026): walk mode raises it (over the trees, on the wall) or lowers it (low
   // shots), 0.3 to 3 m. Kept through restarts of the view; back to eye height (1.73 m, 5'8") on another shot.
-  const [camH, setCamH] = useState(EYE_H);
+  const startH = eyeHeight != null && isFinite(eyeHeight) ? Math.max(CAM_MIN, Math.min(CAM_MAX, eyeHeight)) : EYE_H;
+  const [camH, setCamH] = useState(startH);
   const [groundFine, setGroundFine] = useState<boolean | null>(null);
-  useEffect(() => { setCamH(EYE_H); }, [pair.vantage_id]);
+  useEffect(() => { setCamH(startH); }, [pair.vantage_id]);
   // sent at most every 150 ms while a button is held (a slow phone's view is not flooded), the last value always
   const camSent = useRef<{ t: number; timer: ReturnType<typeof setTimeout> | null }>({ t: 0, timer: null });
   useEffect(() => {

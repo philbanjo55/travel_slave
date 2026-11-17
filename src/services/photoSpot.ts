@@ -20,7 +20,16 @@ export type SpotResult = {
   lat?: number; lng?: number; yaw?: number; pitch?: number; hfov?: number; fp_mm?: number; size?: [number, number];
   lenses?: Lens[]; foreground?: { name: string; dist_m: number } | null; main_landmark?: { name: string; lat: number; lng: number } | null;
   shot_name?: string; overlay_path?: string;
+  // Camera height and the pins (17 Nov 2026); older jobs have none of these.
+  height?: { best: number; lo: number; hi: number; open?: boolean } | null;   // metres above the ground, lo..hi possible
+  aerial?: boolean;
+  ground_alt?: { lat: number; lng: number; eye: number; dist_m: number } | null;   // aerial: the nearest spot on the ground
+  hint?: SpotHint | null;              // the pins it was asked with, echoed
+  dist_from_hint_m?: number | null;
+  open_fit?: { lat: number; lng: number; verdict: string; dist_from_hint_m: number } | null;   // doesn't fit near the pin
 };
+// Find your spot's pins (17 Nov 2026): roughly where he stood (searched within 300 m) and, optionally, what he aimed at.
+export type SpotHint = { lat: number; lng: number; aim_lat?: number; aim_lng?: number };
 export type SpotJob = {
   id: string; stop_id: string; photo_id: string | null; photo_url: string | null;
   status: 'queued' | 'looking' | 'solving' | 'done' | 'error'; note: string | null; error: string | null;
@@ -90,9 +99,10 @@ export async function resumePhotoSpots() {
   if (Object.values(all).some(e => !e.job || isOpen(e.job))) ensurePolling();
 }
 
-export async function requestSpot(stopId: string, photoId: string, stopName?: string, again = false): Promise<{ job: SpotJob | null; error?: string }> {
+export async function requestSpot(stopId: string, photoId: string, stopName?: string, again = false, hint?: SpotHint | null): Promise<{ job: SpotJob | null; error?: string }> {
   const all = await load();
-  const r = await call({ action: 'request', stop_id: stopId, photo_id: photoId, again });
+  // a request with pins always starts a new search
+  const r = await call({ action: 'request', stop_id: stopId, photo_id: photoId, again: again || !!hint, ...(hint ? { hint } : {}) });
   if (!r.ok || !r.job) return { job: null, error: r.error ?? "Couldn't start" };
   all[k(photoId, stopId)] = { jobId: r.job.id, stopId, photoId, stopName, job: r.job, seen: !isOpen(r.job), at: Date.now() };
   emit();

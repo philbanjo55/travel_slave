@@ -429,14 +429,14 @@ function SavedCard({ p }: { p: PairCheck }) {
   );
 }
 
-function CoordStatus({ text, parsed }: { text: string; parsed: Coords | null }) {
+export function CoordStatus({ text, parsed }: { text: string; parsed: Coords | null }) {
   if (!text.trim()) return null;
   return parsed
     ? <Text style={styles.good}>✓ {formatCoords(parsed)}</Text>
     : <Text style={styles.bad}>Can't read these. Paste "43.741, -110.802" or a Google Maps link.</Text>;
 }
 
-function Field({ label, value, onChange, placeholder, keyboardType, maxLength }: {
+export function Field({ label, value, onChange, placeholder, keyboardType, maxLength }: {
   label: string; value: string; onChange: (t: string) => void; placeholder?: string;
   keyboardType?: 'default' | 'numbers-and-punctuation' | 'decimal-pad'; maxLength?: number;
 }) {
@@ -452,7 +452,8 @@ function Field({ label, value, onChange, placeholder, keyboardType, maxLength }:
   );
 }
 
-const styles = StyleSheet.create({
+// Shared with Find your spot (FindSpotSheet), which is built from this screen's parts.
+export const pairEditorStyles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
@@ -507,3 +508,4 @@ const styles = StyleSheet.create({
   errorText: { color: '#f0a79c', fontSize: 13 },
   link: { color: colors.textPrimary, fontSize: 13, fontWeight: '600', textDecorationLine: 'underline' },
 });
+const styles = pairEditorStyles;
