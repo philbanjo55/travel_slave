@@ -198,7 +198,10 @@
   // where the camera stands: eye height EYE m (Phil, 13 Nov 2026: "Do 5,8" = 1.73 m, the height his own photos are taken from; was 2 m on the
   // detail grid, 3 m elsewhere). On the near grid the highest ground within a step and a half, so a pin on a steep slope does not
   // put the eye inside the hill; on the wide grid the ground there; on the detail grid the survey's ground is exact.
-  const EYE = 1.73;
+  // Camera height above the ground (Phil, 17 Nov 2026: raise it to see over trees, lower it for low shots): 0.3 to 3 m,
+  // S3D.eyeHeight(m). Measured from the ground under the camera: exact on the survey's bare ground (detail grid), else
+  // the local high point as above. The sun times are not moved by it (they test the ground spot).
+  let EYE = 1.73;
   const eyeH = e => { if (e.g === DT) return gh(e.g, e.c, e.r) + EYE; let h = gh(e.g, e.c, e.r); if (e.g === NR || e.g === RG) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) h = Math.max(h, gh(e.g, e.c + a * 1.5, e.r + b * 1.5)); return h + EYE; };
   // First / last direct light. Measured 12 Nov 2026 against 102 webcam pictures (27 events, tools/sun3d/README.md): with
   // the first rule (whole disc clear of a soft skyline, never below the flat horizon) ridge-blocked events were right to
@@ -1406,7 +1409,7 @@
       }
       if (det) {
         R.det = det; R.scene.add(det.mesh); if (det.points) R.scene.add(det.points); if (det.houses) R.scene.add(det.houses);
-        R.cam.near = 1;
+        R.cam.near = 1; R.nearBase = 1;
       }
       if (oldT) oldT.dispose(); if (oldN) oldN.dispose();
       if (touched) focus(); else { aim(); heading(); }
@@ -2070,6 +2073,9 @@
   function place() {
     const q = cr(eye), e = pick(eye), cam = R.cam;
     cam.position.set((q.c + 0.5) * FAR.dx, eyeH(e), (q.r + 0.5) * FAR.dz); cam.rotation.set(pitch, -yaw, 0);
+    // a low camera (0.3-1 m) must not cut the ground in front of it: the near plane comes in with the eye height
+    if (R.nearBase == null) R.nearBase = cam.near;
+    cam.near = Math.min(R.nearBase, Math.max(0.15, EYE * 0.4));
     cam.fov = lensFov() * 180 / Math.PI; cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
     if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360)) / (R.det.inst ? 1 : Math.sqrt(R.thin));   // a point's metres -> pixels at 1 m
     if (R.wide) R.wide.mat.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360));
@@ -2513,7 +2519,8 @@
   function told() {
     othCalc();
     const kz = 111132, kx = 111320 * Math.cos(eye.lat * Math.PI / 180);
-    post({ type: 'eye', lat: eye.lat, lng: eye.lng, moved: Math.round(Math.hypot((eye.lat - eye0.lat) * kz, (eye.lng - eye0.lng) * kx) * 10) / 10 });   // 0.1 m: fine steps are 25 cm
+    let fine = false; try { fine = pick(eye).g === DT; } catch (e) { /* not built */ }
+    post({ type: 'eye', lat: eye.lat, lng: eye.lng, moved: Math.round(Math.hypot((eye.lat - eye0.lat) * kz, (eye.lng - eye0.lng) * kx) * 10) / 10, height: EYE, fine });   // 0.1 m: fine steps are 25 cm
     post({ type: 'state', subjectLit: subjLit(sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
   }
   let drag = null;
@@ -2607,6 +2614,7 @@
     overheadShade(v) { OH.shaded = typeof v === 'boolean' ? v : null; dirty = true; },
     overheadSun(v) { OH.sunOn = v !== false; relight = dirty = true; },
     others(list) { OTH.list = Array.isArray(list) ? list.filter(o => o && Number.isFinite(+o.lat) && Number.isFinite(+o.lng)) : []; othCalc(); dirty = true; },
+    eyeHeight(m) { const v = Math.max(0.3, Math.min(3, +m)); if (!Number.isFinite(v)) return; EYE = v; touch('walk'); if (eye) told(); },
     othersOn(v) { OTH.on = v !== false; dirty = true; },
     overheadMarks(v) { OH.marks = v !== false; dirty = true; },   // the cone, the other shots' wedges and the sun arrows / band on or off
     overheadFit() { ohFit(); dirty = true; ohSay(); },

@@ -133,7 +133,9 @@ let lastTrees = true;   // the foreground's trees (Phil, 16 Nov 2026: a "no tree
 let lastIce: boolean | null = null;
 let pickedFor: string | null = null;   // the shot whose lens / frame box the user changed by hand: its framing's lens is not put back over that
 let lastGlass = false;
-let lastOthersOn = true;   // the stop's other stand spots shown in the 3D view (kept while the app is open)
+let lastOthersOn = true;
+const EYE_H = 1.73, CAM_MIN = 0.3, CAM_MAX = 3;   // camera height above the ground, metres (5'8" = 1.73)
+const feetIn = (m: number) => { const t = Math.round(m / 0.0254); return `${Math.floor(t / 12)}'${t % 12}"`; };   // the stop's other stand spots shown in the 3D view (kept while the app is open)
 const FINE_STEP = 0.25, WALK_STEP = 2;   // metres: a tap, and the most a held arrow moves per step
 const REF_OPACITY_KEY = 'pf_ref_opacity';
 let refOpacityRead = false;
@@ -347,6 +349,13 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     run(`window.S3D.othersOn && window.S3D.othersOn(${othersOn ? 'true' : 'false'})`);
   }, [ready, hd, otherKey, othersOn, run]);
   const pickOtherRef = useRef(onPickOther); pickOtherRef.current = onPickOther;
+  // Camera height above the ground (Phil, 17 Nov 2026): walk mode raises it (over the trees, on the wall) or lowers it (low
+  // shots), 0.3 to 3 m. Kept through restarts of the view; back to eye height (1.73 m, 5'8") on another shot.
+  const [camH, setCamH] = useState(EYE_H);
+  const [groundFine, setGroundFine] = useState<boolean | null>(null);
+  useEffect(() => { setCamH(EYE_H); }, [pair.vantage_id]);
+  useEffect(() => { if (ready && !hd && !overhead) run(`window.S3D.eyeHeight && window.S3D.eyeHeight(${camH.toFixed(2)})`); }, [ready, hd, overhead, camH, run]);
+  const nudgeCamH = useCallback((d: number) => setCamH(h => Math.round(Math.max(CAM_MIN, Math.min(CAM_MAX, h + d)) * 100) / 100), []);
 
   // Which terrain files this shot needs (the wide one for the stand spot, plus a fine box around the
   // stand spot when there is one), then the files themselves (from the phone when saved).
@@ -598,6 +607,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     }
     else if (m.type === 'eye') {
       setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); walkAnsweredRef.current();
+      if (typeof m.fine === 'boolean') setGroundFine(m.fine);
       if (!overhead) keepRef.current = { id: pairIdRef.current, eye: (m.moved || 0) > 0 ? { lat: m.lat, lng: m.lng } : null, view: keepRef.current?.id === pairIdRef.current ? keepRef.current.view : null };
     }
     else if (m.type === 'otherTap') { if (typeof m.id === 'string' && pickOtherRef.current) pickOtherRef.current(m.id); }
@@ -983,6 +993,24 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           <Text style={styles.walkText}>
             {queued.move ? 'Saved on the phone, sends when you have signal.' : walkNote ?? (at && at.moved > 0 ? `You've walked ${at.moved < 10 ? at.moved.toFixed(1) : Math.round(at.moved)} m from your saved spot. The times below are for here.` : 'Hold an arrow to walk, tap for 25 cm. Drag the picture to turn.')}
           </Text>
+          <View style={styles.heightRow}>
+            <Text style={styles.heightLabel} accessibilityLabel={`Camera height ${feetIn(camH)}, ${camH.toFixed(2)} metres`}>
+              Camera {feetIn(camH)} · {camH.toFixed(2)} m{groundFine === false ? ' · ground ±2 m here' : ''}
+            </Text>
+            <TouchableOpacity onPress={() => nudgeCamH(-0.25)} disabled={camH <= CAM_MIN} style={[styles.heightBtn, camH <= CAM_MIN && { opacity: 0.35 }]} accessibilityRole="button" accessibilityLabel="Lower the camera" hitSlop={4}>
+              <Ionicons name="remove" size={18} color="#ffffff" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => nudgeCamH(0.25)} disabled={camH >= CAM_MAX} style={[styles.heightBtn, camH >= CAM_MAX && { opacity: 0.35 }]} accessibilityRole="button" accessibilityLabel="Raise the camera" hitSlop={4}>
+              <Ionicons name="add" size={18} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.heightRow}>
+            {([['Low', 0.5], ['Eye', EYE_H], ['On the wall', 2.7]] as const).map(([t, v]) => (
+              <TouchableOpacity key={t} onPress={() => setCamH(v)} style={[styles.heightChip, Math.abs(camH - v) < 0.01 && styles.heightChipOn]} accessibilityRole="button" accessibilityLabel={`Camera ${t}: ${feetIn(v)}`}>
+                <Text style={[styles.heightChipText, Math.abs(camH - v) < 0.01 && { color: '#000000' }]}>{t} {feetIn(v)}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
           <View style={styles.walkBtns}>
             <TouchableOpacity onPress={() => { stopStepping(); run('window.S3D.home()'); }} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Back to my saved spot" disabled={!at || at.moved === 0}>
               <Text style={[styles.walkBtnText, (!at || at.moved === 0) && { opacity: 0.4 }]}>Back to my spot</Text>
@@ -1119,6 +1147,12 @@ const styles = StyleSheet.create({
   padRight: { left: 100, top: 50 },
   padDown: { left: 50, top: 100 },
   walkRow: { marginTop: 8, gap: 8 },
+  heightRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  heightLabel: { flex: 1, color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
+  heightBtn: { width: 44, height: 36, borderRadius: 8, borderWidth: 1, borderColor: '#444444', alignItems: 'center', justifyContent: 'center' },
+  heightChip: { minHeight: 32, paddingHorizontal: 10, borderRadius: 16, borderWidth: 1, borderColor: '#444444', justifyContent: 'center' },
+  heightChipOn: { backgroundColor: '#ffffff', borderColor: '#ffffff' },
+  heightChipText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   walkText: { color: colors.textSecondary, fontSize: 13 },
   walkBtns: { flexDirection: 'row', gap: 8 },
   walkBtn: { flex: 1, minHeight: 40, borderRadius: 8, borderWidth: 1, borderColor: '#444444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
