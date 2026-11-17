@@ -320,18 +320,32 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
 
 # ------------------------------------------------------------------ worker
 def oidc_token():
+    # GitHub's token service can answer 5xx for a moment (17 Nov 2026: a solved job was lost to one 503): try 5 times
     url = os.environ['ACTIONS_ID_TOKEN_REQUEST_URL'] + '&audience=photo-spot'
-    req = urllib.request.Request(url, headers={'Authorization': 'bearer ' + os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
-    return json.load(urllib.request.urlopen(req, timeout=30))['value']
+    last = None
+    for i in range(5):
+        try:
+            req = urllib.request.Request(url, headers={'Authorization': 'bearer ' + os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
+            return json.load(urllib.request.urlopen(req, timeout=30))['value']
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
+            last = e
+            if isinstance(e, urllib.error.HTTPError) and e.code < 500: raise
+            time.sleep(3 * (i + 1))
+    raise last
 
 
 def call(api, body, tok):
     req = urllib.request.Request(api, data=json.dumps(body, default=float).encode(), method='POST',
                                  headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok})
-    try:
-        return json.load(urllib.request.urlopen(req, timeout=120))
-    except urllib.error.HTTPError as e:
-        return dict(ok=False, error=f'{e.code}: {e.read()[:300].decode(errors="replace")}')
+    for i in range(4):   # the function or the network can hiccup too: 5xx and dropped connections are tried again
+        try:
+            return json.load(urllib.request.urlopen(req, timeout=120))
+        except urllib.error.HTTPError as e:
+            if e.code >= 500 and i < 3: time.sleep(3 * (i + 1)); continue
+            return dict(ok=False, error=f'{e.code}: {e.read()[:300].decode(errors="replace")}')
+        except (urllib.error.URLError, TimeoutError) as e:
+            if i < 3: time.sleep(3 * (i + 1)); continue
+            return dict(ok=False, error=f'network: {e}')
 
 
 def worker(a):
