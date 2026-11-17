@@ -262,7 +262,12 @@ Deno.serve(async (req) => {
         const ctx = await stopCtx(j.stop_id);
         if (!ctx?.region) return json({ ok: false, error: 'no region' }, 422);
         await setJob(j.id, { status: 'solving', note: 'searching the terrain', run_id: body.run_id ?? null });
-        return json({ ok: true, job: { id: j.id, stop: ctx.stop, region: ctx.region, look: j.look, photo_url: lookUrl(j.photo_url) ?? j.photo_url },
+        // the stop's own stand pins (17 Nov 2026): the solver's tie-break between spots that fit about as well. Pins Find
+        // spot placed itself are left out (they would vote for its own earlier answers).
+        const { data: sp } = await db.from('stop_sun_pairs').select('scout_vantages(lat, lng, notes)').eq('stop_id', j.stop_id);
+        const stand_pins = (sp ?? []).map((r: any) => r.scout_vantages).filter((v: any) => v && v.lat != null && v.lng != null &&
+          !String(v.notes ?? '').startsWith('Placed by Find spot')).map((v: any) => ({ lat: v.lat, lng: v.lng }));
+        return json({ ok: true, job: { id: j.id, stop: ctx.stop, region: ctx.region, look: j.look, photo_url: lookUrl(j.photo_url) ?? j.photo_url, stand_pins },
           rows: await terrainRows(ctx.region) });
       }
       if (j.status !== 'solving') return json({ ok: false, error: `job is ${j.status}` }, 409);
