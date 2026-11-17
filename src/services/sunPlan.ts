@@ -51,6 +51,23 @@ async function readCached(tripId: string): Promise<SunPlan | null> {
   }
 }
 
+// The trip whose saved sun plan holds a stop, with no signal (17 Nov 2026: Find my spot asked the server for its stop's
+// trip, so offline its 3D had no pins and its sheet no chips). Plans in memory first, then the plans saved on the phone.
+export async function tripForStop(stopId: string): Promise<string | null> {
+  if (!stopId) return null;
+  for (const [id, p] of Object.entries(memory)) if (p?.stops?.[stopId]) return id;
+  try {
+    const names = await FileSystem.readDirectoryAsync(CACHE_DIR);
+    for (const n of names) {
+      const m = /^sun_(.+)\.json$/.exec(n);
+      if (!m || memory[m[1]]) continue;
+      const p = await readCached(m[1]);
+      if (p?.stops?.[stopId]) { memory[m[1]] = p; return m[1]; }
+    }
+  } catch { /* no saved plans */ }
+  return null;
+}
+
 // Temp file then move, as the trip cache does, so a crash mid-write never
 // leaves a truncated copy in place of a good one.
 async function writeCached(tripId: string, plan: SunPlan): Promise<void> {

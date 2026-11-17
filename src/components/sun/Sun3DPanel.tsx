@@ -269,6 +269,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const booted = useRef(false);
   const sent = useRef(false);
   const foreSent = useRef(false);
+  const [readyN, setReadyN] = useState(0);                   // counts the page's 'ready' messages (a restart that keeps 'ready')
   const [gen, setGen] = useState(0);                         // bumped to start the web view afresh after it died
   const [heavy, setHeavy] = useState(foregroundTooHeavy);
   const loaded = useRef<string | null>(null);   // the files the plain view holds: "<region>|<fine box or nothing>"
@@ -351,7 +352,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     if (!ready || hd) return;
     run(`window.S3D.others && window.S3D.others(${otherKey})`);
     run(`window.S3D.othersOn && window.S3D.othersOn(${othersOn ? 'true' : 'false'})`);
-  }, [ready, hd, otherKey, othersOn, run]);
+  }, [ready, readyN, hd, otherKey, othersOn, run]);
   const pickOtherRef = useRef(onPickOther); pickOtherRef.current = onPickOther;
   // Camera height above the ground (Phil, 17 Nov 2026): walk mode raises it (over the trees, on the wall) or lowers it (low
   // shots), 0.3 to 3 m. Kept through restarts of the view; back to eye height (1.73 m, 5'8") on another shot.
@@ -620,7 +621,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       if (m.levels && typeof m.levels.look === 'number' && typeof m.levels.sun === 'number') lastLevels = { look: m.levels.look, sun: m.levels.sun };
       if (typeof m.ms === 'number') setPerf({ ms: m.ms, worst: typeof m.worst === 'number' ? m.worst : m.ms, quality: typeof m.quality === 'string' ? m.quality : 'full' });
     }
-    else if (m.type === 'ready') setPhase('ready');
+    else if (m.type === 'ready') { setPhase('ready'); setReadyN(n => n + 1); }   // every page start gets the pins again
     else if (m.type === 'foreground') { setShapes(!!m.ok); setLaser(!!(m.ok && m.detail)); setPhotoFore(!!(m.ok && m.colour)); setForeBusy(false); }   // not ok = the page dropped it and kept the plain view
     else if (m.type === 'wideTrees') setWideTrees(m.ok && typeof m.trees === 'number' ? m.trees : 0);   // not ok = left out, the rest stays
     else if (m.type === 'range') setRangeIn(!!m.ok);   // not ok = left out, the view stays as it was

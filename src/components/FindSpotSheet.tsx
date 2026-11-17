@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { colors } from '../theme';
 import { supabase } from '../services/supabase';
-import { useSunStop } from '../services/sunPlan';
+import { useSunStop, tripForStop } from '../services/sunPlan';
 import type { SpotHint } from '../services/photoSpot';
 import { useTripStore } from '../store/tripStore';
 import { Coords, formatCoords, parseCoords } from '../utils/coords';
@@ -38,6 +38,8 @@ export default function FindSpotSheet({ visible, onClose, stopId, stopName, trip
   useEffect(() => {
     if (!visible || tripIn || !stopId) return;
     let alive = true;
+    // the plans saved on the phone first (works with no signal), then the server
+    tripForStop(stopId).then(t => { if (alive && t) setAskedTrip(t); }, () => {});
     supabase.from('stops').select('trip_id').eq('id', stopId).maybeSingle()
       .then(({ data }: any) => { if (alive && data?.trip_id) setAskedTrip(data.trip_id); }, () => {});
     return () => { alive = false; };
