@@ -2058,8 +2058,12 @@
     const th = lens.fw / (2 * lens.f), tv = lens.fh / (2 * lens.f), k = Math.max(th / (a * 0.9), tv / 0.9);
     const el = document.getElementById('frame');
     if (el) {   // written only when it changes: this runs every frame, and a style write makes the web view lay the page out again
-      const disp = lens.box ? 'block' : 'none', wd = (th / (k * a) * 100) + '%', ht = (tv / k * 100) + '%', key = disp + wd + ht;
-      if (key !== lensKey) { lensKey = key; el.style.display = disp; el.style.width = wd; el.style.height = ht; }
+      const only = !!(lens.box && lens.only), disp = lens.box ? 'block' : 'none', wd = (th / (k * a) * 100) + '%', ht = (tv / k * 100) + '%', key = disp + wd + ht + only;
+      if (key !== lensKey) {
+        lensKey = key; el.style.display = disp; el.style.width = wd; el.style.height = ht;
+        // frame only (17 Nov 2026): a huge black shadow round the box hides everything outside it
+        el.style.boxShadow = only ? '0 0 0 1px rgba(0,0,0,.55), 0 0 0 4000px #000' : '';
+      }
     }
     return 2 * Math.atan(k);
   }

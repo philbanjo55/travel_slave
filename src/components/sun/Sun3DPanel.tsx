@@ -127,6 +127,7 @@ const FRAME_SAY: Record<FrameMode, string> = { land: 'landscape', port: 'portrai
 // The last lens and frame chosen, kept while the app is open so full screen and the next stop start the same way.
 let lastLens = '135';
 let lastFrame: FrameMode = 'land';
+let lastFrameOnly = false;
 let lastForeground = true;
 let lastTrees = true;   // the foreground's trees (Phil, 16 Nov 2026: a "no trees" setting): kept like the foreground itself
 let lastIce: boolean | null = null;
@@ -236,12 +237,16 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     } else { setLensState(lastLens); setFrameState(lastFrame); }
   }, [vid]);
   // What the page needs for the lens: focal length, the film's width and height as the camera is turned, box on / off.
+  // Frame only (Phil, 17 Nov 2026): just what the lens sees, the rest of the picture black. Kept while the app is open.
+  const [frameOnly, setFrameOnlyState] = useState(lastFrameOnly);
+  const setFrameOnly = useCallback((v: boolean) => { lastFrameOnly = v; setFrameOnlyState(v); }, []);
   const lens = useMemo(() => ({
     f: pickLens.f,
     fw: frame === 'port' ? pickLens.short : pickLens.long,
     fh: frame === 'port' ? pickLens.long : pickLens.short,
     box: frame !== 'off',
-  }), [pickLens, frame]);
+    only: frame !== 'off' && frameOnly,   // everything outside the frame box blacked out (older pages ignore it)
+  }), [pickLens, frame, frameOnly]);
   const [lit, setLit] = useState<{ subjectLit: boolean; hereLit: boolean; up: boolean; trees: boolean } | null>(null);
   const [moments, setMoments] = useState<Moments | null>(null);
   const [look, setLook] = useState<number | null>(null);
@@ -854,6 +859,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             >
               <Ionicons name={frame === 'port' ? 'tablet-portrait-outline' : frame === 'land' ? 'tablet-landscape-outline' : 'scan-outline'} size={17} color={frame !== 'off' ? '#000000' : '#ffffff'} />
             </TouchableOpacity>
+            {frame !== 'off' && !hd ? (
+              <TouchableOpacity
+                onPress={() => setFrameOnly(!frameOnly)}
+                style={[styles.fullBtn, frameOnly && styles.lensOn]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: frameOnly }}
+                accessibilityLabel={frameOnly ? 'Frame only: on. Tap to see around the frame' : 'Frame only: off. Tap to black out everything outside the frame'}
+                hitSlop={6}
+              >
+                <Ionicons name="crop-outline" size={17} color={frameOnly ? '#000000' : '#ffffff'} />
+              </TouchableOpacity>
+            ) : null}
             {hasFore && !hd ? (
               <TouchableOpacity
                 onPress={cycleForeground}
