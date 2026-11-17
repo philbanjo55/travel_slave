@@ -2337,7 +2337,7 @@
     if (k !== OH.shadeKey) { OH.shadeKey = k; try { OH.shadeVal = !subjLit(sun.az, sun.alt); } catch (e) { OH.shadeVal = false; } }
     return OH.shadeVal;
   }
-  const _ohv = new THREE.Vector3();
+  const _ohv = new THREE.Vector3(), _ohc = new THREE.Vector3();
   function ohProj(x, y, z, w, h) { _ohv.set(x, y, z).project(R.cam); return { x: (_ohv.x + 1) / 2 * w, y: (1 - _ohv.y) / 2 * h }; }
   // a screen vector no longer than k (a ray drawn toward a point km away stays a sane number of pixels)
   // The stop's other stand spots in the normal 3D view (Phil, 17 Nov 2026: "how far, treacherous"): a marker on each,
@@ -2373,20 +2373,55 @@
     c.style.display = OTH.on && OTH.calc.length ? 'block' : 'none';
     if (!OTH.on || !OTH.calc.length || !R) return;
     const fmt = m => m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
-    const items = OTH.calc.map(x => { const q = ohXZ(x.p); _ohv.set(q.x, x.h1 + 1.7, q.z).project(R.cam); return { x, sx: (_ohv.x + 1) / 2 * w, sy: (1 - _ohv.y) / 2 * h, z: _ohv.z }; })
-      .filter(t => t.z > -1 && t.z < 1).sort((a, b) => b.x.d - a.x.d);   // in front of the camera; far ones first (near on top)
-    for (const t of items) {
-      const { x, sx, sy } = t; if (sx < -40 || sx > w + 40 || sy < -40 || sy > h + 40) continue;
-      g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,0.6)'; g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx, sy - 18); g.stroke();
-      g.beginPath(); g.arc(sx, sy - 22, 6, 0, 2 * Math.PI); g.fillStyle = '#ffffff'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#000000'; g.stroke();
-      const up = Math.round(x.up), lines = [`${x.o.code || x.o.name || 'Spot'} · ${fmt(x.d)}`, `${up === 0 ? 'level' : up > 0 ? `${up} m up` : `${-up} m down`}${x.steep >= 20 ? ` · steep ${Math.round(x.steep)}°` : ''}`];
-      g.font = '700 12px Roboto, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'bottom'; g.lineJoin = 'round';
-      for (let i = 0; i < lines.length; i++) {
-        const ly = sy - 32 - (lines.length - 1 - i) * 15; g.font = `${i ? 600 : 700} ${i ? 11 : 12}px Roboto, system-ui, sans-serif`;
-        g.lineWidth = 3.5; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(lines[i], sx, ly);
-        g.fillStyle = i && x.steep >= 30 ? '#ffb4a8' : '#ffffff'; g.fillText(lines[i], sx, ly);
+    // A pin in view stands on its spot. One out of view (behind you, to the side, under your feet: 17 Nov 2026, Phil
+    // saw none from Find my spot's spots, which look the same way as the others) sits at the edge it lies past, with
+    // an arrow pointing to it, so every other stand spot is always on screen.
+    const M = 46;
+    const items = OTH.calc.map(x => {
+      const q = ohXZ(x.p); _ohc.set(q.x, x.h1 + 1.7, q.z).applyMatrix4(R.cam.matrixWorldInverse);
+      _ohv.set(q.x, x.h1 + 1.7, q.z).project(R.cam);
+      const sx = (_ohv.x + 1) / 2 * w, sy = (1 - _ohv.y) / 2 * h;
+      const inView = _ohc.z < -0.5 && sx >= 8 && sx <= w - 8 && sy - 60 >= 4 && sy <= h - 8;
+      let ex = sx, ey = sy, dir = null;
+      if (!inView) {
+        if (_ohc.z < -0.5 && sx >= M && sx <= w - M) { ex = sx; if (sy > h - 8) { ey = h - 14; dir = 'down'; } else { ey = 72; dir = 'up'; } }
+        else { dir = _ohc.x >= 0 ? 'right' : 'left'; ex = dir === 'right' ? w - 14 : 14; ey = Math.max(80, Math.min(h - 30, _ohc.z < -0.5 ? sy : h * 0.55)); }
       }
-      OTH.dots.push({ id: x.o.id, x: sx, y: sy - 22 });
+      return { x, sx: ex, sy: ey, dir };
+    }).sort((a, b) => b.x.d - a.x.d);   // far ones first (near on top)
+    const edgeTaken = [];
+    for (const t of items) {
+      const { x, dir } = t; let { sx, sy } = t;
+      if (dir) {   // keep edge markers from piling on one another
+        for (let k = 0; k < 8 && edgeTaken.some(e => e.dir === dir && Math.abs(e.x - sx) < 70 && Math.abs(e.y - sy) < 38); k++) {
+          if (dir === 'left' || dir === 'right') sy = Math.min(h - 30, sy + 40); else sx = Math.min(w - M, sx + 72);
+        }
+        edgeTaken.push({ dir, x: sx, y: sy });
+      }
+      const up = Math.round(x.up), lines = [`${x.o.code || x.o.name || 'Spot'} · ${fmt(x.d)}`, `${up === 0 ? 'level' : up > 0 ? `${up} m up` : `${-up} m down`}${x.steep >= 20 ? ` · steep ${Math.round(x.steep)}°` : ''}`];
+      let dotX = sx, dotY = sy - 22, align = 'center', tx = sx, ty0 = sy - 32;
+      if (!dir) {
+        g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,0.6)'; g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx, sy - 18); g.stroke();
+        g.beginPath(); g.arc(sx, sy - 22, 6, 0, 2 * Math.PI); g.fillStyle = '#ffffff'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#000000'; g.stroke();
+      } else {
+        const a = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 }[dir];
+        dotX = sx; dotY = sy;
+        g.save(); g.translate(sx, sy); g.rotate(a);
+        g.beginPath(); g.moveTo(9, 0); g.lineTo(-6, -8); g.lineTo(-6, 8); g.closePath();
+        g.fillStyle = '#ffffff'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#000000'; g.stroke(); g.restore();
+        if (dir === 'right') { align = 'right'; tx = sx - 14; ty0 = sy - 1; }
+        else if (dir === 'left') { align = 'left'; tx = sx + 14; ty0 = sy - 1; }
+        else if (dir === 'down') { ty0 = sy - 14; }
+        else { ty0 = sy + 30; }
+      }
+      g.textAlign = align; g.textBaseline = 'bottom'; g.lineJoin = 'round';
+      for (let i = 0; i < lines.length; i++) {
+        const ly = dir === 'left' || dir === 'right' ? ty0 + i * 15 : ty0 - (lines.length - 1 - i) * 15;
+        g.font = `${i ? 600 : 700} ${i ? 11 : 12}px Roboto, system-ui, sans-serif`;
+        g.lineWidth = 3.5; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(lines[i], tx, ly);
+        g.fillStyle = i && x.steep >= 30 ? '#ffb4a8' : '#ffffff'; g.fillText(lines[i], tx, ly);
+      }
+      OTH.dots.push({ id: x.o.id, x: dotX, y: dotY });
     }
   }
   const ohCap = (a, b, k) => { const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy); return l > k ? { x: a.x + dx / l * k, y: a.y + dy / l * k } : b; };

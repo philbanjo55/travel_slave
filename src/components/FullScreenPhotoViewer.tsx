@@ -354,7 +354,14 @@ function FindSpot({ photoId, stop, onLeave }: { photoId: string; stop: { id: str
             <Text style={styles.spotTitle}>Spot found</Text>
             <Text style={[styles.spotSmall, { color: '#5aaa7a' }]}>{job?.result?.confidence?.word ?? ''}</Text>
           </View>
-          <Text style={styles.spotSmall}>Tap to see it</Text>
+          <View style={styles.spotRow}>
+            <Text style={styles.spotSmall}>Tap to see it</Text>
+            {!offline ? (
+              <Pressable onPress={() => start(true)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Find this spot again">
+                <Text style={[styles.spotSmall, { color: '#ffffff', fontWeight: '700' }]}>Find again</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </Pressable>
       ) : failed || err ? (
         <View style={[styles.spotCard, { bottom: insets.bottom + 100 }]} accessibilityLabel="Couldn't place it">

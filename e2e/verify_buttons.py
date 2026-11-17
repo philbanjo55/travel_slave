@@ -1746,6 +1746,9 @@ def spot_open_3d_edit():
     line = next((t for t in f.all_texts if t.startswith(('Framing: ', 'Not a shot yet', 'Not framed yet', 'Framed '))), None)
     print(f'INFO spot-3d framing line: {line!r}', flush=True)
     V.check('spot-3d-aim', btn(f, 'Aim at subject') is not None, 'Aim at subject button')
+    # the stop's other stand spots as pins (17 Nov 2026: the screen never loaded the stop's shots until 774fdfc)
+    pb = next((c for c in f.clickables if c['label'].startswith('Other stand spots')), None)
+    V.check('spot-3d-pins', pb is not None, (pb['label'].split(' | ')[0] if pb else 'no Other stand spots button: the stop\'s shots were not loaded')[:70])
     cut_off('spot-3d-edit', f)
     if V.tap_text(f, 'Save framing for this shot'):
         q = None

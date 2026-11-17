@@ -144,12 +144,15 @@ export function useSunStopState(tripId: string | null | undefined, stopId: strin
     let alive = true;
     const onUpdate = (id: string) => { if (alive && id === tripId && memory[id]) { setPlan(memory[id]); setReady(true); } };
     listeners.add(onUpdate);
+    // The trip can arrive after the first render (Find my spot learns its stop's trip from the job): the plan already
+    // in memory must be taken then too, not only at the first render (17 Nov 2026: Find my spot's 3D had no pins).
+    setPlan(memory[tripId] ?? null); setReady(!!memory[tripId]);
     (async () => {
       if (!memory[tripId]) {
         const cached = await readCached(tripId);
         if (cached && !memory[tripId]) { memory[tripId] = cached; saveTerrain(tripId, cached); }   // no signal: still counts what is saved
-        if (alive && memory[tripId]) setPlan(memory[tripId]);
       }
+      if (alive && memory[tripId]) setPlan(memory[tripId]);
       if (alive) setReady(true);
       refreshSunPlan(tripId);
     })();
