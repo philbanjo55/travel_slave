@@ -2170,7 +2170,7 @@
     R.halo.position.copy(R.disc.position); R.halo.lookAt(cam.position);
     if (OH.on) R.disc.visible = R.halo.visible = false;
     R.renderer.render(R.scene, cam); dirty = false; frames++;
-    if (OH.on) ohOverlay();
+    if (OH.on) ohOverlay(); else othOverlay();
     owe = quick || q !== QL[0]; sharp = false;
     if (owe && restTimer == null && !resting) restTimer = setTimeout(rested, REST.sun);   // a light change nobody touched for (the foreground coming in, ice on / off)
     if (a) { a.px = cw * ch; a.pts = pts; a.wpts = wpts; }
@@ -2254,7 +2254,7 @@
     if (!OH.saved) OH.saved = { near: cam.near, far: cam.far, fogD: F.fogD.value };
     F.fogD.value = 0; R.sky.visible = false; R.renderer.setClearColor(0x111111, 1);
     const fr = document.getElementById('frame'); if (fr) fr.style.display = 'none'; lensKey = '';
-    ohCanvas().style.display = 'block';
+    ohCanvas().style.display = 'block'; if (OTH.cv) OTH.cv.style.display = 'none';
     if (OH.needFit || !OH.shotKey) ohFit();
     relight = dirty = true;
   }
@@ -2330,6 +2330,55 @@
   const _ohv = new THREE.Vector3();
   function ohProj(x, y, z, w, h) { _ohv.set(x, y, z).project(R.cam); return { x: (_ohv.x + 1) / 2 * w, y: (1 - _ohv.y) / 2 * h }; }
   // a screen vector no longer than k (a ray drawn toward a point km away stays a sane number of pixels)
+  // The stop's other stand spots in the normal 3D view (Phil, 17 Nov 2026: "how far, treacherous"): a marker on each,
+  // labelled with the distance, how much higher / lower, and the steepest ground on the straight line from where you
+  // stand (6 m steps, the finest terrain there). S3D.others([{id, code, name, lat, lng}]), S3D.othersOn(bool); a tap on
+  // a marker posts {type: 'otherTap', id}. Drawn on its own canvas over the picture; never in the sun times.
+  const OTH = { list: [], on: true, cv: null, g2: null, calc: [], dots: [] };
+  function othCanvas() {
+    if (OTH.cv) return OTH.cv;
+    const c = document.createElement('canvas'); c.id = 'oth'; c.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none';
+    document.body.insertBefore(c, document.getElementById('msg')); OTH.cv = c; OTH.g2 = c.getContext('2d'); return c;
+  }
+  function othCalc() {
+    OTH.calc = [];
+    if (!R || !eye || !OTH.list.length) return;
+    let h0; try { h0 = ohH(eye); } catch (e) { return; }
+    for (const o of OTH.list) {
+      const p = { lat: +o.lat, lng: +o.lng }; if (!inside(p)) continue;
+      const d = ohDist(eye, p); if (d < 1) continue;
+      let h1; try { h1 = ohH(p); } catch (e) { continue; }
+      const n = Math.min(240, Math.max(2, Math.ceil(d / 3))), hs = [];
+      for (let i = 0; i <= n; i++) { const t = i / n; try { hs.push(ohH({ lat: eye.lat + (p.lat - eye.lat) * t, lng: eye.lng + (p.lng - eye.lng) * t })); } catch (e) { hs.push(NaN); } }
+      const step = d / n, k = Math.max(1, Math.round(6 / step)); let steep = 0;
+      for (let i = 0; i + k < hs.length; i++) { const dh = hs[i + k] - hs[i]; if (Number.isFinite(dh)) steep = Math.max(steep, Math.atan(Math.abs(dh) / (k * step)) * 180 / Math.PI); }
+      OTH.calc.push({ o, p, d, up: h1 - h0, steep, h1 });
+    }
+  }
+  function othOverlay() {
+    if (!OTH.cv && !OTH.list.length) return;
+    const c = othCanvas(), w = window.innerWidth || 1, h = window.innerHeight || 1, dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cw = Math.round(w * dpr), ch = Math.round(h * dpr); if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+    const g = OTH.g2; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h); OTH.dots = [];
+    c.style.display = OTH.on && OTH.calc.length ? 'block' : 'none';
+    if (!OTH.on || !OTH.calc.length || !R) return;
+    const fmt = m => m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+    const items = OTH.calc.map(x => { const q = ohXZ(x.p); _ohv.set(q.x, x.h1 + 1.7, q.z).project(R.cam); return { x, sx: (_ohv.x + 1) / 2 * w, sy: (1 - _ohv.y) / 2 * h, z: _ohv.z }; })
+      .filter(t => t.z > -1 && t.z < 1).sort((a, b) => b.x.d - a.x.d);   // in front of the camera; far ones first (near on top)
+    for (const t of items) {
+      const { x, sx, sy } = t; if (sx < -40 || sx > w + 40 || sy < -40 || sy > h + 40) continue;
+      g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,0.6)'; g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx, sy - 18); g.stroke();
+      g.beginPath(); g.arc(sx, sy - 22, 6, 0, 2 * Math.PI); g.fillStyle = '#ffffff'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#000000'; g.stroke();
+      const up = Math.round(x.up), lines = [`${x.o.code || x.o.name || 'Spot'} · ${fmt(x.d)}`, `${up === 0 ? 'level' : up > 0 ? `${up} m up` : `${-up} m down`}${x.steep >= 20 ? ` · steep ${Math.round(x.steep)}°` : ''}`];
+      g.font = '700 12px Roboto, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'bottom'; g.lineJoin = 'round';
+      for (let i = 0; i < lines.length; i++) {
+        const ly = sy - 32 - (lines.length - 1 - i) * 15; g.font = `${i ? 600 : 700} ${i ? 11 : 12}px Roboto, system-ui, sans-serif`;
+        g.lineWidth = 3.5; g.strokeStyle = 'rgba(0,0,0,0.85)'; g.strokeText(lines[i], sx, ly);
+        g.fillStyle = i && x.steep >= 30 ? '#ffb4a8' : '#ffffff'; g.fillText(lines[i], sx, ly);
+      }
+      OTH.dots.push({ id: x.o.id, x: sx, y: sy - 22 });
+    }
+  }
   const ohCap = (a, b, k) => { const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy); return l > k ? { x: a.x + dx / l * k, y: a.y + dy / l * k } : b; };
   const ohShort = n => { let t = String(n || '').replace(/\s*\(.*?\)\s*/g, ' ').trim(); if (t.length > 14) t = t.replace(/^(Mount|Mt\.?)\s+/i, ''); if (t.length > 14) t = t.split(/\s+/)[0]; return t; };
   const ohKm = m => m >= 1000 ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : `${Math.round(m / 10) * 10} m`;
@@ -2458,6 +2507,7 @@
 
   const WALK_MAX = 400;
   function told() {
+    othCalc();
     const kz = 111132, kx = 111320 * Math.cos(eye.lat * Math.PI / 180);
     post({ type: 'eye', lat: eye.lat, lng: eye.lng, moved: Math.round(Math.hypot((eye.lat - eye0.lat) * kz, (eye.lng - eye0.lng) * kx) * 10) / 10 });   // 0.1 m: fine steps are 25 cm
     post({ type: 'state', subjectLit: subjLit(sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
@@ -2465,10 +2515,17 @@
   let drag = null;
   function wire() {
     const c = R.canvas;
-    c.addEventListener('pointerdown', e => { if (OH.on) return ohDown(e); drag = { x: e.clientX, y: e.clientY }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
+    c.addEventListener('pointerdown', e => { if (OH.on) return ohDown(e); drag = { x: e.clientX, y: e.clientY }; OTH.tap = { x: e.clientX, y: e.clientY, t: performance.now() }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
     c.addEventListener('webglcontextlost', e => { e.preventDefault(); if (R) R.lost = true; post({ type: 'lost', fore: foreState > 0 }); });
     c.addEventListener('pointermove', e => { if (OH.on) return ohMove(e); if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; touch('look'); });
-    const drop = e => { if (OH.on) return ohUp(e); if (drag) { drag = null; heading(); if (act && act.kind === 'look') rest(); } };   // finger up: the sharp frame now
+    const drop = e => {
+      if (OH.on) return ohUp(e);
+      const tp = OTH.tap; OTH.tap = null;
+      if (tp && e && e.type === 'pointerup' && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) < 10 && performance.now() - tp.t < 600 && OTH.on) {   // a tap on another stand spot's marker
+        let best = null, bd = 26; for (const d of OTH.dots) { const dd = Math.hypot(d.x - e.clientX, d.y - e.clientY); if (dd < bd) { bd = dd; best = d; } }
+        if (best) post({ type: 'otherTap', id: best.id });
+      }
+      if (drag) { drag = null; heading(); if (act && act.kind === 'look') rest(); } };   // finger up: the sharp frame now
     c.addEventListener('pointerup', drop); c.addEventListener('pointercancel', drop);
     window.addEventListener('resize', resize);
   }
@@ -2491,6 +2548,7 @@
         if (OH.on) ohApplyR();
         const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length || (cfg.canopy && cnAny()) || (cfg.range && rparts.length) || (cfg.houses && hsAny()));
         post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: 0, fore }); heading();
+        othCalc();
         if (eye !== eye0) told();   // a restart that kept a walked-to spot: the app hears where it stands again
         if (fore) queueFore();
       } catch (e) { fail("The 3D view couldn't start on this phone."); post({ type: 'error', msg: String(e && e.message || e) }); }
@@ -2544,6 +2602,8 @@
     overheadUp(v) { ohSetUp(v === undefined ? 'view' : v); dirty = true; ohSay(); },
     overheadShade(v) { OH.shaded = typeof v === 'boolean' ? v : null; dirty = true; },
     overheadSun(v) { OH.sunOn = v !== false; relight = dirty = true; },
+    others(list) { OTH.list = Array.isArray(list) ? list.filter(o => o && Number.isFinite(+o.lat) && Number.isFinite(+o.lng)) : []; othCalc(); dirty = true; },
+    othersOn(v) { OTH.on = v !== false; dirty = true; },
     overheadMarks(v) { OH.marks = v !== false; dirty = true; },   // the cone, the other shots' wedges and the sun arrows / band on or off
     overheadFit() { ohFit(); dirty = true; ohSay(); },
     // overheadZoom(k): k > 1 closer, < 1 farther, about the middle of the screen (the small view's + / - buttons)
