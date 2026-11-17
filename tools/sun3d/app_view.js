@@ -104,7 +104,13 @@
   let cnparts = {}, cnbytes = {}, cnlast = -1, wideTiles = null, wideState = 0, wideRun = 0;   // park-wide trees: tile pieces by index, each tile's packed bytes once its pieces are in, the tile coming in, the packed files, 0 none 1 building 2 in -1 dropped
   const cnAny = () => Object.keys(cnparts).length > 0 || Object.keys(cnbytes).length > 0;   // foreground: 0 none, 1 on its way, 2 in, -1 dropped
   let R = null;   // everything three.js, once built
-  const OHU = { value: 0 };   // the view from above is on (S3D.overhead): shaders draw trees as crowns seen from over them
+  const OHU = { value: 0 };
+  // The tree shaders' from-above drawing is compiled in only while the view from above is on (17 Nov 2026: as a run-time
+  // branch it made every tree pixel of the normal 3D view dearer, and the test emulator's software graphics froze):
+  // these materials get the OH define on entering it and lose it on leaving.
+  const OHM = new Set();
+  function ohMat(m) { OHM.add(m); if (OHU.value) { m.defines = Object.assign({}, m.defines, { OH: 1 }); m.needsUpdate = true; } return m; }
+  function ohDefines(on) { for (const m of OHM) { const d = Object.assign({}, m.defines); if (on) d.OH = 1; else delete d.OH; m.defines = d; m.needsUpdate = true; } }   // the view from above is on (S3D.overhead): shaders draw trees as crowns seen from over them
   let eye = null, eye0 = null, target = null, framed = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true;
   const G = 768;  // mesh points per side
 
@@ -820,10 +826,15 @@
     uniform sampler2D kmap; uniform sampler2D lmap; uniform vec4 rect; uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform float fogD; uniform float pscale;
     uniform float oh;   // 1 = the view from above: each tree is its crown seen from over it (a flat quad at the tree's top)
     attribute vec3 tpos; attribute vec4 tsz;   // ground point; height m, drawn width m, 2 = bare else the crown's shape a / 2.5, random
-    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx; varying vec3 vOh;
+    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx;
+#ifdef OH
+    varying vec3 vOh;
+#endif
     void main() {
       vec2 rg = vec2(viewMatrix[0][0], viewMatrix[2][0]); rg = length(rg) > 1e-5 ? normalize(rg) : vec2(1., 0.);
+#ifdef OH
       vec2 fw = vec2(viewMatrix[0][1], viewMatrix[2][1]); fw = length(fw) > 1e-5 ? normalize(fw) : vec2(0., -1.);   // the screen's up, on the ground (from above)
+#endif
       // A2: a crown close to the eye is a flat quad seen from inside its own width (a striped slab at a frame edge): a tree
       // whose crown (a cylinder: the drawn half-width round the stem, foot to top) is within NEAR_DROP m of the eye in 3D is
       // not drawn. Per frame in the shader, so it follows the eye while walking. (A dithered fade over 8-12 m was tried:
@@ -831,7 +842,9 @@
       vec2 dxz = tpos.xz - cameraPosition.xz; float dh = max(length(dxz) - .5 * tsz.y, 0.), dv = max(max(tpos.y - cameraPosition.y, cameraPosition.y - tpos.y - tsz.x), 0.);
       if (length(vec2(dh, dv)) < ${NEAR_DROP.toFixed(1)}) { gl_Position = vec4(2., 2., 2., 1.); return; }
       vec3 p = vec3(tpos.x + rg.x * position.x * tsz.y, tpos.y - .4 + position.y * (tsz.x + .4), tpos.z + rg.y * position.x * tsz.y);   // the foot a little into the ground (slopes)
+#ifdef OH
       if (oh > .5) p = vec3(tpos.x + (rg.x * position.x + fw.x * (position.y - .5)) * tsz.y, tpos.y + tsz.x, tpos.z + (rg.y * position.x + fw.y * (position.y - .5)) * tsz.y);
+#endif
       vec4 mv = modelViewMatrix * vec4(p, 1.); gl_Position = projectionMatrix * mv; float dist = length(mv.xyz);
       vQ = position.xy; vT = tsz;
       vec2 uv = (tpos.xz - rect.xy) / rect.zw; float sh = 0., hl = length(sunDir.xz);
@@ -839,14 +852,19 @@
         for (int k = 1; k <= 6; k++) { float d = .5 * tsz.y + 1.6 * float(k); if (y0 + tanA * d < texture2D(kmap, uv + dir * d).a * 51.) sh += .22; } }
       vSun = sunCol * texture2D(lmap, uv).a * (1. - .8 * min(sh, 1.)); vAmb = amb;
       vSide = hl > 1e-4 ? dot(sunDir.xz / hl, rg) : 0.;
+#ifdef OH
       vOh = vec3(oh, hl > 1e-4 ? dot(sunDir.xz / hl, rg) : 0., hl > 1e-4 ? dot(sunDir.xz / hl, fw) : 0.);
+#endif
       vFog = 1. - exp(-pow(fogD * dist, 2.)); vPx = dist / pscale;
     }`;
   // A draws the outline solid; B (STIPPLE) fills the same outline with soft dots (a point cloud with no gaps however
   // near the tree is: the dots are cut in the fragment shader, a few cm apart close by, a pixel and a half far off).
   const SHAPE_FS = `
     precision highp float; uniform float snowMode; uniform vec3 fogCol;
-    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx; varying vec3 vOh;
+    varying vec2 vQ; varying vec4 vT; varying vec3 vSun; varying vec3 vAmb; varying float vFog; varying float vSide; varying float vPx;
+#ifdef OH
+    varying vec3 vOh;
+#endif
     float h1(float x) { return fract(sin(x * 78.233) * 43758.5453); }
     float h2(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     float sg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float t = clamp(dot(pa, ba) / dot(ba, ba), 0., 1.); return length(pa - ba * t); }
@@ -857,6 +875,7 @@
       return h2(cell + r + 11.) < keep && length(f - .75 * off) < .3 + .2 * h2(cell + r + 7.);   // dots off the grid, of uneven size
     }
     void main() {
+#ifdef OH
       if (vOh.x > .5) {   // from above: an evergreen is a dark round crown (snow on its boughs), a bare tree a lace of limbs
         vec2 d = vec2(vQ.x, vQ.y - .5) * 2.; float rr = length(d), rw = vT.w, ww = vT.y, pxo = max(vPx, .01), lt = .5 + .5 * clamp(dot(d, vOh.yz), -1., 1.);
         vec3 co;
@@ -875,6 +894,7 @@
         cl = pow(min(cl * .9, vec3(1.)), vec3(.62));
         gl_FragColor = vec4(mix(cl, fogCol, vFog), 1.); return;
       }
+#endif
       float H = vT.x, W = vT.y, r = vT.w, x = vQ.x * W, y = vQ.y * H, px = max(vPx, .01), lit, sh = .5;
       vec3 c;
       if (vT.z < 1.) {   // evergreen: a spire of tiered boughs from just over the snow to the top, as full as its survey crown
@@ -1337,7 +1357,7 @@
       const mesh = new THREE.Mesh(dgeo, [mat]); mesh.frustumCulled = false; made.push(dLight, dlo, dhi, mat);
       det = { lightMat: dLight, lo: dlo, hi: dhi, lite: [], mat, mesh, dmap, kmap, points: null, count: 0, houses: null };
       if (tp && tp.inst) {   // A / B: one quad a tree
-        const smat = new THREE.ShaderMaterial({ defines: STYLE === 'cloud' ? { STIPPLE: 1 } : {}, uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, oh: OHU }, vertexShader: SHAPE_VS, fragmentShader: SHAPE_FS });
+        const smat = new THREE.ShaderMaterial({ defines: STYLE === 'cloud' ? { STIPPLE: 1 } : {}, uniforms: { kmap: { value: kmap }, lmap: { value: dlo.texture }, rect: { value: drect }, sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, oh: OHU }, vertexShader: SHAPE_VS, fragmentShader: SHAPE_FS }); ohMat(smat);
         det.points = new THREE.Mesh(tp.inst, smat); det.points.frustumCulled = false; det.inst = true; det.count = tp.count; made.push(tp.inst, smat);
         const drop = function () { free(this.array); this.array = null; }; tp.inst.attributes.tpos.onUpload(drop); tp.inst.attributes.tsz.onUpload(drop);
       } else if (tp) {
@@ -1619,7 +1639,10 @@
     uniform float pscale; uniform float snowMode; uniform float share; uniform float clearR; uniform float psMax;
     uniform float oh;   // 1 = from above: the point is the crown seen from over the tree's top
     attribute vec4 tw;
-    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide; varying vec3 vOh;
+    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide;
+#ifdef OH
+    varying vec3 vOh;
+#endif
     void main() {
       float S = max(tw.x, tw.y);
       vec4 mv = modelViewMatrix * vec4(position.x, position.y + (oh > .5 ? tw.x : S * .5), position.z, 1.); float dist = length(mv.xyz);
@@ -1636,15 +1659,21 @@
       vSun = sunCol * vis;
       vec2 rgt = vec2(viewMatrix[0][0], viewMatrix[2][0]), sh = sunDir.xz;
       vSide = length(rgt) > 1e-4 && length(sh) > 1e-4 ? dot(normalize(sh), normalize(rgt)) : 0.;
+#ifdef OH
       vec2 upg = vec2(viewMatrix[0][1], viewMatrix[2][1]);
       vOh = vec3(oh, vSide, length(upg) > 1e-4 && length(sh) > 1e-4 ? dot(normalize(sh), normalize(upg)) : 0.);
+#endif
       vFog = 1. - exp(-pow(fogD * dist, 2.)); vFogC = fogCol;
     }`;
   const WTREE_FS = `
     precision highp float; uniform vec3 amb; uniform float snowMode;
-    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide; varying vec3 vOh;
+    varying vec4 vS; varying vec3 vBase; varying vec3 vSun; varying vec3 vFogC; varying float vFog; varying float vSide;
+#ifdef OH
+    varying vec3 vOh;
+#endif
     float h1(float x) { return fract(sin(x * 78.233) * 43758.5453); }
     void main() {
+#ifdef OH
       if (vOh.x > .5) {   // from above: a round crown (an evergreen), or a see-through lace (bare in winter)
         vec2 qo = gl_PointCoord, d = vec2(qo.x - .5, .5 - qo.y) * 2.; float rr = length(d), ro = fract(vS.w), lt = .5 + .5 * clamp(dot(d, vOh.yz), -1., 1.);
         vec3 co;
@@ -1658,6 +1687,7 @@
         cl = pow(min(cl * .9, vec3(1.)), vec3(.62));
         gl_FragColor = vec4(mix(cl, vFogC, vFog), 1.); return;
       }
+#endif
       vec2 q = gl_PointCoord; float yb = (1. - q.y) / vS.x, u = (q.x - .5) / vS.y;   // yb 0 at the ground .. 1 at the crown's top; u -.5 .. .5 across it
       if (yb > 1. || abs(u) > .5) discard;
       if (vS.w >= 2.) {   // bare in winter (A / B): a trunk and a lace of twigs in an oval crown, see-through, grey-brown
@@ -1896,7 +1926,7 @@
       let psMax = 256; try { psMax = Math.max(16, Math.min(512, gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] || 64)); } catch (e) { psMax = 64; }
       const mat = new THREE.ShaderMaterial({ uniforms: { lmapF: { value: R.lo.texture }, lmapN: { value: R.near ? R.near.lo.texture : R.lo.texture }, nrect: { value: NR ? new THREE.Vector4(NR.x0, NR.z0, NR.w, NR.d) : new THREE.Vector4(0, 0, 1, 1) }, hasN: { value: NR && R.near ? 1 : 0 }, size: { value: C.size },
         sunDir: sunU.sunDir, sunCol: sunU.sunCol, amb: sunU.amb, fogCol: fog.fogCol, fogD: fog.fogD, pscale: { value: 600 }, snowMode: sunU.snowMode, share: { value: 1 }, clearR: { value: 30 }, psMax: { value: psMax }, oh: OHU },
-        vertexShader: WTREE_VS, fragmentShader: WTREE_FS });
+        vertexShader: WTREE_VS, fragmentShader: WTREE_FS }); ohMat(mat);
       made.push(mat);
       const pts = new THREE.Points(wp.geo, [mat]); pts.frustumCulled = false;
       const drop = function () { free(this.array); this.array = null; }; wp.geo.attributes.position.onUpload(drop); wp.geo.attributes.tw.onUpload(drop);
@@ -2228,10 +2258,10 @@
     if (OH.needFit || !OH.shotKey) ohFit();
     relight = dirty = true;
   }
-  function ohEnter() { OH.on = true; OHU.value = 1; OH.posted = false; OH.ptr.clear(); OH.tap = null; if (R) ohApplyR(); }
+  function ohEnter() { OH.on = true; if (!OHU.value) { OHU.value = 1; ohDefines(true); } OH.posted = false; OH.ptr.clear(); OH.tap = null; if (R) ohApplyR(); }
   function ohLeave() {
     if (!OH.on) return;
-    OH.on = false; OHU.value = 0; OH.ptr.clear();
+    OH.on = false; if (OHU.value) { OHU.value = 0; ohDefines(false); } OH.ptr.clear();
     if (R && OH.saved) { const cam = R.cam; cam.near = OH.saved.near; cam.far = OH.saved.far; R.ctx.fog.fogD.value = OH.saved.fogD; R.sky.visible = true; R.renderer.setClearColor(0x000000, 1); }
     OH.saved = null; lensKey = '';
     if (OH.cv) { OH.cv.style.display = 'none'; OH.g2.clearRect(0, 0, OH.cv.width, OH.cv.height); }
