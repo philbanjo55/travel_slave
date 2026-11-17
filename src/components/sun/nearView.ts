@@ -7,24 +7,33 @@ import { Dimensions, View } from 'react-native';
 // 3D view starts only once the section has been scrolled to within a quarter screen of the bottom edge, and then stays.
 // The page's scroll view calls pingNearView() on scroll; each waiting part measures itself then.
 
+// 17 Nov 2026 (Phil: "when I scroll it buffers"): the 3D view also waits until the scrolling has stopped (0.7 s quiet)
+// and the section is well on screen, so it never starts loading while the page is moving.
 const subs = new Set<() => void>();
-export function pingNearView(): void { subs.forEach(f => { try { f(); } catch { /* a part gone */ } }); }
+const QUIET_MS = 700;
+let quietTimer: ReturnType<typeof setTimeout> | null = null;
+export function pingNearView(): void {
+  if (quietTimer) clearTimeout(quietTimer);
+  quietTimer = setTimeout(() => { quietTimer = null; subs.forEach(f => { try { f(); } catch { /* a part gone */ } }); }, QUIET_MS);
+}
 
 type Box = React.ComponentRef<typeof View>;
-export function useNearView(): { ref: React.RefObject<Box | null>; near: boolean; onLayout: () => void } {
+export function useNearView(): { ref: React.RefObject<Box | null>; near: boolean; onLayout: () => void; start: () => void } {
   const ref = useRef<Box | null>(null);
   const [near, setNear] = useState(false);
   const check = useCallback(() => {
     ref.current?.measureInWindow((_x: number, y: number, _w: number, h: number) => {
       const H = Dimensions.get('window').height;
-      if (h > 0 && y < H * 1.25 && y + h > -H) setNear(true);
+      if (quietTimer) return;   // still scrolling: the settle check comes after
+      if (h > 0 && y < H * 0.8 && y + h > H * 0.15) setNear(true);
     });
   }, []);
   useEffect(() => {
     if (near) return;
     subs.add(check);
-    const t = setTimeout(check, 400);   // a page opened already scrolled down (or a short page) has no scroll to wait for
+    const t = setTimeout(check, 900);   // a page opened already scrolled down (or a short page) has no scroll to wait for
     return () => { subs.delete(check); clearTimeout(t); };
   }, [near, check]);
-  return { ref, near, onLayout: check };
+  const start = useCallback(() => setNear(true), []);   // a tap on the placeholder starts it at once
+  return { ref, near, onLayout: check, start };
 }

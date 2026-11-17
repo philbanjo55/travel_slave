@@ -318,7 +318,11 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
           <View style={styles.fullNote}><Text style={styles.fullNoteText}>Showing full screen</Text></View>
         ) : !nv.near ? (
           // the 3D view starts once this part of the page is (nearly) on screen, never while the stop page opens
-          <View ref={nv.ref} collapsable={false} onLayout={nv.onLayout} style={styles.fullNote}><Text style={styles.fullNoteText}>3D loads here</Text></View>
+          <View ref={nv.ref} collapsable={false} onLayout={nv.onLayout}>
+            <TouchableOpacity onPress={nv.start} style={styles.fullNote} accessibilityRole="button" accessibilityLabel="3D loads here. Tap to load now">
+              <Text style={styles.fullNoteText}>3D loads here</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
           <Sun3DPanel pair={pair} tripId={tripId} sun={light.sun} day0={day0} height={208} onJump={setMinute} onFull={() => setFull3d(true)} hdOn={hd3d} onHd={setHd3d} />
         )
