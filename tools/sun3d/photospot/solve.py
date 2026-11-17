@@ -524,6 +524,9 @@ AIR_MAX = 122.0       # US drone limit, 400 ft above the ground
 AERIAL_M = 8.0        # an eye higher than this is called a raised / drone camera
 AIR_MARGIN = 0.05     # an air answer must beat the ground one by the confidence delta: the ground answer is then no longer
 AIR_MARGIN_HINT = 0.02   # "possible"; when the look itself said 'drone' a smaller lead is enough
+AIR_SKY_GAIN = 0.02   # ... and (without a drone look) the sky line alone must fit better too: the far skyline barely moves
+                      # with height, so only near ridges / trees pin it; the region picture alone can be fooled by a wrong
+                      # height (scan 3, Oxbow Bend: 10 m over the water won 0.11 on region only, the sky line got worse)
 
 
 def spot_score(R, s, q0, pts, robust=False):
@@ -566,6 +569,11 @@ def height_profile(R, sol, heights=HEIGHTS, delta=0.05):
     j = int(np.argmax(sc))
     return dict(best=e0, lo=min(ok), hi=max(ok), top=hs[j], top_gain=sc[j] - ref, heights=hs, scores=[round(v, 4) for v in sc],
                 open=max(ok) >= hs[-1])
+
+
+def sky_score(sol):
+    """the sky-line part of the final score (no region match, no distance pull)"""
+    return sol['agree'] - 0.02 * min(sol['rms'], 10) - 0.01 * min(sol.get('lmc', 0.0), 50)
 
 
 def final_score(R, sol):
@@ -689,9 +697,10 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
         ab = air_search(R, best, hp, sols, log=log)
         margin = AIR_MARGIN_HINT if kind == 'drone' else AIR_MARGIN
         air_info = dict(why=why_air, margin=margin, ground_score=best['score'],
+                        ground_sky=sky_score(best),
                         tried=[dict(eye=a['s'][2], dE=a['s'][0], dN=a['s'][1], score=a['score'], agree=a['agree'], rms=a['rms'], reg=a['reg'],
-                                    seed_eye=a['seed_eye']) for a in ab])
-        if ab and ab[0]['score'] > best['score'] + margin:
+                                    sky=sky_score(a), seed_eye=a['seed_eye']) for a in ab])
+        if ab and ab[0]['score'] > best['score'] + margin and (kind == 'drone' or sky_score(ab[0]) >= sky_score(best) + AIR_SKY_GAIN):
             a0 = ab[0]
             ground_alt = dict(lat=best['lat'], lng=best['lng'], eye=best['s'][2], score=best['score'], agree=best['agree'],
                               dist_m=math.hypot(a0['s'][0] - best['s'][0], a0['s'][1] - best['s'][1]))
