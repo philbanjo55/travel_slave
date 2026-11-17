@@ -247,7 +247,9 @@ export default function PhotoSpotScreen() {
         <View style={[styles.fullWrap, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           {full && fullPair && fSun ? (
             <Sun3DPanel
-              pair={fullPair} tripId={tripId} stopId={stopId} sun={fSun} day0={fDay0} full onJump={setFMinute} onFull={() => setFull(false)}
+              // Looking from the ground spot of a drone answer before the shot is added: view only (a first save would add the
+              // shot at the spot in the air). Once added, saves go to that shot as usual (Save as my spot moves it here).
+              pair={fullPair} tripId={ground && ga && !added ? null : tripId} stopId={ground && ga && !added ? null : stopId} sun={fSun} day0={fDay0} full onJump={setFMinute} onFull={() => setFull(false)}
               photos={photos} addShot={added ? undefined : makeShot}
               others={planStop?.pairs}   // the stop's other shots as pins (Phil, 17 Nov 2026)
               eyeHeight={fullH}
