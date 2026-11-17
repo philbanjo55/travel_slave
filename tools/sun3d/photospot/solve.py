@@ -828,6 +828,9 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     sols.sort(key=lambda s_: -s_['score'])
     best = sols[0]
     t4 = time.time()
+    # the lens-width bounds of later fits come from the answer's own lens, not the last candidate refined (17 Nov 2026:
+    # an extra stand-pin refine at a 0.21 start changed the Chapel's confidence from +-15 m to +-100 m, same answer)
+    R.hf0 = float(best['q'][3])
     # camera height: profile at the ground answer; an air search when the eye sits at the old 3 m cap, a higher eye
     # scores better, or the look said drone. The air answer is kept only with a clear lead (AIR_MARGIN).
     R.set_trees(best['s'][0], best['s'][1])
