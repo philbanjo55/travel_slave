@@ -94,6 +94,10 @@ type Props = {
   // the stop yet, so the first save (stand spot or framing) makes it first and then saves onto it. Returns the new
   // shot's vantage id; throws with a plain reason. The parent then hands the new id in as pair.vantage_id.
   addShot?: () => Promise<string>;
+  // The stop's other shots (Phil, 17 Nov 2026): their stand spots stand in the picture as markers with the distance, the
+  // height difference and the steepest ground on the way; a tap on one picks that shot.
+  others?: Pair[];
+  onPickOther?: (vantageId: string) => void;
   // Overhead tab, our 3D look (16 Nov 2026; Overhead3DPanel): the same page looking straight down over every shot of the
   // place. The perspective controls (lens, frame box, walk, framing, HD, photo, Street View, the lines under the picture)
   // are hidden and overhead3d.tsx's are shown; the foreground is always on. `pair` must be the picked shot.
@@ -128,6 +132,7 @@ let lastTrees = true;   // the foreground's trees (Phil, 16 Nov 2026: a "no tree
 let lastIce: boolean | null = null;
 let pickedFor: string | null = null;   // the shot whose lens / frame box the user changed by hand: its framing's lens is not put back over that
 let lastGlass = false;
+let lastOthersOn = true;   // the stop's other stand spots shown in the 3D view (kept while the app is open)
 const FINE_STEP = 0.25, WALK_STEP = 2;   // metres: a tap, and the most a held arrow moves per step
 const REF_OPACITY_KEY = 'pf_ref_opacity';
 let refOpacityRead = false;
@@ -167,7 +172,7 @@ function Below({ full, max, hide, children }: { full?: boolean; max: number; hid
   return <ScrollView style={{ maxHeight: max, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
 }
 
-export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview, addShot, overhead }: Props) {
+export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 208, full, onJump, onFull, hdOn, onHd, photos, preview, addShot, overhead, others, onPickOther }: Props) {
   const web = useRef<any>(null);
   const [phase, setPhase] = useState<Phase>('finding');
   const [region, setRegion] = useState<TerrainRegion | null>(null);
@@ -245,6 +250,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const lookRef = useRef<{ yaw: number; pitch: number } | null>(null);   // where the view points now, to 0.01 deg (page's `look`)
   // Where you stand and look, kept through a restart of the view (Phil, 17 Nov 2026: switching the foreground off / on
   // restarts the page and put him back on the saved spot): per shot, cleared when another shot is shown.
+  const placedRef = useRef<string | null>(null);   // the shot and pins last sent to the page (see the place effect)
   const keepRef = useRef<{ id: string; eye: { lat: number; lng: number } | null; view: { yaw: number; pitch: number } | null } | null>(null);
   const [lookTilt, setLookTilt] = useState<number | null>(null);   // the tilt to 0.1 deg, so a tilt-only change re-checks Save framing
   const [problem, setProblem] = useState<string | null>(null);
@@ -324,6 +330,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
   const oh = useOverhead3D({ overhead, ready, run, full, onFull });
+  // the stop's other stand spots in the picture (not from above: Overhead draws its own)
+  const [othersOn, setOthersOnState] = useState(lastOthersOn);
+  const setOthersOn = useCallback((v: boolean) => { lastOthersOn = v; setOthersOnState(v); }, []);
+  const otherList = useMemo(() => (overhead ? [] : (others ?? []).filter(p => p.vantage_id !== pair.vantage_id && (Math.abs(p.v.lat - pair.v.lat) > 1e-6 || Math.abs(p.v.lng - pair.v.lng) > 1e-6))
+    .map(p => ({ id: p.vantage_id, code: p.code ?? null, name: p.shot_name ?? null, lat: p.v.lat, lng: p.v.lng }))), [overhead, others, pair.vantage_id, pair.v.lat, pair.v.lng]);
+  const otherKey = JSON.stringify(otherList);
+  useEffect(() => {
+    if (!ready || hd) return;
+    run(`window.S3D.others && window.S3D.others(${otherKey})`);
+    run(`window.S3D.othersOn && window.S3D.othersOn(${othersOn ? 'true' : 'false'})`);
+  }, [ready, hd, otherKey, othersOn, run]);
+  const pickOtherRef = useRef(onPickOther); pickOtherRef.current = onPickOther;
 
   // Which terrain files this shot needs (the wide one for the stand spot, plus a fine box around the
   // stand spot when there is one), then the files themselves (from the phone when saved).
@@ -577,6 +595,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); walkAnsweredRef.current();
       if (!overhead) keepRef.current = { id: pairIdRef.current, eye: (m.moved || 0) > 0 ? { lat: m.lat, lng: m.lng } : null, view: keepRef.current?.id === pairIdRef.current ? keepRef.current.view : null };
     }
+    else if (m.type === 'otherTap') { if (typeof m.id === 'string' && pickOtherRef.current) pickOtherRef.current(m.id); }
     else if (m.type === 'walk') { walkQ.current.busy = 0; walkQ.current.f = 0; walkQ.current.r = 0; setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : 'That is the edge of the saved terrain.'); }
     else if (m.type === 'hd') setHdLoading(!!m.loading);
     else if (m.type === 'error') {
@@ -595,7 +614,13 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   useEffect(() => {
     if (!ready) return;
     setMoments(null);
-    run(`window.S3D.view(${vLat},${vLng},${sLat},${sLng},${JSON.stringify(pageFraming(framingRef.current))})`);
+    // After a restart of the view for the same shot and the same pins (foreground off / on), the page was started where
+    // you had walked to and looking where you looked (keepRef in start()): sending the shot's spot again would put you
+    // back on the saved spot (Phil, 17 Nov 2026), so only the day's path goes.
+    const placed = `${vid}|${vLat}|${vLng}|${sLat}|${sLng}`;
+    const kept = keepRef.current?.id === vid && (keepRef.current.eye || keepRef.current.view);
+    if (!(kept && placedRef.current === placed)) run(`window.S3D.view(${vLat},${vLng},${sLat},${sLng},${JSON.stringify(pageFraming(framingRef.current))})`);
+    placedRef.current = placed;
     run(`window.S3D.path(${JSON.stringify(dayPath)})`);
   }, [ready, vid, vLat, vLng, sLat, sLng, dayPath, run]);
   useEffect(() => { if (ready) run(`window.S3D.lens(${JSON.stringify(lens)})`); }, [ready, lens, run]);
@@ -851,6 +876,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
                 hitSlop={6}
               >
                 <Ionicons name="snow-outline" size={17} color={iceOn ? '#000000' : '#ffffff'} />
+              </TouchableOpacity>
+            ) : null}
+            {otherList.length && !hd ? (
+              <TouchableOpacity
+                onPress={() => setOthersOn(!othersOn)}
+                style={[styles.fullBtn, othersOn && styles.lensOn]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: othersOn }}
+                accessibilityLabel={othersOn ? `Other stand spots shown (${otherList.length}). Tap to hide` : `Other stand spots hidden (${otherList.length}). Tap to show`}
+                hitSlop={6}
+              >
+                <Ionicons name="location-outline" size={17} color={othersOn ? '#000000' : '#ffffff'} />
               </TouchableOpacity>
             ) : null}
             {full ? (

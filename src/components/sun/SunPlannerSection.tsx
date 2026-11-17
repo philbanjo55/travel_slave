@@ -324,7 +324,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
             </TouchableOpacity>
           </View>
         ) : (
-          <Sun3DPanel pair={pair} tripId={tripId} sun={light.sun} day0={day0} height={208} onJump={setMinute} onFull={() => setFull3d(true)} hdOn={hd3d} onHd={setHd3d} />
+          <Sun3DPanel pair={pair} tripId={tripId} sun={light.sun} day0={day0} height={208} onJump={setMinute} onFull={() => setFull3d(true)} hdOn={hd3d} onHd={setHd3d} others={stop.pairs} onPickOther={vid => { const k = stop.pairs.findIndex(p => p.vantage_id === vid); if (k >= 0) { chosen.current = true; setPairIdx(k); } }} />
         )
       ) : (
         <PhotoPanel pair={pair} onOpen={() => openPhoto(pair)} onAdd={() => onEdit(pair.vantage_id)} />
@@ -405,7 +405,12 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
       <Modal visible={full3d} animationType="fade" onRequestClose={() => setFull3d(false)}>
         <View style={[styles.fullScreen, { paddingTop: insets.top }]}>
           {full3d ? (
-            <Sun3DPanel full pair={fPair} tripId={tripId} stopId={fStopId} sun={fSun ?? light.sun} day0={fDay0} onJump={setFMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d} />
+            <Sun3DPanel full pair={fPair} tripId={tripId} stopId={fStopId} sun={fSun ?? light.sun} day0={fDay0} onJump={setFMinute} onFull={() => setFull3d(false)} hdOn={hd3d} onHd={setHd3d}
+              others={fStop.pairs} onPickOther={vid => {
+                const i = tour.findIndex(t => t.stopId === fStopId && t.pair.vantage_id === vid);
+                if (i >= 0) { goTour(i); return; }
+                if (fStopId === stopId) { const k = stop.pairs.findIndex(p => p.vantage_id === vid); if (k >= 0) { chosen.current = true; setPairIdx(k); setAwayKey(null); } }
+              }} />
           ) : null}
           <View style={[styles.fullBar, { paddingBottom: 18 + insets.bottom }]}>
             {tour.length > 1 && tourAt >= 0 ? (
