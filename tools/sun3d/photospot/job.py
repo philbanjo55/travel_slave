@@ -270,7 +270,11 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
         v, why = verdict(None, look)
         return dict(ok=False, verdict=v, why=why, confidence=confidence(v, why, None), times=dict(total=time.time() - t0))
     T = Terrain(rows_file, cache, region)
-    keep, extra = peak_sets(all_lms, stop, W, H, T, T.stack(stop[0], stop[1], 30))
+    hint = look.get('hint') or None   # the user's "I stood about here" pin (17 Nov 2026): {lat, lng, radius_m?, aim_lat?, aim_lng?}
+    if hint and (hint.get('lat') is None or hint.get('lng') is None): hint = None
+    if hint: hint = dict(hint, radius_m=float(hint.get('radius_m') or 300))
+    pin = (hint['lat'], hint['lng']) if hint else tuple(stop)
+    keep, extra = peak_sets(all_lms, pin, W, H, T, T.stack(stop[0], stop[1], 30))
     others = [L for L in all_lms if L.get('type') != 'peak' or L.get('lat') is None or L.get('x') is None]
     dropped = [L['name'] for L in all_lms if L.get('type') == 'peak' and L not in keep and L not in extra]
     log(f"  peaks kept {[L['name'] for L in keep]}, unsure {[L['name'] for L in extra]}, disagreeing {dropped}")
@@ -289,15 +293,35 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
     best = None
     for i, lms in enumerate(tries):
         lmf = os.path.join(work, f'landmarks{i}.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
-        r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'))
+        r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'), hint=hint)
         v, why = verdict(r, dict(look, landmarks=lms))
         log(f"  try {i + 1}: {v} {why}")
         if best is None or RANK[v] > RANK[best[1]]: best = (r, v, why, lms)
         if v == 'placed': break
     r, v, why, lms = best
+    open_fit = None
+    if hint and v != 'placed':
+        # nothing sure near the user's pin: the open search round the stop says whether the photo fits clearly better
+        # elsewhere (a wrong pin still gets 'direction only' when only far peaks show: scan 6 with a pin 1.6 km off)
+        log('  hint: no good answer near the pin, open search round the stop')
+        lmf = os.path.join(work, 'landmarks_open.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
+        r2 = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'))
+        v2, why2 = verdict(r2, dict(look, landmarks=lms))
+        if r2.get('ok'):
+            d2 = bearing(hint['lat'], hint['lng'], r2['lat'], r2['lng'])[1]
+            open_fit = dict(lat=r2['lat'], lng=r2['lng'], verdict=v2, dist_from_hint_m=round(d2), eye=r2['eye_above_ground'], yaw=r2['yaw'] % 360)
+            log(f"  open search: {v2} {why2}, {d2:.0f} m from the pin")
+            fit1 = r.get('fit', -9) if r.get('ok') else -9; fit2 = r2.get('fit', -9)
+            open_fit.update(fit=fit2, fit_pin=fit1)
+            if RANK[v2] > RANK[v] or (RANK[v2] == RANK[v] and fit2 > fit1 + 0.05):
+                if d2 <= 1.5 * hint['radius_m']: r, v, why = r2, v2, why2   # it is near the pin after all: take it
+                else:   # the answer near the pin stays, marked weak, and says where the photo fits
+                    why = f"doesn't fit near your pin; best fit {d2:.0f} m away"
+                    if v != 'not placed': v = 'weak'
     conf = confidence(v, why, r)
     if not r.get('ok') or v == 'not placed':
-        return dict(ok=False, verdict=v, why=why, confidence=conf, times=r.get('times'))
+        return dict(ok=False, verdict=v, why=why, confidence=conf, times=dict(r.get('times') or {}, all=time.time() - t0),
+                    hint=hint, open_fit=open_fit)
     grids = T.stack(r['lat'], r['lng'], 30)
     fp, rows, fg, far = lens_rows(r, lms, T, grids)
     main = None
@@ -311,6 +335,8 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
                main_landmark=main, shot_name=shot_name(fg, far, r['lat'], r['lng']),
                landmarks=[dict(name=L['name'], x=L['x'], px=L['px'], dist_m=round(L['dist_m'])) for L in r.get('landmarks', [])],
                height=height_summary(r), aerial=bool(r.get('aerial')), ground_alt=r.get('ground_alt'), air=r.get('air'),
+               hint=hint, open_fit=open_fit,
+               dist_from_hint_m=round(bearing(hint['lat'], hint['lng'], r['lat'], r['lng'])[1]) if hint else None,
                times=r.get('times'))
     when = time.strftime('%d %b %Y')
     for x in rows:

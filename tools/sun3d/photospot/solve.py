@@ -98,7 +98,10 @@ def rel_x(az, yaw, fp, W):
 
 
 # ---------------------------------------------------------------- coarse search
-def coarse(T, sky, lms, stop, radius, step, use_names=True, log=print, region_grids=None, extras=True, houses=None, cache_key=None):
+def coarse(T, sky, lms, stop, radius, step, use_names=True, log=print, region_grids=None, extras=True, houses=None, cache_key=None,
+           aim=None, aim_tol=30.0):
+    """aim = (lat, lng) of what the user says the photo aims at: only headings within aim_tol deg of the bearing from
+    each spot to it are tried"""
     W, H = sky['size']
     lat0, lng0 = stop; k0 = kx(lat0)
     # positions on a grid within the radius
@@ -160,6 +163,7 @@ def coarse(T, sky, lms, stop, radius, step, use_names=True, log=print, region_gr
         dirs = lm_dirs(named, lat, lng, eyeh) if named else []
         sdirs = lm_dirs([dict(L, type='peak', h=0) for L in spans], lat, lng, eyeh) if spans else []
         best = None
+        ab = math.degrees(math.atan2((aim[1] - lng) * kx(lat), (aim[0] - lat) * KZ)) % 360 if aim is not None else None
         for hf in (HFOVS if (dirs or extras) else HFOVS[::2]):
             fp = C.fpx(hf, W); dx = cx - W / 2
             rel = np.degrees(np.arctan2(dx, fp)); cosf = fp / np.hypot(fp, dx)
@@ -172,6 +176,9 @@ def coarse(T, sky, lms, stop, radius, step, use_names=True, log=print, region_gr
                 yaws = y0 + np.arange(-sig, sig + 1e-9, 0.25)
             else:
                 yaws = np.arange(0, 360, 0.5)
+            if ab is not None:   # the user's aim pin: headings near it only
+                yaws = yaws[np.abs(((yaws - ab + 180) % 360) - 180) <= aim_tol]
+                if not len(yaws): continue
             # pitch bins in PIXELS (so a narrow lens is not favoured by chance): 4 px at 1440 wide
             BIN = 4.0 * W / 1440 * hf / W
             NB = int(30 / BIN) + 3
@@ -578,7 +585,9 @@ def sky_score(sol):
 
 def final_score(R, sol):
     sol['dist_stop'] = math.hypot(*sol['s'][:2]); sol['lmc'] = lm_total(R, sol)
-    sol['score'] = sol['agree'] - 0.02 * min(sol['rms'], 10) - prior(sol['dist_stop']) - 0.01 * min(sol['lmc'], 50) + MU_REG * sol['reg']
+    sol['dist_anchor'] = math.hypot(sol['s'][0] - R.anchor[0], sol['s'][1] - R.anchor[1])
+    sol['score'] = (sol['agree'] - 0.02 * min(sol['rms'], 10) - prior(sol['dist_anchor'], R.prior_scale) - 0.01 * min(sol['lmc'], 50)
+                    + MU_REG * sol['reg'])
     return sol['score']
 
 
@@ -610,13 +619,17 @@ def air_search(R, best, hp, sols, log=print):
     return out
 
 
-def prior(d_m):
-    """the photo is filed under this stop: a spot far from it needs a clearly better fit"""
-    return 0.03 * (d_m / 1000) ** 2
+def prior(d_m, scale=1000.0):
+    """the photo is filed under this stop (or the user put a pin where they stood: scale = twice the pin's radius): a
+    spot far from it needs a clearly better fit"""
+    return 0.03 * (d_m / scale) ** 2
 
 
 def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None, use_names=True, log=print, n_refine=2,
-          n_screen=14, use_trees=True, use_region=True, kind=None, air=True):
+          n_screen=14, use_trees=True, use_region=True, kind=None, air=True, hint=None):
+    """hint = {lat, lng, radius_m (300), aim_lat?, aim_lng?}: the user's "I stood about here" pin (and "aiming at"): the
+    spot search is centred on it with its radius, the pull toward a spot is toward it, and with an aim pin only headings
+    within 30 deg of it are tried in the coarse search and the screen. The terrain is still loaded round the stop."""
     t0 = time.time()
     T = Terrain(rows, cache, region)
     sky = SK.extract(photo)
@@ -633,16 +646,38 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
         rt, nt = tree_grid(T, stop[0], stop[1], min(radius, 1500) + 400, 3.0, fine, clear_m=0)
         rt = rt if nt else None
     t1 = time.time()
-    key = f"{region}_{stop[0]:.6f}_{stop[1]:.6f}_r{int(radius)}_s{int(step)}"
-    co = coarse(T, sky, lms, stop, radius, step, use_names=use_names, log=log, region_grids=fine, extras=bool(named), houses=hg,
-                cache_key=key)
-    for c in co: c['vote'] = c['score']; c['score'] = c['vote'] * math.exp(-0.5 * (math.hypot(c['dE'], c['dN']) / 1500) ** 2)
+    k0 = kx(stop[0]); aim = None; aim_tol = 30.0
+    if hint:
+        hrad = float(hint.get('radius_m') or 300)
+        center = (float(hint['lat']), float(hint['lng']))
+        anchor = ((center[1] - stop[1]) * k0, (center[0] - stop[0]) * KZ)
+        crad = max(100.0, hrad); cstep = float(min(150, max(25, round(crad / 6 / 5) * 5)))
+        pscale = max(300.0, 2 * hrad); psig = max(300.0, 1.5 * hrad)
+        if hint.get('aim_lat') is not None and hint.get('aim_lng') is not None: aim = (float(hint['aim_lat']), float(hint['aim_lng']))
+        log(f"  hint: {anchor[0]:.0f},{anchor[1]:.0f} m from the stop, radius {hrad:.0f} m, grid {cstep:.0f} m" + (', aim pin' if aim else ''))
+    else:
+        center, anchor, crad, cstep, pscale, psig = stop, (0.0, 0.0), radius, step, 1000.0, 1500.0
+    key = f"{region}_{center[0]:.6f}_{center[1]:.6f}_r{int(crad)}_s{int(cstep)}"
+    co = coarse(T, sky, lms, center, crad, cstep, use_names=use_names, log=log, region_grids=fine, extras=bool(named), houses=hg,
+                cache_key=key, aim=aim, aim_tol=aim_tol)
+    if hint:   # spots relative to the stop, as everywhere else
+        for c in co: c['dE'] = (c['lng'] - stop[1]) * k0; c['dN'] = (c['lat'] - stop[0]) * KZ
+
+    def dA(c): return math.hypot(c['dE'] - anchor[0], c['dN'] - anchor[1])
+
+    def aim_ok(yaw, lat, lng):
+        if aim is None: return True
+        b = math.degrees(math.atan2((aim[1] - lng) * kx(lat), (aim[0] - lat) * KZ)) % 360
+        return abs(((yaw - b + 180) % 360) - 180) <= aim_tol
+    for c in co: c['vote'] = c['score']; c['score'] = c['vote'] * math.exp(-0.5 * (dA(c) / psig) ** 2)
     co.sort(key=lambda r: -r['score'])
     t2 = time.time()
     # screen: the best few distinct coarse answers get a quick heading / tilt / roll / lens fit at their own spot
     R = Refiner(T, sky, lms, stop, fine, houses=hg, use_trees=use_trees, photo=ps, rtrees=rt)
-    cands = distinct(co, n_screen, 200)
-    home = [c for c in co if math.hypot(c['dE'], c['dN']) <= 250]
+    R.anchor, R.prior_scale = anchor, pscale
+    # distinct candidates: 200 m apart, closer inside a small hint area (else one candidate covers the whole pin area)
+    cands = distinct(co, n_screen, max(50.0, min(200.0, crad / 3)) if hint else 200)
+    home = [c for c in co if dA(c) <= min(250, crad)]
     if home:
         h0 = max(home, key=lambda c: c['vote'])
         if all(math.hypot(h0['dE'] - c['dE'], h0['dN'] - c['dN']) > 100 for c in cands): cands.append(h0)
@@ -650,8 +685,10 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     for c in cands:
         qk = R.quick(c)
         if qk is None: continue
-        d = math.hypot(c['dE'], c['dN'])
-        c['quick'] = qk['agree'] - 0.02 * min(qk['rms'], 10) - prior(d) - 0.01 * min(qk['lmc'], 50) + MU_REG * qk['reg']; c['reg'] = qk['reg']
+        d = dA(c)
+        lat_, lng_ = R.spot(c['dE'], c['dN'])
+        if not aim_ok(qk['q'][0], lat_, lng_): continue   # the fit turned away from the user's aim pin
+        c['quick'] = qk['agree'] - 0.02 * min(qk['rms'], 10) - prior(d, pscale) - 0.01 * min(qk['lmc'], 50) + MU_REG * qk['reg']; c['reg'] = qk['reg']
         c['q_quick'] = qk['q']; scr.append(c)
     scr.sort(key=lambda c: -c['quick'])
     log('  screen: ' + ', '.join(f"{c['dE']:.0f},{c['dN']:.0f}:{c['quick']:.2f}" for c in scr[:8]))
@@ -659,10 +696,15 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     if home and h0 in scr and h0 not in todo: todo.append(h0)
     # the stop pin itself is always tried too (photos are filed under the stop they were taken at; a 150 m grid can miss
     # a spot where near trees and banks fix the answer)
-    if scr and all(math.hypot(c['dE'], c['dN']) > 40 for c in todo):
-        qb = scr[0]['q_quick']; c0 = dict(scr[0], dE=0.0, dN=0.0, yaw=qb[0], pitch=qb[1], roll=qb[2], hfov=qb[3])
+    # (with a hint: the hint pin instead)
+    # (with a hint: the hint pin, and the stop pin too when it lies inside the hint area: a hint pin is rough, and
+    # the refine from it stops at the nearest good spot, 17 Nov 2026 scan 6: 55 m off from a pin 57 m from the truth)
+    pins = [anchor] + ([(0.0, 0.0)] if hint and math.hypot(*anchor) <= crad else [])
+    for pE, pN in pins:
+        if not scr or any(math.hypot(c['dE'] - pE, c['dN'] - pN) <= 40 for c in todo): continue
+        qb = scr[0]['q_quick']; c0 = dict(scr[0], dE=pE, dN=pN, yaw=qb[0], pitch=qb[1], roll=qb[2], hfov=qb[3])
         qk = R.quick(c0)
-        if qk is not None:
+        if qk is not None and aim_ok(qk['q'][0], *R.spot(pE, pN)):
             c0['quick'] = qk['agree'] - 0.02 * min(qk['rms'], 10) - 0.01 * min(qk['lmc'], 50) + MU_REG * qk['reg']
             c0['reg'] = qk['reg']; c0['q_quick'] = qk['q']; todo.append(c0)
     steps1 = (64, 32, 16, 8, 4)
@@ -678,7 +720,7 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
         except Exception as e:  # noqa: BLE001
             log('  refine failed: ' + repr(e))
     if not sols:
-        return dict(ok=False, why='no candidate could be refined', sky_good=float(sky['good'].mean()), times=dict(total=time.time() - t0))
+        return dict(ok=False, why='no candidate could be refined' if scr or not aim else 'nothing fits facing the aim pin', sky_good=float(sky['good'].mean()), times=dict(total=time.time() - t0))
     # when two answers fit the picture about as well, the one nearer the stop wins (the photo is filed under it)
     for s_ in sols: final_score(R, s_)
     sols.sort(key=lambda s_: -s_['score'])
@@ -725,7 +767,8 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
                agree=best['agree'], n_agree=best['n_agree'], rms_px=best['rms'], hist=best['hist'], conf=conf, landmarks=lmchk,
                alts=[dict(lat=s['lat'], lng=s['lng'], agree=s['agree'], rms=s['rms'], yaw=s['q'][0] % 360, hfov=s['q'][3], score=s['score'],
                           reg=s['reg'], ground_alt=bool(s.get('ground_alt')), dist_m=math.hypot((s['lat'] - best['lat']) * KZ, (s['lng'] - best['lng']) * kx(best['lat']))) for s in sols[1:]],
-               score=best['score'], lm_cost=best['lmc'], region_match=best['reg'], dist_stop=best['dist_stop'], trees=R.trees is not None,
+               score=best['score'], lm_cost=best['lmc'], region_match=best['reg'], dist_stop=best['dist_stop'],
+               hint=dict(hint, dist_m=best['dist_anchor']) if hint else None, fit=best['score'] + prior(best['dist_anchor'], pscale), trees=R.trees is not None,
                coarse_top=[dict(dE=c['dE'], dN=c['dN'], score=c['score'], yaw=c['yaw'], hfov=c['hfov']) for c in co[:5]],
                screen=[dict(dE=c['dE'], dN=c['dN'], quick=c['quick']) for c in scr],
                sky_good=float(sky['good'].mean()), used_names=use_names, n_landmarks=len([L for L in lms if L.get('known')]),
@@ -751,6 +794,14 @@ def coarse_local(T, sky, lms, stop, c, use_names, fine, extras, houses=None):
     return sub[:3]
 
 
+def parse_hint(txt):
+    if not txt: return None
+    v = [float(x) for x in txt.split(',')]
+    h = dict(lat=v[0], lng=v[1], radius_m=v[2] if len(v) > 2 else 300)
+    if len(v) >= 5: h.update(aim_lat=v[3], aim_lng=v[4])
+    return h
+
+
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('photo'); ap.add_argument('--rows', required=True); ap.add_argument('--cache', required=True)
@@ -759,12 +810,13 @@ if __name__ == '__main__':
     ap.add_argument('--no-names', action='store_true'); ap.add_argument('--out'); ap.add_argument('--no-trees', action='store_true')
     ap.add_argument('--hcache', help='folder for per-stop horizon tables')
     ap.add_argument('--no-region', action='store_true')
+    ap.add_argument('--hint', help='LAT,LNG[,RADIUS_M[,AIM_LAT,AIM_LNG]]: the user\'s "I stood about here" pin')
     ap.add_argument('--kind', help="the look's kind (a 'drone' hint starts the air search)"); ap.add_argument('--no-air', action='store_true')
     a = ap.parse_args()
     stop = tuple(float(v) for v in a.stop.split(','))
     HCACHE = a.hcache
     r = solve(a.photo, a.rows, a.cache, a.region, stop, a.landmarks, a.radius, a.step, use_names=not a.no_names, use_trees=not a.no_trees, use_region=not a.no_region,
-              kind=a.kind, air=not a.no_air)
+              kind=a.kind, air=not a.no_air, hint=parse_hint(a.hint))
     s = json.dumps(r, indent=1, default=float)
     if a.out: open(a.out, 'w').write(s)
     print(json.dumps({k: r.get(k) for k in ('lat', 'lng', 'yaw', 'pitch', 'roll', 'hfov', 'agree', 'rms_px', 'times')}, default=float))
