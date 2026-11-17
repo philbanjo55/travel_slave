@@ -122,12 +122,14 @@ async function dispatch(jobId: string): Promise<string | null> {
 }
 
 // The look, then the worker. Runs after the app already has its job id.
-async function lookThenSolve(job: any, ctx: any) {
+async function lookThenSolve(job: any, ctx: any, hint: Record<string, number> | null = null) {
   try {
     const img = lookUrl(job.photo_url);
     if (!img) throw new Error('the photo is not stored online');
     const { look, cost } = await runLook(img, ctx);
-    const flag = look.kind !== 'ground' ? { drone: 'a drone photo: only spots on the ground are searched', close_up: 'a close-up with no sky line', screenshot: 'a screenshot, not a photo', no_sky: 'the sky line is hidden' }[look.kind as string] : null;
+    if (hint) look.hint = hint;
+    // a drone photo is searched too since 17 Nov 2026 (the worker also tries the air, up to 122 m)
+    const flag = look.kind !== 'ground' && look.kind !== 'drone' ? { close_up: 'a close-up with no sky line', screenshot: 'a screenshot, not a photo', no_sky: 'the sky line is hidden' }[look.kind as string] : null;
     if (flag) { await setJob(job.id, { status: 'done', look, cost_usd: cost, note: null, result: { ok: false, verdict: 'not placed', why: flag } }); return; }
     await setJob(job.id, { status: 'queued', look, cost_usd: cost, note: 'starting the search' });
     const why = await dispatch(job.id);
@@ -142,7 +144,10 @@ async function freshen(j: any) {
   if (!j || !(j.status in STALE_MIN)) return j;
   const since = j.status === 'queued' ? (j.dispatched_at ?? null) : j.updated_at;
   if (j.status === 'queued' && !j.dispatched_at) {
-    // the worker token may have been added since: try once more
+    // the worker token may have been added since: try once more. Not while the first dispatch may still be on its way
+    // (16 Nov 2026: the app's 5 s status poll landed between 'queued' and dispatched_at and started a second worker,
+    // whose claim then failed and GitHub emailed 'All jobs have failed').
+    if (Date.now() - new Date(j.updated_at).getTime() < 60e3) return j;
     if (Deno.env.get('GITHUB_DISPATCH_TOKEN') && j.look) { const why = await dispatch(j.id); if (!why) return (await db.from('photo_spot_jobs').select('*').eq('id', j.id).maybeSingle()).data; }
     return j;
   }
@@ -196,11 +201,18 @@ Deno.serve(async (req) => {
   try {
     if (action === 'request') {
       const { stop_id, photo_id } = body;
+      // The user's own pins (17 Nov 2026): "I stood about here" and optionally "aiming at"; a request with pins always
+      // starts a new search. Anything that is not a pair of finite coordinates is dropped.
+      const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+      const h = body.hint && typeof body.hint === 'object' ? body.hint : null;
+      const hint = h && num(h.lat) != null && num(h.lng) != null && Math.abs(h.lat) <= 90 && Math.abs(h.lng) <= 180
+        ? { lat: h.lat, lng: h.lng, radius_m: 300, ...(num(h.aim_lat) != null && num(h.aim_lng) != null ? { aim_lat: h.aim_lat, aim_lng: h.aim_lng } : {}) }
+        : null;
       if (!stop_id || !photo_id) return json({ ok: false, error: 'stop_id and photo_id are needed' }, 400);
       const { data: open } = await db.from('photo_spot_jobs').select('*').eq('photo_id', photo_id).eq('stop_id', stop_id).order('created_at', { ascending: false }).limit(1);
       let last = await freshen(open?.[0]);
       if (last && ['queued', 'looking', 'solving'].includes(last.status)) return json({ ok: true, job: publicJob(last) });
-      if (last && last.status === 'done' && !body.again) return json({ ok: true, job: publicJob(last) });
+      if (last && last.status === 'done' && !body.again && !hint) return json({ ok: true, job: publicJob(last) });
       const { data: photo } = await db.from('stop_photos').select('id, stop_id, storage_url, url').eq('id', photo_id).maybeSingle();
       if (!photo) return json({ ok: false, error: 'photo not found' }, 404);
       const url = photo.storage_url ?? (String(photo.url ?? '').startsWith('http') ? photo.url : null);
@@ -216,7 +228,7 @@ Deno.serve(async (req) => {
         return json({ ok: true, job: publicJob(again?.[0]) });
       }
       // @ts-ignore EdgeRuntime is the Supabase edge runtime
-      EdgeRuntime.waitUntil(lookThenSolve(job, ctx));
+      EdgeRuntime.waitUntil(lookThenSolve(job, ctx, hint));
       return json({ ok: true, job: publicJob(job) });
     }
 
