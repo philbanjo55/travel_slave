@@ -734,7 +734,9 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     why_air = [w for w, c_ in (('look says drone', kind == 'drone'), ('eye at the 3 m cap', best['s'][2] >= 2.8),
                                 ('higher eye scores better', bool(hp) and hp['top'] > 3.0 and hp['top_gain'] > 0.005)) if c_]
     t_air = time.time()
-    if air and why_air:
+    # Tested 17 Nov 2026: run on its own (cap / higher-scores reasons) the air search changed no answer (from the Snake
+    # River rim, higher and further back look the same) and cost up to 40 s a try, so it runs only when the look said drone.
+    if air and kind == 'drone':
         log('  air search: ' + ', '.join(why_air))
         ab = air_search(R, best, hp, sols, log=log)
         margin = AIR_MARGIN_HINT if kind == 'drone' else AIR_MARGIN
