@@ -299,7 +299,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
         if best is None or RANK[v] > RANK[best[1]]: best = (r, v, why, lms)
         if v == 'placed': break
     r, v, why, lms = best
-    open_fit = None
+    open_fit = None; open_check = None
     if hint and v != 'placed':
         # nothing sure near the user's pin: the open search round the stop says whether the photo fits clearly better
         # elsewhere (a wrong pin still gets 'direction only' when only far peaks show: scan 6 with a pin 1.6 km off)
@@ -313,11 +313,21 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
             log(f"  open search: {v2} {why2}, {d2:.0f} m from the pin")
             fit1 = r.get('fit', -9) if r.get('ok') else -9; fit2 = r2.get('fit', -9)
             open_fit.update(fit=fit2, fit_pin=fit1)
-            if RANK[v2] > RANK[v] or (RANK[v2] == RANK[v] and fit2 > fit1 + 0.05):
+            flagged = False
+            # The open answer wins only when it really fits better: a better verdict alone is not enough (17 Nov 2026,
+            # Oxbow Bend under pink cloud: the pin answer fit 1.08, the open one 0.80, yet 'direction only' beat 'weak'
+            # and the screen said "doesn't fit near your pin" while the line sat on the peaks only at the pin).
+            if fit1 >= fit2 + 0.05:
+                if v == 'direction only' and str(why).startswith('another spot'):
+                    v, why = 'placed', 'fits near your pin better than anywhere else'
+            elif (RANK[v2] > RANK[v] and fit2 >= fit1) or fit2 > fit1 + 0.05:
                 if d2 <= 1.5 * hint['radius_m']: r, v, why = r2, v2, why2   # it is near the pin after all: take it
                 else:   # the answer near the pin stays, marked weak, and says where the photo fits
                     why = f"doesn't fit near your pin; best fit {d2:.0f} m away"
                     if v != 'not placed': v = 'weak'
+                    flagged = True
+            if not flagged:   # the app shows "doesn't fit near your pin" whenever open_fit is set
+                open_check, open_fit = open_fit, None
     conf = confidence(v, why, r)
     if not r.get('ok') or v == 'not placed':
         return dict(ok=False, verdict=v, why=why, confidence=conf, times=dict(r.get('times') or {}, all=time.time() - t0),
@@ -335,7 +345,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
                main_landmark=main, shot_name=shot_name(fg, far, r['lat'], r['lng']),
                landmarks=[dict(name=L['name'], x=L['x'], px=L['px'], dist_m=round(L['dist_m'])) for L in r.get('landmarks', [])],
                height=height_summary(r), aerial=bool(r.get('aerial')), ground_alt=r.get('ground_alt'), air=r.get('air'),
-               hint=hint, open_fit=open_fit,
+               hint=hint, open_fit=open_fit, open_check=open_check,
                dist_from_hint_m=round(bearing(hint['lat'], hint['lng'], r['lat'], r['lng'])[1]) if hint else None,
                times=r.get('times'))
     when = time.strftime('%d %b %Y')
