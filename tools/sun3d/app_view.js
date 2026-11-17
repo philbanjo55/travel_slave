@@ -2474,7 +2474,7 @@
   }
 
   window.S3D = {
-    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; bldNear = []; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; treesOn = c.trees !== false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye = c.eye; eye0 = c.eye; target = c.target; framed = toFraming(c.view); act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
+    init(c) { rparts = []; rangeState = 0; hsparts = {}; houseState = 0; cnparts = {}; cnbytes = {}; cnlast = -1; wideTiles = null; wideState = 0; wideRun++; cfg = c; bldNear = []; parts = []; nparts = []; dparts = []; mparts = []; tparts = []; wparts = []; cparts = []; ncparts = []; bparts = []; wcparts = []; foreState = 0; lastPath = null; touched = false; treesOn = c.trees !== false; ice = c.ice != null ? !!c.ice : c.ground !== 'green'; eye0 = c.eye; eye = c.start && Number.isFinite(+c.start.lat) && Number.isFinite(+c.start.lng) ? { lat: +c.start.lat, lng: +c.start.lng } : c.eye; target = c.target;   /* start: a walked-to spot kept through a restart (17 Nov 2026) */ framed = toFraming(c.view); act = null; if (c.level) for (const k of ['look', 'sun']) if (c.level[k] >= 0) lv[k] = Math.min(QL.length - 1, Math.floor(c.level[k])); focal = c.focal || 50; if (c.lens) lens = Object.assign({}, lens, c.lens); inline = !!c.inline; { const cv = document.getElementById('view'); if (cv) cv.style.touchAction = inline ? 'pan-y' : 'none'; } },
     chunk(s, which) {
       if (typeof which === 'string' && which.startsWith('canopy:')) {   // a tree tile: packed as soon as the next one starts, so its text is let go at once
         const i = +which.slice(7);
@@ -2491,6 +2491,7 @@
         if (OH.on) ohApplyR();
         const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length || (cfg.canopy && cnAny()) || (cfg.range && rparts.length) || (cfg.houses && hsAny()));
         post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: 0, fore }); heading();
+        if (eye !== eye0) told();   // a restart that kept a walked-to spot: the app hears where it stands again
         if (fore) queueFore();
       } catch (e) { fail("The 3D view couldn't start on this phone."); post({ type: 'error', msg: String(e && e.message || e) }); }
     },

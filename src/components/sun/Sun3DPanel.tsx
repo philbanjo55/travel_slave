@@ -240,7 +240,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [lit, setLit] = useState<{ subjectLit: boolean; hereLit: boolean; up: boolean; trees: boolean } | null>(null);
   const [moments, setMoments] = useState<Moments | null>(null);
   const [look, setLook] = useState<number | null>(null);
+  const pairIdRef = useRef(pair.vantage_id);
+  pairIdRef.current = pair.vantage_id;
   const lookRef = useRef<{ yaw: number; pitch: number } | null>(null);   // where the view points now, to 0.01 deg (page's `look`)
+  // Where you stand and look, kept through a restart of the view (Phil, 17 Nov 2026: switching the foreground off / on
+  // restarts the page and put him back on the saved spot): per shot, cleared when another shot is shown.
+  const keepRef = useRef<{ id: string; eye: { lat: number; lng: number } | null; view: { yaw: number; pitch: number } | null } | null>(null);
   const [lookTilt, setLookTilt] = useState<number | null>(null);   // the tilt to 0.1 deg, so a tilt-only change re-checks Save framing
   const [problem, setProblem] = useState<string | null>(null);
   const [perf, setPerf] = useState<Perf | null>(null);   // the last movement's frame time, as the page measured it (offline view)
@@ -468,7 +473,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ? { n: near.n, north: near.north, south: near.south, west: near.west, east: near.east, base: near.base_m, step: near.step_m }
         : undefined,
       ice: iceOn,
-      view: pageFraming(framingRef.current) ?? undefined,   // a framed shot opens on its framing (older pages ignore it)
+      view: (keepRef.current?.id === pair.vantage_id && keepRef.current.view ? { yaw_deg: keepRef.current.view.yaw, pitch_deg: keepRef.current.view.pitch } : null)
+        ?? pageFraming(framingRef.current) ?? undefined,   // a restart keeps the view; else a framed shot opens on its framing
+      start: keepRef.current?.id === pair.vantage_id && keepRef.current.eye ? keepRef.current.eye : undefined,   // a walked-to spot
       level: lastLevels ?? undefined,
       treeStyle: TREE_STYLE,   // how the laser trees are drawn (services/terrain.ts TREE_STYLE)
       trees: overhead ? true : treesRef.current,   // the foreground's trees shown or hidden (older pages ignore it)
@@ -563,9 +570,13 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     else if (m.type === 'look') {
       setLook(typeof m.deg === 'number' ? m.deg : null);
       lookRef.current = typeof m.deg === 'number' ? { yaw: typeof m.yaw === 'number' ? m.yaw : m.deg, pitch: typeof m.pitch === 'number' ? m.pitch : 0 } : null;
+      if (lookRef.current && !overhead) keepRef.current = { id: pairIdRef.current, eye: keepRef.current?.id === pairIdRef.current ? keepRef.current.eye : null, view: lookRef.current };
       setLookTilt(typeof m.pitch === 'number' ? Math.round(m.pitch * 10) / 10 : null);
     }
-    else if (m.type === 'eye') { setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); walkAnsweredRef.current(); }
+    else if (m.type === 'eye') {
+      setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); walkAnsweredRef.current();
+      if (!overhead) keepRef.current = { id: pairIdRef.current, eye: (m.moved || 0) > 0 ? { lat: m.lat, lng: m.lng } : null, view: keepRef.current?.id === pairIdRef.current ? keepRef.current.view : null };
+    }
     else if (m.type === 'walk') { walkQ.current.busy = 0; walkQ.current.f = 0; walkQ.current.r = 0; setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : 'That is the edge of the saved terrain.'); }
     else if (m.type === 'hd') setHdLoading(!!m.loading);
     else if (m.type === 'error') {
@@ -592,6 +603,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // ---- Walk mode ----
   // A new shot (or a saved move) puts the viewpoint back on the stand pin.
   useEffect(() => { setAt(null); setWalkNote(null); }, [vLat, vLng, sLat, sLng]);
+  useEffect(() => { if (keepRef.current && keepRef.current.id !== pair.vantage_id) keepRef.current = null; }, [pair.vantage_id]);
   useEffect(() => { setFrameNote(null); }, [vid]);
   // A save of this shot that waited for signal and was then refused by the server: said once.
   useEffect(() => { const r = takeRefusal(vid); if (r) setFrameNote(`A save made with no signal was refused: ${r}`); });
