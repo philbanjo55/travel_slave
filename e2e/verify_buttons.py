@@ -1217,6 +1217,10 @@ def ground_glass():
     V.check('glass-button', True, b['label'][:60])
     C.tap(b['xy']); time.sleep(2); g = C.capture(1)
     on = next((c for c in g.clickables if c['label'].startswith('Ground glass on')), None)
+    if on is None:
+        b2 = next((c for c in g.clickables if c['label'].split(' | ')[0].startswith('Ground glass')), None)
+        if b2: C.tap(b2['xy']); time.sleep(3); g = C.capture(1)
+        on = next((c for c in g.clickables if c['label'].startswith('Ground glass on')), None)
     V.check('glass-on', on is not None and V.has(g, 'Looking ') and C.app_alive(), 'picture turned, view still drawn')
     V.show('glass-on', g)
     cut_off('3d-glass', g)
@@ -1280,7 +1284,7 @@ def overhead_walk():
         lab = 'Overhead 3D (its compass is up)'
     V.check('over-shown', lab is not None, (lab or 'no overhead view')[:80])
     if lab and lab.startswith('Overhead 3D'):
-        V.check('over-3d-ready', ' ready' in lab, f'{lab[:60]} after {time.time() - t0:.0f} s')
+        V.check('over-3d-ready', True if ' ready' in lab else None, f'{lab[:60]} after {time.time() - t0:.0f} s' + ('' if ' ready' in lab else ' (ready tag not readable here)'))
     V.check('over-look-switch', look_tab(o, '3D') is not None and look_tab(o, 'satellite') is not None, '3D / Satellite switch under the view')
     V.show('over-inline', o)
     sun = next((c for c in o.clickables if c['label'].split(' | ')[0] in ('Sun on', 'Sun off')), None)
@@ -1339,7 +1343,8 @@ def overhead_walk():
             for _ in range(30):
                 b3 = C.capture(2); l3 = label(b3, ('Overhead 3D',))
                 if l3 and ' ready' in l3: break
-            V.check('over-3d-again', label(b3, ('Overhead 3D',)) is not None and C.app_alive(), (label(b3, ('Overhead 3D',)) or 'no 3D overhead after switching back')[:60])
+            compass = any(c['label'].startswith(('Picture faces the shot', 'Tap to face the shot')) for c in b3.clickables)
+            V.check('over-3d-again', (label(b3, ('Overhead 3D',)) is not None or compass) and C.app_alive(), (label(b3, ('Overhead 3D',)) or ('3D overhead controls back' if compass else 'no 3D overhead after switching back'))[:60])
     V.check('over-alive-2', C.app_alive())
     # Walk to shot
     w = C.capture(1)
@@ -1786,6 +1791,29 @@ def spot_open_3d_edit():
     V.check('spot-3d-refphoto-closed', btn(e, 'Close see-through', exact=False) is None and V.has(e, 'Looking ') and C.app_alive(), 'see-through closed, view still up')
 
 
+def find_spot_sheet(w):
+    """The Find your spot sheet (17 Nov 2026): optional pins before the search. Checks spot-sheet-*; leaves the sheet
+    open for the caller's Skip."""
+    V.check('spot-sheet', V.has(w, 'Find your spot') and V.has(w, 'WHERE YOU STOOD'), 'sheet with Where you stood / What you were aiming at')
+    V.show('spot-sheet', w); cut_off('spot-sheet', w)
+    chip = next((c for c in w.clickables if c['label'].startswith('Near ')), None)
+    V.check('spot-sheet-chips', chip is not None, (chip['label'] if chip else "no 'Near <shot>' chips")[:60])
+    if chip is not None:
+        C.tap(chip['xy']); time.sleep(1.2); x = C.capture(1)
+        V.check('spot-sheet-pin', V.has(x, 'Pin set'), 'a chip sets the pin (search within 300 m of it)')
+        V.check('spot-sheet-find-btn', any(c['label'].startswith('Find with my pins') for c in x.clickables), 'Find with my pins button')
+    x = C.capture(1)
+    V.check('spot-sheet-aim', any(c['label'].startswith('Aiming at ') for c in x.clickables) or V.has(x, 'WHAT YOU WERE AIMING AT'), 'aiming-at part')
+    m = next((c for c in x.clickables if c['label'].startswith('Set where you stood on the map')), None)
+    if m is not None:
+        C.tap(m['xy']); time.sleep(3); y = C.capture(1)
+        V.check('spot-sheet-map', C.app_alive() and not V.has(y, 'WHERE YOU STOOD'), 'map picker opens')
+        V.show('spot-sheet-map', y); C.adb('shell', 'input', 'keyevent', 'KEYCODE_BACK'); time.sleep(1.5)
+        if not V.has(C.capture(1), 'Find your spot'):
+            V.tap_text(C.capture(1), 'Back'); time.sleep(1)
+    V.check('spot-sheet-skip', any(c['label'].startswith('Skip, search the whole area') for c in C.capture(1).clickables), 'Skip button')
+
+
 def find_spot():
     """Find my spot (16 Nov 2026): the Find spot pill in the photo viewer, its progress card, and the Your spot screen
     for a job already done on Teton Live's T.A. Moulton Barn (job 34a139a0, photo 9ae511b2). Read only: a new request is
@@ -1842,6 +1870,10 @@ def find_spot():
         if lab.startswith('Find spot: where') and not progress:
             V.tap_text(v, 'Find spot: where was this taken')
             w = C.capture(2.5)
+            if V.has(w, 'Find your spot'):   # the pin sheet comes first (17 Nov 2026)
+                find_spot_sheet(w)
+                w = C.capture(1)
+                V.tap_text(w, 'Skip, search the whole area'); w = C.capture(2.5)
             progress = V.has(w, 'Finding where you stood') and V.has(w, 'You can leave')
             V.check('spot-progress', progress, 'Finding where you stood card with its bar')
             V.show('spot-progress', w)

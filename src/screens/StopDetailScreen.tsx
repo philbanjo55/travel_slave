@@ -493,7 +493,7 @@ export default function StopDetailScreen() {
         photos={viewerKind === 'field' ? fieldPhotos : refPhotos}
         visible={!!viewerPhoto}
         onClose={closeViewer}
-        spotStop={{ id: stop.id, name: stop.name }}
+        spotStop={{ id: stop.id, name: stop.name, tripId: currentTripData?.trip?.id ?? null, lat: stop.lat ?? null, lng: stop.lng ?? null }}
         onDelete={(p) => handlePhotoLongPress(p.id, viewerKind, closeViewer)}
         onMakeFirst={viewerKind === 'reference' && !refPhotos.some((r: any) => r.borrowed) ? async (p) => {
           const ok = await makeFirst(p.id, refPhotos.map((r: any) => r.id));
