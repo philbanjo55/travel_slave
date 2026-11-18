@@ -971,9 +971,13 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
                 <Ionicons name="image-outline" size={17} color={refMode !== 'off' ? '#000000' : '#ffffff'} />
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity onPress={onFull} style={styles.fullBtn} accessibilityRole="button" accessibilityLabel={full ? 'Close full screen' : 'Open the 3D view full screen'} hitSlop={6}>
-              <Ionicons name={full ? 'contract-outline' : 'expand-outline'} size={18} color="#ffffff" />
-            </TouchableOpacity>
+            {/* full screen has its own Close at the bottom: no shrink button up here (Phil, 18 Nov 2026: next to the photo
+                button it was hit by mistake and threw away the walked spot and framing) */}
+            {!full ? (
+              <TouchableOpacity onPress={onFull} style={styles.fullBtn} accessibilityRole="button" accessibilityLabel="Open the 3D view full screen" hitSlop={6}>
+                <Ionicons name="expand-outline" size={18} color="#ffffff" />
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
         {walking && full && !hd && ready ? (
