@@ -967,10 +967,22 @@ def sun_3d():
                     V.check('walk-back', back_ok, 'back on the saved spot')
                     # tap to go (18 Nov 2026): a tap on the ground low in the picture jumps there
                     if back_ok and V.has(w2, 'Tap the ground to jump there'):
-                        C.adb('shell', 'input', 'tap', '540', '1180'); time.sleep(3)
+                        # well below the middle of the picture (1180 was just under the horizon: the ray met the
+                        # ground past the old 6 km reach and the page said 'not the sky')
+                        C.adb('shell', 'input', 'tap', '760', '1320'); time.sleep(3)
                         w3 = C.capture(1); line = next((t for t in w3.all_texts if "You've walked" in t), None)
+                        if line is None:
+                            print('INFO walk-tapgo texts: ' + ' | '.join(t for t in w3.all_texts if 'Tap' in t or 'walk' in t.lower())[:300], flush=True)
                         V.check('walk-tapgo', line is not None, (line or 'no jump after a tap on the ground')[:70])
-                        V.tap_text(w3, 'Back to my saved spot'); time.sleep(2)
+                        # Back (18 Nov 2026): undoes the jump, back where the tap was made (the saved spot)
+                        bk = next((c for c in w3.clickables if c['label'].split(' | ')[0].startswith('Back: undo the last jump')), None)
+                        if line is not None and bk is not None:
+                            V.tap_text(w3, 'Back: undo the last jump'); time.sleep(2)
+                            w4 = C.capture(1)
+                            V.check('walk-undo-jump', not any("You've walked" in t for t in w4.all_texts), 'Back took the jump back' if not any("You've walked" in t for t in w4.all_texts) else 'still away after Back')
+                        elif line is not None:
+                            V.check('walk-undo-jump', False, 'no Back button after a jump')
+                        V.tap_text(C.capture(1), 'Back to my saved spot'); time.sleep(2)
                 V.check('walk-alive', C.app_alive())
             else:
                 print('INFO walk: no walk button in full screen (this build has no walk mode)', flush=True)
@@ -999,6 +1011,16 @@ def sun_3d():
             print(f'INFO sun3d close: {"tapped Close" if closed else "no Close button, pressed Back"}', flush=True)
             ac = C.capture(1)
             V.show('sun3d-after-close', ac)
+            # the photo button in the small view too (Phil, 18 Nov 2026)
+            sb = next((c for c in ac.clickables if c['label'].split(' | ')[0].strip() == 'Reference photo'), None)
+            if REF_SEEN[0]:
+                V.check('refphoto-small-button', sb is not None, 'photo button in the small view' if sb else 'no photo button in the small view')
+                if sb is not None:
+                    V.tap_text(ac, 'Reference photo'); time.sleep(2)
+                    sv = C.capture(1)
+                    V.check('refphoto-small-see', V.has(sv, 'See-through'), 'see-through bar in the small view')
+                    V.tap_text(sv, 'Close see-through'); time.sleep(1)
+                    ac = C.capture(1)
             after_close_texts = list(ac.all_texts)
         else:
             V.show('sun3d-full', g)
@@ -1420,6 +1442,9 @@ def overhead_walk():
     V.check('walkto-closed', not V.has(C.capture(1), 'Walking directions') and C.app_alive(), 'back on the stop page')
 
 
+REF_SEEN = [False]   # the shot has its own photo (refphoto found the button): the small view should show it too
+
+
 def refphoto():
     """Reference photo in the full-screen 3D view (15 Nov 2026, branch claude/sun3d-ref-photo): the photo button opens a
     small card of the stop's photos, X closes it, a tap on the card lays the photo see-through over the picture with an
@@ -1457,6 +1482,7 @@ def refphoto():
             V.check('refphoto-button', None, 'this shot has no photo of its own: no photo button (as designed)')
         return
     V.check('refphoto-button', True, f'photo button in full screen (heading {h0})')
+    REF_SEEN[0] = True
     def tap_btn():
         b = clickable(C.capture(1), 'Reference photo', exact=True)
         if b: C.tap(b['xy'])

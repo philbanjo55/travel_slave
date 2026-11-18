@@ -161,7 +161,11 @@ export type Pair = {
 
 // A shot's saved framing in the 3D view: where the camera points (compass heading of the frame's middle), its tilt
 // (degrees up), the lens (Sun3DPanel's lens id) and the frame box's orientation; `at` = when it was framed.
-export type Framing = { heading: number; pitch: number; lens: string; orient: 'landscape' | 'portrait'; at: string };
+// photo: where the shot's own photo sat over the 3D view when the framing was saved (Phil, 18 Nov 2026): key = the photo
+// (stop_photos id or address), s = zoom, x / y = its middle's offset from the view's middle (dp), w / h = the view's size
+// (dp). undefined = leave the saved one as it is; null = none.
+export type FramePhoto = { key: string; s: number; x: number; y: number; w: number; h: number };
+export type Framing = { heading: number; pitch: number; lens: string; orient: 'landscape' | 'portrait'; at: string; photo?: FramePhoto | null };
 
 export type Light = {
   sun: SkyPos;
