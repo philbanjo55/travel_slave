@@ -1207,6 +1207,26 @@ def walk_height_and_keep(walked):
         C.tap(b['xy']); time.sleep(4)
 
 
+def shot_checks_hold():
+    """Shot checklist (18 Nov 2026): hold a shot chip = done (greyed, label says 'shot done'), hold again = undone.
+    The test build blocks the database write, so the phone keeps the change (as offline). Checks shotcheck-*."""
+    def chips(st):
+        return [c for c in st.clickables if 'Hold to mark' in c['label']]
+    st = C.capture(1); cs = chips(st)
+    if not cs:
+        V.check('shotcheck-chips', None, 'no shot chips here (needs the build with the checklist)'); return
+    c = cs[-1]; name = c['label'].split('. Hold')[0].replace(', shot done', '')
+    was = 'shot done' in c['label']
+    x, y = c['xy']; C.adb('shell', 'input', 'swipe', str(x), str(y), str(x), str(y), '900'); time.sleep(1.5)
+    now = next((k for k in chips(C.capture(1)) if k['label'].startswith(name)), None)
+    V.check('shotcheck-hold', now is not None and (('shot done' in now['label']) != was), f"{name[:30]}: {'done' if was else 'not done'} -> {('done' if 'shot done' in now['label'] else 'not done') if now else 'gone'}")
+    if now is not None:
+        x, y = now['xy']; C.adb('shell', 'input', 'swipe', str(x), str(y), str(x), str(y), '900'); time.sleep(1.5)
+        back = next((k for k in chips(C.capture(1)) if k['label'].startswith(name)), None)
+        V.check('shotcheck-undo', back is not None and (('shot done' in back['label']) == was), 'held again: back as it was')
+    V.check('shotcheck-alive', C.app_alive())
+
+
 def ground_glass():
     """Ground glass (16 Nov 2026): in full-screen 3D a button turns the picture (and the shot's photo) upside down and
     left-right; the buttons stay upright and the view stays drawn. Checks glass-*."""
@@ -1355,6 +1375,11 @@ def overhead_walk():
             wb = next((c for c in w.clickables if c['label'].startswith('Walk to')), None)
             if wb: break
     V.check('walkto-button', wb is not None, (wb['label'] if wb else 'no Walk to button')[:60])
+    try:
+        shot_checks_hold()
+    except Exception as e:
+        V.check('shotcheck-run', False, f'shot checklist checks stopped: {e!r}'[:120])
+    w = C.capture(1); wb = next((c for c in w.clickables if c['label'].startswith('Walk to')), wb)
     if wb is None:
         return
     Hh = 2400

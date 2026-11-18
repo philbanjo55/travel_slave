@@ -66,7 +66,12 @@ def verdict(r, look):
     W = (r.get('size') or [1440])[0]
     off = [L for L in r.get('landmarks', []) if L['name'] in peaks and not (np.isfinite(L['px']) and abs(L['px'] - L['x']) <= 0.08 * W)]
     if off: return 'not placed', f"{short_name(off[0]['name'])} does not fit"
-    rival = [x for x in r.get('alts', []) if not x.get('ground_alt') and x['dist_m'] > 150 and x.get('score', -9) >= r['score'] - 0.05]
+    # a rival = another refined spot over 150 m away that fits about as well: by the final score, or by the photo alone
+    # (fit, without the pulls toward the stop and the stand pins: 17 Nov 2026, Glacier View: the turnout won the tie-break
+    # while a spot 615 m north fit the photo 0.10 better; the answer stays, the confidence says the spot is not pinned)
+    rival = [x for x in r.get('alts', []) if not x.get('ground_alt') and x['dist_m'] > 150 and
+             (x.get('score', -9) >= r['score'] - 0.05 or (x.get('fit') is not None and r.get('fit') is not None and x['fit'] >= r['fit'] - 0.05))]
+    rival.sort(key=lambda x: -x['dist_m'])
     if rival: return 'direction only', f"another spot {rival[0]['dist_m']:.0f} m away fits too"
     c = r.get('conf') or {}
     if not c: return 'weak', 'not checked'
@@ -241,7 +246,8 @@ def peak_sets(lms, stop, W, H, T, grids):
 
 
 # ------------------------------------------------------------------ one photo
-def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, log=print):
+def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, log=print, stand_pins=None):
+    """stand_pins = [(lat, lng)]: the stop's own stand spots (claim's job.stand_pins; solve.py's tie-break)"""
     t0 = time.time()
     im = cv2.imread(photo, cv2.IMREAD_COLOR)
     if im is None: raise ValueError('cannot read the photo')
@@ -293,7 +299,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
     best = None
     for i, lms in enumerate(tries):
         lmf = os.path.join(work, f'landmarks{i}.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
-        r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'), hint=hint)
+        r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'), hint=hint, stand_pins=stand_pins)
         v, why = verdict(r, dict(look, landmarks=lms))
         log(f"  try {i + 1}: {v} {why}")
         if best is None or RANK[v] > RANK[best[1]]: best = (r, v, why, lms)
@@ -305,7 +311,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
         # elsewhere (a wrong pin still gets 'direction only' when only far peaks show: scan 6 with a pin 1.6 km off)
         log('  hint: no good answer near the pin, open search round the stop')
         lmf = os.path.join(work, 'landmarks_open.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
-        r2 = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'))
+        r2 = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'), stand_pins=stand_pins)
         v2, why2 = verdict(r2, dict(look, landmarks=lms))
         if r2.get('ok'):
             d2 = bearing(hint['lat'], hint['lng'], r2['lat'], r2['lng'])[1]
@@ -345,6 +351,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
                main_landmark=main, shot_name=shot_name(fg, far, r['lat'], r['lng']),
                landmarks=[dict(name=L['name'], x=L['x'], px=L['px'], dist_m=round(L['dist_m'])) for L in r.get('landmarks', [])],
                height=height_summary(r), aerial=bool(r.get('aerial')), ground_alt=r.get('ground_alt'), air=r.get('air'),
+               clear_view=r.get('clear_view'),
                hint=hint, open_fit=open_fit, open_check=open_check,
                dist_from_hint_m=round(bearing(hint['lat'], hint['lng'], r['lat'], r['lng'])[1]) if hint else None,
                times=r.get('times'))
@@ -409,7 +416,8 @@ def worker(a):
     pic = os.path.join(work, 'photo.jpg'); urllib.request.urlretrieve(job['photo_url'], pic)
     ovf = os.path.join(work, 'overlay.jpg')
     try:
-        res = run(pic, job['look'], (job['stop']['lat'], job['stop']['lng']), job['region'], rows, a.cache, a.hcache, ovf)
+        pins = [(float(p_['lat']), float(p_['lng'])) for p_ in (job.get('stand_pins') or []) if p_.get('lat') is not None]
+        res = run(pic, job['look'], (job['stop']['lat'], job['stop']['lng']), job['region'], rows, a.cache, a.hcache, ovf, stand_pins=pins)
         ov = base64.b64encode(open(ovf, 'rb').read()).decode() if os.path.exists(ovf) else None
         print(json.dumps({k: res.get(k) for k in ('ok', 'verdict', 'why', 'lat', 'lng', 'yaw', 'hfov', 'fp_mm', 'times')}, default=float))
         f = call(a.api, dict(action='finish', job_id=a.job, result=json.loads(json.dumps(res, default=float)), overlay_jpeg_base64=ov), oidc_token())
@@ -425,13 +433,15 @@ if __name__ == '__main__':
     ap.add_argument('--photo'); ap.add_argument('--look'); ap.add_argument('--stop'); ap.add_argument('--region')
     ap.add_argument('--rows'); ap.add_argument('--cache', required=True); ap.add_argument('--hcache')
     ap.add_argument('--out'); ap.add_argument('--overlay')
+    ap.add_argument('--pins', help='LAT,LNG;LAT,LNG...: the stop\'s stand pins (local test)')
     a = ap.parse_args()
     if a.hcache: os.makedirs(a.hcache, exist_ok=True)
     if a.job:
         worker(a)
     else:
         look = json.load(open(a.look)); look = look.get('look', look)
-        res = run(a.photo, look, tuple(float(v) for v in a.stop.split(',')), a.region, a.rows, a.cache, a.hcache, a.overlay)
+        res = run(a.photo, look, tuple(float(v) for v in a.stop.split(',')), a.region, a.rows, a.cache, a.hcache, a.overlay,
+                  stand_pins=SV.parse_pins(a.pins))
         s = json.dumps(res, indent=1, default=float)
         if a.out: open(a.out, 'w').write(s)
         print(json.dumps({k: res.get(k) for k in ('ok', 'verdict', 'why', 'lat', 'lng', 'yaw', 'hfov', 'fp_mm', 'shot_name')}, default=float))
