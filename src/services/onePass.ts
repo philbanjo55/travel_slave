@@ -10,7 +10,7 @@ import { kickPlanning } from './planningStatus';
 // + Plan again: today first (where the plan says he is, the cameras, notes), then the rest of the trip planned around
 // today's new plan (the server goes on by itself: planner_t_rest). Once today's stops are over: tomorrow on.
 // TEST app only and OFF: Phil OKs the before / after first (no visible change while this is false).
-export const ONE_PASS_UI = false;
+export const ONE_PASS_UI = true;   // Phil OK'd the before / after, 18 Nov 2026
 
 export type ReplanMode = 'today' | 'rest';
 
