@@ -3,7 +3,7 @@ import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
 import { refreshSunPlan } from './sunPlan';
-import type { Framing, Pair } from '../utils/sunEngine';
+import type { Framing, IdealLight, Pair } from '../utils/sunEngine';
 
 // Saves from the 3D view (TEST app, 14 Nov 2026): a shot's stand spot (walk mode's "Save as my spot") and its framing
 // ("Save framing"). Phil goes through every shot of a trip in the 3D view, often with no signal, so a save that cannot
@@ -16,7 +16,8 @@ import type { Framing, Pair } from '../utils/sunEngine';
 export type ShotSave =
   | { kind: 'move'; tripId: string; stopId: string; vantageId: string; lat: number; lng: number; at: string }
   | { kind: 'frame'; tripId: string; stopId: string; vantageId: string; framing: Framing }
-  | { kind: 'unframe'; tripId: string; stopId: string; vantageId: string; at: string };
+  | { kind: 'unframe'; tripId: string; stopId: string; vantageId: string; at: string }
+  | { kind: 'ideal'; tripId: string; stopId: string; vantageId: string; ideal: IdealLight | null };   // null = forget
 
 const KEY = 'pf_shot_saves';
 const SEND_TIMEOUT_MS = 15000;
@@ -28,11 +29,12 @@ let flushing = false;
 let timer: ReturnType<typeof setInterval> | null = null;
 let started = false;
 const known: Record<string, Framing | null> = {};       // vantage id -> framing saved on this phone (null = forgotten)
+const knownIdeal: Record<string, IdealLight | null> = {};   // vantage id -> ideal light saved on this phone (null = forgotten)
 const refused: Record<string, string> = {};             // vantage id -> why the server refused a waiting save
 const listeners = new Set<() => void>();
 const tell = () => listeners.forEach(fn => { try { fn(); } catch { /* a screen gone */ } });
 
-const family = (j: ShotSave) => (j.kind === 'move' ? 'move' : 'frame');
+const family = (j: ShotSave) => (j.kind === 'move' ? 'move' : j.kind === 'ideal' ? 'ideal' : 'frame');
 
 async function load(): Promise<ShotSave[]> {
   if (queue) return queue;
@@ -46,7 +48,7 @@ async function load(): Promise<ShotSave[]> {
       } catch { /* nothing saved, or unreadable: start empty */ }
       if (!queue) {
         queue = q;
-        for (const j of q) if (j.kind === 'frame') known[j.vantageId] = j.framing; else if (j.kind === 'unframe') known[j.vantageId] = null;
+        for (const j of q) if (j.kind === 'frame') known[j.vantageId] = j.framing; else if (j.kind === 'unframe') known[j.vantageId] = null; else if (j.kind === 'ideal') knownIdeal[j.vantageId] = j.ideal;
       }
       return queue;
     })();
@@ -74,7 +76,9 @@ async function send(j: ShotSave): Promise<void> {
         ...(j.framing.photo === undefined ? {} : { p_photo: j.framing.photo ?? {} }),
         ...(j.framing.eye != null ? { p_eye_m: j.framing.eye } : {}),   // camera height (left out = eye height)
       })
-      : supabase.rpc('sun_vantage_unframe', { p_stop_id: j.stopId, p_vantage_id: j.vantageId });
+      : j.kind === 'ideal'
+        ? supabase.rpc('sun_vantage_ideal', { p_stop_id: j.stopId, p_vantage_id: j.vantageId, p_az: j.ideal?.az ?? null, p_alt: j.ideal?.alt ?? null, p_at: j.ideal?.at ?? null })
+        : supabase.rpc('sun_vantage_unframe', { p_stop_id: j.stopId, p_vantage_id: j.vantageId });
   const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out')), SEND_TIMEOUT_MS));
   const { error } = (await Promise.race([call, timeout])) as any;
   if (error) throw error;
@@ -103,7 +107,8 @@ export async function flushShotSaves(): Promise<void> {
       } catch (e: any) {
         if (isNoSignal(e)) break;
         refused[j.vantageId] = String(e?.message ?? e ?? 'refused');   // the server said no: dropped, and said once
-        if (j.kind !== 'move' && q[0] === j) delete known[j.vantageId];   // (unless a newer framing already took its place)
+        if (j.kind === 'ideal') delete knownIdeal[j.vantageId];
+        else if (j.kind !== 'move' && q[0] === j) delete known[j.vantageId];   // (unless a newer framing already took its place)
       }
       const i = q.indexOf(j);   // by identity: a newer save of this shot may have taken its place while it was sent
       if (i >= 0) q.splice(i, 1);
@@ -132,6 +137,7 @@ export async function saveShot(j: ShotSave): Promise<'sent' | 'queued'> {
   delete refused[j.vantageId];
   if (j.kind === 'frame') known[j.vantageId] = j.framing;
   if (j.kind === 'unframe') known[j.vantageId] = null;
+  if (j.kind === 'ideal') knownIdeal[j.vantageId] = j.ideal;
   tell();
   const waiting = q.findIndex(x => x.vantageId === j.vantageId && family(x) === family(j));
   if (waiting >= 0 || q.length) {   // something is already waiting: keep the order, replace an older save of this shot
@@ -144,7 +150,8 @@ export async function saveShot(j: ShotSave): Promise<'sent' | 'queued'> {
     await send(j);
   } catch (e: any) {
     if (!isNoSignal(e)) {
-      if (j.kind !== 'move') delete known[j.vantageId];
+      if (j.kind === 'ideal') delete knownIdeal[j.vantageId];
+      else if (j.kind !== 'move') delete known[j.vantageId];
       tell();
       throw new Error(String(e?.message ?? e ?? 'Something went wrong'));
     }
@@ -163,10 +170,17 @@ export function framingOf(pair: Pair): Framing | null {
   return f && Number.isFinite(f.heading) && Number.isFinite(f.pitch) ? f : null;
 }
 
+// The shot's ideal light as this phone knows it: a save made here (sent or waiting) wins over the trip's sun plan.
+export function idealOf(pair: Pair): IdealLight | null {
+  if (Object.prototype.hasOwnProperty.call(knownIdeal, pair.vantage_id)) return knownIdeal[pair.vantage_id];
+  const i = pair.ideal;
+  return i && Number.isFinite(i.az) && Number.isFinite(i.alt) ? i : null;
+}
+
 // What of this shot is still waiting for signal.
 export function waitingFor(vantageId: string): { move: boolean; frame: boolean } {
   const q = queue ?? [];
-  return { move: q.some(j => j.vantageId === vantageId && j.kind === 'move'), frame: q.some(j => j.vantageId === vantageId && j.kind !== 'move') };
+  return { move: q.some(j => j.vantageId === vantageId && j.kind === 'move'), frame: q.some(j => j.vantageId === vantageId && (j.kind === 'frame' || j.kind === 'unframe')) };
 }
 
 // A waiting save of this shot the server refused (shown once, then forgotten).

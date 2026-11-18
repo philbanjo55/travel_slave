@@ -157,7 +157,27 @@ export type Pair = {
   photo_url?: string | null;
   framing?: Framing | null;    // the 3D view's saved framing (trip_sun_plan, after 20261114040000_vantage_framing)
   starred?: boolean;           // the stop's starred shot (same migration; older plans leave it out)
+  ideal?: IdealLight | null;   // the shot's saved ideal light (trip_sun_plan, after 20261118090000_vantage_ideal_light)
 };
+
+// A shot's ideal light (Phil, 18 Nov 2026): where the sun is (az / alt, degrees) at the moment he picked, plus that moment.
+// On another day it is the time when the sun is closest to that spot in the sky (idealMinute).
+export type IdealLight = { az: number; alt: number; at?: string | null };
+
+// The minute of the day (0-1439, from day0) when the sun is closest to the ideal spot in the sky, and how far it is (deg).
+export function idealMinute(ideal: IdealLight, day0: number, lat: number, lng: number): { minute: number; off: number } {
+  const r = Math.PI / 180, a1 = ideal.az * r, h1 = ideal.alt * r;
+  let best = 0, bd = Infinity;
+  for (let m = 0; m < 1440; m += 1) {
+    const p = sunPosition(day0 + m * 60000, lat, lng);
+    if (p.alt < -10) continue;
+    const a2 = p.az * r, h2 = p.alt * r;
+    const c = Math.sin(h1) * Math.sin(h2) + Math.cos(h1) * Math.cos(h2) * Math.cos(a1 - a2);
+    const d = Math.acos(Math.max(-1, Math.min(1, c))) / r;
+    if (d < bd) { bd = d; best = m; }
+  }
+  return { minute: best, off: Math.round(bd * 10) / 10 };
+}
 
 // A shot's saved framing in the 3D view: where the camera points (compass heading of the frame's middle), its tilt
 // (degrees up), the lens (Sun3DPanel's lens id) and the frame box's orientation; `at` = when it was framed.
