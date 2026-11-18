@@ -11,8 +11,9 @@ import { useTripStore } from '../../store/tripStore';
 import { buildTour, TourShot } from './shotTour';
 import SunPairEditor from './SunPairEditor';
 import {
-  dayEvents, dayStartMs, fmtMinute, idealMinute, lightAt, moonPosition, parseTimeLabel,
+  dayEvents, dayStartMs, fmtMinute, lightAt, moonPosition, parseTimeLabel,
 } from '../../utils/sunEngine';
+import type { IdealLight } from '../../utils/sunEngine';
 import { idealOf, saveShot, startShotSaves, useShotSaves } from '../../services/shotSaves';
 import SunMapPanel from './SunMapPanel';
 import OverheadMapPanel from './OverheadMapPanel';
@@ -23,7 +24,7 @@ import SunHorizonPanel from './SunHorizonPanel';
 import VantagePhoto from './VantagePhoto';
 import FullScreenPhotoViewer from '../FullScreenPhotoViewer';
 import type { Pair } from '../../utils/sunEngine';
-import { LABELS, PHASE_COLORS, compassPoint, shotName, shotTitle } from './sunStyle';
+import { LABELS, PHASE_COLORS, SUN, compassPoint, shotName, shotTitle } from './sunStyle';
 import Sun3DPanel from './Sun3DPanel';
 import WalkToShot from './WalkToShot';
 import { useNearView } from './nearView';
@@ -464,44 +465,49 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
 }
 
 // Ideal light for the shot (Phil, 18 Nov 2026: "for each shot, save an ideal time / lighting scenario"; step 1, T
-// does not read it yet). A sun button by the time: nothing saved = "Save this light?"; saved = the ideal time on this
-// day ("7:42"), and a tap offers Go there / Save this time instead / Forget. Saved as the sun's place in the sky at the
-// slider's moment, so on another day it is the time the sun is closest to that place.
+// does not read it yet). A sun button by the time, styled like the walk / Close buttons: nothing saved = save the
+// slider's time; saved = that time ("7:42 AM"), a tap offers Go there / Save this time instead / Forget. Each shot keeps
+// its own time (Phil: "I'll just set each"); the sun's place at that moment is stored with it for T later.
+function idealClock(ideal: IdealLight, day0: number): number | null {
+  const t = ideal.at ? Date.parse(ideal.at) : NaN;
+  if (!Number.isFinite(t)) return null;
+  return ((Math.round((t - day0) / 60000) % 1440) + 1440) % 1440;
+}
+
 function IdealLightButton({ tripId, stopId, pair, day0, minute, onJump }: {
   tripId: string | null | undefined; stopId: string; pair: Pair; day0: number; minute: number; onJump: (m: number) => void;
 }) {
   useShotSaves();
   useEffect(() => { startShotSaves(); }, []);
   const ideal = idealOf(pair);
-  const at = ideal ? idealMinute(ideal, day0, pair.v.lat, pair.v.lng) : null;
-  const here = at != null && Math.abs(at.minute - minute) <= 2;
-  const sun = lightAt(pair, day0 + minute * 60000).sun;
+  const at = ideal ? idealClock(ideal, day0) : null;
+  const here = at != null && Math.abs(at - minute) <= 2;
   const save = () => {
     if (!tripId) return;
-    const j = { kind: 'ideal' as const, tripId, stopId, vantageId: pair.vantage_id,
-      ideal: { az: Math.round(sun.az * 100) / 100, alt: Math.round(sun.alt * 100) / 100, at: new Date(day0 + minute * 60000).toISOString() } };
-    saveShot(j).catch((e: any) => Alert.alert("Couldn't save the light", String(e?.message ?? e)));
+    const sun = lightAt(pair, day0 + minute * 60000).sun;
+    saveShot({ kind: 'ideal', tripId, stopId, vantageId: pair.vantage_id,
+      ideal: { az: Math.round(sun.az * 100) / 100, alt: Math.round(sun.alt * 100) / 100, at: new Date(day0 + minute * 60000).toISOString() } })
+      .catch((e: any) => Alert.alert("Couldn't save the light", String(e?.message ?? e)));
   };
   const forget = () => { if (tripId) saveShot({ kind: 'ideal', tripId, stopId, vantageId: pair.vantage_id, ideal: null }).catch(() => {}); };
-  const sunWords = `sun ${Math.round(sun.alt)}° up, from the ${compassPoint(sun.az)}`;
   const press = () => {
-    if (!ideal || !at) {
-      Alert.alert('Save this as the ideal light?', `${fmtMinute(minute)} (${sunWords}). It changes the shot on every trip that uses it, practice copies included.`, [
+    if (at == null) {
+      Alert.alert(`Save ${fmtMinute(minute)} as this shot's ideal light?`, undefined, [
         { text: 'Cancel', style: 'cancel' }, { text: 'Save', onPress: save }]);
       return;
     }
-    Alert.alert('Ideal light', `${fmtMinute(at.minute)} on this day${at.off > 5 ? ` (the sun comes no closer than ${Math.round(at.off)}° to it today)` : ''}.`, [
+    Alert.alert(`Ideal light: ${fmtMinute(at)}`, undefined, [
       { text: 'Cancel', style: 'cancel' },
-      ...(here ? [] : [{ text: `Go to ${fmtMinute(at.minute)}`, onPress: () => onJump(at.minute) }]),
+      ...(here ? [] : [{ text: `Go to ${fmtMinute(at)}`, onPress: () => onJump(at) }]),
       ...(here ? [] : [{ text: `Save ${fmtMinute(minute)} instead`, onPress: save }]),
       { text: 'Forget', style: 'destructive' as const, onPress: forget },
     ]);
   };
-  const label = ideal && at ? `Ideal light ${fmtMinute(at.minute)}${here ? ', showing' : ''}. Tap for options` : 'Save this time as the ideal light';
+  const label = at != null ? `Ideal light ${fmtMinute(at)}${here ? ', showing' : ''}. Tap for options` : 'Save this time as the ideal light';
   return (
     <TouchableOpacity onPress={press} style={[styles.idealBtn, here && styles.idealHere]} accessibilityRole="button" accessibilityLabel={label} hitSlop={4} disabled={!tripId}>
-      <Ionicons name={ideal ? 'sunny' : 'sunny-outline'} size={16} color={ideal ? '#f2c14e' : '#ffffff'} />
-      {ideal && at ? <Text style={styles.idealText}>{fmtMinute(at.minute)}</Text> : null}
+      <Ionicons name={at != null ? 'sunny' : 'sunny-outline'} size={18} color={at != null ? SUN : '#ffffff'} />
+      {at != null ? <Text style={styles.idealText}>{fmtMinute(at)}</Text> : null}
     </TouchableOpacity>
   );
 }
@@ -645,9 +651,9 @@ const styles = StyleSheet.create({
   facing: { marginLeft: 'auto', fontSize: 11, color: '#888888' },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   timeText: { fontSize: 15, fontWeight: '600', color: colors.textPrimary },
-  idealBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, minHeight: 32, borderRadius: 999, borderWidth: 1, borderColor: '#444444' },
-  idealHere: { borderColor: '#f2c14e' },
-  idealText: { fontSize: 12, fontWeight: '600', color: '#f2c14e' },
+  idealBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 44, height: 40, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a', justifyContent: 'center' },
+  idealHere: { borderColor: SUN },
+  idealText: { fontSize: 13, fontWeight: '600', color: SUN },
   stopBadge: { borderWidth: 1, borderColor: '#555555', borderRadius: 3, paddingHorizontal: 5, paddingVertical: 1 },
   stopBadgeText: { fontSize: 9, letterSpacing: 1, color: '#aaaaaa' },
   jumps: { marginLeft: 'auto', flexDirection: 'row', gap: 2 },
