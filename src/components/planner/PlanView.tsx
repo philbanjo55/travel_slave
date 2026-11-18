@@ -14,6 +14,8 @@ import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../..
 import { VERDICT_COLOR, VERDICT_TEXT, countText, expShots, forecastCount, isLightOnly, lateReplan, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
 import { forgetWeek } from '../../services/plannerWeek';
 import { startReplan, ack } from '../../services/planningStatus';
+import { ONE_PASS_UI, OnePassStart, waitOnePass } from '../../services/onePass';
+import { OnePassButton } from './OnePassButton';
 import { useTripStore } from '../../store/tripStore';
 import { dayBadge } from './dayBadge';
 import { useTierOf, forgetTiers } from './DayPlannerHints';
@@ -68,6 +70,19 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
     setBusy(null);
   }, [tripId, tripDate]);
 
+  // One-pass Re-plan (flag ONE_PASS_UI): today's plan comes with the re-plan, a later day's with the rest of the trip.
+  const loadOnePass = useCallback(async (s: OnePassStart) => {
+    setError(null); setBusy('T is re-planning. You can leave this screen.');
+    try {
+      const r = await waitOnePass(tripId, tripDate, format(new Date(), 'yyyy-MM-dd'), s, () => mounted.current);
+      if (!mounted.current) return;
+      ack(tripId);
+      if (r) { setRun(r); setPlans(await fetchPlans(r.id)); }
+      else setError("T is still planning, or doesn't re-plan this day. Check back in a few minutes.");
+    } catch (e: any) { setError(errText(e)); }
+    setBusy(null);
+  }, [tripId, tripDate]);
+
   const load = useCallback(async (pv: boolean, replan = false) => {
     if (t) return loadT(replan);
     setError(null); setBusy('Loading…');
@@ -114,12 +129,14 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
             </Text>
           </TouchableOpacity>
         ))}
+        {ONE_PASS_UI && t ? <OnePassButton tripId={tripId} variant="pill" disabled={!!busy} onStarted={loadOnePass} /> : (
         <TouchableOpacity onPress={() => load(preview, true)} style={styles.replan} disabled={!!busy} accessibilityLabel="Plan again">
           <Ionicons name="refresh" size={16} color={colors.textSecondary} />
           <Text style={styles.replanText}>Plan again</Text>
         </TouchableOpacity>
+        )}
       </View>
-      {t && isToday ? (
+      {t && isToday && !ONE_PASS_UI ? (
         <TouchableOpacity onPress={doNow} style={[styles.replan, styles.nowBtn]} disabled={!!busy || nowView.phase === 'running'} accessibilityLabel="Re-plan now">
           {nowView.phase === 'running' ? <ActivityIndicator size="small" color={colors.textPrimary} /> : <Ionicons name="camera-outline" size={16} color={colors.textPrimary} />}
           <Text style={[styles.replanText, { color: colors.textPrimary }]}>
@@ -174,6 +191,19 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
     setBusy(null);
   }, [tripId, key]);
 
+  const loadOnePass = useCallback(async (s: OnePassStart) => {
+    setError(null); setBusy('T is re-planning. You can leave this screen.'); setNote(null);
+    try {
+      await waitOnePass(tripId, tripDates[tripDates.length - 1], format(new Date(), 'yyyy-MM-dd'), s, () => mounted.current);
+      if (!mounted.current) return;
+      ack(tripId);
+      const j = await fetchTDays(tripId, tripDates);
+      setRun(j.run); setPlans(j.plans);
+      if (j.missing.length) setNote(`T has no plan yet for ${j.missing.map(d => format(parseISO(d), 'EEE d MMM')).join(', ')}.`);
+    } catch (e: any) { setError(errText(e)); }
+    setBusy(null);
+  }, [tripId, key]);
+
   const load = useCallback(async (replan = false) => {
     if (t) return loadT(replan);
     setError(null); setBusy('Loading…');
@@ -199,10 +229,12 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
           {t ? "T's plan for each day (forecast, else week draft)."
              : 'Each subject counts once, on its best day.'}
         </Text>
+        {ONE_PASS_UI && t ? <OnePassButton tripId={tripId} variant="pill" disabled={!!busy} onStarted={loadOnePass} /> : (
         <TouchableOpacity onPress={() => load(true)} style={styles.replan} disabled={!!busy} accessibilityLabel="Plan again">
           <Ionicons name="refresh" size={16} color={colors.textSecondary} />
           <Text style={styles.replanText}>Plan again</Text>
         </TouchableOpacity>
+        )}
       </View>
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>

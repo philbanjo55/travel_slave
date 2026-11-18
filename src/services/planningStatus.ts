@@ -75,6 +75,15 @@ export async function ack(tripId: string, made?: string | null) {
   emit(tripId);
 }
 
+// The strip at once, before the server has the new run (also the one-pass Re-plan, services/onePass: its week draft
+// starts only once today's re-plan is done, so holdMs keeps the strip on until then).
+export function kickPlanning(tripId: string, holdMs = 0) {
+  const e = entry(tripId);
+  e.kicked = Date.now() + holdMs;
+  emit(tripId);
+  refresh(tripId);
+}
+
 // "Plan again": start T's week draft and show the strip at once. Returns `since` for waitForT.
 export async function startReplan(tripId: string): Promise<string> {
   const e = entry(tripId);

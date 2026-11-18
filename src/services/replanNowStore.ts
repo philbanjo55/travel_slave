@@ -83,6 +83,12 @@ export async function resumeReplanNow() { await load(); if (pending.length) kick
 export async function startReplanNow(tripId: string, title?: string): Promise<void> {
   await load();
   const { id } = await replanNow(tripId);
+  await trackReplanNow(tripId, id, title);
+}
+
+// Follows a request started elsewhere (the one-pass Re-plan, services/onePass) the same way.
+export async function trackReplanNow(tripId: string, id: number, title?: string): Promise<void> {
+  await load();
   if (!pending.some(p => p.tripId === tripId && p.id === id)) pending = [...pending.filter(p => p.tripId !== tripId), { tripId, id, title, since: Date.now() }];
   await save();
   set(tripId, { phase: 'running', since: Date.now() });
