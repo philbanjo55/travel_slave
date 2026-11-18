@@ -420,7 +420,7 @@ Deno.serve(async (req) => {
     const FOG = cfg.fog && !cfg.draft ? 80 : 0;
     // vfit (v73, 6 Nov 2026, planner version AN): builds at lead + 640 use the hidden-peak and look odds
     // learned from the camera vote (counts hb + 10 / lk + 10); carried with SUN in every lead below.
-    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0) + (cfg.cons && !cfg.draft ? 2560 : 0) + (cfg.sbfix && !cfg.draft ? 5120 : 0) + (cfg.blue && !cfg.draft ? 10240 : 0) + (cfg.layers && !cfg.draft ? 40960 : 0) + (cfg.runs && !cfg.draft ? 81920 : 0) + (cfg.slay && !cfg.draft ? 163840 : 0) + (cfg.svis && !cfg.draft ? 327680 : 0);
+    const FADE = cfg.fade && !cfg.draft ? 160 : 0, SUN = (cfg.sun && !cfg.draft ? 320 : 0) + (cfg.vfit && !cfg.draft ? 640 : 0) + (cfg.nopk && !cfg.draft ? 1280 : 0) + (cfg.cons && !cfg.draft ? 2560 : 0) + (cfg.sbfix && !cfg.draft ? 5120 : 0) + (cfg.blue && !cfg.draft ? 10240 : 0) + (cfg.layers && !cfg.draft ? 40960 : 0) + (cfg.runs && !cfg.draft ? 81920 : 0) + (cfg.slay && !cfg.draft ? 163840 : 0) + (cfg.svis && !cfg.draft ? 327680 : 0) + (cfg.ideal && !cfg.draft ? 655360 : 0) + (cfg.ideal_strong && !cfg.draft ? 1310720 : 0);
     const leadOf = (l: number) => (l === 1 && cfg.day1_lead != null ? Number(cfg.day1_lead) : l) + (cfg.calsun ? 10 : 0) + (cfg.learn ? 40 : 0) + WX + FOG + SUN;
     const { data: blds } = await db.from('replay_builds').select('id, replay_day_id, kind, lead, members, look_at')
       .in('replay_day_id', horizon.map(h => h.dayId).filter(x => x != null)).order('created_at', { ascending: false });
