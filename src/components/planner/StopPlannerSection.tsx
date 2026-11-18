@@ -10,6 +10,8 @@ import {
 import { VERDICT_COLOR, VERDICT_TEXT, countText, planKindText, reasonText, verdictOf } from '../../services/plannerWords';
 import { mineVisit, placements, samePlace } from '../../services/plannerWeek';
 import { startReplan } from '../../services/planningStatus';
+import { ONE_PASS_UI } from '../../services/onePass';
+import { OnePassButton } from './OnePassButton';
 import SettingsEditor, { settingsSummary } from './SettingsEditor';
 import { DayPlanner } from './DayPlannerHints';
 
@@ -152,7 +154,13 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
       ) : (
         <View style={{ gap: spacing.sm }}>
           <SettingsEditor stopId={stopId} initial={setting} onChange={s => { setSetting(s); setSaved(true); }} />
-          {saved && tripId ? (
+          {saved && tripId && ONE_PASS_UI ? (
+            // One-pass Re-plan (flag off): today + the rest of the trip, or tomorrow on.
+            <View style={styles.replan}>
+              <Text style={styles.replanText}>Saved. Re-plan with this change?</Text>
+              <OnePassButton tripId={tripId} variant="link" onStarted={() => setSaved(false)} />
+            </View>
+          ) : saved && tripId ? (
             <TouchableOpacity style={styles.replan} onPress={replan} disabled={replanning} accessibilityRole="button">
               <Text style={styles.replanText}>Saved. Re-plan with this change?</Text>
               {replanning ? <ActivityIndicator size="small" color={colors.signalOk} /> : <Text style={styles.replanGo}>Plan again ›</Text>}
