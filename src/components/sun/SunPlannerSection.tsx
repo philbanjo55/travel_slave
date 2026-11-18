@@ -155,6 +155,14 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   const home = stopMinute ?? events.goldenPm ?? 720;
   const [minute, setMinute] = useState(home);
   useEffect(() => { setMinute(home); }, [stop.date, home]);
+  // A shot with a saved ideal light opens the 3D view at that time (Phil, 18 Nov 2026: "always save that light when I
+  // view in 3d"): on the 3D tab and in full screen, each time the shot changes (or the view opens). The slider stays free.
+  useShotSaves();
+  const idealAt = (p: Pair, d0: number) => { const i = idealOf(p); return i ? idealClock(i, d0) : null; };
+  const pairIdeal = idealAt(pair, day0);
+  useEffect(() => {
+    if ((tab === '3d' || full3d) && pairIdeal != null) setMinute(pairIdeal);
+  }, [tab, full3d, pair.vantage_id, stop.date, pairIdeal]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Full screen: every shot of the trip, one after another (Phil, 14 Nov 2026) ----
   // The trip's shots in day order (shotTour) from the sun plan already on the phone; `away` = a shot of another stop
@@ -193,7 +201,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
       setAwayKey(null);
     } else {
       const d0 = dayStartMs(t.stop.date, t.stop.utc_offset_min);
-      setAwayMinute(parseTimeLabel(t.timeLabel) ?? dayEvents(t.pair.v, d0).goldenPm ?? 720);
+      setAwayMinute(idealAt(t.pair, d0) ?? parseTimeLabel(t.timeLabel) ?? dayEvents(t.pair.v, d0).goldenPm ?? 720);
       setAwayKey({ stopId: t.stopId, vid: t.pair.vantage_id });
     }
   };
