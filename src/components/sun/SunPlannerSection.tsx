@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../../theme';
 import { SunPlan, SunStop, SUN_PLANNER_ENABLED, useSunStopState } from '../../services/sunPlan';
+import { toggleShotCheck, useShotChecks } from '../../services/shotChecks';
 import { useTripStore } from '../../store/tripStore';
 import { buildTour, TourShot } from './shotTour';
 import SunPairEditor from './SunPairEditor';
@@ -121,6 +122,8 @@ async function savedStars(stopIds: string[]): Promise<Record<string, string | nu
 }
 
 function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stopPhotos }: { stop: SunStop; tripId?: string | null; stopId?: string | null; timeLabel?: string | null; onEdit: (vantageId?: string | null) => void; plan?: SunPlan | null; stopName?: string | null; stopPhotos?: any[] }) {
+  const shotChecks = useShotChecks(stopId);   // shots checked off here (hold a chip: Phil, 18 Nov 2026)
+  const checkShot = (vid: string) => { if (stopId) toggleShotCheck(stopId, vid).catch(() => {}); };
   const stopMinute = parseTimeLabel(timeLabel);
   const day0 = dayStartMs(stop.date, stop.utc_offset_min);
   const [pairIdx, setPairIdx] = useState(0);
@@ -361,28 +364,36 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
       <TimeScrubber minute={minute} onChange={setMinute} phases={events.phases} />
 
       {stop.pairs.length === 1 && (
-        <View style={styles.onePair}>
+        <View style={[styles.onePair, shotChecks[pair.vantage_id] && styles.shotDone]}>
           <PairThumb pair={pair} size={46} onOpen={() => openPhoto(pair)} />
-          <Text style={[styles.onePairText, { flex: 1 }]} numberOfLines={2}>
-            {!!pair.code && <Text>{pair.code} </Text>}
-            <Text style={styles.onePairStrong}>{shotName(pair)}</Text>
-          </Text>
+          <TouchableOpacity style={{ flex: 1 }} onLongPress={() => checkShot(pair.vantage_id)} delayLongPress={450}
+            accessibilityRole="button" accessibilityLabel={`${pair.code ? `${pair.code} ` : ''}${shotName(pair)}${shotChecks[pair.vantage_id] ? ', shot done' : ''}. Hold to mark ${shotChecks[pair.vantage_id] ? 'not done' : 'done'}`}>
+            <Text style={styles.onePairText} numberOfLines={2}>
+              {shotChecks[pair.vantage_id] ? <Text style={styles.doneTick}>✓ </Text> : null}
+              {!!pair.code && <Text>{pair.code} </Text>}
+              <Text style={styles.onePairStrong}>{shotName(pair)}</Text>
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
       {stop.pairs.length > 1 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
           {stop.pairs.map((p, i) => {
             const on = p === pair;
+            const done = !!shotChecks[p.vantage_id];
             return (
               <TouchableOpacity
                 key={p.vantage_id}
                 onPress={() => { chosen.current = true; setPairIdx(i); }}
-                style={[styles.pairChip, on && styles.pairChipOn]}
-                accessibilityState={{ selected: on }}
+                onLongPress={() => checkShot(p.vantage_id)}
+                delayLongPress={450}
+                style={[styles.pairChip, on && styles.pairChipOn, done && styles.shotDone]}
+                accessibilityState={{ selected: on, checked: done }}
+                accessibilityLabel={`${p.code ? `${p.code} ` : ''}${shotName(p)}${done ? ', shot done' : ''}. Hold to mark ${done ? 'not done' : 'done'}`}
               >
                 <PairThumb pair={p} size={34} />
                 <View>
-                  {!!p.code && <Text style={[styles.pairCode, on && styles.pairTextOn]}>{p.code}</Text>}
+                  {!!p.code && <Text style={[styles.pairCode, on && styles.pairTextOn]}>{done ? '✓ ' : ''}{p.code}</Text>}
                   <Text style={[styles.pairTo, on && styles.pairTextOn]} numberOfLines={1}>{shotName(p)}</Text>
                 </View>
               </TouchableOpacity>
@@ -634,6 +645,8 @@ const styles = StyleSheet.create({
   photoFull: { position: 'absolute', right: 8, bottom: 8, backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 3 },
   photoCapText: { color: '#ffffff', fontSize: 11 },
   pairChipOn: { backgroundColor: '#ffffff' },
+  shotDone: { opacity: 0.4 },   // a shot checked off: greyed out (hold again to undo)
+  doneTick: { color: '#5aaa7a', fontWeight: '700' },
   pairCode: { fontSize: 11, fontWeight: '700', color: '#ffffff' },
   pairTo: { fontSize: 11, color: '#ffffff', maxWidth: 110 },
   pairTextOn: { color: '#000000' },
