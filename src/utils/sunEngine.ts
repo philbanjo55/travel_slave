@@ -157,7 +157,12 @@ export type Pair = {
   photo_url?: string | null;
   framing?: Framing | null;    // the 3D view's saved framing (trip_sun_plan, after 20261114040000_vantage_framing)
   starred?: boolean;           // the stop's starred shot (same migration; older plans leave it out)
+  ideal?: IdealLight | null;   // the shot's saved ideal light (trip_sun_plan, after 20261118090000_vantage_ideal_light)
 };
+
+// A shot's ideal light (Phil, 18 Nov 2026): where the sun is (az / alt, degrees) at the moment he picked, plus that moment.
+export type IdealLight = { az: number; alt: number; at?: string | null };
+
 
 // A shot's saved framing in the 3D view: where the camera points (compass heading of the frame's middle), its tilt
 // (degrees up), the lens (Sun3DPanel's lens id) and the frame box's orientation; `at` = when it was framed.

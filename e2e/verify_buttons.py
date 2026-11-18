@@ -259,7 +259,8 @@ def replan_now_card():
     time.sleep(6)
     after = blocked_lines()[before:]
     print('INFO blocked after Re-plan now: ' + ' | '.join(a[-160:] for a in after)[:800], flush=True)
-    V.check('btn-replan-now-sent', any('planner_t_now' in a for a in after), 'the tap sent planner_t_now (blocked)')
+    # the one Re-plan button (18 Nov 2026) sends planner_t_replan_one (Re-plan now + the rest of the trip)
+    V.check('btn-replan-now-sent', any(('planner_t_now' in a) or ('planner_t_replan_one' in a) for a in after), 'the tap sent planner_t_now / planner_t_replan_one (blocked)')
     V.check('btn-replan-now-alive', C.app_alive())
     aft = C.capture(1)
     V.show('btn-replan-now-after', aft)

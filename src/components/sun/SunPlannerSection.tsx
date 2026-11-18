@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, PanResponder, LayoutChangeEvent, Modal,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, PanResponder, LayoutChangeEvent, Modal, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +13,8 @@ import SunPairEditor from './SunPairEditor';
 import {
   dayEvents, dayStartMs, fmtMinute, lightAt, moonPosition, parseTimeLabel,
 } from '../../utils/sunEngine';
+import type { IdealLight } from '../../utils/sunEngine';
+import { idealOf, saveShot, startShotSaves, useShotSaves } from '../../services/shotSaves';
 import SunMapPanel from './SunMapPanel';
 import OverheadMapPanel from './OverheadMapPanel';
 import Overhead3DPanel from './Overhead3DPanel';
@@ -22,7 +24,7 @@ import SunHorizonPanel from './SunHorizonPanel';
 import VantagePhoto from './VantagePhoto';
 import FullScreenPhotoViewer from '../FullScreenPhotoViewer';
 import type { Pair } from '../../utils/sunEngine';
-import { LABELS, PHASE_COLORS, compassPoint, shotName, shotTitle } from './sunStyle';
+import { LABELS, PHASE_COLORS, SUN, compassPoint, shotName, shotTitle } from './sunStyle';
 import Sun3DPanel from './Sun3DPanel';
 import WalkToShot from './WalkToShot';
 import { useNearView } from './nearView';
@@ -439,6 +441,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
             ) : null}
             <View style={styles.timeRow}>
               <Text style={styles.timeText}>{fmtMinute(fMinute)}</Text>
+              <IdealLightButton tripId={tripId} stopId={fStopId} pair={fPair} day0={fDay0} minute={fMinute} onJump={setFMinute} />
               <Text style={styles.fullShot} numberOfLines={1}>{away ? `${MONTHS[Number(fStop.date.slice(5, 7)) - 1]} ${Number(fStop.date.slice(8, 10))}` : shotName(pair)}</Text>
               <TouchableOpacity onPress={() => setWalk('full')} style={styles.fullWalk} accessibilityRole="button" accessibilityLabel="Walk to this shot" hitSlop={4}>
                 <Ionicons name="walk-outline" size={20} color="#ffffff" />
@@ -458,6 +461,54 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
         onClose={() => setViewing(null)}
       />
     </View>
+  );
+}
+
+// Ideal light for the shot (Phil, 18 Nov 2026: "for each shot, save an ideal time / lighting scenario"; step 1, T
+// does not read it yet). A sun button by the time, styled like the walk / Close buttons: nothing saved = save the
+// slider's time; saved = that time ("7:42 AM"), a tap offers Go there / Save this time instead / Forget. Each shot keeps
+// its own time (Phil: "I'll just set each"); the sun's place at that moment is stored with it for T later.
+function idealClock(ideal: IdealLight, day0: number): number | null {
+  const t = ideal.at ? Date.parse(ideal.at) : NaN;
+  if (!Number.isFinite(t)) return null;
+  return ((Math.round((t - day0) / 60000) % 1440) + 1440) % 1440;
+}
+
+function IdealLightButton({ tripId, stopId, pair, day0, minute, onJump }: {
+  tripId: string | null | undefined; stopId: string; pair: Pair; day0: number; minute: number; onJump: (m: number) => void;
+}) {
+  useShotSaves();
+  useEffect(() => { startShotSaves(); }, []);
+  const ideal = idealOf(pair);
+  const at = ideal ? idealClock(ideal, day0) : null;
+  const here = at != null && Math.abs(at - minute) <= 2;
+  const save = () => {
+    if (!tripId) return;
+    const sun = lightAt(pair, day0 + minute * 60000).sun;
+    saveShot({ kind: 'ideal', tripId, stopId, vantageId: pair.vantage_id,
+      ideal: { az: Math.round(sun.az * 100) / 100, alt: Math.round(sun.alt * 100) / 100, at: new Date(day0 + minute * 60000).toISOString() } })
+      .catch((e: any) => Alert.alert("Couldn't save the light", String(e?.message ?? e)));
+  };
+  const forget = () => { if (tripId) saveShot({ kind: 'ideal', tripId, stopId, vantageId: pair.vantage_id, ideal: null }).catch(() => {}); };
+  const press = () => {
+    if (at == null) {
+      Alert.alert(`Save ${fmtMinute(minute)} as this shot's ideal light?`, undefined, [
+        { text: 'Cancel', style: 'cancel' }, { text: 'Save', onPress: save }]);
+      return;
+    }
+    Alert.alert(`Ideal light: ${fmtMinute(at)}`, undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      ...(here ? [] : [{ text: `Go to ${fmtMinute(at)}`, onPress: () => onJump(at) }]),
+      ...(here ? [] : [{ text: `Save ${fmtMinute(minute)} instead`, onPress: save }]),
+      { text: 'Forget', style: 'destructive' as const, onPress: forget },
+    ]);
+  };
+  const label = at != null ? `Ideal light ${fmtMinute(at)}${here ? ', showing' : ''}. Tap for options` : 'Save this time as the ideal light';
+  return (
+    <TouchableOpacity onPress={press} style={[styles.idealBtn, here && styles.idealHere]} accessibilityRole="button" accessibilityLabel={label} hitSlop={4} disabled={!tripId}>
+      <Ionicons name={at != null ? 'sunny' : 'sunny-outline'} size={18} color={at != null ? SUN : '#ffffff'} />
+      {at != null ? <Text style={styles.idealText}>{fmtMinute(at)}</Text> : null}
+    </TouchableOpacity>
   );
 }
 
@@ -600,6 +651,9 @@ const styles = StyleSheet.create({
   facing: { marginLeft: 'auto', fontSize: 11, color: '#888888' },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   timeText: { fontSize: 15, fontWeight: '600', color: colors.textPrimary },
+  idealBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 44, height: 40, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a', justifyContent: 'center' },
+  idealHere: { borderColor: SUN },
+  idealText: { fontSize: 13, fontWeight: '600', color: SUN },
   stopBadge: { borderWidth: 1, borderColor: '#555555', borderRadius: 3, paddingHorizontal: 5, paddingVertical: 1 },
   stopBadgeText: { fontSize: 9, letterSpacing: 1, color: '#aaaaaa' },
   jumps: { marginLeft: 'auto', flexDirection: 'row', gap: 2 },
