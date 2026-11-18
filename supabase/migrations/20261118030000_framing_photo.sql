@@ -47,7 +47,7 @@ begin
       raise exception 'The photo placement is not readable';
     end if;
     v_photo := jsonb_build_object('key', p_photo->>'key', 's', round((p_photo->>'s')::numeric, 4), 'x', round((p_photo->>'x')::numeric, 1),
-                                  'y', round((p_photo->>'y')::numeric, 1), 'w', round((p_photo->>'w')::numeric), 'h', round((p_photo->>'h')::numeric));
+                                  'y', round((p_photo->>'y')::numeric, 1), 'w', round((p_photo->>'w')::numeric, 1), 'h', round((p_photo->>'h')::numeric, 1));
   end if;
   v_h := p_heading - 360 * floor(p_heading / 360);
   if v_h >= 360 then v_h := 0; end if;

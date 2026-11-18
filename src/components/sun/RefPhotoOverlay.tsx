@@ -94,8 +94,9 @@ type Pt = [number, number];
 // except with "Move photo" on: then two fingers pinch the photo larger or smaller around the pinch, one finger moves
 // it, and a double tap puts it back to fit. PanResponder only (no native module). The transform lives here while the
 // fingers move (only this small view redraws) and is handed to the panel when they lift.
-export function RefPhotoGhost({ photo, opacity, xf = XF0, move = false, onXf }: {
+export function RefPhotoGhost({ photo, opacity, xf = XF0, move = false, onXf, onSize }: {
   photo: RefPhoto; opacity: number; xf?: PhotoXf; move?: boolean; onXf?: (xf: PhotoXf) => void;
+  onSize?: (w: number, h: number) => void;   // the photo's own size once it loads (its shape is needed to keep it on the scene)
 }) {
   const uri = useRefPhotoUri(photo);
   const [t, setT] = useState<PhotoXf>(xf);
@@ -168,6 +169,7 @@ export function RefPhotoGhost({ photo, opacity, xf = XF0, move = false, onXf }: 
           source={{ uri }}
           style={[StyleSheet.absoluteFill, { opacity, transform: [{ translateX: t.x }, { translateY: t.y }, { scale: t.s }] }]}
           resizeMode="contain"   // the whole photo, never cropped: zooming out shows all of it (Phil, 16 Nov 2026)
+          onLoad={(e: any) => { const sw = e?.nativeEvent?.source?.width, sh = e?.nativeEvent?.source?.height; if (onSize && sw > 0 && sh > 0) onSize(sw, sh); }}
         />
       </View>
     </View>

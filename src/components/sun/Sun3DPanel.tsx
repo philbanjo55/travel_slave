@@ -143,7 +143,31 @@ const feetIn = (m: number) => { const t = Math.round(m / 0.0254); return t >= 12
 const FINE_STEP = 0.25, WALK_STEP = 2;   // metres: a tap, and the most a held arrow moves per step
 const REF_OPACITY_KEY = 'pf_ref_opacity';
 let refOpacityRead = false;
-const refXfKept = new Map<string, PhotoXf>();   // where each photo was moved / zoomed to, while the app is open
+// Where each photo was moved / zoomed to, while the app is open, pinned to the 3D scene (not to the screen): the small
+// view, full screen and every lens show it over the same part of the scene (Phil, 18 Nov 2026: the small view's crop was
+// off from the full screen's, and opening it there threw full screen off too).
+type PhotoOnScene = { x: number; y: number; wd: number };   // the photo's middle and width, in focal lengths (see unitPx)
+const refScKept = new Map<string, PhotoOnScene>();
+const photoShape = new Map<string, number>();   // photo key -> width / height, once it has loaded
+// One focal length in dp for a view of w x h with this lens: the page draws the lens a little wider than its frame,
+// its camera's vertical view = 2 atan(k) (lensFov in tools/sun3d/app_view.js; keep the two the same).
+function unitPx(w: number, h: number, l: { f: number; fw: number; fh: number }): number {
+  const a = w / h, th = l.fw / (2 * l.f), tv = l.fh / (2 * l.f), k = Math.max(th / (a * 0.9), tv / 0.9);
+  return h / (2 * k);
+}
+const fitW = (w: number, h: number, shape: number) => Math.min(w, h * shape);   // the photo's width at 'contain' fit
+function xfToScene(xf: PhotoXf, w: number, h: number, l: { f: number; fw: number; fh: number }, shape: number): PhotoOnScene {
+  const u = unitPx(w, h, l);
+  return { x: xf.x / u, y: xf.y / u, wd: (xf.s * fitW(w, h, shape)) / u };
+}
+function sceneToXf(sc: PhotoOnScene, w: number, h: number, l: { f: number; fw: number; fh: number }, shape: number): PhotoXf {
+  const u = unitPx(w, h, l);
+  return { s: (sc.wd * u) / fitW(w, h, shape), x: sc.x * u, y: sc.y * u };
+}
+const lensOf = (id: string, orient: string) => {
+  const L = LENSES.find(l => l.id === id); if (!L) return null;
+  return { f: L.f, fw: orient === 'portrait' ? L.short : L.long, fh: orient === 'portrait' ? L.long : L.short };
+};
 let lastRefOpacity = 0.45;   // the see-through amount last chosen, kept while the app is open
 let foregroundTooHeavy = false;   // the web view died with the foreground on: it stays off until the user turns it on again
 // How this phone kept up the last time the view was moved: the page's quality levels while moving (0 full .. 3 low),
@@ -341,17 +365,26 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // about the same size (full screen on the same phone), scaled to small differences; on another size it opens fitted.
   const [pic, setPic] = useState<{ w: number; h: number } | null>(null);
   const savedPhoto = framing?.photo ?? null;
-  const savedXf = ((): PhotoXf | null => {
-    if (!savedPhoto || !pic || !refKey || savedPhoto.key !== refKey) return null;
-    const rw = pic.w / savedPhoto.w, rh = pic.h / savedPhoto.h;
-    if (Math.abs(rw - 1) > 0.15 || Math.abs(rh - 1) > 0.15) return null;
-    return { s: savedPhoto.s, x: savedPhoto.x * rw, y: savedPhoto.y * rh };
+  const [shape, setShape] = useState<number | null>(() => photoShape.get(refKey) ?? null);
+  useEffect(() => { setShape(photoShape.get(refKey) ?? null); }, [refKey]);
+  const onPhotoSize = useCallback((w: number, h: number) => { photoShape.set(refKey, w / h); setShape(w / h); }, [refKey]);
+  // the saved placement (screen points on the view it was saved on, with the framing's lens) -> on the scene
+  const savedSc = ((): PhotoOnScene | null => {
+    if (!savedPhoto || !shape || !refKey || savedPhoto.key !== refKey || !framing) return null;
+    const l = lensOf(framing.lens, framing.orient);
+    return l ? xfToScene({ s: savedPhoto.s, x: savedPhoto.x, y: savedPhoto.y }, savedPhoto.w, savedPhoto.h, l, shape) : null;
   })();
-  const savedXfKey = savedXf ? `${savedXf.s}|${savedXf.x}|${savedXf.y}` : '';
-  const [refXf, setRefXfState] = useState<PhotoXf>(() => refXfKept.get(refKey) ?? XF0);
+  const savedScKey = savedSc ? `${savedSc.x}|${savedSc.y}|${savedSc.wd}` : '';
+  const [refSc, setRefSc] = useState<PhotoOnScene | null>(() => refScKept.get(refKey) ?? null);
   const [photoMoved, setPhotoMoved] = useState(false);   // moved since the framing was last saved: Save framing lights up
-  const setRefXf = useCallback((xf: PhotoXf) => { refXfKept.set(refKey, xf); setRefXfState(xf); setPhotoMoved(true); }, [refKey]);
-  useEffect(() => { setRefXfState(refXfKept.get(refKey) ?? savedXf ?? XF0); setPhotoMoved(false); }, [refKey, savedXfKey]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // what the overlay draws: the scene placement turned into this view's points (fitted until one is known)
+  const refXf: PhotoXf = refSc && pic && shape ? sceneToXf(refSc, pic.w, pic.h, lens, shape) : XF0;
+  const setRefXf = useCallback((xf: PhotoXf) => {
+    if (!pic || !shape) return;   // (the photo is on screen to be moved, so both are known)
+    const sc = xfToScene(xf, pic.w, pic.h, lens, shape);
+    refScKept.set(refKey, sc); setRefSc(sc); setPhotoMoved(true);
+  }, [refKey, pic, shape, lens]);
+  useEffect(() => { setRefSc(refScKept.get(refKey) ?? savedSc ?? null); setPhotoMoved(false); }, [refKey, savedScKey]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (refMode !== 'see') setRefMove(false); }, [refMode]);
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
@@ -846,9 +879,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
 
   return (
     <View style={full ? styles.fullWrap : undefined} accessibilityLabel={overhead ? `Overhead 3D ${ready ? 'ready' : phase}, ${overhead.pairs.length} shots` : `3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}`}>
-      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}
-        onLayout={e => { const { width: w, height: h } = e.nativeEvent.layout; setPic(p => (p && Math.abs(p.w - w) < 1 && Math.abs(p.h - h) < 1 ? p : { w: Math.round(w), h: Math.round(h) })); }}>
-        <View style={[styles.web, glassOn ? styles.glass : null]} pointerEvents="box-none">
+      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}>
+        <View style={[styles.web, glassOn ? styles.glass : null]} pointerEvents="box-none"
+          onLayout={e => { const { width: w, height: h } = e.nativeEvent.layout; setPic(p => (p && Math.abs(p.w - w) < 0.5 && Math.abs(p.h - h) < 0.5 ? p : { w, h })); }}>
         {region && b64 && !holding ? (
           <Web
             ref={web}
@@ -866,7 +899,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             style={styles.web}
           />
         ) : null}
-        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} /> : null}
+        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} onSize={onPhotoSize} /> : null}
         </View>
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
