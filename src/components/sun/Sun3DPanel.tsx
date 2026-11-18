@@ -278,6 +278,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const ready = phase === 'ready';
   // Walk mode (full screen, offline view): the arrows step the viewpoint; `at` is where it now stands.
   const [walking, setWalking] = useState(false);
+  // walk mode's tap to go (Phil, 18 Nov 2026): a tap on the ground in the picture jumps the viewpoint there
   const [at, setAt] = useState<{ lat: number; lng: number; moved: number } | null>(null);
   const [walkNote, setWalkNote] = useState<string | null>(null);
   const [savingSpot, setSavingSpot] = useState(false);
@@ -369,6 +370,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     if (c.timer) clearTimeout(c.timer);
     if (wait <= 0) send(); else c.timer = setTimeout(send, wait);
   }, [ready, hd, overhead, camH, run]);
+  useEffect(() => { if (ready) run(`window.S3D.tapGo && window.S3D.tapGo(${walking && full && !hd ? 'true' : 'false'})`); }, [ready, readyN, walking, full, hd, run]);
   const nudgeCamH = useCallback((d: number) => setCamH(h => Math.round(Math.max(CAM_MIN, Math.min(CAM_MAX, h + d)) * 10000) / 10000), []);
   // a tap = 1 inch; held, it keeps going and speeds up (Phil, 17 Nov 2026)
   const camTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -641,7 +643,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       if (!overhead) keepRef.current = { id: pairIdRef.current, eye: (m.moved || 0) > 0 ? { lat: m.lat, lng: m.lng } : null, view: keepRef.current?.id === pairIdRef.current ? keepRef.current.view : null };
     }
     else if (m.type === 'otherTap') { if (typeof m.id === 'string' && pickOtherRef.current) pickOtherRef.current(m.id); }
-    else if (m.type === 'walk') { walkQ.current.busy = 0; walkQ.current.f = 0; walkQ.current.r = 0; setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : 'That is the edge of the saved terrain.'); }
+    else if (m.type === 'walk') { walkQ.current.busy = 0; walkQ.current.f = 0; walkQ.current.r = 0; setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : m.stopped === 'sky' ? 'Tap the ground to jump there, not the sky.' : 'That is the edge of the saved terrain.'); }
     else if (m.type === 'hd') setHdLoading(!!m.loading);
     else if (m.type === 'error') {
       if (hdRef.current) {
@@ -1025,7 +1027,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       {walking && full && !hd ? (
         <View style={[styles.walkRow, pad]}>
           <Text style={styles.walkText}>
-            {queued.move ? 'Saved on the phone, sends when you have signal.' : walkNote ?? (at && at.moved > 0 ? `You've walked ${at.moved < 10 ? at.moved.toFixed(1) : Math.round(at.moved)} m from your saved spot. The times below are for here.` : 'Hold an arrow to walk, tap for 25 cm. Drag the picture to turn.')}
+            {queued.move ? 'Saved on the phone, sends when you have signal.' : walkNote ?? (at && at.moved > 0 ? `You've walked ${at.moved < 10 ? at.moved.toFixed(1) : Math.round(at.moved)} m from your saved spot. The times below are for here.` : 'Tap the ground to jump there, or hold an arrow to walk. Drag the picture to turn.')}
           </Text>
           <View style={styles.heightRow}>
             <Text style={styles.heightLabel} accessibilityLabel={`Camera height ${feetIn(camH)}, ${camH.toFixed(2)} metres`}>

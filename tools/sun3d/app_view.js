@@ -2564,6 +2564,32 @@
     post({ type: 'state', subjectLit: subjLit(sun.az, sun.alt), hereLit: lit(herePoint(), sun.az, sun.alt), up: sun.alt > 0 });
   }
   let drag = null;
+  // Tap to go: the ray from the eye through the tapped point, marched over the ground grids; the first point under the
+  // ground is where the viewpoint jumps (at most WALK_MAX m from the shot's stand spot; the look direction is kept).
+  const TAPGO = { on: false };
+  function tapGo(px, py) {
+    if (!R || !eye || !eye0 || !FAR) return;
+    const w = window.innerWidth || 1, h = window.innerHeight || 1;
+    const v = new THREE.Vector3((px / w) * 2 - 1, -(py / h) * 2 + 1, 0.5).unproject(R.cam);
+    const o = R.cam.position, d = v.sub(o).normalize();
+    if (d.y > 0.02) { post({ type: 'walk', stopped: 'sky' }); return; }
+    const ll = (x, z) => ({ lat: FAR.north - z / FAR.d * (FAR.north - FAR.south), lng: FAR.west + x / FAR.w * (FAR.east - FAR.west) });
+    let hit = null;
+    for (let t = 2; t < 6000; t += Math.max(0.5, t * 0.01)) {
+      const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t, p = ll(x, z);
+      if (!inside(p)) break;
+      let g; try { g = ohH(p); } catch (err) { break; }
+      if (y <= g) { hit = p; break; }
+    }
+    if (!hit) { post({ type: 'walk', stopped: 'sky' }); return; }
+    const kz = 111132, kx = 111320 * Math.cos(eye0.lat * Math.PI / 180);
+    const off = Math.hypot((hit.lat - eye0.lat) * kz, (hit.lng - eye0.lng) * kx);
+    if (off > WALK_MAX) {   // past the limit: as far as allowed along the way there
+      const k = WALK_MAX / off; hit = { lat: eye0.lat + (hit.lat - eye0.lat) * k, lng: eye0.lng + (hit.lng - eye0.lng) * k };
+      post({ type: 'walk', stopped: 'far', max: WALK_MAX });
+    }
+    eye = hit; touch('walk'); told();
+  }
   function wire() {
     const c = R.canvas;
     c.addEventListener('pointerdown', e => { if (OH.on) return ohDown(e); drag = { x: e.clientX, y: e.clientY }; OTH.tap = { x: e.clientX, y: e.clientY, t: performance.now() }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
@@ -2576,6 +2602,9 @@
         let best = null, bd = 26; for (const d of OTH.dots) { const dd = Math.hypot(d.x - e.clientX, d.y - e.clientY); if (dd < bd) { bd = dd; best = d; } }
         if (best) post({ type: 'otherTap', id: best.id });
       }
+      // walk mode's tap to go (Phil, 18 Nov 2026): a tap on the ground (not on a stand-spot marker) jumps there
+      if (tp && e && e.type === 'pointerup' && TAPGO.on && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) < 10 && performance.now() - tp.t < 600
+          && !(OTH.on && OTH.dots.some(d => Math.hypot(d.x - e.clientX, d.y - e.clientY) < 26))) tapGo(e.clientX, e.clientY);
       if (drag) { drag = null; heading(); if (act && act.kind === 'look') rest(); } };   // finger up: the sharp frame now
     c.addEventListener('pointerup', drop); c.addEventListener('pointercancel', drop);
     window.addEventListener('resize', resize);
@@ -2673,6 +2702,7 @@
       if (!inside(next) || off > WALK_MAX) { post({ type: 'walk', stopped: inside(next) ? 'far' : 'edge', max: WALK_MAX }); return; }
       eye = next; touch('walk'); told();
     },
+    tapGo(on) { TAPGO.on = !!on; },
     home() { if (!R || !eye0) return; eye = eye0; aim(); dirty = true; heading(); told(); },
     path(arr) {
       lastPath = arr;
