@@ -280,6 +280,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [walking, setWalking] = useState(false);
   // walk mode's tap to go (Phil, 18 Nov 2026): a tap on the ground in the picture jumps the viewpoint there
   const [at, setAt] = useState<{ lat: number; lng: number; moved: number } | null>(null);
+  const [jumps, setJumps] = useState(0);   // tap-to-go jumps that Back can undo
   const [walkNote, setWalkNote] = useState<string | null>(null);
   const [savingSpot, setSavingSpot] = useState(false);
   const [frameNote, setFrameNote] = useState<string | null>(null);   // a one-off line about the framing (else framedLine)
@@ -639,6 +640,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     }
     else if (m.type === 'eye') {
       setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); walkAnsweredRef.current();
+      if (typeof m.back === 'number') setJumps(m.back);
       if (typeof m.fine === 'boolean') setGroundFine(m.fine);
       if (!overhead) keepRef.current = { id: pairIdRef.current, eye: (m.moved || 0) > 0 ? { lat: m.lat, lng: m.lng } : null, view: keepRef.current?.id === pairIdRef.current ? keepRef.current.view : null };
     }
@@ -1048,6 +1050,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             ))}
           </View>
           <View style={styles.walkBtns}>
+            <TouchableOpacity onPress={() => { stopStepping(); run('window.S3D.back && window.S3D.back()'); }} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Back: undo the last jump" disabled={jumps === 0}>
+              <Text style={[styles.walkBtnText, jumps === 0 && { opacity: 0.4 }]}>Back</Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => { stopStepping(); run('window.S3D.home()'); }} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Back to my saved spot" disabled={!at || at.moved === 0}>
               <Text style={[styles.walkBtnText, (!at || at.moved === 0) && { opacity: 0.4 }]}>Back to my spot</Text>
             </TouchableOpacity>
