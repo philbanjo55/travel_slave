@@ -2379,7 +2379,7 @@
     // A pin in view stands on its spot. One out of view (behind you, to the side, under your feet: 17 Nov 2026, Phil
     // saw none from Find my spot's spots, which look the same way as the others) sits at the edge it lies past, with
     // an arrow pointing to it, so every other stand spot is always on screen.
-    const M = 46;
+    const M = 46, BOT = 96;   // edge labels stay above the caption line the app draws over the bottom of the view
     const items = OTH.calc.map(x => {
       const q = ohXZ(x.p); _ohc.set(q.x, x.h1 + 1.7, q.z).applyMatrix4(R.cam.matrixWorldInverse);
       _ohv.set(q.x, x.h1 + 1.7, q.z).project(R.cam);
@@ -2388,7 +2388,7 @@
       let ex = sx, ey = sy, dir = null;
       if (!inView) {
         if (_ohc.z < -0.5 && sx >= M && sx <= w - M) { ex = sx; if (sy > h - 8) { ey = h - 14; dir = 'down'; } else { ey = 72; dir = 'up'; } }
-        else { dir = _ohc.x >= 0 ? 'right' : 'left'; ex = dir === 'right' ? w - 14 : 14; ey = Math.max(80, Math.min(h - 30, _ohc.z < -0.5 ? sy : h * 0.55)); }
+        else { dir = _ohc.x >= 0 ? 'right' : 'left'; ex = dir === 'right' ? w - 14 : 14; ey = Math.max(80, Math.min(h - BOT, _ohc.z < -0.5 ? sy : h * 0.55)); }
       }
       return { x, sx: ex, sy: ey, dir };
     }).sort((a, b) => b.x.d - a.x.d);   // far ones first (near on top)
@@ -2396,9 +2396,11 @@
     for (const t of items) {
       const { x, dir } = t; let { sx, sy } = t;
       if (dir) {   // keep edge markers from piling on one another
-        for (let k = 0; k < 8 && edgeTaken.some(e => e.dir === dir && Math.abs(e.x - sx) < 70 && Math.abs(e.y - sy) < 38); k++) {
-          if (dir === 'left' || dir === 'right') sy = Math.min(h - 30, sy + 40); else sx = Math.min(w - M, sx + 72);
+        const clash = () => edgeTaken.some(e => e.dir === dir && Math.abs(e.x - sx) < 70 && Math.abs(e.y - sy) < 38);
+        for (let k = 0; k < 8 && clash(); k++) {   // down while there is room above the caption, then up
+          if (dir === 'left' || dir === 'right') sy = sy + 40 <= h - BOT ? sy + 40 : sy; else sx = Math.min(w - M, sx + 72);
         }
+        for (let k = 0; k < 8 && clash() && (dir === 'left' || dir === 'right'); k++) sy = Math.max(80, sy - 40);
         edgeTaken.push({ dir, x: sx, y: sy });
       }
       const up = Math.round(x.up), lines = [`${x.o.code || x.o.name || 'Spot'} · ${fmt(x.d)}`, `${up === 0 ? 'level' : up > 0 ? `${up} m up` : `${-up} m down`}${x.steep >= 20 ? ` · steep ${Math.round(x.steep)}°` : ''}`];
