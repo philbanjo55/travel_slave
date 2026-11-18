@@ -2566,7 +2566,7 @@
   let drag = null;
   // Tap to go: the ray from the eye through the tapped point, marched over the ground grids; the first point under the
   // ground is where the viewpoint jumps (at most WALK_MAX m from the shot's stand spot; the look direction is kept).
-  const TAPGO = { on: false, fingers: 0, hist: [] };   // hist: where each jump came from (Back undoes the last)
+  const TAPGO = { on: false, ids: new Set(), hist: [] };   // ids: fingers down now (by pointer id: a lost 'up' cannot stick)   // hist: where each jump came from (Back undoes the last)
   function tapGo(px, py) {
     if (!R || !eye || !eye0 || !FAR) return;
     const w = window.innerWidth || 1, h = window.innerHeight || 1;
@@ -2593,19 +2593,19 @@
   }
   function wire() {
     const c = R.canvas;
-    c.addEventListener('pointerdown', e => { if (OH.on) return ohDown(e); TAPGO.fingers++; drag = { x: e.clientX, y: e.clientY }; OTH.tap = TAPGO.fingers > 1 ? null : { x: e.clientX, y: e.clientY, t: performance.now(), far: 0 }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
+    c.addEventListener('pointerdown', e => { if (OH.on) return ohDown(e); if (e.isPrimary !== false) TAPGO.ids.clear(); TAPGO.ids.add(e.pointerId); drag = { x: e.clientX, y: e.clientY }; OTH.tap = TAPGO.ids.size > 1 ? null : { x: e.clientX, y: e.clientY, t: e.timeStamp, far: 0 }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
     c.addEventListener('webglcontextlost', e => { e.preventDefault(); if (R) R.lost = true; post({ type: 'lost', fore: foreState > 0 }); });
     c.addEventListener('pointermove', e => { if (OH.on) return ohMove(e); if (OTH.tap) OTH.tap.far = Math.max(OTH.tap.far, Math.hypot(e.clientX - OTH.tap.x, e.clientY - OTH.tap.y)); if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; touch('look'); });
     const drop = e => {
       if (OH.on) return ohUp(e);
-      const tp = OTH.tap; OTH.tap = null; TAPGO.fingers = Math.max(0, TAPGO.fingers - 1);
-      if (tp && e && e.type === 'pointerup' && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) < 10 && performance.now() - tp.t < 600 && OTH.on) {   // a tap on another stand spot's marker
+      const tp = OTH.tap; OTH.tap = null; TAPGO.ids.delete(e && e.pointerId);
+      if (tp && e && e.type === 'pointerup' && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) < 10 && e.timeStamp - tp.t < 600 && OTH.on) {   // a tap on another stand spot's marker
         let best = null, bd = 26; for (const d of OTH.dots) { const dd = Math.hypot(d.x - e.clientX, d.y - e.clientY); if (dd < bd) { bd = dd; best = d; } }
         if (best) post({ type: 'otherTap', id: best.id });
       }
       // walk mode's tap to go (Phil, 18 Nov 2026): a tap on the ground (not on a stand-spot marker) jumps there
       // a real tap only: no sliding during the touch, quick, one finger (18 Nov 2026: looking around sometimes jumped)
-      if (tp && e && e.type === 'pointerup' && TAPGO.on && tp.far < 6 && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) < 6 && performance.now() - tp.t < 350
+      if (tp && e && e.type === 'pointerup' && TAPGO.on && tp.far < 6 && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) < 6 && e.timeStamp - tp.t < 350
           && !(OTH.on && OTH.dots.some(d => Math.hypot(d.x - e.clientX, d.y - e.clientY) < 26))) tapGo(e.clientX, e.clientY);
       if (drag) { drag = null; heading(); if (act && act.kind === 'look') rest(); } };   // finger up: the sharp frame now
     c.addEventListener('pointerup', drop); c.addEventListener('pointercancel', drop);
