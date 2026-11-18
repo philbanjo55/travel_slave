@@ -388,6 +388,15 @@ Deno.serve(async (req) => {
     }
     const cfg = (run ? run.config : body.config) ?? {};
     const cfgName: string = cfg.name ?? 'base';
+    // Test lane (18 Nov 2026, Phil: "build the lane"): a run with config lane 'lab' is planned by the
+    // separate function solver-replay-lab and never reaches the app. as_app = plan like the live T run
+    // (Phil's ticks, his notes) while the run itself is not a publish run, so no SQL lookup of "the
+    // trip's T run" (Re-plan now, notes, camera slots, week drafts) can pick it. publish() writes
+    // nothing for a lab run and one-pass never starts a rest-of-trip draft from it. The lab function
+    // refuses any run that is not a lab run.
+    const lab = cfg.lane === 'lab';
+    if (/solver-replay-lab/.test(new URL(req.url).pathname) && run && !lab) return json({ ok: false, error: 'not a lab run' }, 400);
+    if (lab) cfg.publish = !!cfg.as_app;
     // trace (run config, 28 Oct 2026): progress marks in app_logs, to see how far a
     // night that runs out of CPU got (ms = wall since the request, wait = DB waits after the load).
     const mark = async (stage: string) => {
@@ -1842,7 +1851,7 @@ Deno.serve(async (req) => {
         const { data: pvw } = await db.from('planner_versions').select('letter').eq('status', 'winner').maybeSingle();
         const version: string | null = pvw?.letter ?? null;
         // whatif (v97, Tell T): a what-if run plans like a week draft but never publishes anything.
-        if (!cfg.publish || !live || cfg.whatif) return;
+        if (lab || !cfg.publish || !live || cfg.whatif) return;
         const d0 = days[0];
         const visits = visitsOf(p, s);
         const slotOf = (ms: number) => Math.round((ms - p.dayStart) / (SLOT * 60000));
@@ -2320,7 +2329,7 @@ Deno.serve(async (req) => {
           // One-pass Re-plan (v102, run config one_pass): the rest of the trip at once, planned around today's NEW plan
           // (planner_t_rest reads the plan just published: its visits still ahead start the week draft as done). An
           // error there never fails today's re-plan; the nightly draft still comes.
-          if (cfg.one_pass) {
+          if (cfg.one_pass && !lab) {
             const { data: rest, error: rErr } = await db.rpc('planner_t_rest', { p_trip: tripId, p_at: new Date(askMs).toISOString(), p_req: body.req_id ?? null });
             nd.rest = rErr ? { error: String(rErr.message ?? rErr).slice(0, 200) } : rest;
           }
