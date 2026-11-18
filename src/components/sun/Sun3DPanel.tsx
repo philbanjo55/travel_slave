@@ -337,9 +337,21 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [glass, setGlassState] = useState(lastGlass);
   const setGlass = useCallback((on: boolean) => { lastGlass = on; setGlassState(on); }, []);
   const glassOn = !!full && glass && !overhead;
+  // The picture's size (dp): a photo placement saved with the framing (Phil, 18 Nov 2026) is put back on a view of
+  // about the same size (full screen on the same phone), scaled to small differences; on another size it opens fitted.
+  const [pic, setPic] = useState<{ w: number; h: number } | null>(null);
+  const savedPhoto = framing?.photo ?? null;
+  const savedXf = ((): PhotoXf | null => {
+    if (!savedPhoto || !pic || !refKey || savedPhoto.key !== refKey) return null;
+    const rw = pic.w / savedPhoto.w, rh = pic.h / savedPhoto.h;
+    if (Math.abs(rw - 1) > 0.15 || Math.abs(rh - 1) > 0.15) return null;
+    return { s: savedPhoto.s, x: savedPhoto.x * rw, y: savedPhoto.y * rh };
+  })();
+  const savedXfKey = savedXf ? `${savedXf.s}|${savedXf.x}|${savedXf.y}` : '';
   const [refXf, setRefXfState] = useState<PhotoXf>(() => refXfKept.get(refKey) ?? XF0);
-  const setRefXf = useCallback((xf: PhotoXf) => { refXfKept.set(refKey, xf); setRefXfState(xf); }, [refKey]);
-  useEffect(() => { setRefXfState(refXfKept.get(refKey) ?? XF0); }, [refKey]);
+  const [photoMoved, setPhotoMoved] = useState(false);   // moved since the framing was last saved: Save framing lights up
+  const setRefXf = useCallback((xf: PhotoXf) => { refXfKept.set(refKey, xf); setRefXfState(xf); setPhotoMoved(true); }, [refKey]);
+  useEffect(() => { setRefXfState(refXfKept.get(refKey) ?? savedXf ?? XF0); setPhotoMoved(false); }, [refKey, savedXfKey]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (refMode !== 'see') setRefMove(false); }, [refMode]);
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
@@ -729,7 +741,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     if (!framing || addShot || !lk) return false;
     const dh = Math.abs(((((lk.yaw - framing.heading) % 360) + 540) % 360) - 180);
     return dh < 0.3 && Math.abs(lk.pitch - framing.pitch) < 0.3 && framing.lens === pickLens.id
-      && framing.orient === (frame === 'port' ? 'portrait' : 'landscape');
+      && framing.orient === (frame === 'port' ? 'portrait' : 'landscape') && !photoMoved;
   })();
   void lookTilt;   // (read so the tilt state re-renders this check)
   const saveSpot = useCallback(() => {
@@ -765,10 +777,14 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       heading: Math.round((((lk.yaw % 360) + 360) % 360) * 100) / 100, pitch: Math.round(lk.pitch * 100) / 100,
       lens: pickLens.id, orient: frame === 'port' ? 'portrait' : 'landscape', at: new Date().toISOString(),
     };
+    // the photo goes with the framing when it is on screen or was moved; else the saved placement (if any) stays
+    const withPhoto = !!(refKey && pic && (refMode === 'see' || photoMoved));
+    if (withPhoto && pic) f.photo = { key: refKey, s: refXf.s, x: refXf.x, y: refXf.y, w: pic.w, h: pic.h };
+    else if (framingRef.current?.photo !== undefined) f.photo = framingRef.current?.photo ?? null;
     const tilt = Math.abs(f.pitch) < 0.5 ? 'level' : `tilted ${f.pitch > 0 ? 'up' : 'down'} ${Math.abs(f.pitch).toFixed(1)}°`;
     Alert.alert(
       'Save this framing?',
-      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}. It changes the shot on every trip that uses it, practice copies included.`,
+      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}.${withPhoto ? ' Your photo stays where you put it.' : ''} It changes the shot on every trip that uses it, practice copies included.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -777,6 +793,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             try {
               const id = await ensureShot();
               const r = await saveShot({ kind: 'frame', tripId, stopId, vantageId: id, framing: f });
+              setPhotoMoved(false);
               pickedFor = null;   // the saved framing (lens, landscape / portrait) is what this shot opens with from now on
               run(`window.S3D.view(${JSON.stringify(pageFraming(f))})`);   // later re-aims (foreground, walk's home) keep it
               setFrameNote(null);   // the framing line says Framed, or that it waits for signal
@@ -786,7 +803,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         },
       ],
     );
-  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot]);
+  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot, refKey, pic, refMode, photoMoved, refXf]);
   const aimAtSubject = useCallback(() => {
     run('window.S3D.view(null)');
     setFrameNote(framingRef.current ? 'Aimed at the subject. Your saved framing is kept.' : null);
@@ -808,7 +825,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   }, [tripId, stopId, vid, run]);
   const framedLine = queued.frame ? 'Saved on the phone, sends when you have signal.'
     : addShot ? 'Not a shot yet: saving adds it'
-    : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}`
+    : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}${framing.photo ? ' · photo placed' : ''}`
     : 'Not framed yet';
 
   const waiting = phase === 'finding' ? 'Finding the terrain for this spot…'
@@ -829,7 +846,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
 
   return (
     <View style={full ? styles.fullWrap : undefined} accessibilityLabel={overhead ? `Overhead 3D ${ready ? 'ready' : phase}, ${overhead.pairs.length} shots` : `3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}`}>
-      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}>
+      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}
+        onLayout={e => { const { width: w, height: h } = e.nativeEvent.layout; setPic(p => (p && Math.abs(p.w - w) < 1 && Math.abs(p.h - h) < 1 ? p : { w: Math.round(w), h: Math.round(h) })); }}>
         <View style={[styles.web, glassOn ? styles.glass : null]} pointerEvents="box-none">
         {region && b64 && !holding ? (
           <Web

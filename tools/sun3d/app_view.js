@@ -2575,7 +2575,7 @@
     if (d.y > 0.02) { post({ type: 'walk', stopped: 'sky' }); return; }
     const ll = (x, z) => ({ lat: FAR.north - z / FAR.d * (FAR.north - FAR.south), lng: FAR.west + x / FAR.w * (FAR.east - FAR.west) });
     let hit = null;
-    for (let t = 2; t < 6000; t += Math.max(0.5, t * 0.01)) {
+    for (let t = 2; t < 60000; t += Math.max(0.5, t * 0.01)) {   // out to 60 km: a tap on far hills goes there too (no walk limit)
       const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t, p = ll(x, z);
       if (!inside(p)) break;
       let g; try { g = ohH(p); } catch (err) { break; }
