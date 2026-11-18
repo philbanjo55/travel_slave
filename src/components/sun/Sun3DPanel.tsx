@@ -560,7 +560,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     setForeground(false);
   }, [foreground, treesOn, setForeground, setTrees]);
   const foreSay = !foreground ? 'off' : treesOn ? 'on' : 'buildings only, no trees';
-  const refOn = !hd && refList.length > 0 && !overhead;   // the photo button and card: offline view, the shot has a photo (small view and full screen)
+  const refOn = !hd && !preview && refList.length > 0 && !overhead;   // (not on Find my spot's small lens previews)   // the photo button and card: offline view, the shot has a photo (small view and full screen)
   const refPhoto = refList[Math.min(refIdx, Math.max(0, refList.length - 1))] ?? null;
   const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64 || !!treeTiles || !!rangeBox || !!houseTiles;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour or the park-wide trees
   const useDetail = (foreground || (!!overhead && !heavy)) && !hd && hasFore && !preview;   // from above: always (unless it proved too heavy)
