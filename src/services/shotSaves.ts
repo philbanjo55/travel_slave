@@ -72,6 +72,7 @@ async function send(j: ShotSave): Promise<void> {
         p_lens: j.framing.lens, p_orient: j.framing.orient, p_at: j.framing.at,
         // the photo placement: an object saves it; {} clears it; left out = the saved one stays
         ...(j.framing.photo === undefined ? {} : { p_photo: j.framing.photo ?? {} }),
+        ...(j.framing.eye != null ? { p_eye_m: j.framing.eye } : {}),   // camera height (left out = eye height)
       })
       : supabase.rpc('sun_vantage_unframe', { p_stop_id: j.stopId, p_vantage_id: j.vantageId });
   const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out')), SEND_TIMEOUT_MS));

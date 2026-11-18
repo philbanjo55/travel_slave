@@ -403,10 +403,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const pickOtherRef = useRef(onPickOther); pickOtherRef.current = onPickOther;
   // Camera height above the ground (Phil, 17 Nov 2026): walk mode raises it (over the trees, on the wall) or lowers it (low
   // shots), 0.3 to 3 m. Kept through restarts of the view; back to eye height (1.73 m, 5'8") on another shot.
-  const startH = eyeHeight != null && isFinite(eyeHeight) ? Math.max(CAM_MIN, Math.min(CAM_MAX, eyeHeight)) : EYE_H;
+  // a framed shot opens at the height saved with its framing (18 Nov 2026)
+  const savedH = framing?.eye != null && isFinite(framing.eye) ? Math.max(CAM_MIN, Math.min(CAM_MAX, framing.eye)) : EYE_H;
+  const startH = eyeHeight != null && isFinite(eyeHeight) ? Math.max(CAM_MIN, Math.min(CAM_MAX, eyeHeight)) : savedH;
   const [camH, setCamH] = useState(startH);
   const [groundFine, setGroundFine] = useState<boolean | null>(null);
-  useEffect(() => { setCamH(startH); }, [pair.vantage_id]);
+  useEffect(() => { setCamH(startH); }, [pair.vantage_id, savedH]);   // (a framing that loads late brings its height)
   // sent at most every 150 ms while a button is held (a slow phone's view is not flooded), the last value always
   const camSent = useRef<{ t: number; timer: ReturnType<typeof setTimeout> | null }>({ t: 0, timer: null });
   useEffect(() => {
@@ -774,7 +776,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     if (!framing || addShot || !lk) return false;
     const dh = Math.abs(((((lk.yaw - framing.heading) % 360) + 540) % 360) - 180);
     return dh < 0.3 && Math.abs(lk.pitch - framing.pitch) < 0.3 && framing.lens === pickLens.id
-      && framing.orient === (frame === 'port' ? 'portrait' : 'landscape') && !photoMoved;
+      && framing.orient === (frame === 'port' ? 'portrait' : 'landscape') && !photoMoved && Math.abs(camH - savedH) < 0.005;
   })();
   void lookTilt;   // (read so the tilt state re-renders this check)
   const saveSpot = useCallback(() => {
@@ -809,6 +811,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const f: Framing = {
       heading: Math.round((((lk.yaw % 360) + 360) % 360) * 100) / 100, pitch: Math.round(lk.pitch * 100) / 100,
       lens: pickLens.id, orient: frame === 'port' ? 'portrait' : 'landscape', at: new Date().toISOString(),
+      eye: Math.abs(camH - EYE_H) < 0.005 ? null : Math.round(camH * 10000) / 10000,   // camera height goes with the framing
     };
     // the photo goes with the framing when it is on screen or was moved; else the saved placement (if any) stays
     const withPhoto = !!(refKey && pic && (refMode === 'see' || photoMoved));
@@ -817,7 +820,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const tilt = Math.abs(f.pitch) < 0.5 ? 'level' : `tilted ${f.pitch > 0 ? 'up' : 'down'} ${Math.abs(f.pitch).toFixed(1)}°`;
     Alert.alert(
       'Save this framing?',
-      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}.${withPhoto ? ' Your photo stays where you put it.' : ''} It changes the shot on every trip that uses it, practice copies included.`,
+      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}${f.eye != null ? `, camera ${feetIn(f.eye)} up` : ''}.${withPhoto ? ' Your photo stays where you put it.' : ''} It changes the shot on every trip that uses it, practice copies included.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -836,7 +839,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         },
       ],
     );
-  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot, refKey, pic, refMode, photoMoved, refXf]);
+  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot, refKey, pic, refMode, photoMoved, refXf, camH]);
   const aimAtSubject = useCallback(() => {
     run('window.S3D.view(null)');
     setFrameNote(framingRef.current ? 'Aimed at the subject. Your saved framing is kept.' : null);
@@ -851,9 +854,10 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     setFrameState(f.orient === 'portrait' ? 'port' : 'land');
     run(`window.S3D.view(${JSON.stringify(pageFraming(f))})`);
     if (savedSc) { refScKept.set(refKey, savedSc); setRefSc(savedSc); }
+    setCamH(savedH);
     setPhotoMoved(false);
     setFrameNote('Back to your saved framing.');
-  }, [run, savedSc, refKey]);
+  }, [run, savedSc, refKey, savedH]);
   const forgetFraming = useCallback(() => {
     if (!tripId || !stopId) return;
     Alert.alert('Forget this framing?', 'The shot will open aimed at the subject again, on every trip that uses it.', [
@@ -871,7 +875,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   }, [tripId, stopId, vid, run]);
   const framedLine = queued.frame ? 'Saved on the phone, sends when you have signal.'
     : addShot ? 'Not a shot yet: saving adds it'
-    : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}${framing.photo ? ' · photo placed' : ''}`
+    : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}${framing.eye != null ? ` · camera ${feetIn(framing.eye)} up` : ''}${framing.photo ? ' · photo placed' : ''}`
     : 'Not framed yet';
 
   const waiting = phase === 'finding' ? 'Finding the terrain for this spot…'
