@@ -387,8 +387,23 @@ def oidc_token():
     raise last
 
 
+def clean(o):
+    """JSON the backend can read: NaN / infinity become null (18 Nov 2026: Python wrote NaN, the function answered
+    400 'send JSON', and two finished searches stayed 'searching' in the app). numpy numbers become plain numbers."""
+    if isinstance(o, dict): return {str(k): clean(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)): return [clean(v) for v in o]
+    if isinstance(o, (bool, str)) or o is None: return o
+    if isinstance(o, int) and not isinstance(o, bool): return o
+    try:
+        f = float(o)
+    except (TypeError, ValueError):
+        return str(o)
+    if f != f or f in (float('inf'), float('-inf')): return None
+    return int(f) if isinstance(o, np.integer) else f
+
+
 def call(api, body, tok):
-    req = urllib.request.Request(api, data=json.dumps(body, default=float).encode(), method='POST',
+    req = urllib.request.Request(api, data=json.dumps(clean(body), allow_nan=False).encode(), method='POST',
                                  headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok})
     for i in range(4):   # the function or the network can hiccup too: 5xx and dropped connections are tried again
         try:
@@ -420,11 +435,14 @@ def worker(a):
         res = run(pic, job['look'], (job['stop']['lat'], job['stop']['lng']), job['region'], rows, a.cache, a.hcache, ovf, stand_pins=pins)
         ov = base64.b64encode(open(ovf, 'rb').read()).decode() if os.path.exists(ovf) else None
         print(json.dumps({k: res.get(k) for k in ('ok', 'verdict', 'why', 'lat', 'lng', 'yaw', 'hfov', 'fp_mm', 'times')}, default=float))
-        f = call(a.api, dict(action='finish', job_id=a.job, result=json.loads(json.dumps(res, default=float)), overlay_jpeg_base64=ov), oidc_token())
+        f = call(a.api, dict(action='finish', job_id=a.job, result=clean(res), overlay_jpeg_base64=ov), oidc_token())
     except Exception as e:  # noqa: BLE001
         import traceback; traceback.print_exc()
         f = call(a.api, dict(action='finish', job_id=a.job, error='the search failed: ' + str(e)[:200]), oidc_token())
     print('finish:', json.dumps(f)[:300])
+    if not f.get('ok'):   # the answer could not be saved: say so, so the app does not keep showing 'searching'
+        f2 = call(a.api, dict(action='finish', job_id=a.job, error='the answer could not be saved (' + str(f.get('error'))[:120] + '): tap Find again'), oidc_token())
+        print('finish (error):', json.dumps(f2)[:300])
 
 
 if __name__ == '__main__':
