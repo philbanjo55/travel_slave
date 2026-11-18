@@ -969,7 +969,13 @@ def sun_3d():
                     if back_ok and V.has(w2, 'Tap the ground to jump there'):
                         # well below the middle of the picture (1180 was just under the horizon: the ray met the
                         # ground past the old 6 km reach and the page said 'not the sky')
-                        C.adb('shell', 'input', 'tap', '760', '1320'); time.sleep(3)
+                        # inside the picture: level with the walk arrows' bottom button, on the right half (the
+                        # full-screen picture is only the top part of the screen; 1180 / 1320 px were below it, on the
+                        # buttons under the picture)
+                        wb = next((c for c in w2.clickables if c['label'].split(' | ')[0] == 'Walk back'), None)
+                        ty = wb['xy'][1] - 40 if wb else int(0.35 * H)
+                        print(f'INFO walk-tapgo tap at 820,{ty} (walk back button at {wb["xy"] if wb else None})', flush=True)
+                        C.adb('shell', 'input', 'tap', '820', str(ty)); time.sleep(3)
                         w3 = C.capture(1); line = next((t for t in w3.all_texts if "You've walked" in t), None)
                         if line is None:
                             print('INFO walk-tapgo texts: ' + ' | '.join(t for t in w3.all_texts if 'Tap' in t or 'walk' in t.lower())[:300], flush=True)
@@ -1126,6 +1132,14 @@ def framing():
     if V.tap_text(a, 'Aim at subject'):
         time.sleep(2); b = C.capture(1)
         V.check('frame-aim', V.has(b, 'Looking ') and C.app_alive(), 'view still drawn after Aim at subject')
+        # Reset framing (18 Nov 2026): on a framed shot, back to the saved framing; Save framing greys out again
+        if (line or '').startswith('Framed '):
+            rb = next((c for c in b.clickables if c['label'].split(' | ')[0].startswith('Reset framing')), None)
+            V.check('frame-reset-button', rb is not None, 'Reset framing button on a framed shot')
+            if rb is not None and V.tap_text(b, 'Reset framing'):
+                time.sleep(2.5); r = C.capture(1)
+                grey = any(t.startswith('Back to your saved framing') for t in r.all_texts)
+                V.check('frame-reset-back', grey and V.has(r, 'Looking ') and C.app_alive(), 'back on the saved framing' if grey else 'no "Back to your saved framing" line')
     # Next / previous shot ("Shot 5 of 38 · Oxbow Bend · main" over the time slider)
     pat = re.compile(r'Shot (\d+) of (\d+)')
     def where(st):

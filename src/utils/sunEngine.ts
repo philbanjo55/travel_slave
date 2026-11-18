@@ -165,7 +165,8 @@ export type Pair = {
 // (stop_photos id or address), s = zoom, x / y = its middle's offset from the view's middle (dp), w / h = the view's size
 // (dp). undefined = leave the saved one as it is; null = none.
 export type FramePhoto = { key: string; s: number; x: number; y: number; w: number; h: number };
-export type Framing = { heading: number; pitch: number; lens: string; orient: 'landscape' | 'portrait'; at: string; photo?: FramePhoto | null };
+// eye: camera height above the ground in m (18 Nov 2026); null / missing = eye height (1.73 m)
+export type Framing = { heading: number; pitch: number; lens: string; orient: 'landscape' | 'portrait'; at: string; photo?: FramePhoto | null; eye?: number | null };
 
 export type Light = {
   sun: SkyPos;

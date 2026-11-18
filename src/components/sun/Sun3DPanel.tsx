@@ -143,7 +143,31 @@ const feetIn = (m: number) => { const t = Math.round(m / 0.0254); return t >= 12
 const FINE_STEP = 0.25, WALK_STEP = 2;   // metres: a tap, and the most a held arrow moves per step
 const REF_OPACITY_KEY = 'pf_ref_opacity';
 let refOpacityRead = false;
-const refXfKept = new Map<string, PhotoXf>();   // where each photo was moved / zoomed to, while the app is open
+// Where each photo was moved / zoomed to, while the app is open, pinned to the 3D scene (not to the screen): the small
+// view, full screen and every lens show it over the same part of the scene (Phil, 18 Nov 2026: the small view's crop was
+// off from the full screen's, and opening it there threw full screen off too).
+type PhotoOnScene = { x: number; y: number; wd: number };   // the photo's middle and width, in focal lengths (see unitPx)
+const refScKept = new Map<string, PhotoOnScene>();
+const photoShape = new Map<string, number>();   // photo key -> width / height, once it has loaded
+// One focal length in dp for a view of w x h with this lens: the page draws the lens a little wider than its frame,
+// its camera's vertical view = 2 atan(k) (lensFov in tools/sun3d/app_view.js; keep the two the same).
+function unitPx(w: number, h: number, l: { f: number; fw: number; fh: number }): number {
+  const a = w / h, th = l.fw / (2 * l.f), tv = l.fh / (2 * l.f), k = Math.max(th / (a * 0.9), tv / 0.9);
+  return h / (2 * k);
+}
+const fitW = (w: number, h: number, shape: number) => Math.min(w, h * shape);   // the photo's width at 'contain' fit
+function xfToScene(xf: PhotoXf, w: number, h: number, l: { f: number; fw: number; fh: number }, shape: number): PhotoOnScene {
+  const u = unitPx(w, h, l);
+  return { x: xf.x / u, y: xf.y / u, wd: (xf.s * fitW(w, h, shape)) / u };
+}
+function sceneToXf(sc: PhotoOnScene, w: number, h: number, l: { f: number; fw: number; fh: number }, shape: number): PhotoXf {
+  const u = unitPx(w, h, l);
+  return { s: (sc.wd * u) / fitW(w, h, shape), x: sc.x * u, y: sc.y * u };
+}
+const lensOf = (id: string, orient: string) => {
+  const L = LENSES.find(l => l.id === id); if (!L) return null;
+  return { f: L.f, fw: orient === 'portrait' ? L.short : L.long, fh: orient === 'portrait' ? L.long : L.short };
+};
 let lastRefOpacity = 0.45;   // the see-through amount last chosen, kept while the app is open
 let foregroundTooHeavy = false;   // the web view died with the foreground on: it stays off until the user turns it on again
 // How this phone kept up the last time the view was moved: the page's quality levels while moving (0 full .. 3 low),
@@ -341,17 +365,26 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // about the same size (full screen on the same phone), scaled to small differences; on another size it opens fitted.
   const [pic, setPic] = useState<{ w: number; h: number } | null>(null);
   const savedPhoto = framing?.photo ?? null;
-  const savedXf = ((): PhotoXf | null => {
-    if (!savedPhoto || !pic || !refKey || savedPhoto.key !== refKey) return null;
-    const rw = pic.w / savedPhoto.w, rh = pic.h / savedPhoto.h;
-    if (Math.abs(rw - 1) > 0.15 || Math.abs(rh - 1) > 0.15) return null;
-    return { s: savedPhoto.s, x: savedPhoto.x * rw, y: savedPhoto.y * rh };
+  const [shape, setShape] = useState<number | null>(() => photoShape.get(refKey) ?? null);
+  useEffect(() => { setShape(photoShape.get(refKey) ?? null); }, [refKey]);
+  const onPhotoSize = useCallback((w: number, h: number) => { photoShape.set(refKey, w / h); setShape(w / h); }, [refKey]);
+  // the saved placement (screen points on the view it was saved on, with the framing's lens) -> on the scene
+  const savedSc = ((): PhotoOnScene | null => {
+    if (!savedPhoto || !shape || !refKey || savedPhoto.key !== refKey || !framing) return null;
+    const l = lensOf(framing.lens, framing.orient);
+    return l ? xfToScene({ s: savedPhoto.s, x: savedPhoto.x, y: savedPhoto.y }, savedPhoto.w, savedPhoto.h, l, shape) : null;
   })();
-  const savedXfKey = savedXf ? `${savedXf.s}|${savedXf.x}|${savedXf.y}` : '';
-  const [refXf, setRefXfState] = useState<PhotoXf>(() => refXfKept.get(refKey) ?? XF0);
+  const savedScKey = savedSc ? `${savedSc.x}|${savedSc.y}|${savedSc.wd}` : '';
+  const [refSc, setRefSc] = useState<PhotoOnScene | null>(() => refScKept.get(refKey) ?? null);
   const [photoMoved, setPhotoMoved] = useState(false);   // moved since the framing was last saved: Save framing lights up
-  const setRefXf = useCallback((xf: PhotoXf) => { refXfKept.set(refKey, xf); setRefXfState(xf); setPhotoMoved(true); }, [refKey]);
-  useEffect(() => { setRefXfState(refXfKept.get(refKey) ?? savedXf ?? XF0); setPhotoMoved(false); }, [refKey, savedXfKey]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // what the overlay draws: the scene placement turned into this view's points (fitted until one is known)
+  const refXf: PhotoXf = refSc && pic && shape ? sceneToXf(refSc, pic.w, pic.h, lens, shape) : XF0;
+  const setRefXf = useCallback((xf: PhotoXf) => {
+    if (!pic || !shape) return;   // (the photo is on screen to be moved, so both are known)
+    const sc = xfToScene(xf, pic.w, pic.h, lens, shape);
+    refScKept.set(refKey, sc); setRefSc(sc); setPhotoMoved(true);
+  }, [refKey, pic, shape, lens]);
+  useEffect(() => { setRefSc(refScKept.get(refKey) ?? savedSc ?? null); setPhotoMoved(false); }, [refKey, savedScKey]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (refMode !== 'see') setRefMove(false); }, [refMode]);
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
@@ -370,10 +403,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const pickOtherRef = useRef(onPickOther); pickOtherRef.current = onPickOther;
   // Camera height above the ground (Phil, 17 Nov 2026): walk mode raises it (over the trees, on the wall) or lowers it (low
   // shots), 0.3 to 3 m. Kept through restarts of the view; back to eye height (1.73 m, 5'8") on another shot.
-  const startH = eyeHeight != null && isFinite(eyeHeight) ? Math.max(CAM_MIN, Math.min(CAM_MAX, eyeHeight)) : EYE_H;
+  // a framed shot opens at the height saved with its framing (18 Nov 2026)
+  const savedH = framing?.eye != null && isFinite(framing.eye) ? Math.max(CAM_MIN, Math.min(CAM_MAX, framing.eye)) : EYE_H;
+  const startH = eyeHeight != null && isFinite(eyeHeight) ? Math.max(CAM_MIN, Math.min(CAM_MAX, eyeHeight)) : savedH;
   const [camH, setCamH] = useState(startH);
   const [groundFine, setGroundFine] = useState<boolean | null>(null);
-  useEffect(() => { setCamH(startH); }, [pair.vantage_id]);
+  useEffect(() => { setCamH(startH); }, [pair.vantage_id, savedH]);   // (a framing that loads late brings its height)
   // sent at most every 150 ms while a button is held (a slow phone's view is not flooded), the last value always
   const camSent = useRef<{ t: number; timer: ReturnType<typeof setTimeout> | null }>({ t: 0, timer: null });
   useEffect(() => {
@@ -741,7 +776,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     if (!framing || addShot || !lk) return false;
     const dh = Math.abs(((((lk.yaw - framing.heading) % 360) + 540) % 360) - 180);
     return dh < 0.3 && Math.abs(lk.pitch - framing.pitch) < 0.3 && framing.lens === pickLens.id
-      && framing.orient === (frame === 'port' ? 'portrait' : 'landscape') && !photoMoved;
+      && framing.orient === (frame === 'port' ? 'portrait' : 'landscape') && !photoMoved && Math.abs(camH - savedH) < 0.005;
   })();
   void lookTilt;   // (read so the tilt state re-renders this check)
   const saveSpot = useCallback(() => {
@@ -776,6 +811,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const f: Framing = {
       heading: Math.round((((lk.yaw % 360) + 360) % 360) * 100) / 100, pitch: Math.round(lk.pitch * 100) / 100,
       lens: pickLens.id, orient: frame === 'port' ? 'portrait' : 'landscape', at: new Date().toISOString(),
+      eye: Math.abs(camH - EYE_H) < 0.005 ? null : Math.round(camH * 10000) / 10000,   // camera height goes with the framing
     };
     // the photo goes with the framing when it is on screen or was moved; else the saved placement (if any) stays
     const withPhoto = !!(refKey && pic && (refMode === 'see' || photoMoved));
@@ -784,7 +820,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const tilt = Math.abs(f.pitch) < 0.5 ? 'level' : `tilted ${f.pitch > 0 ? 'up' : 'down'} ${Math.abs(f.pitch).toFixed(1)}°`;
     Alert.alert(
       'Save this framing?',
-      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}.${withPhoto ? ' Your photo stays where you put it.' : ''} It changes the shot on every trip that uses it, practice copies included.`,
+      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}${f.eye != null ? `, camera ${feetIn(f.eye)} up` : ''}.${withPhoto ? ' Your photo stays where you put it.' : ''} It changes the shot on every trip that uses it, practice copies included.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -803,11 +839,25 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         },
       ],
     );
-  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot, refKey, pic, refMode, photoMoved, refXf]);
+  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot, refKey, pic, refMode, photoMoved, refXf, camH]);
   const aimAtSubject = useCallback(() => {
     run('window.S3D.view(null)');
     setFrameNote(framingRef.current ? 'Aimed at the subject. Your saved framing is kept.' : null);
   }, [run]);
+  // Reset framing (Phil, 18 Nov 2026): back to the last saved framing (direction, tilt, lens, landscape / portrait and,
+  // when one was saved with it, where the photo sat), instead of aiming at the subject.
+  const resetFraming = useCallback(() => {
+    const f = framingRef.current;
+    if (!f) return;
+    pickedFor = null;
+    if (LENSES.some(l => l.id === f.lens)) setLensState(f.lens);
+    setFrameState(f.orient === 'portrait' ? 'port' : 'land');
+    run(`window.S3D.view(${JSON.stringify(pageFraming(f))})`);
+    if (savedSc) { refScKept.set(refKey, savedSc); setRefSc(savedSc); }
+    setCamH(savedH);
+    setPhotoMoved(false);
+    setFrameNote('Back to your saved framing.');
+  }, [run, savedSc, refKey, savedH]);
   const forgetFraming = useCallback(() => {
     if (!tripId || !stopId) return;
     Alert.alert('Forget this framing?', 'The shot will open aimed at the subject again, on every trip that uses it.', [
@@ -825,7 +875,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   }, [tripId, stopId, vid, run]);
   const framedLine = queued.frame ? 'Saved on the phone, sends when you have signal.'
     : addShot ? 'Not a shot yet: saving adds it'
-    : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}${framing.photo ? ' · photo placed' : ''}`
+    : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}${framing.eye != null ? ` · camera ${feetIn(framing.eye)} up` : ''}${framing.photo ? ' · photo placed' : ''}`
     : 'Not framed yet';
 
   const waiting = phase === 'finding' ? 'Finding the terrain for this spot…'
@@ -846,9 +896,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
 
   return (
     <View style={full ? styles.fullWrap : undefined} accessibilityLabel={overhead ? `Overhead 3D ${ready ? 'ready' : phase}, ${overhead.pairs.length} shots` : `3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}`}>
-      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}
-        onLayout={e => { const { width: w, height: h } = e.nativeEvent.layout; setPic(p => (p && Math.abs(p.w - w) < 1 && Math.abs(p.h - h) < 1 ? p : { w: Math.round(w), h: Math.round(h) })); }}>
-        <View style={[styles.web, glassOn ? styles.glass : null]} pointerEvents="box-none">
+      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}>
+        <View style={[styles.web, glassOn ? styles.glass : null]} pointerEvents="box-none"
+          onLayout={e => { const { width: w, height: h } = e.nativeEvent.layout; setPic(p => (p && Math.abs(p.w - w) < 0.5 && Math.abs(p.h - h) < 0.5 ? p : { w, h })); }}>
         {region && b64 && !holding ? (
           <Web
             ref={web}
@@ -866,7 +916,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             style={styles.web}
           />
         ) : null}
-        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} /> : null}
+        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} onSize={onPhotoSize} /> : null}
         </View>
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
@@ -1087,6 +1137,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             <TouchableOpacity onPress={aimAtSubject} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Aim at subject">
               <Text style={styles.walkBtnText}>Aim at subject</Text>
             </TouchableOpacity>
+            {framing && !addShot ? (
+              <TouchableOpacity onPress={resetFraming} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Reset framing to the saved one" accessibilityState={{ disabled: frameUnchanged }} disabled={frameUnchanged}>
+                <Text style={[styles.walkBtnText, frameUnchanged && { opacity: 0.4 }]}>Reset framing</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity onPress={saveFraming} style={[styles.walkBtn, styles.walkBtnMain, (!canFrame || frameUnchanged) && { opacity: 0.4 }]} accessibilityRole="button" accessibilityLabel="Save framing for this shot" accessibilityState={{ disabled: !canFrame || frameUnchanged }} disabled={!canFrame || savingFrame || look == null || frameUnchanged}>
               {savingFrame ? <ActivityIndicator size="small" color="#000000" /> : <Text style={styles.walkBtnMainText}>Save framing</Text>}
             </TouchableOpacity>
