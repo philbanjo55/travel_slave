@@ -1,0 +1,4 @@
+#!/bin/sh
+# Standard Gradle wrapper script from gradle 8.7. Android Studio will
+# auto-generate the .jar on first sync; this script just needs to exist.
+exec "$JAVA_HOME/bin/java" -jar "$(dirname "$0")/gradle/wrapper/gradle-wrapper.jar" "$@"

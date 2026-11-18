@@ -49,6 +49,59 @@ export async function fetchDays(tripId: string) {
   return data;
 }
 
+// What deleting a day would take with it. Deleting a day deletes its stops,
+// and deleting a stop deletes its photos, sun/moon pin links and weather
+// (all ON DELETE CASCADE). Exposures survive, unlinked (SET NULL). Counted
+// from the server, not the cached screen, so a stale offline copy can't
+// hide a photo.
+export type DayDeleteCheck = { stops: number; photos: number; sunPairs: number; exposures: number };
+
+export async function checkDayForDelete(dayId: string): Promise<DayDeleteCheck> {
+  const { data: stops, error } = await supabase.from('stops').select('id').eq('day_id', dayId);
+  if (error) throw error;
+  const ids = (stops ?? []).map((s: any) => s.id);
+  if (!ids.length) return { stops: 0, photos: 0, sunPairs: 0, exposures: 0 };
+  const count = async (table: string) => {
+    const { count: n, error: e } = await supabase
+      .from(table).select('*', { count: 'exact', head: true }).in('stop_id', ids);
+    if (e) throw e;
+    return n ?? 0;
+  };
+  const [photos, sunPairs, exposures] = await Promise.all([
+    count('stop_photos'), count('stop_sun_pairs'), count('exposures'),
+  ]);
+  return { stops: ids.length, photos, sunPairs, exposures };
+}
+
+// Delete a day, then close the gap in day numbers. Refuses outright if any
+// of its stops still has photos: a cascade would destroy them with no way
+// back (it has happened once already). Move those stops to another day first.
+export async function deleteDay(dayId: string, tripId: string) {
+  const chk = await checkDayForDelete(dayId);
+  if (chk.photos > 0) {
+    throw new Error(`This day's stops still have ${chk.photos} photo${chk.photos === 1 ? '' : 's'}. Move those stops to another day first.`);
+  }
+  const { error } = await supabase.from('days').delete().eq('id', dayId);
+  if (error) throw error;
+
+  // day_number is unique per trip. Walking the remaining days in order and
+  // giving each the next number never collides: every day's number is at
+  // least its new one, and any lower number is already taken by an earlier
+  // day that has just been renumbered.
+  const { data: rest, error: e2 } = await supabase
+    .from('days').select('id,day_number').eq('trip_id', tripId).order('day_number', { ascending: true });
+  if (e2) throw e2;
+  let n = 1;
+  for (const d of rest ?? []) {
+    if (d.day_number !== n) {
+      const { error: e3 } = await supabase
+        .from('days').update({ day_number: n, updated_at: new Date().toISOString() }).eq('id', d.id);
+      if (e3) throw e3;
+    }
+    n++;
+  }
+}
+
 // ─────────────────────────────────────────
 // STOPS
 // ─────────────────────────────────────────
@@ -143,6 +196,27 @@ export async function fetchFullTrip(tripId: string) {
 
   const stopsData = await fetchAllStopsForTrip(tripId);
 
+  // A practice (training) trip has no photos of its own: it shows the main trip's, read only.
+  // Each borrowed photo keeps the main stop's id as its stop_id and is marked `borrowed`, and
+  // usePhotoUpload refuses to delete or reorder a photo that is not this trip's own.
+  if ((trip as any)?.training_of) {
+    try {
+      const { data: lent, error: lentErr } = await supabase.rpc('training_stop_photos', { p_trip: tripId });
+      if (lentErr) throw lentErr;
+      const byStop: Record<string, any[]> = {};
+      for (const row of (Array.isArray(lent) ? lent : [])) {
+        const { copy_stop_id, ...photo } = row as any;
+        (byStop[copy_stop_id] = byStop[copy_stop_id] || []).push({ ...photo, borrowed: true });
+      }
+      for (const stop of stopsData as any[]) {
+        const more = byStop[stop.id];
+        if (more?.length) stop.stop_photos = [...(stop.stop_photos || []), ...more];
+      }
+    } catch (e) {
+      console.warn('[photos] the main trip\'s photos could not be read for this practice trip:', e);
+    }
+  }
+
   // Group stops by day
   const stopsByDay: Record<string, any[]> = {};
   for (const stop of stopsData) {
@@ -157,4 +231,19 @@ export async function fetchFullTrip(tripId: string) {
       stops: stopsByDay[day.id] || [],
     })),
   };
+}
+
+export async function calculateDriveTimes(tripId: string): Promise<any> {
+  const res = await fetch(
+    `${SUPABASE_URL}/functions/v1/calculate-drive-times`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ trip_id: tripId }),
+    }
+  );
+  return res.json();
 }

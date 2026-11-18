@@ -1,0 +1,118 @@
+<title>Teton Sun Preview</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<style>
+/* Layout: one photo frame (3:2, like the camera) with the day's light controls directly under it. Single dark look, matching the Philm+Frame app. */
+:root {
+  color-scheme: dark;
+  --bg: #000000;
+  --surface: #111111;
+  --line: #2a2a2a;
+  --fg: #ffffff;
+  --dim: #888888;
+  --green: #5aaa7a;
+  --sun: #f2b266;
+  --font: Roboto, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+html, body { background: var(--bg); color: var(--fg); font-family: var(--font); }
+body { font-size: 15px; line-height: 1.4; }
+.wrap { max-width: 860px; margin: 0 auto; padding-block: 20px 28px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 16px; }
+.eyebrow { font-size: 11px; letter-spacing: 1.6px; font-weight: 700; color: var(--dim); }
+h1 { margin: 4px 0 0; font-size: 22px; font-weight: 700; text-wrap: balance; }
+.lede { margin: 6px 0 0; color: var(--dim); font-size: 14px; max-width: 62ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { min-height: 40px; padding: 0 14px; border-radius: 20px; border: 1px solid var(--line); background: transparent; color: var(--fg); font-family: inherit; font-size: 14px; cursor: pointer; }
+.chip[aria-pressed="true"] { border-color: var(--green); color: var(--green); font-weight: 700; }
+.chip:focus-visible, .seg button:focus-visible, .moment:focus-visible, .play:focus-visible, input[type=range]:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.frame { position: relative; width: 100%; max-width: 100%; aspect-ratio: 3 / 2; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; touch-action: none; cursor: grab; }
+.frame:active { cursor: grabbing; }
+.frame canvas { display: block; width: 100%; height: 100%; }
+.cap { position: absolute; left: 10px; bottom: 10px; right: 10px; display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: #ffffff; text-shadow: 0 1px 3px rgba(0,0,0,.9); pointer-events: none; }
+.cap span:last-child { text-align: right; }
+.fail[hidden] { display: none; }
+.fail { position: absolute; inset: 0; background: var(--surface); display: flex; align-items: center; justify-content: center; padding: 20px; text-align: center; color: var(--dim); }
+.links { display: flex; align-items: center; gap: 6px 16px; flex-wrap: wrap; }
+.links .k { font-size: 11px; letter-spacing: 1.4px; font-weight: 700; color: var(--dim); }
+.earth { color: var(--green); font-size: 14px; font-weight: 700; text-decoration: none; min-height: 32px; display: flex; align-items: center; }
+.earth:hover { text-decoration: underline; }
+.timeRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.clock { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.clock b { font-size: 30px; font-weight: 400; font-variant-numeric: tabular-nums; line-height: 1; }
+.clock span { color: var(--dim); font-size: 13px; }
+.play { min-height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--fg); font-family: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+input[type=range] { width: 100%; height: 32px; accent-color: var(--green); margin: 0; }
+.scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; margin-top: -8px; }
+.status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.stat { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.stat .k { font-size: 11px; letter-spacing: 1.4px; font-weight: 700; color: var(--dim); }
+.stat .v { font-size: 15px; font-weight: 700; }
+.stat .v.on { color: var(--sun); }
+.moments { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.moment { min-height: 58px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--fg); font-family: inherit; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.moment .k { font-size: 12px; color: var(--dim); line-height: 1.25; }
+.moment .v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.row .k { font-size: 11px; letter-spacing: 1.4px; font-weight: 700; color: var(--dim); }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { min-height: 40px; padding: 0 14px; border: none; background: transparent; color: var(--dim); font-family: inherit; font-size: 14px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: #000000; font-weight: 700; }
+.note { color: var(--dim); font-size: 13px; max-width: 65ch; margin: 0; }
+@media (max-width: 520px) { .moments { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">3D PREVIEW · CONCEPT · WED 30 DEC 2026</div>
+    <h1>Teton Sun Preview</h1>
+    <p class="lede">The real shape of the Tetons from where you'd stand, with the sun where it will be that day. Drag the picture to look around. Move the slider to move the sun.</p>
+  </header>
+
+  <div class="chips" id="stops" role="group" aria-label="Where you stand"></div>
+
+  <div class="frame" id="frame">
+    <canvas id="view" aria-label="3D view of the Teton range from the chosen stop"></canvas>
+    <div class="cap"><span id="capL"></span><span id="capR"></span></div>
+    <div class="fail" id="loading">Loading the terrain…</div>
+    <div class="fail" id="fail" hidden></div>
+  </div>
+
+  <div class="links">
+    <span class="k">GOOGLE'S VIEW OF THIS SPOT</span>
+    <a class="earth" id="earth" href="https://earth.google.com/web/" target="_blank" rel="noopener">3D (Google Earth) ›</a>
+    <a class="earth" id="street" href="https://www.google.com/maps/" target="_blank" rel="noopener">Street View ›</a>
+  </div>
+
+  <div class="timeRow">
+    <div class="clock"><b id="clock">8:10 AM</b><span id="sunTxt"></span></div>
+    <button class="play" id="play" type="button">Play the day</button>
+  </div>
+  <div>
+    <input type="range" id="time" min="390" max="1080" step="2" value="490" aria-label="Time of day, Jackson time">
+    <div class="scale"><span>6:30 AM</span><span>9</span><span>noon</span><span>3</span><span>6:00 PM</span></div>
+  </div>
+
+  <div class="status">
+    <div class="stat"><div class="k" id="subjK">THE SUMMIT</div><div class="v" id="subjV"></div></div>
+    <div class="stat"><div class="k">WHERE YOU STAND</div><div class="v" id="hereV"></div></div>
+  </div>
+
+  <div class="moments" id="moments"></div>
+
+  <div class="row">
+    <div class="k">LENS</div>
+    <div class="seg" id="lens" role="group" aria-label="Lens">
+      <button type="button" data-f="24">24 mm</button>
+      <button type="button" data-f="50">50 mm</button>
+      <button type="button" data-f="100">100 mm</button>
+    </div>
+  </div>
+
+  <p class="note">This is bare terrain from public elevation data (one point every 27 m), coloured as snow, rock and forest by height and steepness. There are no real trees, buildings, river or photos in it, and no clouds. Sun times come from the terrain's own shadows, so expect them to be a few minutes off. Times are Jackson time.</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/*__SUN__*/
+/*__APP__*/
+</script>

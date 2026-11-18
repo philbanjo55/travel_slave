@@ -1,24 +1,101 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Image, Linking, Dimensions, Alert,
+  Image, Linking, Dimensions, Alert, ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
+import { getPhotoUri } from '../services/photoCache';
+import { usePhotoUpload } from '../hooks/usePhotoUpload';
 import { useTripStore } from '../store/tripStore';
+import StopWeatherCard from '../components/StopWeatherCard';
+import MissingScreen from '../components/MissingScreen';
+import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
+import SpotFoundChip from '../components/SpotFoundChip';
+import SunPlannerSection from '../components/sun/SunPlannerSection';
+import StopLocationEditor from '../components/StopLocationEditor';
+import StopDurationEditor from '../components/StopDurationEditor';
+import StopPlannerSection from '../components/planner/StopPlannerSection';
+import StopCameraHero, { useNearbyFrames } from '../components/planner/StopCameraHero';
+import { useDayPlanner } from '../components/planner/DayPlannerHints';
+import { PLANNER_ON } from '../utils/variant';
 import { colors, typography, spacing, radius } from '../theme';
+import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
+import { photoGroupPhotos, photoGroupStops, splitStopPhotos } from '../utils/photoGroups';
 
 const { width } = Dimensions.get('window');
+
+
+
+
+function PhotoItem({ photo }: { photo: any }) {
+  const [uri, setUri] = React.useState<string>('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    getPhotoUri(photo).then(resolved => {
+      if (!cancelled && resolved) {
+        setUri(resolved);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [photo.id]);
+
+  if (!uri) return null;
+  return <Image source={{ uri }} style={styles.photo} resizeMode="contain" />;
+}
+
+// The first reference photo, small, top right of the stop. Tap opens the
+// full-screen viewer, which swipes through all of them.
+function PhotoThumb({ photo, count, onPress }: { photo: any; count: number; onPress: () => void }) {
+  const [uri, setUri] = React.useState<string>('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    getPhotoUri(photo).then(resolved => {
+      if (!cancelled && resolved) setUri(resolved);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [photo.id]);
+
+  return (
+    <TouchableOpacity
+      style={styles.thumb}
+      onPress={onPress}
+      activeOpacity={0.85}
+      accessibilityLabel={`Open reference photos (1 of ${count})`}
+    >
+      {uri ? (
+        <Image source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      ) : (
+        <ActivityIndicator size="small" color={colors.textTertiary} />
+      )}
+      {count > 1 && (
+        <View style={styles.thumbBadge}>
+          <Text style={styles.thumbBadgeText}>1/{count}</Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
 
 export default function StopDetailScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
+  const insets = useSafeAreaInsets();   // the page draws under Android's Home / Back buttons: keep its end above them
   const { stopId, dayId } = route.params;
   const { currentTripData } = useTripStore();
-  const [photoIndex, setPhotoIndex] = useState(0);
+  const [fieldPhotoIndex, setFieldPhotoIndex] = useState(0);
+  const [viewerPhoto, setViewerPhoto] = useState<any | null>(null);
+  const [viewerKind, setViewerKind] = useState<'reference' | 'field'>('reference');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [editingLocation, setEditingLocation] = useState(false);
+  const [editingDuration, setEditingDuration] = useState(false);
+  // TEST: the stop's info note shows its first lines; the rest behind More (Phil, 13 Nov 2026: "look at all walls
+  // through the app"). Its notes run long (parking, the CAMERAS TO CHECK block).
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const day = currentTripData?.days.find((d: any) => d.id === dayId);
   const stops = day?.stops || [];
@@ -26,32 +103,70 @@ export default function StopDetailScreen() {
   const stop = stops[stopIndex];
   const prevStop = stopIndex > 0 ? stops[stopIndex - 1] : null;
 
-  if (!stop) return null;
+  // TEST app only (mockup S3e): the nearest camera's picture on top with the
+  // forecast over it, the planner's chance for this stop, the weather folded.
+  const planner = useDayPlanner(PLANNER_ON ? currentTripData?.trip?.id ?? null : null, day?.date, currentTripData?.days ?? []);
+  const { cams, reload: reloadCams } = useNearbyFrames(PLANNER_ON && stop?.lat != null && stop?.lng != null
+    ? { lat: stop.lat, lng: stop.lng } : null);
+  // While cameras load the picture's space is kept; with none near, the full
+  // weather card takes the top instead.
+  const hero = PLANNER_ON && (cams == null || cams.length > 0);
 
-  const photos = stop.stop_photos || [];
+  // Linked repeat visits (Bøur, Drangarnir, ...) share one photo pool. Every hook runs before
+  // the early return below: a stop that leaves its day while open (reload, move, a practice
+  // trip rolling its days) otherwise renders one hook fewer and crashes the screen.
+  const groupStops = photoGroupStops(currentTripData, stop);
+  const { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error } = usePhotoUpload(stop?.id ?? '', groupStops.map((s: any) => s.id));
+
+  if (!stop) return <MissingScreen loading={!currentTripData} what="stop" />;
+
+  const allPhotos = photoGroupPhotos(groupStops);
+  const { ref: refPhotos, field: fieldPhotos } = splitStopPhotos(allPhotos);   // also what the 3D view's photo card shows
+
+  const handlePhotoLongPress = (photoId: string, type: string, after?: () => void) => {
+    if (allPhotos.find((p: any) => p.id === photoId)?.borrowed) {
+      Alert.alert('From your real trip', 'This photo can only be removed on the real trip.');
+      return;
+    }
+    Alert.alert('Delete Photo', `Remove this ${type} photo?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => { deletePhoto(photoId); after?.(); } },
+    ]);
+  };
+
+  // The viewer always gets the live list, so a reorder or delete shows at once.
+  const openViewer = (photo: any, kind: 'reference' | 'field') => {
+    setViewerKind(kind);
+    setViewerPhoto(photo);
+  };
+  const closeViewer = () => setViewerPhoto(null);
 
   // Navigate from PREVIOUS stop to THIS stop (chained directions)
   const openNavigation = () => {
     if (!stop.lat || !stop.lng) return;
 
-    let url: string;
-    if (prevStop?.lat && prevStop?.lng) {
-      // Google Maps directions from previous stop to this stop
-      url = `https://www.google.com/maps/dir/?api=1&origin=${prevStop.lat},${prevStop.lng}&destination=${stop.lat},${stop.lng}&travelmode=driving`;
-    } else {
-      // Just navigate to this stop
-      url = `https://www.google.com/maps/dir/?api=1&destination=${stop.lat},${stop.lng}&travelmode=driving`;
-    }
+    // Use google.navigation intent — works offline with downloaded maps
+    const url = `google.navigation:q=${stop.lat},${stop.lng}&mode=d`;
 
     Linking.openURL(url).catch(() => {
-      Alert.alert('Maps not available', 'Could not open Google Maps.');
+      Linking.openURL(`geo:${stop.lat},${stop.lng}?q=${stop.lat},${stop.lng}(${encodeURIComponent(stop.name)})`).catch(() => {
+        Alert.alert('Maps not available', 'Could not open Google Maps.');
+      });
     });
+  };
+
+  // Show route from previous stop to this stop (for planning)
+  const openRouteFromPrev = () => {
+    if (!stop.lat || !stop.lng || !prevStop?.lat || !prevStop?.lng) return;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${prevStop.lat},${prevStop.lng}&destination=${stop.lat},${stop.lng}&travelmode=driving`;
+    Linking.openURL(url);
   };
 
   // Full day route in Google Maps
   const openFullDayRoute = () => {
     const pts = stops.filter((s: any) => s.lat && s.lng);
     if (pts.length < 2) return;
+    // geo: doesn't support waypoints, so use web URL (requires internet)
     const origin = `${pts[0].lat},${pts[0].lng}`;
     const dest = `${pts[pts.length-1].lat},${pts[pts.length-1].lng}`;
     const waypoints = pts.slice(1, -1).map((s: any) => `${s.lat},${s.lng}`).join('|');
@@ -76,61 +191,96 @@ export default function StopDetailScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.timeLabel}>{stop.time_label || ''}</Text>
-        {stop.duration_minutes ? (
-          <View style={styles.durBadge}>
-            <Text style={styles.durText}>{stop.duration_minutes} MIN</Text>
-          </View>
-        ) : null}
+        {/* Tap the time to change how long this stop takes. */}
+        <TouchableOpacity style={styles.timeRow} onPress={() => setEditingDuration(true)} accessibilityLabel="Change time at this stop">
+          <Text style={styles.timeLabel}>{stop.time_label || ''}</Text>
+          {stop.duration_minutes && stop.time_label ? (
+            <Text style={styles.timeEndLabel}>— {addMinutesToTimeLabel(stop.time_label, stop.duration_minutes)}</Text>
+          ) : null}
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.durBadge} onPress={() => setEditingDuration(true)} hitSlop={8}>
+          <Text style={styles.durText}>{stop.duration_minutes ? minutesToHoursMin(stop.duration_minutes).toUpperCase() : 'SET TIME'}</Text>
+          <Ionicons name="pencil" size={10} color={colors.textTertiary} />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Stop name */}
-        <View style={styles.nameSection}>
-          <Text style={styles.stopEmoji}>{stop.emoji || '📷'}</Text>
-          <Text style={styles.stopName}>{stop.name}</Text>
-          {signal && (
-            <View style={[styles.signalBadge, { borderColor: signal.color }]}>
-              <Text style={[styles.signalText, { color: signal.color }]}>{signal.label}</Text>
-            </View>
-          )}
-          {prevStop?.name && (
-            <Text style={styles.fromLabel}>From {prevStop.name}</Text>
-          )}
-        </View>
+      <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder
+        contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}>
+        {hero ? <StopCameraHero cams={cams} weather={stop.weather ?? null} timeLabel={stop.time_label} onClosed={reloadCams} dayDate={day?.date} /> : null}
+        {PLANNER_ON && !hero ? (
+          <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
+        ) : null}
 
-        {/* Photos */}
-        {photos.length > 0 && (
-          <View style={styles.photoSection}>
-            <ScrollView
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              onMomentumScrollEnd={(e) => {
-                setPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
-              }}
-            >
-              {photos.map((photo: any) => (
-                <Image
-                  key={photo.id}
-                  source={{ uri: photo.base64_data || photo.url }}
-                  style={styles.photo}
-                  resizeMode="cover"
-                />
-              ))}
-            </ScrollView>
-            {photos.length > 1 && (
-              <View style={styles.photoDots}>
-                {photos.map((_: any, i: number) => (
-                  <View key={i} style={[styles.dot, i === photoIndex && styles.dotActive]} />
-                ))}
+        {/* Stop name, with the reference photos top right */}
+        <View style={styles.nameRow}>
+          <View style={styles.nameSection}>
+            <Text style={styles.stopEmoji}>{stop.emoji || '📷'}</Text>
+            <Text style={styles.stopName}>{stop.name}</Text>
+            {signal && (
+              <View style={[styles.signalBadge, { borderColor: signal.color }]}>
+                <Text style={[styles.signalText, { color: signal.color }]}>{signal.label}</Text>
               </View>
             )}
+            {prevStop?.name && (
+              <Text style={styles.fromLabel}>From {prevStop.name}</Text>
+            )}
           </View>
+          <View style={styles.thumbCol}>
+            {refPhotos.length > 0 && (
+              <PhotoThumb
+                photo={refPhotos[0]}
+                count={refPhotos.length}
+                onPress={() => openViewer(refPhotos[0], 'reference')}
+              />
+            )}
+            <TouchableOpacity
+              style={styles.addThumbBtn}
+              onPress={() => pickAndUpload('reference')}
+              disabled={uploading}
+              accessibilityLabel="Add reference photos"
+            >
+              {uploading ? (
+                <>
+                  <ActivityIndicator size="small" color={colors.accent} />
+                  <Text style={styles.addThumbText}>{uploadProgress || '…'}</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="add" size={14} color={colors.accent} />
+                  <Text style={styles.addThumbText}>Add photo</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+        {error && (
+          <Text style={[styles.uploadError, { marginBottom: spacing.md }]}>{error}</Text>
+        )}
+        <SpotFoundChip stopId={stop.id} stopName={stop.name} />
+
+        {/* Planner chance + settings (TEST app only until the solver is signed off) */}
+        {PLANNER_ON && (
+          <StopPlannerSection stopId={stop.id} planner={planner} tripId={currentTripData?.trip?.id ?? null} tripDate={day?.date ?? null}
+            days={currentTripData?.days ?? []} timeLabel={stop.time_label ?? null} duration={stop.duration_minutes ?? null}
+            tz={currentTripData?.trip?.timezone ?? undefined} />
         )}
 
-        {/* Info */}
-        {stop.info && (
+        {/* Weather — pinned near the top of the location. TEST: folded under the
+            camera picture, which already shows the headline numbers. */}
+        {!PLANNER_ON ? (
+          <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
+        ) : hero ? (
+          <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} foldable hideHeadline />
+        ) : null}
+
+        {/* Sun & Moon — or a small "add vantage" button when the stop has none */}
+        <SunPlannerSection tripId={currentTripData?.trip?.id} stopId={stop.id} timeLabel={stop.time_label} stopName={stop.name} stopPhotos={[...refPhotos, ...fieldPhotos]}
+          stopCoords={stop.lat != null && stop.lng != null ? { lat: stop.lat, lng: stop.lng }
+            : (() => { const o = stops.find((x: any) => x.lat != null && x.lng != null); return o ? { lat: o.lat, lng: o.lng } : null; })()}
+        />
+
+        {/* Info (TEST: under the map instead) */}
+        {!PLANNER_ON && stop.info && (
           <View style={styles.infoCard}>
             <Text style={styles.infoText}>{stop.info}</Text>
           </View>
@@ -142,7 +292,16 @@ export default function StopDetailScreen() {
             <TouchableOpacity style={styles.actionBtn} onPress={openNavigation}>
               <Ionicons name="navigate-outline" size={18} color={colors.textPrimary} />
               <Text style={styles.actionText}>
-                {prevStop ? 'Directions from prev stop' : 'Navigate here'}
+                Navigate here
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {prevStop?.lat && prevStop?.lng && stop.lat && stop.lng && (
+            <TouchableOpacity style={styles.actionBtn} onPress={openRouteFromPrev}>
+              <Ionicons name="git-commit-outline" size={18} color={colors.textPrimary} />
+              <Text style={styles.actionText}>
+                Route from {prevStop.name?.replace(/^[^\w]*/, '').split(' ').slice(0, 3).join(' ')}
               </Text>
             </TouchableOpacity>
           )}
@@ -153,6 +312,11 @@ export default function StopDetailScreen() {
               <Text style={styles.actionText}>Full day route</Text>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity style={styles.actionBtn} onPress={() => setEditingLocation(true)}>
+            <Ionicons name="pin-outline" size={18} color={colors.textPrimary} />
+            <Text style={styles.actionText}>{stop.lat && stop.lng ? 'Change location' : 'Set location'}</Text>
+          </TouchableOpacity>
 
           {stop.alltrails_url && (
             <TouchableOpacity style={styles.actionBtn} onPress={openAllTrails}>
@@ -203,6 +367,21 @@ export default function StopDetailScreen() {
           </View>
         )}
 
+        {PLANNER_ON && stop.info && (() => {
+          const long = stop.info.length > 280 || stop.info.split('\n').length > 6;
+          return (
+            <View style={styles.infoCard}>
+              <Text style={styles.infoText} numberOfLines={long && !infoOpen ? 6 : undefined}>{stop.info}</Text>
+              {long ? (
+                <TouchableOpacity onPress={() => setInfoOpen(o => !o)} hitSlop={{ top: 8, bottom: 8 }} accessibilityRole="button"
+                  accessibilityLabel={infoOpen ? 'Show less of the note' : 'Show the whole note'}>
+                  <Text style={styles.infoMore}>{infoOpen ? 'Less' : 'More ›'}</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          );
+        })()}
+
         {/* Log */}
         {stop.log && (
           <TouchableOpacity
@@ -243,8 +422,83 @@ export default function StopDetailScreen() {
           </TouchableOpacity>
         )}
 
+        {/* Field Photos — taken on location */}
+        <View style={styles.fieldPhotoSection}>
+          <Text style={styles.fieldPhotoTitle}>FIELD PHOTOS</Text>
+          {fieldPhotos.length > 0 && (
+            <>
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                bounces={false}
+                overScrollMode="never"
+                onMomentumScrollEnd={(e) => {
+                  setFieldPhotoIndex(Math.round(e.nativeEvent.contentOffset.x / width));
+                }}
+              >
+                {fieldPhotos.map((photo: any) => (
+                  <TouchableOpacity
+                    key={photo.id}
+                    onPress={() => openViewer(photo, 'field')}
+                    onLongPress={() => handlePhotoLongPress(photo.id, 'field')}
+                    activeOpacity={0.9}
+                  >
+                    <PhotoItem photo={photo} />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {fieldPhotos.length > 1 && (
+                <View style={styles.photoDots}>
+                  {fieldPhotos.map((_: any, i: number) => (
+                    <View key={i} style={[styles.dot, i === fieldPhotoIndex && styles.dotActive]} />
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+          <View style={styles.fieldPhotoBtns}>
+            <TouchableOpacity
+              style={[styles.addPhotoBtn, { flex: 1 }]}
+              onPress={() => takePhoto('field')}
+              disabled={uploading}
+            >
+              <Ionicons name="camera-outline" size={16} color={colors.accent} />
+              <Text style={styles.addPhotoText}>Take Photo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.addPhotoBtn, { flex: 1 }]}
+              onPress={() => pickAndUpload('field')}
+              disabled={uploading}
+            >
+              <Ionicons name="images-outline" size={16} color={colors.accent} />
+              <Text style={styles.addPhotoText}>From Roll</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <View style={{ height: 80 }} />
       </ScrollView>
+      <StopDurationEditor visible={editingDuration} onClose={() => setEditingDuration(false)} stop={stop} dayStops={stops} />
+      <StopLocationEditor
+        visible={editingLocation}
+        onClose={() => setEditingLocation(false)}
+        stop={stop}
+        fallback={(() => { const o = stops.find((x: any) => x.lat && x.lng); return o ? { lat: o.lat, lng: o.lng } : null; })()}
+      />
+      <FullScreenPhotoViewer
+        photo={viewerPhoto}
+        photos={viewerKind === 'field' ? fieldPhotos : refPhotos}
+        visible={!!viewerPhoto}
+        onClose={closeViewer}
+        spotStop={{ id: stop.id, name: stop.name }}
+        onDelete={(p) => handlePhotoLongPress(p.id, viewerKind, closeViewer)}
+        onMakeFirst={viewerKind === 'reference' && !refPhotos.some((r: any) => r.borrowed) ? async (p) => {
+          const ok = await makeFirst(p.id, refPhotos.map((r: any) => r.id));
+          if (!ok) Alert.alert('Not saved', 'Could not change the photo order. Check your connection and try again.');
+          return ok;
+        } : undefined}
+      />
     </SafeAreaView>
   );
 }
@@ -269,8 +523,13 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   backBtn: { padding: spacing.xs },
-  timeLabel: { fontSize: 13, fontWeight: '500', color: colors.textSecondary, flex: 1 },
+  timeRow: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  timeLabel: { fontSize: 13, fontWeight: '500', color: colors.textSecondary },
+  timeEndLabel: { fontSize: 13, color: colors.textTertiary, marginLeft: 4 },
   durBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     borderRadius: radius.sm,
@@ -279,7 +538,24 @@ const styles = StyleSheet.create({
   },
   durText: { ...typography.labelMedium, color: colors.textTertiary },
 
-  nameSection: { paddingHorizontal: spacing.xl, paddingBottom: spacing.lg, gap: spacing.sm },
+  nameRow: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: spacing.xl, paddingBottom: spacing.lg, gap: 14 },
+  nameSection: { flex: 1, minWidth: 0, gap: spacing.sm },
+  thumbCol: { width: 96, gap: 6 },
+  thumb: {
+    width: 96, height: 96, borderRadius: 10, overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surfaceElevated,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  thumbBadge: {
+    position: 'absolute', right: 5, bottom: 5, paddingHorizontal: 5, paddingVertical: 1,
+    borderRadius: 4, backgroundColor: 'rgba(0,0,0,0.75)',
+  },
+  thumbBadgeText: { fontSize: 9, fontWeight: '700', color: '#ffffff' },
+  addThumbBtn: {
+    minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
+    borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed', borderRadius: 8,
+  },
+  addThumbText: { fontSize: 11, fontWeight: '600', color: colors.accent },
   stopEmoji: { fontSize: 28 },
   stopName: { fontSize: 22, fontWeight: '600', color: colors.textPrimary, lineHeight: 28 },
   signalBadge: {
@@ -294,10 +570,27 @@ const styles = StyleSheet.create({
   signalText: { ...typography.labelMedium, fontSize: 9 },
   fromLabel: { fontSize: 11, color: colors.textTertiary, fontStyle: 'italic' },
 
-  photoSection: { marginBottom: spacing.lg },
-  photo: { width, height: 260 },
+  photo: { width, height: 260, backgroundColor: '#111' },
   photoDots: { flexDirection: 'row', justifyContent: 'center', gap: spacing.xs, marginTop: spacing.sm },
   dot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.border },
+  addPhotoBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
+    marginHorizontal: spacing.xl, marginTop: spacing.sm, paddingVertical: spacing.sm,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, borderStyle: 'dashed',
+  },
+  addPhotoText: { fontSize: 12, fontWeight: '500', color: colors.accent },
+  uploadError: { fontSize: 11, color: '#e74c3c', textAlign: 'center', marginTop: spacing.xs, marginHorizontal: spacing.xl },
+  fieldPhotoSection: {
+    marginTop: spacing.xl, borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border, paddingTop: spacing.lg,
+  },
+  fieldPhotoTitle: {
+    ...typography.labelMedium, paddingHorizontal: spacing.xl, marginBottom: spacing.md,
+  },
+  fieldPhotoBtns: {
+    flexDirection: 'row', gap: spacing.sm,
+    marginHorizontal: spacing.xl, marginTop: spacing.sm,
+  },
   dotActive: { backgroundColor: colors.accent },
 
   infoCard: {
@@ -310,6 +603,7 @@ const styles = StyleSheet.create({
     borderLeftColor: colors.border,
   },
   infoText: { ...typography.bodyLarge, lineHeight: 22 },
+  infoMore: { marginTop: spacing.sm, fontSize: 13, fontWeight: '700', color: colors.signalOk },
 
   actions: {
     paddingHorizontal: spacing.xl,

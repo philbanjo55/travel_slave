@@ -1,31 +1,110 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList,
-  TouchableOpacity, ActivityIndicator, StatusBar,
+  TouchableOpacity, ActivityIndicator, StatusBar, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTripStore } from '../store/tripStore';
+import { supabase } from '../services/supabase';
 import { colors, typography, spacing, radius } from '../theme';
-import { format, differenceInDays } from 'date-fns';
+import { format, parseISO, differenceInDays } from 'date-fns';
+import * as Updates from 'expo-updates';
+import { migratePhotosToStorage } from '../services/migratePhotos';
+import { logLaunch, checkAndFetch, restartNow } from '../services/updateInfo';
+import { PLANNER_ON } from '../utils/variant';
+import { isTrainingRunning } from './TrainingScreen';
 
 export default function TripsScreen() {
   const navigation = useNavigation<any>();
   const { trips, loadTrips, isOffline } = useTripStore();
+  const [migrating, setMigrating] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => { loadTrips(); }, []);
+  // TEST app: which code is running, and fetch a new instant update now.
+  const [updState, setUpdState] = useState<'idle' | 'checking' | 'none' | 'ready' | 'error'>('idle');
+  const [updError, setUpdError] = useState('');
+  const checkUpdate = async () => {
+    setUpdState('checking');
+    const r = await checkAndFetch();
+    setUpdState(r.kind);
+    if (r.kind === 'error') setUpdError(r.message);
+  };
+  useEffect(() => { logLaunch(); }, []);
+
+  useEffect(() => {
+    try {
+      const updateDate = Updates.createdAt;
+      if (updateDate) {
+        setLastUpdate(format(new Date(updateDate), 'MMM d h:mm a'));
+      }
+    } catch {}
+  }, []);
+
+  const reload = () => { setLoading(true); loadTrips().finally(() => setLoading(false)); };
+  useEffect(() => { reload(); }, []);
+
+  // Training trips (live-weather copies, trips.training_of) stay off the
+  // list; both apps show them on their own screen (the 🧪 row).
+  const mainTrips = trips.filter((t: any) => !t.training_of);
+  const activeTrips = mainTrips.filter((t: any) => !t.archived);
+  const archivedTrips = mainTrips.filter((t: any) => t.archived);
+  const trainingTrips = PLANNER_ON ? trips.filter((t: any) => t.training_of) : [];
+  const trainingRunning = trainingTrips.filter((t: any) => isTrainingRunning(t));
+
+  const archiveTrip = async (item: any, archive: boolean) => {
+    try {
+      const { error } = await supabase.from('trips').update({ archived: archive }).eq('id', item.id);
+      if (error) throw error;
+      await loadTrips();
+    } catch (e) {
+      Alert.alert('Error', 'Could not update trip.');
+    }
+  };
+
+  const handleLongPress = (item: any) => {
+    Alert.alert(
+      item.title,
+      'Trip options',
+      [
+        {
+          text: item.archived ? '📂 Unarchive Trip' : '📁 Archive Trip',
+          onPress: () => archiveTrip(item, !item.archived),
+        },
+        {
+          text: '📷 Migrate Photos to Storage',
+          onPress: async () => {
+            setMigrating(true);
+            try {
+              const result = await migratePhotosToStorage();
+              Alert.alert('Done!', `Migrated ${result.migrated} photos. Reload the app to see them.`);
+            } catch (e) {
+              Alert.alert('Error', 'Could not migrate photos. Check your connection.');
+            } finally {
+              setMigrating(false);
+            }
+          }
+        },
+        { text: 'Cancel', style: 'cancel' }
+      ]
+    );
+  };
 
   const renderTrip = ({ item }: { item: any }) => {
-    const start = item.start_date ? format(new Date(item.start_date), 'MMM d') : '';
-    const end = item.end_date ? format(new Date(item.end_date), 'MMM d, yyyy') : '';
+    const start = item.start_date ? format(parseISO(item.start_date), 'MMM d') : '';
+    const end = item.end_date ? format(parseISO(item.end_date), 'MMM d, yyyy') : '';
     const days = item.start_date && item.end_date
-      ? differenceInDays(new Date(item.end_date), new Date(item.start_date))
+      ? differenceInDays(parseISO(item.end_date), parseISO(item.start_date)) + 1 // both ends count: Dec 29 to Jan 4 is 7 days
       : null;
 
     return (
       <TouchableOpacity
         style={styles.tripCard}
         onPress={() => navigation.navigate('Trip', { tripId: item.id })}
+        onLongPress={() => handleLongPress(item)}
         activeOpacity={0.8}
       >
         <View style={styles.tripCardInner}>
@@ -34,8 +113,11 @@ export default function TripsScreen() {
             <Text style={styles.tripTitle}>{item.title}</Text>
             {item.subtitle ? <Text style={styles.tripSub}>{item.subtitle}</Text> : null}
             {days ? <Text style={styles.tripMeta}>{days} days</Text> : null}
+            {trainingRunning.some((t: any) => t.training_of === item.id) ? (
+              <Text style={styles.trainingNote}>🧪 Training on live weather now</Text>
+            ) : null}
           </View>
-          <Ionicons_chevron />
+          <Text style={{ color: '#444', fontSize: 18 }}>›</Text>
         </View>
         <View style={styles.tripDivider} />
       </TouchableOpacity>
@@ -44,38 +126,122 @@ export default function TripsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#000" />
+      <StatusBar barStyle="light-content" />
 
       <View style={styles.header}>
-        <Text style={styles.brand}>PHILM+FRAME</Text>
-        {isOffline && <Text style={styles.offline}>OFFLINE</Text>}
+        <Text style={styles.brand}>PHILM+FRAME ✦</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+          {migrating && <ActivityIndicator size="small" color={colors.accentDim} />}
+          {isOffline && <Text style={styles.offline}>OFFLINE</Text>}
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Reciprocity')}
+            style={{ padding: spacing.xs }}
+          >
+            <Ionicons name="calculator-outline" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('FocusSpread')}
+            style={{ padding: spacing.xs }}
+          >
+            <Ionicons name="aperture-outline" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Exposures')}
+            style={{ padding: spacing.xs }}
+          >
+            <Ionicons name="film-outline" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <Text style={styles.sectionLabel}>TRIPS</Text>
+      {lastUpdate && (
+        <Text style={styles.lastUpdate}>SYNCED {lastUpdate}</Text>
+      )}
+      {PLANNER_ON && (
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={updState === 'ready' ? 'Restart to use the new update' : 'Check for an app update now'}
+          onPress={() => (updState === 'ready' ? restartNow() : checkUpdate())}
+          disabled={updState === 'checking'}
+          style={{ paddingHorizontal: spacing.xl, paddingBottom: spacing.md, marginTop: -spacing.sm }}
+        >
+          <Text style={[styles.lastUpdate, { paddingHorizontal: 0, marginTop: 0, paddingBottom: 0 }]}>
+            {Updates.isEmbeddedLaunch ? 'App code: built in. ' : `App code: ${Updates.updateId?.slice(0, 8) ?? '?'}. `}
+            {Updates.isEmergencyLaunch ? 'An update failed to start, back on the built-in code. ' : ''}
+            {updState === 'idle' ? 'Check for update' : ''}
+            {updState === 'checking' ? 'Checking...' : ''}
+            {updState === 'none' ? 'Up to date. Check again' : ''}
+            {updState === 'ready' ? 'New update downloaded. Tap to restart' : ''}
+            {updState === 'error' ? `Check failed: ${updError.slice(0, 120)}. Try again` : ''}
+          </Text>
+        </TouchableOpacity>
+      )}
 
-      {trips.length === 0 ? (
+      {activeTrips.length === 0 && !showArchived && loading ? (
         <View style={styles.loading}>
           <ActivityIndicator color={colors.accent} />
         </View>
+      ) : activeTrips.length === 0 && !showArchived && trainingTrips.length === 0 ? (
+        // Nothing active: say why and keep a way to the archived trips, instead
+        // of spinning for ever.
+        <View style={styles.loading}>
+          <Text style={styles.emptyText}>
+            {mainTrips.length === 0 && isOffline
+              ? "Couldn't load your trips. Check your connection."
+              : mainTrips.length === 0 ? 'No trips yet.' : 'No active trips.'}
+          </Text>
+          <TouchableOpacity style={styles.emptyBtn} onPress={reload}>
+            <Text style={styles.archivedBtnText}>Try again</Text>
+          </TouchableOpacity>
+          {archivedTrips.length > 0 && (
+            <TouchableOpacity style={styles.emptyBtn} onPress={() => setShowArchived(true)}>
+              <Text style={styles.archivedBtnText}>{`Show Archived (${archivedTrips.length})`}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       ) : (
         <FlatList
-          data={trips}
+          data={showArchived ? [...activeTrips, ...archivedTrips] : activeTrips}
           keyExtractor={item => item.id}
           renderItem={renderTrip}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.list}
+          ListHeaderComponent={
+            trainingTrips.length > 0 ? (
+              <TouchableOpacity style={styles.trainingRow} onPress={() => navigation.navigate('Training')} activeOpacity={0.8}>
+                <Text style={styles.trainingEmoji}>🧪</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.trainingTitle}>Training trips</Text>
+                  <Text style={styles.trainingSub}>
+                    {trainingRunning.length ? `${trainingRunning.length} running on live weather` : 'None running'}
+                    {trainingTrips.length > trainingRunning.length ? ` · ${trainingTrips.length - trainingRunning.length} finished` : ''}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+              </TouchableOpacity>
+            ) : undefined
+          }
+          ListFooterComponent={
+            archivedTrips.length > 0 ? (
+              <TouchableOpacity
+                style={styles.archivedBtn}
+                onPress={() => setShowArchived(!showArchived)}
+              >
+                <Ionicons
+                  name={showArchived ? 'chevron-up' : 'chevron-down'}
+                  size={13}
+                  color={colors.textTertiary}
+                />
+                <Text style={styles.archivedBtnText}>
+                  {showArchived ? 'Hide Archived' : `Show Archived (${archivedTrips.length})`}
+                </Text>
+              </TouchableOpacity>
+            ) : undefined
+          }
         />
       )}
     </SafeAreaView>
-  );
-}
-
-// Inline chevron to avoid import issues
-function Ionicons_chevron() {
-  return (
-    <View style={{ justifyContent: 'center' }}>
-      <Text style={{ color: '#444', fontSize: 18 }}>›</Text>
-    </View>
   );
 }
 
@@ -89,48 +255,40 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xl,
     paddingBottom: spacing.md,
   },
-  brand: {
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 2.5,
-    color: colors.textPrimary,
-  },
+  brand: { fontSize: 13, fontWeight: '700', letterSpacing: 2.5, color: colors.textPrimary },
   offline: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 1,
-    color: colors.textTertiary,
-    borderWidth: 1,
-    borderColor: colors.textTertiary,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
+    fontSize: 9, fontWeight: '700', letterSpacing: 1, color: colors.textTertiary,
+    borderWidth: 1, borderColor: colors.textTertiary,
+    paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm,
   },
-  sectionLabel: {
-    ...typography.labelLarge,
-    paddingHorizontal: spacing.xl,
-    paddingBottom: spacing.lg,
-  },
+  sectionLabel: { ...typography.labelLarge, paddingHorizontal: spacing.xl, paddingBottom: spacing.lg },
   list: { paddingHorizontal: spacing.xl },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-
   tripCard: { marginBottom: spacing.md },
-  tripCardInner: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: spacing.lg,
-  },
+  tripCardInner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.lg },
   tripLeft: { flex: 1 },
   tripDates: { ...typography.labelMedium, marginBottom: spacing.xs },
-  tripTitle: {
-    fontFamily: 'Georgia',
-    fontSize: 24,
-    color: colors.textPrimary,
-    fontWeight: '400',
-    marginBottom: 4,
-  },
+  tripTitle: { fontFamily: 'Georgia', fontSize: 24, color: colors.textPrimary, fontWeight: '400', marginBottom: 4 },
   tripSub: { ...typography.bodyMedium, marginBottom: 4 },
   tripMeta: { ...typography.labelMedium, color: colors.textTertiary },
   tripDivider: { height: 1, backgroundColor: colors.border },
+  lastUpdate: { ...typography.labelMedium, color: colors.textTertiary, paddingHorizontal: spacing.xl, marginTop: -spacing.sm, paddingBottom: spacing.md },
+  archivedBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.xl,
+    justifyContent: 'center',
+  },
+  emptyText: { ...typography.labelLarge, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: spacing.xl },
+  emptyBtn: { marginTop: spacing.lg, paddingVertical: spacing.sm, paddingHorizontal: spacing.lg },
+  archivedBtnText: { ...typography.labelMedium, color: colors.textTertiary },
+  trainingNote: { ...typography.labelMedium, color: colors.textSecondary, marginTop: 2 },
+  trainingRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, marginBottom: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  trainingEmoji: { fontSize: 18 },
+  trainingTitle: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
+  trainingSub: { ...typography.labelMedium, color: colors.textSecondary, marginTop: 2 },
 });

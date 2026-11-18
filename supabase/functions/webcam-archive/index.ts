@@ -1,54 +1,136 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64';
+import Anthropic from 'npm:@anthropic-ai/sdk';
 import jpeg from 'npm:jpeg-js@0.4.4';
 
 // WEBCAM FOG ARCHIVE
-// Every 3 h each active row of webcam_cameras (any trip: image_url, region,
+// Every hour each active row of webcam_cameras (any trip: image_url, region,
 // source and permission per camera; first set is Landsverk in the Faroes,
 // approved by Landsverk) is stored and given cheap haze metrics (fog flattens
-// contrast and edges). Labels come from CLIP in GitHub Actions
-// (tools/webcam_clip via webcam-labels); Gemini labelling here is optional and
-// off unless GEMINI_ENABLED=true (the free tier refused this account with 402).
-// These are the place-specific fog truth the solver's forecasts get scored
-// against; METAR covers only airports.
+// contrast and edges). Night frames (sun below -6 deg) are skipped.
+// Labels come from Claude (ANTHROPIC_API_KEY secret; CLAUDE_LABELS=false turns
+// it off, CLAUDE_LABEL_MODEL overrides the model, CLAUDE_DAILY_CAP caps calls
+// per UTC day, CLAUDE_MONTHLY_CAP_USD caps spend per UTC month, logged in
+// claude_usage). Phil's own taps go to phil_label, never over Claude's label,
+// so the two can be compared. These are the place-specific fog truth the
+// solver's forecasts get scored against; METAR covers only airports.
 //
-// Storage (free plan, 1 GB): full frames kept 7 days, plus one frame per
-// camera per day (the 12 UTC capture) kept permanently.
+// Storage: v17 (Phil, 5 Nov 2026: "keep more than the morning") keeps every
+// daylight picture for good (~23 MB a day for 12 cameras; night frames are never
+// captured). Only a frozen camera's repeat of the same picture is pruned after
+// KEEP_DAYS, unless it is the capture nearest the camera's solar noon (until v16
+// the only frame per camera per day kept past 7 days).
+//
+// POST {} archives this hour; {force: true} re-captures it; {backfill: n}
+// labels up to n stored daylight frames that have no label yet.
+//
+// v24 (Phil, 14 Nov 2026, offload step 2: "Yes"): a camera with label_by = 'session' is read
+// by the nightly Claude sessions (webcam_session_queue / webcam_session_label), not here, except
+// for the hours the planner needs within minutes: webcam_paid_slots() (the camera look after
+// sunrise of each live T run, and this hour + the hour before while a Re-plan now / note about
+// today is running). Those hours are read here at once, also when the picture was already taken.
+// The hourly run's small backfill leaves session cameras alone; an explicit {backfill: n} (the
+// 06:00 UTC backup cron) reads whatever is still unread. Paused cameras are never read and no
+// longer stop the backfill. Setting label_by back to 'api' restores the old behaviour.
+//
+// Stale frames: a camera can freeze and keep serving an old picture. Each
+// image's SHA-256 is stored; a repeat of an earlier frame is not sent to
+// Claude. Claude also reads the time printed on the image (camera_time_text);
+// the webcam_frame_stale trigger marks a frame stale when it repeats or its
+// printed time is over 45 min from fetched_at. Stale frames are no truth.
+//
+// image_url may be a template for archives that name files by time (TetonCam:
+// .../{YYYY}/{MM}/{DD}/{HHmm}.jpg): filled in the camera's tz on 15-min steps,
+// newest first, stepping back up to an hour; the file's time becomes
+// camera_time_text. Every image fetch times out after FETCH_TIMEOUT_MS so one
+// dead camera can't stall the run. A plain image_url that answers with an
+// empty body and a Location header (Roundshot panoramas) is followed, and a
+// time in that file name becomes camera_time_text too.
+// v16 (3 Nov 2026): source_time (Last-Modified, or the time in the image address after fetch's own
+// redirects, which Roundshot uses) and source_etag kept per frame; the stale trigger also flags a
+// source time over 45 min old (cameras that print no clock).
 
 const BUCKET = 'webcams';
 const KEEP_DAYS = 7;
-const KEEP_HOUR_UTC = 12;
-// Google retires models for new keys quickly (2.5-flash was refused in Oct
-// 2026), so the GEMINI_MODEL secret overrides this without a redeploy.
-const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') ?? 'gemini-3.8-flash';
+const NIGHT_ALT = -6;
+const SHARDS = 8;
+const FETCH_TIMEOUT_MS = 20_000;
+const TEMPLATE_STEP_MIN = 15;
+const MODEL = Deno.env.get('CLAUDE_LABEL_MODEL') ?? 'claude-opus-5-5';
+const DAILY_CAP = Number(Deno.env.get('CLAUDE_DAILY_CAP') ?? 400);
+const MONTHLY_CAP_USD = Number(Deno.env.get('CLAUDE_MONTHLY_CAP_USD') ?? 40);
+// USD per million tokens [input, output]; unknown models are priced as Opus.
+const PRICES: Record<string, [number, number]> = {
+  'claude-opus': [4, 20], 'claude-sonnet': [2, 10], 'claude-haiku': [0.1, 0.5],
+};
+// Prompt caching (v23, Phil 8 Nov 2026, worksheet C7): cache writes cost 1.25x input, reads 0.05x
+// on Opus 5.5 (0.1x on the others).
+const costUsd = (model: string, inTok: number, outTok: number, cacheWrite = 0, cacheRead = 0) => {
+  const p = Object.entries(PRICES).find(([k]) => model.startsWith(k))?.[1] ?? PRICES['claude-opus'];
+  const readX = model.startsWith('claude-opus-5-5') ? 0.05 : 0.1;
+  return (inTok * p[0] + outTok * p[1] + cacheWrite * p[0] * 1.25 + cacheRead * p[0] * readX) / 1e6;
+};
+// CLAUDE_LABEL_CACHE=true: the fixed instructions go first as a cached system block and the
+// picture + camera line after, so every label after the first in an hourly batch re-reads the
+// instructions from cache. Off by default until {compare: n} has shown the labels match.
+const LABEL_CACHE = Deno.env.get('CLAUDE_LABEL_CACHE') === 'true';
 
 const LABELS = ['clear', 'haze', 'low_cloud', 'fog', 'dark', 'camera_problem'];
 const CLOUD = ['none', 'above_hills', 'touching_tops', 'covering_hills', 'unknown'];
 
-const PROMPT = (region: string, name: string, island: string, hint: string) => `You are labelling a ${region} webcam frame for a landscape photographer's fog archive.
-Camera: ${name} (${island}). ${hint}
-Judge only what the image shows. Labels:
-- clear: hills and distance clearly visible, no fog or cloud on the hills
+// UTC hour of the capture kept forever: nearest the camera's solar noon.
+const keepHourUtc = (lng: number | null) => lng == null ? 12 : ((Math.round(12 - lng / 15) % 24) + 24) % 24;
+
+const CAMERA_LINE = (name: string, place: string, hint: string) => `Camera: ${name}${place ? ` (${place})` : ''}. ${hint}`;
+const RULES = `Foreground (road, verges, buildings, trees, snow, rock) filling much of the frame is normal. Judge the weather from whatever part shows sky, mountains, hills or distance, even a thin strip.
+label:
+- clear: hills or mountains and distance clearly visible, no fog or cloud on them
 - haze: visibility reduced by haze or mist but hills still discernible
 - low_cloud: cloud sitting on or hiding the hilltops, lower ground visible
 - fog: fog at camera level, distant terrain hidden
-- dark: too dark to judge (night)
-- camera_problem: frozen, blank, blurred by water/snow on the lens, or obstructed
-Answer with the JSON schema only.`;
+- dark: too dark to judge
+- camera_problem: frozen, blank, or lens so covered by water or snow that no sky, hills or distance can be judged
+hills_visible: the hills in view can be seen to their tops.
+cloud_on_hills: where the lowest cloud sits relative to the hills.
+sun_on_land: direct sunlight is falling on the land or sea in view (shadows, sunlit patches), not just a bright overcast sky.
+camera_time: the date and time printed on the image (caption bar or overlay), written YYYY-MM-DD HH:MM exactly as shown (do not convert time zones); an empty string if none is printed.
+confidence: 0 to 1. note: one short sentence on what decided it.`;
+const PROMPT = (region: string, name: string, place: string, hint: string) => `You are labelling a ${region ? region + ' ' : ''}webcam frame for a landscape photographer's weather archive. The labels are scored against forecasts, so judge only what the image shows.
+${CAMERA_LINE(name, place, hint)}
+${RULES}`;
+// Cached layout: the same words, with the camera line (and region) moved after the picture.
+const SYSTEM_CACHED = `You are labelling webcam frames for a landscape photographer's weather archive. The labels are scored against forecasts, so judge only what the image shows. Each message has one frame and a line naming the camera and its region.
+${RULES}`;
 
 const SCHEMA = {
-  type: 'OBJECT',
+  type: 'object',
+  additionalProperties: false,
+  required: ['label', 'hills_visible', 'cloud_on_hills', 'sea_visible', 'rain_or_wet_lens', 'sun_on_land', 'camera_time', 'confidence', 'note'],
   properties: {
-    label: { type: 'STRING', enum: LABELS },
-    hills_visible: { type: 'BOOLEAN' },
-    cloud_on_hills: { type: 'STRING', enum: CLOUD },
-    sea_visible: { type: 'BOOLEAN' },
-    rain_or_wet_lens: { type: 'BOOLEAN' },
-    confidence: { type: 'NUMBER' },
-    note: { type: 'STRING' },
+    label: { type: 'string', enum: LABELS },
+    hills_visible: { type: 'boolean' },
+    cloud_on_hills: { type: 'string', enum: CLOUD },
+    sea_visible: { type: 'boolean' },
+    rain_or_wet_lens: { type: 'boolean' },
+    sun_on_land: { type: 'boolean' },
+    camera_time: { type: 'string' },
+    confidence: { type: 'number' },
+    note: { type: 'string' },
   },
-  required: ['label', 'hills_visible', 'cloud_on_hills', 'confidence'],
 };
+
+// Solar altitude in degrees (low-precision almanac formula, ~0.5 deg).
+function sunAltitude(lat: number, lng: number, d: Date) {
+  const rad = Math.PI / 180;
+  const n = d.getTime() / 86400000 - 10957.5; // days since J2000.0
+  const L = (280.46 + 0.9856474 * n) % 360, g = ((357.528 + 0.9856003 * n) % 360) * rad;
+  const lam = (L + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * rad;
+  const eps = (23.439 - 0.0000004 * n) * rad;
+  const dec = Math.asin(Math.sin(eps) * Math.sin(lam));
+  const ra = Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam));
+  const ha = ((280.46061837 + 360.98564736629 * n + lng) % 360) * rad - ra;
+  return Math.asin(Math.sin(lat * rad) * Math.sin(dec) + Math.cos(lat * rad) * Math.cos(dec) * Math.cos(ha)) / rad;
+}
 
 // Luminance statistics on a 4-pixel grid. RMS contrast and mean horizontal
 // gradient drop sharply in fog; the top third is where hills and sky meet.
@@ -76,56 +158,236 @@ function hazeMetrics(buf: Uint8Array) {
            contrast_top: r(top.contrast), edge_full: r(full.edge), edge_top: r(top.edge) };
 }
 
-async function label(key: string, cam: any, buf: Uint8Array) {
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [
-          { text: PROMPT(cam.region ?? 'road', cam.name, cam.island ?? '', cam.hint ?? '') },
-          { inline_data: { mime_type: 'image/jpeg', data: encodeBase64(buf) } },
-        ] }],
-        generationConfig: { responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0 },
-      }),
-    });
-  const j = await r.json().catch(() => null);
-  if (!r.ok) throw new Error(`gemini ${r.status}: ${j?.error?.message ?? ''}`.slice(0, 300));
-  const text = j?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('gemini: empty response');
-  return JSON.parse(text);
+async function label(client: Anthropic, cam: any, buf: Uint8Array, cached = LABEL_CACHE) {
+  const image = { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: encodeBase64(buf) } };
+  const msg: any = await client.beta.messages.create({
+    model: MODEL,
+    max_tokens: 4000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+    ...(cached ? { system: [{ type: 'text', text: SYSTEM_CACHED, cache_control: { type: 'ephemeral' } }] } : {}),
+    messages: [{
+      role: 'user',
+      content: cached
+        ? [image, { type: 'text', text: `${CAMERA_LINE(cam.name, cam.island ?? '', cam.hint ?? '')} Region: ${cam.region ?? 'unknown'}.` }]
+        : [image, { type: 'text', text: PROMPT(cam.region ?? '', cam.name, cam.island ?? '', cam.hint ?? '') }],
+    }],
+  } as any);
+  if (msg.stop_reason === 'refusal') throw new Error(`refused: ${msg.stop_details?.category ?? ''}`);
+  const text = msg.content.find((b: any) => b.type === 'text')?.text;
+  if (!text) throw new Error(`no text (${msg.stop_reason})`);
+  return { lab: JSON.parse(text), model: msg.model as string, usage: msg.usage };
 }
+
+// Candidate URLs for a templated image_url, newest first, with the local
+// time each one names (YYYY-MM-DD HH:MM).
+function templateCandidates(url: string, tz: string, now: Date): { url: string; time: string }[] {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const step = TEMPLATE_STEP_MIN * 60_000;
+  const out: { url: string; time: string }[] = [];
+  for (let k = 0; k <= 60 / TEMPLATE_STEP_MIN; k++) {
+    const t = new Date(Math.floor(now.getTime() / step) * step - k * step);
+    const p: Record<string, string> = {};
+    for (const x of fmt.formatToParts(t)) p[x.type] = x.value;
+    out.push({
+      url: url.replace('{YYYY}', p.year).replace('{MM}', p.month).replace('{DD}', p.day).replace('{HHmm}', p.hour + p.minute),
+      time: `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`,
+    });
+  }
+  return out;
+}
+
+// The camera's own time from the source (v16, Phil 3 Nov 2026: "make sure live is actually live"):
+// the server's Last-Modified, and the version tag (ETag), kept with each frame.
+type Src = { sourceTime: string | null; etag: string | null };
+const srcOf = (r: Response): Src => {
+  const lm = r.headers.get('last-modified'), t = lm ? Date.parse(lm) : NaN;
+  return { sourceTime: Number.isFinite(t) ? new Date(t).toISOString() : null, etag: r.headers.get('etag') };
+};
+// A capture time in an image address (Roundshot: .../2026-10-23-11-50-00_quarter.jpg, camera-local).
+const timeInUrl = (u: string | null) => {
+  const m = u?.match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-\d{2}_[a-z]+\.jpg/);
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : null;
+};
+
+async function fetchImage(cam: any, now: Date): Promise<{ buf: Uint8Array; time: string | null } & Src> {
+  const headers = { 'User-Agent': 'travel_slave webcam archive (permission: see webcam_cameras.permission_note)' };
+  if (!cam.image_url.includes('{')) {
+    const sep = cam.image_url.includes('?') ? '&' : '?';
+    const r = await fetch(`${cam.image_url}${sep}t=${Date.now()}`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (!r.ok) throw new Error(`image ${r.status}`);
+    let buf = new Uint8Array(await r.arrayBuffer());
+    let src = srcOf(r);
+    // fetch follows a real redirect itself: its target's name carries the time (Roundshot).
+    let time: string | null = timeInUrl(r.url);
+    // Roundshot's .../cams/<id>/<size> answers 200 with an empty body and the
+    // newest picture in Location (no redirect status), so follow it by hand.
+    // Its file name carries the camera-local time (..._2026-10-23-11-50-00_quarter.jpg).
+    const loc = r.headers.get('location');
+    if (buf.length === 0 && loc) {
+      const r2 = await fetch(new URL(loc, cam.image_url).toString(), { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      if (!r2.ok) throw new Error(`image ${r2.status} (location)`);
+      buf = new Uint8Array(await r2.arrayBuffer());
+      src = srcOf(r2);
+      time = timeInUrl(loc) ?? timeInUrl(r2.url) ?? time;
+    }
+    if (buf.length === 0) throw new Error('empty image');
+    return { buf, time, ...src };
+  }
+  let last = 'no candidate';
+  for (const c of templateCandidates(cam.image_url, cam.tz ?? 'UTC', now)) {
+    const r = await fetch(c.url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (r.ok) return { buf: new Uint8Array(await r.arrayBuffer()), time: c.time, ...srcOf(r) };
+    await r.body?.cancel();
+    last = `image ${r.status}`;
+  }
+  throw new Error(last);
+}
+
+const labelColumns = (lab: any, model: string | null, err: string | null) => ({
+  label: LABELS.includes(lab?.label) ? lab.label : null,
+  hills_visible: typeof lab?.hills_visible === 'boolean' ? lab.hills_visible : null,
+  cloud_on_hills: CLOUD.includes(lab?.cloud_on_hills) ? lab.cloud_on_hills : null,
+  sea_visible: typeof lab?.sea_visible === 'boolean' ? lab.sea_visible : null,
+  rain_or_wet_lens: typeof lab?.rain_or_wet_lens === 'boolean' ? lab.rain_or_wet_lens : null,
+  sun_on_land: typeof lab?.sun_on_land === 'boolean' ? lab.sun_on_land : null,
+  label_confidence: typeof lab?.confidence === 'number' ? lab.confidence : null,
+  label_note: typeof lab?.note === 'string' ? lab.note.slice(0, 500) : null,
+  camera_time_text: typeof lab?.camera_time === 'string' && lab.camera_time.trim() ? lab.camera_time.trim().slice(0, 40) : null,
+  label_model: lab ? model : null,
+  label_error: err,
+});
 
 Deno.serve(async (req) => {
   const json = (b: any, status = 200) =>
     new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
   try {
     const body = await req.json().catch(() => ({}));
+    // Shards (v21, 7 Nov 2026): 44 cameras in one request ran past the edge CPU limit (each picture
+    // is decoded for the haze metrics), so the hourly run died partway and the cameras added on
+    // 6 Nov were almost never saved. A plain call (cron, planner_t_now) now sends the cameras out
+    // in SHARDS requests of its own (camera i of the list sorted by code goes to shard i % SHARDS)
+    // and returns their results; the backfill and the prune run in shard 0 only.
+    // {compare: n, offset?} (v23): re-read the n newest labelled daylight pictures twice, the old way
+    // and the cached way, and report how often each matches the stored label (the old-way rerun is
+    // the baseline: the same model asked twice does not always answer the same). Writes no labels.
+    if (body.compare) {
+      const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      const key = Deno.env.get('ANTHROPIC_API_KEY');
+      if (!key) return json({ ok: false, error: 'no ANTHROPIC_API_KEY' });
+      const cl = new Anthropic({ apiKey: key });
+      const { data: frames } = await sb.from('webcam_frames')
+        .select('id,camera_code,storage_path,captured_at,label,hills_visible,cloud_on_hills')
+        .like('label_model', 'claude%').not('hills_visible', 'is', null).not('storage_path', 'is', null).eq('stale', false)
+        .order('captured_at', { ascending: false }).range(Number(body.offset ?? 0), Number(body.offset ?? 0) + Math.min(Number(body.compare), 12) - 1);
+      const { data: camsAll } = await sb.from('webcam_cameras').select('*');
+      const out: any[] = [];
+      for (const f of frames ?? []) {
+        const cam = (camsAll ?? []).find((c: any) => c.code === f.camera_code);
+        const { data: blob } = await sb.storage.from(BUCKET).download(f.storage_path);
+        if (!cam || !blob) continue;
+        const buf = new Uint8Array(await blob.arrayBuffer());
+        const row: any = { camera: f.camera_code, at: f.captured_at, stored: [f.label, f.hills_visible] };
+        for (const [k, c] of [['old', false], ['cached', true]] as const) {
+          try {
+            const r = await label(cl, cam, buf, c);
+            const u = r.usage ?? {};
+            const cost = costUsd(r.model ?? MODEL, u.input_tokens ?? 0, u.output_tokens ?? 0, u.cache_creation_input_tokens ?? 0, u.cache_read_input_tokens ?? 0);
+            await sb.from('claude_usage').insert({ fn: 'webcam-archive', purpose: 'label_compare_cache_' + k, model: r.model,
+              input_tokens: u.input_tokens ?? 0, output_tokens: u.output_tokens ?? 0,
+              cache_write_tokens: u.cache_creation_input_tokens ?? 0, cache_read_tokens: u.cache_read_input_tokens ?? 0,
+              cost_usd: Math.round(cost * 1e5) / 1e5 });
+            row[k] = [r.lab?.label, r.lab?.hills_visible, u.input_tokens, u.cache_creation_input_tokens ?? 0, u.cache_read_input_tokens ?? 0];
+          } catch (e) { row[k] = String(e).slice(0, 200); }
+        }
+        out.push(row);
+      }
+      const agree = (k: string) => out.filter(r => Array.isArray(r[k]) && r[k][1] === r.stored[1]).length;
+      return json({ ok: true, n: out.length, hills_agree_old: agree('old'), hills_agree_cached: agree('cached'), rows: out });
+    }
+    if (body.shard == null && !body.backfill) {
+      const url = `${Deno.env.get('SUPABASE_URL')}/functions/v1/webcam-archive`;
+      // One after another (v22): run at once, the shards shared one worker's memory and the Teton
+      // ones (the 4K Kelly picture, Claude labels) died with WORKER_RESOURCE_LIMIT on 7 Nov.
+      const parts: any[] = [];
+      for (let i = 0; i < SHARDS; i++) {
+        parts.push(await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ ...body, shard: i, shards: SHARDS }) })
+          .then(r => r.json()).catch(e => ({ ok: false, shard: i, error: String(e) })));
+      }
+      return json({ ok: parts.every((x: any) => x.ok), shards: parts });
+    }
+    const shards = Number(body.shards ?? 1), shard = Number(body.shard ?? 0), lead = shard === 0;
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const geminiKey = Deno.env.get('GEMINI_ENABLED') === 'true' ? Deno.env.get('GEMINI_API_KEY') : undefined;
+    const apiKey = Deno.env.get('CLAUDE_LABELS') === 'false' ? undefined : Deno.env.get('ANTHROPIC_API_KEY');
+    const claude = apiKey ? new Anthropic({ apiKey }) : null;
+
+    // Calls left today under the cap.
+    const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+    const { count: usedToday } = await supabase.from('webcam_frames').select('id', { count: 'exact', head: true })
+      .like('label_model', 'claude%').gte('captured_at', dayStart.toISOString());
+    let budget = Math.max(0, DAILY_CAP - (usedToday ?? 0));
+    const { data: spentMonth } = await supabase.rpc('claude_spend_month');
+    let spent = Number(spentMonth ?? 0);
+    const tokens = { input: 0, output: 0 };
+    const tryLabel = async (cam: any, buf: Uint8Array) => {
+      // v18 (Phil, 6 Nov 2026): a camera can be saved without being read (webcam_cameras.label_paused;
+      // the Faroes cameras Nov-Mar, when only the off-season practice trip uses them).
+      if (cam.label_paused) return { lab: null, model: null, err: 'labels paused for this camera' };
+      if (!claude || budget <= 0) return { lab: null, model: null, err: claude ? 'daily cap reached' : null };
+      if (spent >= MONTHLY_CAP_USD) return { lab: null, model: null, err: 'monthly spend cap reached' };
+      budget--;
+      try {
+        const r = await label(claude, cam, buf);
+        const inTok = r.usage?.input_tokens ?? 0, outTok = r.usage?.output_tokens ?? 0;
+        const cw = r.usage?.cache_creation_input_tokens ?? 0, cr = r.usage?.cache_read_input_tokens ?? 0;
+        tokens.input += inTok; tokens.output += outTok;
+        const cost = costUsd(r.model ?? MODEL, inTok, outTok, cw, cr);
+        spent += cost;
+        await supabase.from('claude_usage').insert({ fn: 'webcam-archive', purpose: 'webcam_label', model: r.model,
+          input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cw, cache_read_tokens: cr,
+          cost_usd: Math.round(cost * 1e5) / 1e5 });
+        return { lab: r.lab, model: r.model, err: null };
+      } catch (e) { return { lab: null, model: null, err: String(e).slice(0, 300) }; }
+    };
 
     const { data: buckets } = await supabase.storage.listBuckets();
     if (!buckets?.some(b => b.name === BUCKET)) await supabase.storage.createBucket(BUCKET, { public: false });
 
-    // Captures are stamped to the 3-hour slot so re-runs in the same slot are no-ops.
+    // Captures are stamped to the hour so re-runs in the same hour are no-ops.
     const now = new Date();
-    const slot = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
-                                   Math.floor(now.getUTCHours() / 3) * 3));
+    const slot = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours()));
     const { data: cams, error: cErr } = await supabase.from('webcam_cameras').select('*').eq('active', true);
     if (cErr) throw cErr;
 
+    const { data: paidRaw } = await supabase.rpc('webcam_paid_slots');
+    const paid = new Set<string>(((paidRaw as any[]) ?? []).map((t: any) => new Date(t).toISOString()));
+    const readHere = (cam: any, at: Date) => cam.label_by !== 'session' || paid.has(at.toISOString());
+    const keepFileTime = (cols: any) => { if (cols.camera_time_text == null) delete cols.camera_time_text; return cols; };
+
     const results: any[] = [];
-    for (const cam of cams ?? []) {
+    const mine = [...(cams ?? [])].sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
+      .filter((_: any, i: number) => i % shards === shard);
+    for (const cam of body.backfill ? [] : mine) {
       const res: any = { camera: cam.code };
       try {
+        const alt = cam.lat != null ? sunAltitude(cam.lat, cam.lng, slot) : null;
+        if (alt != null && alt < NIGHT_ALT && body.force !== true) { res.skipped = 'night'; results.push(res); continue; }
         const { data: existing } = await supabase.from('webcam_frames').select('id')
           .eq('camera_code', cam.code).eq('captured_at', slot.toISOString()).maybeSingle();
-        if (existing && body.force !== true) { res.skipped = 'already captured this slot'; results.push(res); continue; }
+        if (existing && body.force !== true) { res.skipped = 'already captured this hour'; results.push(res); continue; }
 
-        const sep = cam.image_url.includes('?') ? '&' : '?';
-        const r = await fetch(`${cam.image_url}${sep}t=${Date.now()}`,
-          { headers: { 'User-Agent': 'travel_slave webcam archive (permission: see webcam_cameras.permission_note)' } });
-        if (!r.ok) throw new Error(`image ${r.status}`);
-        const buf = new Uint8Array(await r.arrayBuffer());
+        const { buf, time: fileTime, sourceTime, etag } = await fetchImage(cam, now);
+        const fetchedAt = new Date().toISOString();
+        const sha = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)))
+          .map(b => b.toString(16).padStart(2, '0')).join('');
+        // A frozen camera serves the same picture again: keep it, but don't pay to label it.
+        const { data: same } = await supabase.from('webcam_frames').select('id')
+          .eq('camera_code', cam.code).eq('image_sha256', sha).lt('captured_at', slot.toISOString())
+          .gt('captured_at', new Date(slot.getTime() - 12 * 3600_000).toISOString()).limit(1);
+        const repeat = (same?.length ?? 0) > 0;
 
         const path = `${cam.code}/${slot.toISOString().slice(0, 13)}.jpg`;
         const { error: upErr } = await supabase.storage.from(BUCKET)
@@ -134,68 +396,72 @@ Deno.serve(async (req) => {
 
         let metrics: any = {};
         try { metrics = hazeMetrics(buf); } catch (e) { res.metrics_error = String(e).slice(0, 200); }
-
-        let lab: any = null, labErr: string | null = null;
-        if (geminiKey) {
-          try { lab = await label(geminiKey, cam, buf); } catch (e) { labErr = String(e).slice(0, 300); }
-        }
+        const l = repeat ? { lab: null, model: null, err: 'repeat image, not labelled' }
+          : !readHere(cam, slot) ? { lab: null, model: null, err: 'read tonight' } : await tryLabel(cam, buf);
 
         const row = {
           camera_code: cam.code, captured_at: slot.toISOString(), storage_path: path, bytes: buf.length,
-          keep: slot.getUTCHours() === KEEP_HOUR_UTC, ...metrics,
-          label: LABELS.includes(lab?.label) ? lab.label : null,
-          hills_visible: typeof lab?.hills_visible === 'boolean' ? lab.hills_visible : null,
-          cloud_on_hills: CLOUD.includes(lab?.cloud_on_hills) ? lab.cloud_on_hills : null,
-          sea_visible: typeof lab?.sea_visible === 'boolean' ? lab.sea_visible : null,
-          rain_or_wet_lens: typeof lab?.rain_or_wet_lens === 'boolean' ? lab.rain_or_wet_lens : null,
-          label_confidence: typeof lab?.confidence === 'number' ? lab.confidence : null,
-          label_note: typeof lab?.note === 'string' ? lab.note.slice(0, 500) : null,
-          label_model: lab ? GEMINI_MODEL : null,
-          label_error: labErr,
+          keep: !repeat || slot.getUTCHours() === keepHourUtc(cam.lng), sun_altitude: alt, ...metrics,
+          image_sha256: sha, fetched_at: fetchedAt, source_time: sourceTime, source_etag: etag ? etag.slice(0, 200) : null,
+          ...labelColumns(l.lab, l.model, l.err),
+          // A file named by its time is a better clock than reading the image.
+          ...(fileTime ? { camera_time_text: fileTime } : {}),
         };
         const { error: insErr } = await supabase.from('webcam_frames')
           .upsert(row, { onConflict: 'camera_code,captured_at' });
         if (insErr) throw insErr;
         Object.assign(res, { bytes: buf.length, label: row.label, cloud_on_hills: row.cloud_on_hills,
-                             contrast_top: metrics.contrast_top, label_error: labErr });
+                             sun_on_land: row.sun_on_land, camera_time: row.camera_time_text, source_time: sourceTime, repeat, label_error: l.err });
       } catch (e: any) { res.error = String(e?.message ?? e).slice(0, 300); }
       results.push(res);
     }
 
-    // Catch up on frames that missed a label (key missing, quota, billing),
-    // a few per run, while their image is still in storage.
-    let backfilled = 0;
-    if (geminiKey) {
-      const { data: pending } = await supabase.from('webcam_frames')
-        .select('id,camera_code,storage_path').is('label', null).not('storage_path', 'is', null)
-        .not('captured_at', 'eq', slot.toISOString()).order('captured_at', { ascending: false }).limit(8);
-      for (const f of pending ?? []) {
-        const cam = (cams ?? []).find((c: any) => c.code === f.camera_code);
+    // v24: the hours the planner needs now (paid slots), for this shard's session cameras whose
+    // picture was taken before the need came up (Re-plan now after :37).
+    const mySession = mine.filter((c: any) => c.label_by === 'session' && !c.label_paused).map((c: any) => c.code);
+    if (claude && !body.backfill && paid.size && mySession.length) {
+      const { data: due } = await supabase.from('webcam_frames')
+        .select('id,camera_code,storage_path,captured_at').in('camera_code', mySession)
+        .in('captured_at', [...paid]).is('label', null).is('label_model', null)
+        .not('storage_path', 'is', null).eq('stale', false);
+      for (const f of due ?? []) {
+        const cam = mine.find((c: any) => c.code === f.camera_code);
         const { data: blob } = await supabase.storage.from(BUCKET).download(f.storage_path);
         if (!cam || !blob) continue;
-        try {
-          const lab = await label(geminiKey, cam, new Uint8Array(await blob.arrayBuffer()));
-          await supabase.from('webcam_frames').update({
-            label: LABELS.includes(lab?.label) ? lab.label : null,
-            hills_visible: typeof lab?.hills_visible === 'boolean' ? lab.hills_visible : null,
-            cloud_on_hills: CLOUD.includes(lab?.cloud_on_hills) ? lab.cloud_on_hills : null,
-            sea_visible: typeof lab?.sea_visible === 'boolean' ? lab.sea_visible : null,
-            rain_or_wet_lens: typeof lab?.rain_or_wet_lens === 'boolean' ? lab.rain_or_wet_lens : null,
-            label_confidence: typeof lab?.confidence === 'number' ? lab.confidence : null,
-            label_note: typeof lab?.note === 'string' ? lab.note.slice(0, 500) : null,
-            label_model: GEMINI_MODEL, label_error: null,
-          }).eq('id', f.id);
-          backfilled++;
-        } catch (e) {
-          await supabase.from('webcam_frames').update({ label_error: String(e).slice(0, 300) }).eq('id', f.id);
-          break; // same failure would repeat for the rest
-        }
+        const l = await tryLabel(cam, new Uint8Array(await blob.arrayBuffer()));
+        await supabase.from('webcam_frames').update(keepFileTime(labelColumns(l.lab, l.model, l.err))).eq('id', f.id);
+        results.push({ camera: f.camera_code, captured_at: f.captured_at, read_now: !l.err, label_error: l.err });
+      }
+    }
+
+    // Label stored daylight frames that have none yet (key added late, cap,
+    // errors), newest first, while their image is still in storage. v24: never paused cameras;
+    // session cameras only on an explicit backfill (the 06:00 UTC backup).
+    let backfilled = 0;
+    if (claude && lead) {
+      const codes = (cams ?? []).filter((c: any) => !c.label_paused && (body.backfill || c.label_by !== 'session')).map((c: any) => c.code);
+      const { data: pending, error: pErr } = await supabase.from('webcam_frames')
+        .select('id,camera_code,storage_path,captured_at').is('label', null).not('storage_path', 'is', null)
+        .in('camera_code', codes.length ? codes : ['-'])
+        .eq('stale', false).gte('sun_altitude', NIGHT_ALT).neq('captured_at', slot.toISOString())
+        .order('captured_at', { ascending: false }).limit(Math.min(Number(body.backfill ?? 4), 40));
+      if (pErr) results.push({ backfill_error: pErr.message });
+      results.push({ backfill_candidates: pending?.length ?? null });
+      for (const f of pending ?? []) {
+        const cam = (cams ?? []).find((c: any) => c.code === f.camera_code);
+        const { data: blob, error: dErr } = await supabase.storage.from(BUCKET).download(f.storage_path);
+        if (!cam || !blob) { results.push({ camera: f.camera_code, skipped: dErr?.message ?? 'camera not active' }); continue; }
+        const l = await tryLabel(cam, new Uint8Array(await blob.arrayBuffer()));
+        await supabase.from('webcam_frames').update(keepFileTime(labelColumns(l.lab, l.model, l.err))).eq('id', f.id);
+        if (l.err) break; // the same failure would repeat for the rest
+        backfilled++;
+        results.push({ camera: f.camera_code, captured_at: f.captured_at, ...l.lab });
       }
     }
 
     // Prune full images past KEEP_DAYS unless kept; labels and metrics stay.
     const cutoff = new Date(Date.now() - KEEP_DAYS * 86400000).toISOString();
-    const { data: old } = await supabase.from('webcam_frames').select('id,storage_path')
+    const { data: old } = !lead ? { data: [] as any[] } : await supabase.from('webcam_frames').select('id,storage_path')
       .eq('keep', false).lt('captured_at', cutoff).not('storage_path', 'is', null).limit(500);
     let pruned = 0;
     if (old?.length) {
@@ -206,7 +472,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    return json({ ok: true, slot: slot.toISOString(), backfilled, pruned, results });
+    return json({ ok: true, slot: slot.toISOString(), model: claude ? MODEL : null, tokens,
+                  spent_month_usd: Math.round(spent * 100) / 100, backfilled, pruned, results });
   } catch (e: any) {
     return json({ ok: false, error: String(e?.message ?? e) }, 500);
   }
