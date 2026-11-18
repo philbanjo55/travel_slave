@@ -160,8 +160,9 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   useShotSaves();
   const idealAt = (p: Pair, d0: number) => { const i = idealOf(p); return i ? idealClock(i, d0) : null; };
   const pairIdeal = idealAt(pair, day0);
+  // No ideal saved: the stop's own time (Phil, 18 Nov 2026), else the evening golden hour as before.
   useEffect(() => {
-    if ((tab === '3d' || full3d) && pairIdeal != null) setMinute(pairIdeal);
+    if (tab === '3d' || full3d) setMinute(pairIdeal ?? home);
   }, [tab, full3d, pair.vantage_id, stop.date, pairIdeal]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Full screen: every shot of the trip, one after another (Phil, 14 Nov 2026) ----
