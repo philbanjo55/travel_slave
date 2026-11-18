@@ -300,13 +300,13 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const want = !overhead && (hdOn ?? wantLocal);   // (no HD from above)
   const setWant = useCallback((on: boolean) => { if (onHd) onHd(on); else setWantLocal(on); }, [onHd]);
   const savedLine = tripTerrainLine(useTripTerrain(tripId));
-  // Reference photo (full screen only): 'card' = the small card, 'see' = see-through over the picture.
+  // Reference photo (small view and full screen): 'card' = the small card, 'see' = see-through over the picture.
   // Phil, 16 Nov 2026: only the photo that belongs to this shot, never a pick of the stop's other photos. The shot's own
   // photo (scout_vantages.photo_id) when it has one; else the first photo the parent hands in (Find spot: the photo the
   // spot was found from); a shot with neither has no photo button.
   const ownRef: RefPhoto | null = pair.photo_id ? { id: pair.photo_id, storage_url: pair.photo_url ?? null }
     : (photos ?? []).find(p => p && (p.id || p.storage_url || p.base64_data)) ?? null;
-  const refList = full && ownRef ? [ownRef] : [];
+  const refList = ownRef ? [ownRef] : [];   // small view too (Phil, 18 Nov 2026: pop the photo up without going full screen)
   const refKey = refList.map(p => p.id ?? p.storage_url ?? '').join('|');
   const [refMode, setRefMode] = useState<'off' | 'card' | 'see'>('off');
   const [refIdx, setRefIdx] = useState(0);
@@ -513,7 +513,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     setForeground(false);
   }, [foreground, treesOn, setForeground, setTrees]);
   const foreSay = !foreground ? 'off' : treesOn ? 'on' : 'buildings only, no trees';
-  const refOn = full && !hd && refList.length > 0 && !overhead;   // the photo button and card: full screen, offline view, the stop has photos
+  const refOn = !hd && refList.length > 0 && !overhead;   // the photo button and card: offline view, the shot has a photo (small view and full screen)
   const refPhoto = refList[Math.min(refIdx, Math.max(0, refList.length - 1))] ?? null;
   const hasFore = (!!detail && !!detailB64) || !!nearColorB64 || !!wideColorB64 || !!treeTiles || !!rangeBox || !!houseTiles;   // a detail box, or a fine box's photo, or (Tetons) the wide winter colour or the park-wide trees
   const useDetail = (foreground || (!!overhead && !heavy)) && !hd && hasFore && !preview;   // from above: always (unless it proved too heavy)
