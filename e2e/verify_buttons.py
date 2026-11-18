@@ -963,7 +963,14 @@ def sun_3d():
                     cut_off('walk-mode', w1)
                     V.tap_text(w1, 'Back to my saved spot'); time.sleep(2)
                     w2 = C.capture(1)
-                    V.check('walk-back', V.has(w2, 'Hold an arrow to walk'), 'back on the saved spot')
+                    back_ok = V.has(w2, 'Hold an arrow to walk') or V.has(w2, 'Tap the ground to jump there')
+                    V.check('walk-back', back_ok, 'back on the saved spot')
+                    # tap to go (18 Nov 2026): a tap on the ground low in the picture jumps there
+                    if back_ok and V.has(w2, 'Tap the ground to jump there'):
+                        C.adb('shell', 'input', 'tap', '540', '1180'); time.sleep(3)
+                        w3 = C.capture(1); line = next((t for t in w3.all_texts if "You've walked" in t), None)
+                        V.check('walk-tapgo', line is not None, (line or 'no jump after a tap on the ground')[:70])
+                        V.tap_text(w3, 'Back to my saved spot'); time.sleep(2)
                 V.check('walk-alive', C.app_alive())
             else:
                 print('INFO walk: no walk button in full screen (this build has no walk mode)', flush=True)
@@ -1046,7 +1053,7 @@ def framing():
     s = C.capture(1)
     # Walk mode off first: its row sits above the framing row inside the short scrolling area under the picture
     walk_on = next((c for c in s.clickables if 'Walk mode: move your viewpoint' in c['label']), None)
-    if walk_on is not None and (V.has(s, 'Hold an arrow to walk') or V.has(s, "You've walked") or V.has(s, 'Back to my saved spot')):
+    if walk_on is not None and (V.has(s, 'Hold an arrow to walk') or V.has(s, 'Tap the ground to jump there') or V.has(s, "You've walked") or V.has(s, 'Back to my saved spot')):
         C.tap(walk_on['xy']); time.sleep(1.5); s = C.capture(1)
     H = 2400
     def framing_row(st):
