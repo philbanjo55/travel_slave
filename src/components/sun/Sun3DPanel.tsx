@@ -841,6 +841,19 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     run('window.S3D.view(null)');
     setFrameNote(framingRef.current ? 'Aimed at the subject. Your saved framing is kept.' : null);
   }, [run]);
+  // Reset framing (Phil, 18 Nov 2026): back to the last saved framing (direction, tilt, lens, landscape / portrait and,
+  // when one was saved with it, where the photo sat), instead of aiming at the subject.
+  const resetFraming = useCallback(() => {
+    const f = framingRef.current;
+    if (!f) return;
+    pickedFor = null;
+    if (LENSES.some(l => l.id === f.lens)) setLensState(f.lens);
+    setFrameState(f.orient === 'portrait' ? 'port' : 'land');
+    run(`window.S3D.view(${JSON.stringify(pageFraming(f))})`);
+    if (savedSc) { refScKept.set(refKey, savedSc); setRefSc(savedSc); }
+    setPhotoMoved(false);
+    setFrameNote('Back to your saved framing.');
+  }, [run, savedSc, refKey]);
   const forgetFraming = useCallback(() => {
     if (!tripId || !stopId) return;
     Alert.alert('Forget this framing?', 'The shot will open aimed at the subject again, on every trip that uses it.', [
@@ -1120,6 +1133,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             <TouchableOpacity onPress={aimAtSubject} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Aim at subject">
               <Text style={styles.walkBtnText}>Aim at subject</Text>
             </TouchableOpacity>
+            {framing && !addShot ? (
+              <TouchableOpacity onPress={resetFraming} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Reset framing to the saved one" accessibilityState={{ disabled: frameUnchanged }} disabled={frameUnchanged}>
+                <Text style={[styles.walkBtnText, frameUnchanged && { opacity: 0.4 }]}>Reset framing</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity onPress={saveFraming} style={[styles.walkBtn, styles.walkBtnMain, (!canFrame || frameUnchanged) && { opacity: 0.4 }]} accessibilityRole="button" accessibilityLabel="Save framing for this shot" accessibilityState={{ disabled: !canFrame || frameUnchanged }} disabled={!canFrame || savingFrame || look == null || frameUnchanged}>
               {savingFrame ? <ActivityIndicator size="small" color="#000000" /> : <Text style={styles.walkBtnMainText}>Save framing</Text>}
             </TouchableOpacity>
