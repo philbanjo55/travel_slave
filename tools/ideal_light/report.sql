@@ -6,7 +6,7 @@ with ideal as (
     from scout_vantages v where v.ideal_sun_az is not null),
 starred as (
   select s.id stop_id, s.trip_id, s.name, i.* from stops s
-    join solver_stop_settings ss on ss.stop_id = s.id
+    join solver_stop_inputs ss on ss.stop_id = s.id   -- the shot T plans: the star, else the stop's first shot
     join ideal i on i.vid = ss.star_vantage_id
    where s.day_id is not null),
 runs as (
