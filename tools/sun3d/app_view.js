@@ -2555,7 +2555,7 @@
     post({ type: 'look', deg: Math.round(y), yaw: Math.round(y * 100) / 100 % 360, pitch: Math.round(pitch * 18000 / Math.PI) / 100 });
   }
 
-  const WALK_MAX = 400;
+  const WALK_MAX = Infinity;   // no limit (Phil, 18 Nov 2026: 'as far as I want'); only the edge of the saved terrain stops a walk
   function told() {
     othCalc();
     const kz = 111132, kx = 111320 * Math.cos(eye.lat * Math.PI / 180);
