@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "mcp__Supabase__deploy_edge_function"
+      "mcp__Supabase__deploy_edge_function",
+      "mcp__Supabase",
+      "mcp__github",
+      "ArtifactData",
+      "Artifact"
     ]
   }
 }
