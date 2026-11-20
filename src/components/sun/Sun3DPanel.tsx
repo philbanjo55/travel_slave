@@ -14,6 +14,8 @@ import { compassPoint } from './sunStyle';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
 import { Overhead3D, useOverhead3D } from './overhead3d';
+import { CropOverlay, CropPanel, cropName, fitCrop, longInNow, readLongIn, refitCrop, setLongInStored } from './CropOverlay';
+import type { CropRatio, FrameCrop } from '../../utils/sunEngine';
 
 // 3D view of the shot (TEST app, Phil 12 Nov 2026): the real terrain from the
 // stand spot toward the subject, lit by the sun at the slider's time. The
@@ -386,6 +388,24 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   }, [refKey, pic, shape, lens]);
   useEffect(() => { setRefSc(refScKept.get(refKey) ?? savedSc ?? null); setPhotoMoved(false); }, [refKey, savedScKey]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (refMode !== 'see') setRefMove(false); }, [refMode]);
+  // ---- Crop inside the frame box (Phil, 20 Nov 2026): saved with the framing; the print size is only a calculator ----
+  const film = useMemo(() => ({ fw: lens.fw, fh: lens.fh }), [lens.fw, lens.fh]);
+  const savedCrop = framing?.crop ?? null;
+  const savedCropKey = savedCrop ? JSON.stringify(savedCrop) : '';
+  const [crop, setCrop] = useState<FrameCrop | null>(() => refitCrop(savedCrop, film));
+  const [cropOpen, setCropOpen] = useState(false);
+  const [longIn, setLongIn] = useState(longInNow());
+  useEffect(() => { let on = true; readLongIn().then(v => { if (on) setLongIn(v); }); return () => { on = false; }; }, []);
+  const onLong = useCallback((v: number) => { setLongInStored(v); setLongIn(v); }, []);
+  useEffect(() => { setCrop(refitCrop(savedCrop, film)); }, [vid, savedCropKey]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setCrop(c => refitCrop(c, film)); }, [film]);   // turned landscape <-> portrait, or another lens's film
+  useEffect(() => { if (frame === 'off') setCropOpen(false); }, [frame]);
+  const pickCrop = useCallback((id: CropRatio | '4x5') => {
+    if (id === '4x5') setCrop(null);
+    else if (id === 'custom') setCrop(c => (c ? { ...c, ratio: 'custom' } : { ratio: 'custom', cx: 0.5, cy: 0.5, w: 0.8, h: 0.8 }));
+    else setCrop(c => fitCrop(id, film, c?.cx ?? 0.5, c?.cy ?? 0.5));
+  }, [film]);
+  const cropKey = crop ? JSON.stringify(crop) : '';
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
   const oh = useOverhead3D({ overhead, ready, run, full, onFull });
@@ -776,7 +796,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     if (!framing || addShot || !lk) return false;
     const dh = Math.abs(((((lk.yaw - framing.heading) % 360) + 540) % 360) - 180);
     return dh < 0.3 && Math.abs(lk.pitch - framing.pitch) < 0.3 && framing.lens === pickLens.id
-      && framing.orient === (frame === 'port' ? 'portrait' : 'landscape') && !photoMoved && Math.abs(camH - savedH) < 0.005;
+      && framing.orient === (frame === 'port' ? 'portrait' : 'landscape') && !photoMoved && Math.abs(camH - savedH) < 0.005
+      && cropKey === (() => { const c = refitCrop(framing.crop ?? null, film); return c ? JSON.stringify(c) : ''; })();
   })();
   void lookTilt;   // (read so the tilt state re-renders this check)
   const saveSpot = useCallback(() => {
@@ -817,10 +838,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const withPhoto = !!(refKey && pic && (refMode === 'see' || photoMoved));
     if (withPhoto && pic) f.photo = { key: refKey, s: refXf.s, x: refXf.x, y: refXf.y, w: pic.w, h: pic.h };
     else if (framingRef.current?.photo !== undefined) f.photo = framingRef.current?.photo ?? null;
+    // the crop goes with the framing; null clears a saved one (left out when there is neither)
+    if (crop || framingRef.current?.crop) f.crop = crop;
     const tilt = Math.abs(f.pitch) < 0.5 ? 'level' : `tilted ${f.pitch > 0 ? 'up' : 'down'} ${Math.abs(f.pitch).toFixed(1)}°`;
     Alert.alert(
       'Save this framing?',
-      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}${f.eye != null ? `, camera ${feetIn(f.eye)} up` : ''}.${withPhoto ? ' Your photo stays where you put it.' : ''} It changes the shot on every trip that uses it, practice copies included.`,
+      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}${f.eye != null ? `, camera ${feetIn(f.eye)} up` : ''}${crop ? `, cropped ${cropName(crop, film)}` : ''}.${withPhoto ? ' Your photo stays where you put it.' : ''} It changes the shot on every trip that uses it, practice copies included.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -839,7 +862,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         },
       ],
     );
-  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot, refKey, pic, refMode, photoMoved, refXf, camH]);
+  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot, refKey, pic, refMode, photoMoved, refXf, camH, crop, film]);
   const aimAtSubject = useCallback(() => {
     run('window.S3D.view(null)');
     setFrameNote(framingRef.current ? 'Aimed at the subject. Your saved framing is kept.' : null);
@@ -855,9 +878,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     run(`window.S3D.view(${JSON.stringify(pageFraming(f))})`);
     if (savedSc) { refScKept.set(refKey, savedSc); setRefSc(savedSc); }
     setCamH(savedH);
+    const fl = lensOf(f.lens, f.orient);
+    setCrop(refitCrop(f.crop ?? null, fl ? { fw: fl.fw, fh: fl.fh } : film));
     setPhotoMoved(false);
     setFrameNote('Back to your saved framing.');
-  }, [run, savedSc, refKey, savedH]);
+  }, [run, savedSc, refKey, savedH, film]);
   const forgetFraming = useCallback(() => {
     if (!tripId || !stopId) return;
     Alert.alert('Forget this framing?', 'The shot will open aimed at the subject again, on every trip that uses it.', [
@@ -875,7 +900,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   }, [tripId, stopId, vid, run]);
   const framedLine = queued.frame ? 'Saved on the phone, sends when you have signal.'
     : addShot ? 'Not a shot yet: saving adds it'
-    : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}${framing.eye != null ? ` · camera ${feetIn(framing.eye)} up` : ''}${framing.photo ? ' · photo placed' : ''}`
+    : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}${framing.eye != null ? ` · camera ${feetIn(framing.eye)} up` : ''}${framing.photo ? ' · photo placed' : ''}${framing.crop ? ` · crop ${cropName(framing.crop, (() => { const fl = lensOf(framing.lens, framing.orient); return fl ? { fw: fl.fw, fh: fl.fh } : film; })())}` : ''}`
     : 'Not framed yet';
 
   const waiting = phase === 'finding' ? 'Finding the terrain for this spot…'
@@ -917,6 +942,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           />
         ) : null}
         {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} onSize={onPhotoSize} /> : null}
+        {frame !== 'off' && pic && !overhead && !preview ? (
+          <CropOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={crop} editing={!!full && cropOpen} only={!!lens.only} flip={glassOn} longIn={longIn} onChange={setCrop} />
+        ) : null}
         </View>
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
@@ -971,6 +999,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             >
               <Ionicons name={frame === 'port' ? 'tablet-portrait-outline' : frame === 'land' ? 'tablet-landscape-outline' : 'scan-outline'} size={17} color={frame !== 'off' ? '#000000' : '#ffffff'} />
             </TouchableOpacity>
+            {full && frame !== 'off' ? (
+              <TouchableOpacity
+                onPress={() => setCropOpen(!cropOpen)}
+                style={[styles.hdBtn, cropOpen && styles.lensOn]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: cropOpen }}
+                accessibilityLabel={`Crop: ${crop ? cropName(crop, film) : 'none'}. Tap to ${cropOpen ? 'close' : 'change'}`}
+                hitSlop={6}
+              >
+                <Text style={[styles.lensText, cropOpen && styles.lensTextOn]}>{crop ? cropName(crop, film) : 'Crop'}</Text>
+              </TouchableOpacity>
+            ) : null}
             {frame !== 'off' && !hd ? (
               <TouchableOpacity
                 onPress={() => setFrameOnly(!frameOnly)}
@@ -1128,6 +1168,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
               {savingSpot ? <ActivityIndicator size="small" color="#000000" /> : <Text style={styles.walkBtnMainText}>Save as my spot</Text>}
             </TouchableOpacity>
           </View>
+        </View>
+      ) : null}
+      {full && cropOpen && frame !== 'off' ? (
+        <View style={pad}>
+          <CropPanel crop={crop} film={film} filmName={pickLens.format === '6×9 (GW690)' ? '6×9' : '4×5'} longIn={longIn} onPick={pickCrop} onLong={onLong} />
         </View>
       ) : null}
       {full && !hd && ready ? (

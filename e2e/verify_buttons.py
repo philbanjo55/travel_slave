@@ -892,6 +892,10 @@ def sun_3d():
             except Exception as e:
                 V.check('frame-run', False, f'framing checks stopped: {e!r}'[:120])
             try:
+                crop_checks()
+            except Exception as e:
+                V.check('crop-run', False, f'crop checks stopped: {e!r}'[:120])
+            try:
                 refphoto()
             except Exception as e:
                 V.check('refphoto-run', False, f'reference photo checks stopped: {e!r}'[:120])
@@ -1032,6 +1036,42 @@ def framing():
     else:
         V.check('frame-prev', False, f'no {back_} button')
     cut_off('3d-tour', C.capture(1))
+
+
+def crop_checks():
+    """Crop ratios in the full-screen 3D view (20 Nov 2026, branch claude/crop-ratios). Nothing is saved: the crop panel is
+    opened, 3:2 picked, the print long side stepped, the crop put back to the whole frame and the panel closed. Checks crop-*."""
+    panel = os.path.join(os.path.dirname(__file__), '..', 'src', 'components', 'sun', 'CropOverlay.tsx')
+    if not os.path.exists(panel):
+        print('INFO crop: this build has no crop ratios', flush=True); return
+    s = C.capture(1)
+    btn = next((c for c in s.clickables if c['label'].startswith('Crop: ')), None)
+    V.check('crop-button', btn is not None, 'Crop button in the top row' if btn else 'no "Crop:" button (frame box off?)')
+    if btn is None:
+        return
+    C.tap(btn['xy']); time.sleep(1.2); s = C.capture(1)
+    V.check('crop-panel', V.has(s, 'CROP') and V.has(s, 'PRINT, LONG SIDE'), 'crop chips and the print calculator')
+    if V.tap_text(s, 'Crop 3 to 2'):
+        time.sleep(1.2); s = C.capture(1)
+        line = next((t for t in s.all_texts if '3:2 print:' in t), None)
+        V.check('crop-3-2', line is not None, (line or 'no "3:2 print:" line after picking 3:2')[:110])
+        V.check('crop-film-line', any(t.startswith('Uses ') and 'negative' in t for t in s.all_texts), 'what the crop uses of the film')
+        before = next((t for t in s.all_texts if t.endswith(' in') and t[:-3].isdigit()), None)
+        if V.tap_text(s, 'Longer print'):
+            time.sleep(1); s2 = C.capture(1)
+            after = next((t for t in s2.all_texts if t.endswith(' in') and t[:-3].isdigit()), None)
+            V.check('crop-long-step', before is not None and after is not None and after != before, f'{before} -> {after}')
+            V.tap_text(s2, 'Shorter print'); time.sleep(0.8)
+        cut_off('3d-crop-panel', C.capture(1))
+        s3 = C.capture(1)
+        V.tap_text(s3, 'No crop, the whole'); time.sleep(1)
+    else:
+        V.check('crop-3-2', False, 'no "Crop 3 to 2" chip')
+    s4 = C.capture(1)
+    b2 = next((c for c in s4.clickables if c['label'].startswith('Crop: ')), None)
+    if b2 is not None:
+        C.tap(b2['xy']); time.sleep(1)
+    V.check('crop-closed', not V.has(C.capture(1), 'PRINT, LONG SIDE') and C.app_alive(), 'panel closed, app alive')
 
 
 def refphoto():
