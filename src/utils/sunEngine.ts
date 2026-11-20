@@ -171,7 +171,11 @@ export type IdealLight = { az: number; alt: number; at?: string | null };
 // (dp). undefined = leave the saved one as it is; null = none.
 export type FramePhoto = { key: string; s: number; x: number; y: number; w: number; h: number };
 // eye: camera height above the ground in m (18 Nov 2026); null / missing = eye height (1.73 m)
-export type Framing = { heading: number; pitch: number; lens: string; orient: 'landscape' | 'portrait'; at: string; photo?: FramePhoto | null; eye?: number | null };
+// crop (20 Nov 2026): a print ratio inside the frame box, its centre and size as fractions of the frame (as turned);
+// null / missing = the whole frame
+export type CropRatio = '1:1' | '11x14' | '5x7' | '3:2' | '16:9' | '2:1' | '3:1' | 'custom';
+export type FrameCrop = { ratio: CropRatio; cx: number; cy: number; w: number; h: number };
+export type Framing = { heading: number; pitch: number; lens: string; orient: 'landscape' | 'portrait'; at: string; photo?: FramePhoto | null; eye?: number | null; crop?: FrameCrop | null };
 
 export type Light = {
   sun: SkyPos;

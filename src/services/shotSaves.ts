@@ -75,6 +75,9 @@ async function send(j: ShotSave): Promise<void> {
         // the photo placement: an object saves it; {} clears it; left out = the saved one stays
         ...(j.framing.photo === undefined ? {} : { p_photo: j.framing.photo ?? {} }),
         ...(j.framing.eye != null ? { p_eye_m: j.framing.eye } : {}),   // camera height (left out = eye height)
+        // the crop (20 Nov 2026): an object saves it; null clears it ({}); left out = the saved one stays. Sent only when
+        // there is one to save or clear, so a framing without crops never needs the newer server function
+        ...(j.framing.crop === undefined ? {} : { p_crop: j.framing.crop ?? {} }),
       })
       : j.kind === 'ideal'
         ? supabase.rpc('sun_vantage_ideal', { p_stop_id: j.stopId, p_vantage_id: j.vantageId, p_az: j.ideal?.az ?? null, p_alt: j.ideal?.alt ?? null, p_at: j.ideal?.at ?? null })
