@@ -69,8 +69,12 @@ function lookupReciprocity(metered: number, dataPoints: [number, number][]): num
 }
 
 // Kodak lookup tables (from official data sheets)
-const TRIX_DATA: [number, number][] = [[1, 2], [10, 50], [100, 1200]];
-const TMY_DATA: [number, number][] = [[1, 1], [10, 15], [100, 200], [240, 540]];
+const TRIX_DATA: [number, number][] = [[1, 2], [10, 50], [100, 1200]];                 // Kodak F-4017 (10-21)
+// T-Max 400: Kodak's current sheet by default, Bond's 2003 field test (older emulsion) as an option.
+const TMY_KODAK: [number, number][] = [[1, 1], [10, 12.6], [100, 300]];                 // Kodak F-4043 (2-16)
+const TMY_BOND: [number, number][] = [[1, 1], [10, 15], [100, 200], [240, 540]];        // Bond 2003 field test
+const TMY_SOURCE_KODAK = 'Kodak F-4043';
+const TMY_SOURCE_BOND = 'Bond 2003 field test (older emulsion)';
 
 type FilmStock = {
   name: string;
@@ -79,16 +83,28 @@ type FilmStock = {
   data?: [number, number][];
   source: string;
   note?: string;
+  // Longest metered time the source publishes; past it the result is an extrapolation.
+  dataMax?: number;
+  // Kodak F-4017 development cut for long exposures (Tri-X).
+  devCut?: boolean;
 };
+
+// Kodak F-4017: 1 s -> -10%, 10 s -> -20%, 100 s -> -30%, on log time, to the nearest 5%.
+function triXDevCut(exposed: number): string | null {
+  if (exposed < 1) return null;
+  if (exposed > 100) return 'Develop −30% or more · beyond Kodak data';
+  const n = Math.round((10 * (1 + Math.log10(exposed))) / 5) * 5;
+  return `Develop −${n}% (Kodak F-4017)`;
+}
 
 const FILM_STOCKS_4x5: FilmStock[] = [
   { name: 'Delta 100', method: 'power', p: 1.26, source: 'Ilford official PDF' },
   { name: 'FP4+', method: 'power', p: 1.26, source: 'Ilford official PDF' },
   { name: 'Pan F+ 50', method: 'power', p: 1.26, source: 'HARMAN 4x5 launch May 2026 · Bond/Roos field', note: '3-mo latent image — develop within weeks of exposure' },
   { name: 'HP5+', method: 'power', p: 1.31, source: 'Ilford official PDF' },
-  { name: 'T-Max 400', method: 'lookup', data: TMY_DATA, source: 'Kodak F-4016 + Bond' },
-  { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Kodak F-4016' },
-  { name: 'Tri-X 320', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017' },
+  { name: 'T-Max 400', method: 'lookup', data: TMY_KODAK, source: TMY_SOURCE_KODAK, dataMax: 100 },
+  { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Fit to Kodak F-4016 (P=1.15)', dataMax: 100 },
+  { name: 'Tri-X 320', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017', dataMax: 100, devCut: true },
   { name: 'Provia 100F', method: 'provia', source: 'Fuji data sheet', note: 'No correction up to 128s' },
   { name: 'Portra 160', method: 'portra', source: 'Sachs/community R²=0.995' },
   { name: 'Portra 400', method: 'portra', source: 'Same curve as 160' },
@@ -97,9 +113,9 @@ const FILM_STOCKS_4x5: FilmStock[] = [
 
 const FILM_STOCKS_120: FilmStock[] = [
   { name: 'SFX 200', method: 'power', p: 1.43, source: 'Ilford official PDF' },
-  { name: 'Tri-X 400', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017' },
-  { name: 'T-Max 400', method: 'lookup', data: TMY_DATA, source: 'Kodak F-4016 + Bond' },
-  { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Kodak F-4016' },
+  { name: 'Tri-X 400', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017', dataMax: 100, devCut: true },
+  { name: 'T-Max 400', method: 'lookup', data: TMY_KODAK, source: TMY_SOURCE_KODAK, dataMax: 100 },
+  { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Fit to Kodak F-4016 (P=1.15)', dataMax: 100 },
   { name: 'Custom', method: 'power', p: 1.26, source: 'User defined — field testing', note: 'Tap +/- to adjust P value' },
 ];
 
@@ -167,6 +183,7 @@ export default function ReciprocityScreen() {
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [deltaP, setDeltaP] = useState<1.26 | 1.20>(1.26);
   const [customP, setCustomP] = useState(1.26);
+  const [tmySource, setTmySource] = useState<'kodak' | 'bond'>('kodak');
   const [stopAdjust, setStopAdjust] = useState(0); // dial: +/- stops applied to metered base
   // Off (default): the reading was taken without the filters, so the stack is added before
   // reciprocity. On: the meter already read through them (or its ND EV field had them).
@@ -205,7 +222,9 @@ export default function ReciprocityScreen() {
     ? { ...rawStock, p: deltaP, source: `Ilford official (P=${deltaP})` }
     : rawStock.name === 'Custom'
       ? { ...rawStock, p: customP, source: `User defined (P=${customP.toFixed(2)})` }
-      : rawStock;
+      : rawStock.name === 'T-Max 400' && tmySource === 'bond'
+        ? { ...rawStock, data: TMY_BOND, source: TMY_SOURCE_BOND, dataMax: 240 }
+        : rawStock;
   const meteredBase = parseFloat(inputTime) || 0;
   // The dial shifts the METERED reading by +/- stops, and reciprocity is then
   // computed on the shifted value. Adjusting the *input* (not the corrected time)
@@ -479,6 +498,25 @@ export default function ReciprocityScreen() {
           </View>
         )}
 
+        {/* T-Max 400 source toggle: Kodak's current sheet or Bond's older field test */}
+        {rawStock.name === 'T-Max 400' && (
+          <View style={styles.pToggleRow}>
+            <Text style={styles.pToggleLabel}>Data:</Text>
+            {(['kodak', 'bond'] as const).map(src => (
+              <TouchableOpacity
+                key={src}
+                style={[styles.pToggleBtn, tmySource === src && styles.pToggleBtnActive]}
+                onPress={() => setTmySource(src)}
+                accessibilityLabel={`T-Max 400 data: ${src === 'kodak' ? 'Kodak' : 'Bond'}`}
+              >
+                <Text style={[styles.pToggleText, tmySource === src && styles.pToggleTextActive]}>
+                  {src === 'kodak' ? 'Kodak' : 'Bond'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         {/* Custom P-value stepper */}
         {rawStock.name === 'Custom' && (
           <View style={styles.pToggleRow}>
@@ -590,6 +628,12 @@ export default function ReciprocityScreen() {
                   ? `Filters already in the reading (+${totalFilterStops} stops not added)`
                   : `Includes filters +${totalFilterStops} stops: ${result.meteredFormatted} → ${result.exposedFormatted} before reciprocity`}
               </Text>
+            ) : null}
+            {stock.devCut && triXDevCut(exposed) ? (
+              <Text style={[styles.noteText, styles.resultNote]}>{triXDevCut(exposed)}</Text>
+            ) : null}
+            {stock.dataMax !== undefined && exposed > stock.dataMax ? (
+              <Text style={[styles.noteText, styles.resultNote]}>Beyond published data: estimate, bracket +1 stop</Text>
             ) : null}
             <TouchableOpacity
               style={styles.timerBtn}
@@ -813,6 +857,7 @@ const styles = StyleSheet.create({
     fontSize: 10, color: colors.signalWarning || '#d4a017',
     paddingHorizontal: spacing.xl, marginTop: 2,
   },
+  resultNote: { paddingHorizontal: 0, marginTop: spacing.xs, fontSize: 11 },
   pToggleRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
     paddingHorizontal: spacing.xl, marginTop: spacing.sm,
