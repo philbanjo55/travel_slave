@@ -73,7 +73,7 @@ const rssNow = () => { try { const rows = execSync('ps -eo pid=,ppid=,rss=').toS
         await p.evaluate(fo => window.S3D.fore(fo), fo);
         const DF = f => b64(path.join(path.dirname(j.detail), f));
         if (rng) await feed(p, b64(rng.path), 'range');
-        if (det) { await feed(p, DF(det.path), 'detail'); await feed(p, DF(det.leaf_mask_path || det.mask_path), 'mask'); if (det.water_path) await feed(p, DF(det.water_path), 'water'); if (det.color_path) await feed(p, b64(det.color_path), 'color'); }
+        if (det) { await feed(p, DF(det.path), 'detail'); await feed(p, DF(det.leaf_mask_path || det.mask_path), 'mask'); if (det.water_path) await feed(p, DF(det.water_path), 'water'); if (det.color_path) await feed(p, b64(det.color_path), 'color'); if (det.buildings_path) await feed(p, DF(det.buildings_path), 'bld'); }
         if (N.color_path) await feed(p, b64(N.color_path), 'ncolor');
         if (R.color_path) await feed(p, b64(R.color_path), 'wcolor');
         for (let i = 0; i < hts.length; i++) await feed(p, b64(hts[i].path), 'house:' + i);

@@ -256,6 +256,47 @@ def rect_pieces(m, piece=12):
     return out
 
 
+# The trestle's corridor on the 1 m grid of the close-up box: rows / columns read off the laser's height picture
+# (rows 1434-1464, columns 1420-2199 = the band of 6.5-13.5 m cells south of the stoves, from the plaza west of the furnaces to its east end
+# by the casino road, ~760 m: further east the same rows hold the casino's buildings), cut to the cells of the band itself by the height test in houses().
+TRESTLE = dict(r0=1434, r1=1465, c0=1420, c1=2200)
+DECK_T = 2.0
+
+
+def trestle_mask(box, n):
+    m = np.zeros((n, n), bool); f = n / 3008
+    m[int(TRESTLE['r0'] * f):int(TRESTLE['r1'] * f), int(TRESTLE['c0'] * f):int(TRESTLE['c1'] * f)] = True
+    return m
+
+
+def deck_file(a, cell_m, n_box):
+    """The trestle deck as the close-up box's building file: absolute heights (foot f, eave / ridge e = r), outlines in
+    metres east / south of the box's north-west corner, 4 m columns joined along a row where the deck top stays
+    within 0.6 m."""
+    deck = np.load(f"{a.work}/deck1.npy"); hs = np.load(f"{a.work}/deck_hs1.npy"); base, _, _ = ground1(a)
+    n = deck.shape[0]; cm = SIDE / n; out = []; col = 4
+    for r in range(0, n, col):
+        run = None
+        for c in range(0, n + col, col):
+            blk = None
+            if c < n:
+                q = deck[r:r + col, c:c + col]
+                if q.sum() >= 4:
+                    top = float(np.percentile(hs[r:r + col, c:c + col][q], 90)); g = float(base[r:r + col, c:c + col][q].mean())
+                    blk = (r, r + col, c, c + col, top + g)
+            if run and blk and abs(blk[4] - run[4]) <= 0.6 and blk[2] == run[3]:
+                run = (run[0], run[1], run[2], blk[3], max(run[4], blk[4])); continue
+            if run:
+                y0, y1, x0, x1, z = run
+                P = [x0 * cm, y0 * cm, x1 * cm, y0 * cm, x1 * cm, y1 * cm, x0 * cm, y1 * cm]
+                out.append(dict(p=[round(v, 1) for v in P], f=round(z - DECK_T + 1.0, 2), e=round(z, 2), r=round(z, 2), roof='flat', rc=[118, 96, 82], wc=[70, 56, 48]))
+            run = blk
+    path = f"{a.work}/files_{a.cell}m/{DETAIL_ID}{'' if a.cell == 1 else '_' + str(a.cell) + 'm'}_bld.json"
+    open(path, 'w').write(json.dumps(dict(v=1, note='Hoover-Mason Trestle deck: laser top, 2 m slab, open below', b=out), separators=(',', ':')))
+    print(f"  trestle deck file {os.path.basename(path)}: {len(out)} slabs, {os.path.getsize(path):,} bytes")
+    return path
+
+
 def houses(a):
     import build_detail as bd, build_buildings as bb
     from scipy import ndimage
@@ -280,6 +321,18 @@ def houses(a):
     # roughness: the spread of the highest returns in 3 x 3 cells (measured here: roofs median 0.4 m, tree crowns 4.9 m)
     top_ = np.where(has, g['top'], 0).astype(np.float64); mu = ndimage.uniform_filter(top_, 3); rough = np.sqrt(np.maximum(ndimage.uniform_filter(top_ * top_, 3) - mu * mu, 0))
     hs = ndimage.median_filter(np.where(solid, hag, 0), size=3); hs = np.where(solid, np.maximum(hs, np.minimum(hag, 2.0)), 0)
+    # The Hoover-Mason Trestle: an elevated walkway (deck ~8-13 m up on posts) along the south side of the furnaces. The
+    # park-wide house tiles stand every block on the ground, so there it was a wall between the stand pin and the
+    # furnaces. It is taken out of the tiles and drawn as a raised deck in the close-up box's own building file
+    # (buildings_path: the page's detail-box houses take a foot height `f`, absolute, and draw walls from f - 1 m up):
+    # each 4 m column of deck cells a slab DECK_T thick under the laser's top, open below (the laser sees only the deck
+    # top: posts and the underside are not in the survey). Low pieces under it in the corridor (stairs, rails) go too.
+    tr_ = trestle_mask(box, n)
+    deck = solid & tr_ & (hs >= 6.5) & (hs <= 13.5)
+    under = solid & tr_ & (hs < 6.5)
+    solid &= ~(deck | under)
+    np.save(f"{a.work}/deck1.npy", deck); np.save(f"{a.work}/deck_hs1.npy", np.where(deck, hs, 0).astype(np.float32))
+    print(f"trestle deck cells {int(deck.sum()):,} (heights {np.percentile(hs[deck], 10):.1f}..{np.percentile(hs[deck], 90):.1f} m over the ground), low cells under it taken out {int(under.sum()):,}", flush=True)
     lab, k = ndimage.label(solid, structure=np.ones((3, 3), bool)); objs = ndimage.find_objects(lab)
     print(f"{k:,} raised solid patches", flush=True)
     kx = KX((box[0] + box[1]) / 2); dlat = (box[0] - box[1]) / n; dlng = (box[3] - box[2]) / n
@@ -368,10 +421,10 @@ def houses(a):
     for (tr, tc), Lb in sorted(tiles.items()):
         tn, ts, tw, te = tbox(tr, tc)
         out = dict(v=1, box=[tn, ts, tw, te], b=[{k_: r[k_] for k_ in ('p', 'g', 'e', 'r', 'a', 'hw', 'roof', 'c', 'n6', 'id', 'part', 'rc', 'wc') if k_ in r} for r in Lb])
-        path = f"{F}/bthb_{tr}_{tc}.json"; open(path, 'w').write(json.dumps(out, separators=(',', ':')))
-        rows.append(dict(id=f"bthb_{tr}_{tc}", parent=REGION['id'], north=tn, south=ts, west=tw, east=te, path=os.path.basename(path), bytes=os.path.getsize(path), count=len(Lb)))
+        path = f"{F}/bthb2_{tr}_{tc}.json"; open(path, 'w').write(json.dumps(out, separators=(',', ':')))
+        rows.append(dict(id=f"bthb2_{tr}_{tc}", parent=REGION['id'], north=tn, south=ts, west=tw, east=te, path=os.path.basename(path), bytes=os.path.getsize(path), count=len(Lb)))
     json.dump(rows, open(f"{a.work}/house_tiles.json", 'w'), indent=1); json.dump(allb, open(f"{a.work}/buildings.json", 'w'))
-    np.save(f"{a.work}/struct1.npy", struct)
+    np.save(f"{a.work}/struct1.npy", struct | deck | under)   # (no tree drawn on the deck or the posts either)
     print(f"structures kept {nb_['kept']:,} (one-height blocks {nb_['simple']:,}, stacked {nb_['levels']:,}: {nb_['blocks']:,} blocks, {nb_['pieces']:,} footprints cut in pieces); "
           f"left out as vehicles {nb_['cars']:,}, too small {nb_['small']:,}, trees {nb_.get('trees', 0):,}; records {len(allb):,} in {len(rows)} tiles, {sum(r['bytes'] for r in rows) / 1e3:.0f} KB", flush=True)
 
@@ -545,6 +598,8 @@ def detail(a):
                base_m=base_m, step_m=bd.STEP, cell_m=cell, path=os.path.basename(hp), bytes=os.path.getsize(hp), mask_path=os.path.basename(mp), mask_bytes=os.path.getsize(mp),
                leaf_mask_path=os.path.basename(m6p), leaf_mask_bytes=os.path.getsize(m6p), water_path=os.path.basename(wpth), water_bytes=os.path.getsize(wpth), water_n=wn,
                water_north=wb[0], water_south=wb[1], water_west=wb[2], water_east=wb[3], color_path='bthd_steel_stacks_colour.jpg', bare=True)
+    if os.path.exists(f"{a.work}/deck1.npy"):
+        bp = deck_file(a, cell, n); row.update(buildings_path=os.path.basename(bp), buildings_bytes=os.path.getsize(bp))
     json.dump(row, open(f"{a.work}/detail_{f}m.json", 'w'), indent=1); print('  ' + json.dumps({k_: row[k_] for k_ in ('n', 'bytes', 'mask_bytes', 'leaf_mask_bytes', 'water_bytes')}))
 
 
@@ -623,14 +678,14 @@ def sql(a):
                          'Aerial photos: USDA NAIP via USGS, April 2022. Buildings and trees: USGS 3DEP lidar 2019.')
     Nn = dict(NEAR, base_m=NEAR['base'], step_m=NEAR['step'], color_path='bth_bethlehem_steel_stacks_colour.jpg'); Nn['width_m'], Nn['depth_m'] = w_m(Nn)
     rng['width_m'], rng['depth_m'] = w_m(rng)
-    files = [R['path'], R['color_path'], Nn['path'], Nn['color_path'], rng['path'], det['path'], det['mask_path'], det['leaf_mask_path'], det['water_path'], det['color_path']] + [t['path'] for t in hts] + [t['path'] for t in tts] + [t['leaf_path'] for t in tts]
+    files = [R['path'], R['color_path'], Nn['path'], Nn['color_path'], rng['path'], det['path'], det['mask_path'], det['leaf_mask_path'], det['water_path'], det['color_path']] + ([det['buildings_path']] if det.get('buildings_path') else []) + [t['path'] for t in hts] + [t['path'] for t in tts] + [t['leaf_path'] for t in tts]
     lines = []
     for f in files:
         shutil.copy(src[f], f"{U}/{f}"); by = open(f"{U}/{f}", 'rb').read(); lines.append(f"{f}\t{len(by)}\t{hashlib.sha256(by).hexdigest()}")
     size = {f: os.path.getsize(f"{U}/{f}") for f in files}
     for o in (R, Nn, rng, det): o['bytes'] = size[o['path']]
     R['color_bytes'] = size[R['color_path']]; Nn['color_bytes'] = size[Nn['color_path']]
-    for k in ('mask', 'leaf_mask', 'water', 'color'): det[f'{k}_bytes'] = size[det[f'{k}_path']]
+    for k in ('mask', 'leaf_mask', 'water', 'color') + (('buildings',) if det.get('buildings_path') else ()): det[f'{k}_bytes'] = size[det[f'{k}_path']]
     open(f"{U}/upload.txt", 'w').write("\n".join(lines) + "\n")
     for nm, o in (('region', R), ('near', Nn), ('range', rng), ('house_tiles', hts), ('tree_tiles', tts), ('detail', det)): json.dump(o, open(f"{U}/{nm}.json", 'w'), indent=1)
     q = lambda v: 'null' if v is None else ('true' if v is True else 'false' if v is False else f"'{v}'" if isinstance(v, str) else str(v))
@@ -643,8 +698,9 @@ def sql(a):
 --   range '{rng['id']}' (10.24 km at 5 m): USGS 3DEP 1 m DEM PA_Northcentral_2019_B19 over the site and South Mountain (feeds sun times);
 --   close-up box '{det['id']}' (3 km at {det['cell_m']:g} m, n {det['n']}): USGS 3DEP lidar PA_Northcentral_B5_2019, bare ground + water
 --     (Lehigh River, the canal), mask v6 trees (bare / evergreen from Sentinel-2 16 Nov 2023 NDVI), NAIP colour;
---   {len(hts)} house tiles (bthb_*, {nh:,} blocks): every building and structure the survey saw in the box, found by the returns
+--   {len(hts)} house tiles (bthb2_*, {nh:,} blocks): every building and structure the survey saw in the box, found by the returns
 --     (one return = solid) and the NAIP photo (no plant), the furnaces / casino as 4 m columns at the laser's height;
+--   the Hoover-Mason Trestle as a raised deck (laser top, 2 m slab, open below) in the close-up box's buildings_path.
 --   {len(tts)} tree tiles (bthc_*, 7 m cells over the near box, bare bit in leaf_path).
 -- Before applying: upload the {len(files)} files listed in upload.txt (bucket terrain, same names, {sum(size.values()):,} bytes).
 -- No 'Teton' or 'Faroes' row is touched.
@@ -657,8 +713,8 @@ on conflict (id) do nothing;
 insert into public.terrain_range_regions (id, parent, north, south, west, east, n, width_m, depth_m, base_m, step_m, cell_m, path, bytes, note) values
   ({q(rng['id'])}, 'bethlehem', {rng['north']}, {rng['south']}, {rng['west']}, {rng['east']}, {rng['n']}, {rng['width_m']}, {rng['depth_m']}, {rng['base_m']}, {rng['step_m']}, {rng['cell_m']}, {q(rng['path'])}, {rng['bytes']}, 'USGS 3DEP 1 m DEM (PA_Northcentral_2019_B19), bare earth at 5 m: the site and South Mountain toward the late-autumn sunset.')
 on conflict (id) do nothing;
-insert into public.terrain_detail_regions_v4 (id, parent, north, south, west, east, n, width_m, depth_m, base_m, step_m, cell_m, path, bytes, mask_path, mask_bytes, water_path, water_bytes, water_n, water_north, water_south, water_west, water_east, color_path, color_bytes, bare, leaf_mask_path, leaf_mask_bytes, note) values
-  ({q(det['id'])}, 'bethlehem', {det['north']}, {det['south']}, {det['west']}, {det['east']}, {det['n']}, {det['width_m']}, {det['depth_m']}, {det['base_m']}, {det['step_m']}, {det['cell_m']}, {q(det['path'])}, {det['bytes']}, {q(det['mask_path'])}, {det['mask_bytes']}, {q(det['water_path'])}, {det['water_bytes']}, {det['water_n']}, {det['water_north']}, {det['water_south']}, {det['water_west']}, {det['water_east']}, {q(det['color_path'])}, {det['color_bytes']}, true, {q(det['leaf_mask_path'])}, {det['leaf_mask_bytes']}, 'USGS 3DEP lidar PA_Northcentral_B5_2019 (2019), 3 km at {det['cell_m']:g} m around the parking and the stand pin: bare ground and water, trees in the mask (bare or evergreen in late November). Buildings and the furnaces are the bthb_* house tiles.')
+insert into public.terrain_detail_regions_v4 (id, parent, north, south, west, east, n, width_m, depth_m, base_m, step_m, cell_m, path, bytes, mask_path, mask_bytes, water_path, water_bytes, water_n, water_north, water_south, water_west, water_east, color_path, color_bytes, bare, leaf_mask_path, leaf_mask_bytes, buildings_path, buildings_bytes, note) values
+  ({q(det['id'])}, 'bethlehem', {det['north']}, {det['south']}, {det['west']}, {det['east']}, {det['n']}, {det['width_m']}, {det['depth_m']}, {det['base_m']}, {det['step_m']}, {det['cell_m']}, {q(det['path'])}, {det['bytes']}, {q(det['mask_path'])}, {det['mask_bytes']}, {q(det['water_path'])}, {det['water_bytes']}, {det['water_n']}, {det['water_north']}, {det['water_south']}, {det['water_west']}, {det['water_east']}, {q(det['color_path'])}, {det['color_bytes']}, true, {q(det['leaf_mask_path'])}, {det['leaf_mask_bytes']}, {q(det.get('buildings_path'))}, {det.get('buildings_bytes') or 'null'}, 'USGS 3DEP lidar PA_Northcentral_B5_2019 (2019), 3 km at {det['cell_m']:g} m around the parking and the stand pin: bare ground and water, trees in the mask (bare or evergreen in late November). Buildings and the furnaces are the bthb2_* house tiles, the Hoover-Mason Trestle a raised deck in buildings_path.')
 on conflict (id) do nothing;
 insert into public.terrain_house_tiles (id, parent, north, south, west, east, path, bytes, count, note) values
 """ + ",\n".join(f"  ({q(t['id'])}, 'bethlehem', {t['north']}, {t['south']}, {t['west']}, {t['east']}, {q(t['path'])}, {size[t['path']]}, {t['count']}, 'USGS 3DEP lidar 2019: buildings (walls + fitted roof) and structures of many heights (furnaces, trestle, casino) as 4 m columns, roof colour from NAIP.')" for t in hts) + "\non conflict (id) do nothing;\n"
