@@ -270,6 +270,7 @@ def main():
         b.add_argument('--near-max-km', type=float, default=8.0); b.add_argument('--pad', type=float, default=2000.0, help='metres of fine ground around every stand spot')
         b.add_argument('--close-km', type=float, default=6.0, help='a subject this close to its stand spot goes in the same box')
         b.add_argument('--wide-file'); b.add_argument('--force', action='store_true', help='go on after a failed data check')
+        b.add_argument('--wide-km', type=float, default=6.0, help='a new region: metres (km) of ground around all the pins (a one-stop day shoot: ~29 km = zoom 12 at 2048 points)')
     a = ap.parse_args(); pins = load_pins(a)
 
     if a.cmd == 'check':
@@ -281,8 +282,8 @@ def main():
     lats = [s['vlat'] for s in shots] + [s['slat'] for s in shots]; lngs = [s['vlng'] for s in shots] + [s['slng'] for s in shots]
     region = next((r for r in pins.get('regions', []) if r['id'] == a.region), None)
     if region: wbox = (region['north'], region['south'], region['west'], region['east']); wn, wbase = region['n'], region['base_m']
-    else:   # a new region: all the pins plus 6 km, to 0.01 deg
-        mid = math.radians((max(lats) + min(lats)) / 2); py = 6000 / 111132; px = 6000 / (111320 * math.cos(mid))
+    else:   # a new region: all the pins plus --wide-km (6 km), to 0.01 deg
+        mid = math.radians((max(lats) + min(lats)) / 2); py = a.wide_km * 1000 / 111132; px = a.wide_km * 1000 / (111320 * math.cos(mid))
         wbox = (math.ceil((max(lats) + py) * 100) / 100, math.floor((min(lats) - py) * 100) / 100, math.floor((min(lngs) - px) * 100) / 100, math.ceil((max(lngs) + px) * 100) / 100); wn, wbase = 2048, 0.0
     source = a.source or ('arctic' if wbox[1] >= 60 else 'terrarium'); ww, wd = metres(wbox)
     mlat = (wbox[0] + wbox[1]) / 2; wzoom = int(min(14, max(8, math.ceil(math.log2(40075016.686 * math.cos(math.radians(mlat)) / 256 / (min(ww, wd) / wn))))))
