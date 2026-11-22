@@ -1151,7 +1151,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             </TouchableOpacity>
           </View>
           <View style={styles.heightRow}>
-            {([['Low', 0.5], ['Eye', EYE_H], ['On the wall', 2.7]] as const).map(([t, v]) => (
+            {([['Low', 0.5], ['Eye', EYE_H], ['Raised', 2.7]] as const).map(([t, v]) => (
               <TouchableOpacity key={t} onPress={() => setCamH(v)} style={[styles.heightChip, Math.abs(camH - v) < 0.01 && styles.heightChipOn]} accessibilityRole="button" accessibilityLabel={`Camera ${t}: ${feetIn(v)}`}>
                 <Text style={[styles.heightChipText, Math.abs(camH - v) < 0.01 && { color: '#000000' }]}>{t} {feetIn(v)}</Text>
               </TouchableOpacity>
