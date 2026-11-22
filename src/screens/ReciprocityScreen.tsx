@@ -69,8 +69,14 @@ function lookupReciprocity(metered: number, dataPoints: [number, number][]): num
 }
 
 // Kodak lookup tables (from official data sheets)
-const TRIX_DATA: [number, number][] = [[1, 2], [10, 50], [100, 1200]];
-const TMY_DATA: [number, number][] = [[1, 1], [10, 15], [100, 200], [240, 540]];
+// The 0.1 s points are Kodak's "no change up to 1/10 s": without them a lookup jumped
+// straight from no correction at 0.99 s to the full 1 s figure (Tri-X: 1 s -> 2 s).
+const TRIX_DATA: [number, number][] = [[0.1, 0.1], [1, 2], [10, 50], [100, 1200]];     // Kodak F-4017 (10-21)
+const TMX_DATA: [number, number][] = [[0.1, 0.1], [1, 1.26], [10, 15], [100, 200]];    // Kodak F-4016: +1/3 at 1 s
+// T-Max 400: Kodak's current sheet. (Until Nov 2026 this mixed the pre-2007 sheet,
+// T-Max 100's 100 s value and Bond's 2003 test: [[1,1],[10,15],[100,200],[240,540]].)
+const TMY_KODAK: [number, number][] = [[1, 1], [10, 12.6], [100, 300]];                 // Kodak F-4043 (2-16)
+const TMY_SOURCE_KODAK = 'Kodak F-4043';
 
 type FilmStock = {
   name: string;
@@ -79,6 +85,8 @@ type FilmStock = {
   data?: [number, number][];
   source: string;
   note?: string;
+  // Longest metered time the source publishes; past it the result is an extrapolation.
+  dataMax?: number;
 };
 
 const FILM_STOCKS_4x5: FilmStock[] = [
@@ -86,9 +94,9 @@ const FILM_STOCKS_4x5: FilmStock[] = [
   { name: 'FP4+', method: 'power', p: 1.26, source: 'Ilford official PDF' },
   { name: 'Pan F+ 50', method: 'power', p: 1.26, source: 'HARMAN 4x5 launch May 2026 · Bond/Roos field', note: '3-mo latent image — develop within weeks of exposure' },
   { name: 'HP5+', method: 'power', p: 1.31, source: 'Ilford official PDF' },
-  { name: 'T-Max 400', method: 'lookup', data: TMY_DATA, source: 'Kodak F-4016 + Bond' },
-  { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Kodak F-4016' },
-  { name: 'Tri-X 320', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017' },
+  { name: 'T-Max 400', method: 'lookup', data: TMY_KODAK, source: TMY_SOURCE_KODAK, dataMax: 100 },
+  { name: 'T-Max 100', method: 'lookup', data: TMX_DATA, source: 'Kodak F-4016', dataMax: 100 },
+  { name: 'Tri-X 320', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017', dataMax: 100 },
   { name: 'Provia 100F', method: 'provia', source: 'Fuji data sheet', note: 'No correction up to 128s' },
   { name: 'Portra 160', method: 'portra', source: 'Sachs/community R²=0.995' },
   { name: 'Portra 400', method: 'portra', source: 'Same curve as 160' },
@@ -97,14 +105,17 @@ const FILM_STOCKS_4x5: FilmStock[] = [
 
 const FILM_STOCKS_120: FilmStock[] = [
   { name: 'SFX 200', method: 'power', p: 1.43, source: 'Ilford official PDF' },
-  { name: 'Tri-X 400', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017' },
-  { name: 'T-Max 400', method: 'lookup', data: TMY_DATA, source: 'Kodak F-4016 + Bond' },
-  { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Kodak F-4016' },
+  { name: 'Tri-X 400', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017', dataMax: 100 },
+  { name: 'T-Max 400', method: 'lookup', data: TMY_KODAK, source: TMY_SOURCE_KODAK, dataMax: 100 },
+  { name: 'T-Max 100', method: 'lookup', data: TMX_DATA, source: 'Kodak F-4016', dataMax: 100 },
   { name: 'Custom', method: 'power', p: 1.26, source: 'User defined — field testing', note: 'Tap +/- to adjust P value' },
 ];
 
 function calculate(stock: FilmStock, metered: number): number {
-  if (metered < 1) return metered; // No correction below 1s
+  // No correction below 1 s, except for a lookup whose own data starts lower
+  // (Kodak's tables ease in from 1/10 s instead of jumping at 1 s).
+  const startsLower = stock.method === 'lookup' && stock.data![0][0] < 1;
+  if (metered < 1 && !startsLower) return metered;
   switch (stock.method) {
     case 'power':
       return Math.max(metered, Math.pow(metered, stock.p!));
@@ -128,7 +139,9 @@ function calculate(stock: FilmStock, metered: number): number {
 // Ilford's published power-law method. calculate() is monotonic increasing, so
 // bisection inverts it for any film model (power, lookup, or special-case).
 function invertReciprocity(stock: FilmStock, targetCorrected: number): number {
-  if (targetCorrected <= 1) return targetCorrected; // identity domain (<1s, no correction)
+  // Identity below 1 s, except for lookups that ease in from 1/10 s (Tri-X, T-Max 100).
+  const startsLower = stock.method === 'lookup' && stock.data![0][0] < 1;
+  if (targetCorrected <= 1 && !startsLower) return targetCorrected;
   let lo = 0.001, hi = targetCorrected; // metered is always <= corrected
   for (let i = 0; i < 60; i++) {
     const mid = (lo + hi) / 2;
@@ -591,6 +604,9 @@ export default function ReciprocityScreen() {
                   : `Includes filters +${totalFilterStops} stops: ${result.meteredFormatted} → ${result.exposedFormatted} before reciprocity`}
               </Text>
             ) : null}
+            {stock.dataMax !== undefined && exposed > stock.dataMax ? (
+              <Text style={[styles.noteText, styles.resultNote]}>Beyond published data: also shoot one at half this time ({formatTime(result.adjusted / 2)})</Text>
+            ) : null}
             <TouchableOpacity
               style={styles.timerBtn}
               onPress={() => startTimer(apertureAdj ? apertureAdj.targetSeconds : result.adjusted)}
@@ -813,6 +829,7 @@ const styles = StyleSheet.create({
     fontSize: 10, color: colors.signalWarning || '#d4a017',
     paddingHorizontal: spacing.xl, marginTop: 2,
   },
+  resultNote: { paddingHorizontal: 0, marginTop: spacing.xs, fontSize: 11 },
   pToggleRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
     paddingHorizontal: spacing.xl, marginTop: spacing.sm,

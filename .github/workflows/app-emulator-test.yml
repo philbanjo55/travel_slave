@@ -84,7 +84,7 @@ jobs:
           - shard: a
             only: sun_3d
           - shard: b
-            only: offline_3d,find_spot
+            only: emily_3d,offline_3d,find_spot
           - shard: c
             only: faroes_3d,overhead_walk,stops_page,today_auto_open
           - shard: d

@@ -1701,9 +1701,78 @@ def offline_3d():
         top = C.capture(2)
         print('INFO offline trip page: ' + ' | '.join(t for t in top.all_texts if len(t.strip()) > 2)[:1800], flush=True)
         stops_page(fresh=False)
+        C.launch(); emily_3d()
     finally:
         V.check = orig; OFFLINE = False
         C.adb('shell', 'svc', 'wifi', 'enable'); C.adb('shell', 'svc', 'data', 'enable'); time.sleep(10)
+
+
+def emily_3d():
+    """Emily's Pond Levee close-up box with water (22 Nov 2026, Phil: "I just don't see any water ... can't tell if I'm close
+    or not to that s curve"): Teton Live Day 2 (17 Nov) -> Emily's Pond Levee -> Sun & Moon -> 3D draws, and the close-up
+    box (10 m heights, water from the summer photo, no trees or buildings) comes in as the foreground."""
+    if open_live() is None:
+        return
+    p = C.capture(1)
+    found = False
+    for k in range(8):
+        if V.tap_text(p, 'Nov 17', exact=True):
+            found = True; break
+        C.adb('shell', 'input', 'swipe', '300', '384', '900', '384', '300'); p = C.capture(0.8)   # earlier days are to the left
+    V.check('em3d-day', found, 'Day 2 tab (Nov 17)')
+    if not found:
+        return
+    time.sleep(3)
+    row = re.compile(r"^\d{1,2}:\d{2} [AP]M .*Emily.s Pond")
+    stop = sun3d_find_row(C.capture(1.0), row)
+    V.check('em3d-stop', stop is not None, (stop or "no Emily's Pond Levee row on Day 2")[:80])
+    if stop is None:
+        return
+    time.sleep(4)
+    st = scroll_find('SUN & MOON', 14)
+    V.check('em3d-section', st is not None, 'Sun & Moon section')
+    if st is None:
+        return
+    H = 2400
+    def text_y(sc, needle):
+        for nd in (sc.root.iter('node') if sc.root is not None else []):
+            t = (nd.get('text') or nd.get('content-desc') or '')
+            if nd.get('package') == V.PKG and needle.lower() in t.lower():
+                x1, y1, x2, y2 = C.bounds(nd); return (y1 + y2) // 2
+        return None
+    for _ in range(5):
+        y = text_y(st, 'SUN & MOON')
+        if y is None or 0.22 * H <= y <= 0.45 * H:
+            break
+        dd = max(-600, min(600, int(y - 0.33 * H)))
+        C.adb('shell', 'input', 'swipe', '540', str(int(0.6 * H)), '540', str(int(0.6 * H) - dd), '600')
+        st = C.capture(1.2)
+    V.tap_text(st, '3D', exact=True)   # 3D is the default tab; the tap does nothing then
+    f0 = scroll_find('Open the 3D view full screen', 8)
+    if f0 is not None:
+        mid_screen(f0, 'Open the 3D view full screen')
+    t0 = time.time(); ok = False; c = C.capture(2)
+    for _ in range(40):
+        if V.has(c, 'Looking '):
+            ok = True; break
+        c = C.capture(3)
+    V.check('em3d-ready', ok, f'drawn {time.time() - t0:.0f} s after the tab tap' if ok else 'no caption')
+    if not ok:
+        print('INFO em3d on screen: ' + ' | '.join(x for x in c.all_texts if len(x.strip()) > 2)[:1500], flush=True); return
+    fg_label = 'Foreground (trees and buildings near you)'
+    lab = None; t1 = time.time()
+    for _ in range(60):
+        c = C.capture(2)
+        lab = next((x['label'] for x in c.clickables if fg_label in x['label']), None)
+        if lab is None or ', showing' in lab or V.has(c, "foreground didn't load") or V.has(c, 'foreground was too heavy'):
+            break
+        time.sleep(2)
+    V.check('em3d-fg-in', lab is not None and ', showing' in lab, f'{(lab or "no Foreground button")[:80]} after {time.time() - t1:.0f} s')
+    time.sleep(4)
+    c = C.capture(1)
+    alive = V.has(c, 'Looking ')
+    V.check('em3d-view-alive', alive, 'view still drawn 4 s after the close-up came in')
+    print('INFO em3d texts: ' + ' | '.join(x for x in c.all_texts if len(x.strip()) > 2)[:1200], flush=True)
 
 
 def faroes_3d():
@@ -2061,7 +2130,7 @@ def find_spot():
 
 
 def main():
-    sections = (find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, offline_3d)
+    sections = (find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d)
     # E2E_ONLY = comma list of section names: the workflow runs the sections on several emulators at once (16 Nov 2026)
     only = [x.strip() for x in os.environ.get('E2E_ONLY', '').split(',') if x.strip()]
     if only:

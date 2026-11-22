@@ -79,7 +79,9 @@ export function setLongInStored(v: number) {
   AsyncStorage.setItem(LONG_KEY, String(v)).catch(() => { /* kept for this run */ });
 }
 export const longInNow = () => longIn;
-export const stepLong = (v: number, dir: 1 | -1) => clamp(dir > 0 ? v + (v >= 20 ? 5 : 2) : v - (v > 20 ? 5 : 2), 8, 80);
+// A tap moves half an inch (Phil, 22 Nov 2026); a long press moves 5 inches.
+export const stepLong = (v: number, dir: 1 | -1, big = false) =>
+  clamp(Math.round((v + dir * (big ? 5 : 0.5)) * 2) / 2, 8, 80);
 export function printSize(c: FrameCrop | null, film: Film, L: number) {
   const m = cropMm(c, film);
   return { long: L, short: (L * m.short) / m.long, enlarge: (L * 25.4) / m.long, pct: Math.round((100 * m.w * m.h) / (film.fw * film.fh)), m };
@@ -215,11 +217,11 @@ export function CropPanel({ crop, film, filmName, longIn: L, onPick, onLong }: P
         : crop ? <Text style={styles.hint}>Drag the crop to move it.</Text> : null}
       <View style={styles.longRow}>
         <Text style={styles.head}>PRINT, LONG SIDE</Text>
-        <TouchableOpacity onPress={() => onLong(stepLong(L, -1))} style={styles.step} accessibilityRole="button" accessibilityLabel="Shorter print" disabled={L <= 8}>
+        <TouchableOpacity onPress={() => onLong(stepLong(L, -1))} onLongPress={() => onLong(stepLong(L, -1, true))} style={styles.step} accessibilityRole="button" accessibilityLabel="Shorter print" disabled={L <= 8}>
           <Text style={[styles.stepText, L <= 8 && { opacity: 0.4 }]}>−</Text>
         </TouchableOpacity>
         <Text style={styles.longVal} accessibilityLabel={`Long side ${L} inches`}>{L} in</Text>
-        <TouchableOpacity onPress={() => onLong(stepLong(L, 1))} style={styles.step} accessibilityRole="button" accessibilityLabel="Longer print" disabled={L >= 80}>
+        <TouchableOpacity onPress={() => onLong(stepLong(L, 1))} onLongPress={() => onLong(stepLong(L, 1, true))} style={styles.step} accessibilityRole="button" accessibilityLabel="Longer print" disabled={L >= 80}>
           <Text style={[styles.stepText, L >= 80 && { opacity: 0.4 }]}>+</Text>
         </TouchableOpacity>
       </View>
