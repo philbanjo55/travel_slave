@@ -605,7 +605,7 @@ export default function ReciprocityScreen() {
               </Text>
             ) : null}
             {stock.dataMax !== undefined && exposed > stock.dataMax ? (
-              <Text style={[styles.noteText, styles.resultNote]}>Beyond published data: estimate, bracket +1 stop</Text>
+              <Text style={[styles.noteText, styles.resultNote]}>Beyond published data: also shoot one at half this time ({formatTime(result.adjusted / 2)})</Text>
             ) : null}
             <TouchableOpacity
               style={styles.timerBtn}
