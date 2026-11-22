@@ -69,7 +69,10 @@ function lookupReciprocity(metered: number, dataPoints: [number, number][]): num
 }
 
 // Kodak lookup tables (from official data sheets)
-const TRIX_DATA: [number, number][] = [[1, 2], [10, 50], [100, 1200]];                 // Kodak F-4017 (10-21)
+// The 0.1 s points are Kodak's "no change up to 1/10 s": without them a lookup jumped
+// straight from no correction at 0.99 s to the full 1 s figure (Tri-X: 1 s -> 2 s).
+const TRIX_DATA: [number, number][] = [[0.1, 0.1], [1, 2], [10, 50], [100, 1200]];     // Kodak F-4017 (10-21)
+const TMX_DATA: [number, number][] = [[0.1, 0.1], [1, 1.26], [10, 15], [100, 200]];    // Kodak F-4016: +1/3 at 1 s
 // T-Max 400: Kodak's current sheet by default, Bond's 2003 field test (older emulsion) as an option.
 const TMY_KODAK: [number, number][] = [[1, 1], [10, 12.6], [100, 300]];                 // Kodak F-4043 (2-16)
 const TMY_BOND: [number, number][] = [[1, 1], [10, 15], [100, 200], [240, 540]];        // Bond 2003 field test
@@ -85,17 +88,7 @@ type FilmStock = {
   note?: string;
   // Longest metered time the source publishes; past it the result is an extrapolation.
   dataMax?: number;
-  // Kodak F-4017 development cut for long exposures (Tri-X).
-  devCut?: boolean;
 };
-
-// Kodak F-4017: 1 s -> -10%, 10 s -> -20%, 100 s -> -30%, on log time, to the nearest 5%.
-function triXDevCut(exposed: number): string | null {
-  if (exposed < 1) return null;
-  if (exposed > 100) return 'Develop −30% or more · beyond Kodak data';
-  const n = Math.round((10 * (1 + Math.log10(exposed))) / 5) * 5;
-  return `Develop −${n}% (Kodak F-4017)`;
-}
 
 const FILM_STOCKS_4x5: FilmStock[] = [
   { name: 'Delta 100', method: 'power', p: 1.26, source: 'Ilford official PDF' },
@@ -103,8 +96,8 @@ const FILM_STOCKS_4x5: FilmStock[] = [
   { name: 'Pan F+ 50', method: 'power', p: 1.26, source: 'HARMAN 4x5 launch May 2026 · Bond/Roos field', note: '3-mo latent image — develop within weeks of exposure' },
   { name: 'HP5+', method: 'power', p: 1.31, source: 'Ilford official PDF' },
   { name: 'T-Max 400', method: 'lookup', data: TMY_KODAK, source: TMY_SOURCE_KODAK, dataMax: 100 },
-  { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Fit to Kodak F-4016 (P=1.15)', dataMax: 100 },
-  { name: 'Tri-X 320', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017', dataMax: 100, devCut: true },
+  { name: 'T-Max 100', method: 'lookup', data: TMX_DATA, source: 'Kodak F-4016', dataMax: 100 },
+  { name: 'Tri-X 320', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017', dataMax: 100 },
   { name: 'Provia 100F', method: 'provia', source: 'Fuji data sheet', note: 'No correction up to 128s' },
   { name: 'Portra 160', method: 'portra', source: 'Sachs/community R²=0.995' },
   { name: 'Portra 400', method: 'portra', source: 'Same curve as 160' },
@@ -113,14 +106,17 @@ const FILM_STOCKS_4x5: FilmStock[] = [
 
 const FILM_STOCKS_120: FilmStock[] = [
   { name: 'SFX 200', method: 'power', p: 1.43, source: 'Ilford official PDF' },
-  { name: 'Tri-X 400', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017', dataMax: 100, devCut: true },
+  { name: 'Tri-X 400', method: 'lookup', data: TRIX_DATA, source: 'Kodak F-4017', dataMax: 100 },
   { name: 'T-Max 400', method: 'lookup', data: TMY_KODAK, source: TMY_SOURCE_KODAK, dataMax: 100 },
-  { name: 'T-Max 100', method: 'power', p: 1.15, source: 'Fit to Kodak F-4016 (P=1.15)', dataMax: 100 },
+  { name: 'T-Max 100', method: 'lookup', data: TMX_DATA, source: 'Kodak F-4016', dataMax: 100 },
   { name: 'Custom', method: 'power', p: 1.26, source: 'User defined — field testing', note: 'Tap +/- to adjust P value' },
 ];
 
 function calculate(stock: FilmStock, metered: number): number {
-  if (metered < 1) return metered; // No correction below 1s
+  // No correction below 1 s, except for a lookup whose own data starts lower
+  // (Kodak's tables ease in from 1/10 s instead of jumping at 1 s).
+  const startsLower = stock.method === 'lookup' && stock.data![0][0] < 1;
+  if (metered < 1 && !startsLower) return metered;
   switch (stock.method) {
     case 'power':
       return Math.max(metered, Math.pow(metered, stock.p!));
@@ -628,9 +624,6 @@ export default function ReciprocityScreen() {
                   ? `Filters already in the reading (+${totalFilterStops} stops not added)`
                   : `Includes filters +${totalFilterStops} stops: ${result.meteredFormatted} → ${result.exposedFormatted} before reciprocity`}
               </Text>
-            ) : null}
-            {stock.devCut && triXDevCut(exposed) ? (
-              <Text style={[styles.noteText, styles.resultNote]}>{triXDevCut(exposed)}</Text>
             ) : null}
             {stock.dataMax !== undefined && exposed > stock.dataMax ? (
               <Text style={[styles.noteText, styles.resultNote]}>Beyond published data: estimate, bracket +1 stop</Text>
