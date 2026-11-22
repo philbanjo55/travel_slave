@@ -206,6 +206,7 @@ def ground1(a):
 # (gable or flat, tools/sun3d/lidar/build_buildings.py parts); a structure of many heights (the furnaces, the casino) is
 # a stack of blocks, one per height step (LEVELS), each the outline of the cells that reach that step.
 LEVELS = [2.0, 4.0, 6.5, 9.5, 13.0, 17.0, 22.0, 28.0, 35.0, 43.0, 52.0, 62.0, 74.0, 90.0]
+COL = 4     # the column size (m = cells) of a structure of many heights (3 m: 22,206 blocks, 3-11 s to build in the page here: too near its 30 s limit for a phone)
 TILES = 3   # the house tiles: 3 x 3 over the close-up box (~1 km each)
 
 
@@ -308,10 +309,11 @@ def houses(a):
         to_tile = lambda px, py: ((box[2] + (c0 + px) * dlng - tw) * kxt, (tn - (box[0] - (r0 + py) * dlat)) * KZ)
         rgb = nb[sl][..., :3][m]; rc = [int(v_) for v_ in np.clip(np.median(rgb, 0) * 255, 0, 255)]
         g0 = float(base[sl][m].mean())
-        def put(pts, e, r, roof='flat', a_=0.0, hw=0.0, part=0, c=None):
+        def put(pts, e, r, roof='flat', a_=0.0, hw=0.0, part=0, c=None, wc=None):
             P = [to_tile(x, y) for x, y in pts]
             rec = dict(p=[round(q, 1) for xy in P for q in xy], g=round(g0, 1), e=round(max(1.8, e), 1), r=round(max(e, r), 1), a=round(a_ % 180, 1), hw=round(hw, 1), roof=roof,
                        c=[round(sum(p[0] for p in P) / len(P), 1), round(sum(p[1] for p in P) / len(P), 1)] if c is None else c, n6=0, id=idx * 4 + min(part, 3), part=part, rc=rc)
+            if wc: rec['wc'] = wc
             tiles.setdefault((tr, tc), []).append(rec); allb.append(dict(rec, obj=idx, lat=round(clat, 6), lng=round(clng, 6), area=area, top=round(top, 1)))
         simple = (top < 22 and area <= 8000) or (p90 - p10 <= 4.0 and top < 30 and area <= 20000)   # an ordinary building: walls and a fitted roof (one or two parts)
         if simple:   # one height: a block with its fitted roof (gable / flat), as the park-wide buildings
@@ -342,26 +344,30 @@ def houses(a):
                     p2, _ = ring_poly(hi)
                     if p2: z2 = float(np.percentile(h[hi], 70)); put(p2, z2, z2, part=1)
                 continue
-        # many heights: one block per height step
-        nb_['levels'] += 1; part = 0
-        for li, t0 in enumerate(LEVELS):
-            t1 = LEVELS[li + 1] if li + 1 < len(LEVELS) else 999.0
-            sub = m & (h >= t0) if li else m
-            if sub.sum() < 3: break
-            sl2, k2 = ndimage.label(sub, structure=np.ones((3, 3), bool))
-            for j in range(1, k2 + 1):
-                s2 = sl2 == j
-                if s2.sum() < 3: continue
-                ztop = float(np.percentile(np.clip(h[s2], t0, t1), 75)) if li else float(np.percentile(np.clip(h[s2], 0, t1), 75))
-                pts, ar = ring_poly(s2)
-                pieces = [(pts, ar)] if pts else rect_pieces(s2)
-                if not pts: nb_['pieces'] += 1
-                for pp, _ in pieces: put(pp, ztop, ztop, part=part); nb_['blocks'] += 1
-                part += 1
+        # many heights (the furnaces with their stoves, stacks, pipes and the trestle, the casino, the big plants): columns.
+        # The footprint in COL x COL m squares, each square with enough of the structure in it a block to the height the
+        # laser saw there (90th percentile), and neighbouring squares along a row of about the same height (1.5 m) joined.
+        # A height step per square keeps the yards between the stoves open and every stack its own height (an outline per
+        # height step had to fill the yards in: a solid mass in front of the stand pin).
+        nb_['levels'] += 1; part = 0; H_, W_ = m.shape; wc = [int(v_ * 0.62) for v_ in rc]
+        for r_ in range(0, H_, COL):
+            run = None
+            for c_ in range(0, W_ + COL, COL):
+                blk = None
+                if c_ < W_:
+                    q_ = m[r_:r_ + COL, c_:c_ + COL]
+                    if q_.sum() >= max(2, COL * COL // 3):
+                        rr_ = np.where(q_.any(1))[0]; cc_ = np.where(q_.any(0))[0]
+                        blk = (r_ + rr_[0], r_ + rr_[-1] + 1, c_ + cc_[0], c_ + cc_[-1] + 1, float(np.percentile(h[r_:r_ + COL, c_:c_ + COL][q_], 90)))
+                if run and blk and abs(blk[4] - run[4]) <= 1.5 and blk[2] == run[3] and abs(blk[0] - run[0]) <= 1 and abs(blk[1] - run[1]) <= 1:
+                    run = (min(run[0], blk[0]), max(run[1], blk[1]), run[2], blk[3], max(run[4], blk[4])); continue
+                if run:
+                    y0, y1, x0, x1, z = run; put([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], z, z, part=min(part, 3), wc=wc); nb_['blocks'] += 1; part += 1
+                run = blk
     F = f"{a.work}/files"; os.makedirs(F, exist_ok=True); rows = []
     for (tr, tc), Lb in sorted(tiles.items()):
         tn, ts, tw, te = tbox(tr, tc)
-        out = dict(v=1, box=[tn, ts, tw, te], b=[{k_: r[k_] for k_ in ('p', 'g', 'e', 'r', 'a', 'hw', 'roof', 'c', 'n6', 'id', 'part', 'rc')} for r in Lb])
+        out = dict(v=1, box=[tn, ts, tw, te], b=[{k_: r[k_] for k_ in ('p', 'g', 'e', 'r', 'a', 'hw', 'roof', 'c', 'n6', 'id', 'part', 'rc', 'wc') if k_ in r} for r in Lb])
         path = f"{F}/bthb_{tr}_{tc}.json"; open(path, 'w').write(json.dumps(out, separators=(',', ':')))
         rows.append(dict(id=f"bthb_{tr}_{tc}", parent=REGION['id'], north=tn, south=ts, west=tw, east=te, path=os.path.basename(path), bytes=os.path.getsize(path), count=len(Lb)))
     json.dump(rows, open(f"{a.work}/house_tiles.json", 'w'), indent=1); json.dump(allb, open(f"{a.work}/buildings.json", 'w'))
@@ -534,7 +540,7 @@ def detail(a):
     df = at(base, box, L1, L2) - at(rh, (rj['north'], rj['south'], rj['west'], rj['east']), L1, L2)
     print(f"  DATA CHECK ground against the range (3DEP 1 m DEM at 5 m): middle {np.nanmedian(df):+.2f} m, 9 in 10 within {np.nanpercentile(np.abs(df), 90):.2f} m")
     for nm, p in (('stop (stored 70 m)', STOP), ('stand pin', STAND)): print(f"  {nm}: ground {float(at(base, box, [p[0]], [p[1]])[0]):.1f} m")
-    lv = surf[mask == 3]; print(f"  water level in the box {np.percentile(lv, 5):.1f}..{np.percentile(lv, 95):.1f} m (the Lehigh's pool at Bethlehem ~ 61-62 m NAVD88)")
+    lv = surf[mask == 3]; print(f"  water level in the box {np.percentile(lv, 5):.1f}..{np.percentile(lv, 95):.1f} m (compare with the 3DEP DEM: the data check in the README)")
     row = dict(id=DETAIL_ID + suf, parent=REGION['id'], north=box[0], south=box[1], west=box[2], east=box[3], n=n, width_m=round((box[3] - box[2]) * KX(MID[0]), 1), depth_m=round((box[0] - box[1]) * KZ, 1),
                base_m=base_m, step_m=bd.STEP, cell_m=cell, path=os.path.basename(hp), bytes=os.path.getsize(hp), mask_path=os.path.basename(mp), mask_bytes=os.path.getsize(mp),
                leaf_mask_path=os.path.basename(m6p), leaf_mask_bytes=os.path.getsize(m6p), water_path=os.path.basename(wpth), water_bytes=os.path.getsize(wpth), water_n=wn,
@@ -638,7 +644,7 @@ def sql(a):
 --   close-up box '{det['id']}' (3 km at {det['cell_m']:g} m, n {det['n']}): USGS 3DEP lidar PA_Northcentral_B5_2019, bare ground + water
 --     (Lehigh River, the canal), mask v6 trees (bare / evergreen from Sentinel-2 16 Nov 2023 NDVI), NAIP colour;
 --   {len(hts)} house tiles (bthb_*, {nh:,} blocks): every building and structure the survey saw in the box, found by the returns
---     (one return = solid) and the NAIP photo (no plant), the furnaces / casino as stacks of blocks by height step;
+--     (one return = solid) and the NAIP photo (no plant), the furnaces / casino as 4 m columns at the laser's height;
 --   {len(tts)} tree tiles (bthc_*, 7 m cells over the near box, bare bit in leaf_path).
 -- Before applying: upload the {len(files)} files listed in upload.txt (bucket terrain, same names, {sum(size.values()):,} bytes).
 -- No 'Teton' or 'Faroes' row is touched.
@@ -655,7 +661,7 @@ insert into public.terrain_detail_regions_v4 (id, parent, north, south, west, ea
   ({q(det['id'])}, 'bethlehem', {det['north']}, {det['south']}, {det['west']}, {det['east']}, {det['n']}, {det['width_m']}, {det['depth_m']}, {det['base_m']}, {det['step_m']}, {det['cell_m']}, {q(det['path'])}, {det['bytes']}, {q(det['mask_path'])}, {det['mask_bytes']}, {q(det['water_path'])}, {det['water_bytes']}, {det['water_n']}, {det['water_north']}, {det['water_south']}, {det['water_west']}, {det['water_east']}, {q(det['color_path'])}, {det['color_bytes']}, true, {q(det['leaf_mask_path'])}, {det['leaf_mask_bytes']}, 'USGS 3DEP lidar PA_Northcentral_B5_2019 (2019), 3 km at {det['cell_m']:g} m around the parking and the stand pin: bare ground and water, trees in the mask (bare or evergreen in late November). Buildings and the furnaces are the bthb_* house tiles.')
 on conflict (id) do nothing;
 insert into public.terrain_house_tiles (id, parent, north, south, west, east, path, bytes, count, note) values
-""" + ",\n".join(f"  ({q(t['id'])}, 'bethlehem', {t['north']}, {t['south']}, {t['west']}, {t['east']}, {q(t['path'])}, {size[t['path']]}, {t['count']}, 'USGS 3DEP lidar 2019: buildings and structures (furnaces, trestle, casino) as blocks by height step, roof colour from NAIP.')" for t in hts) + "\non conflict (id) do nothing;\n"
+""" + ",\n".join(f"  ({q(t['id'])}, 'bethlehem', {t['north']}, {t['south']}, {t['west']}, {t['east']}, {q(t['path'])}, {size[t['path']]}, {t['count']}, 'USGS 3DEP lidar 2019: buildings (walls + fitted roof) and structures of many heights (furnaces, trestle, casino) as 4 m columns, roof colour from NAIP.')" for t in hts) + "\non conflict (id) do nothing;\n"
           + "insert into public.terrain_tree_tiles (id, parent, north, south, west, east, n, lod, step_m, cell_m, path, bytes, trees, note, leaf_path, leaf_bytes) values\n"
           + ",\n".join(f"  ({q(t['id'])}, 'bethlehem', {t['north']}, {t['south']}, {t['west']}, {t['east']}, {t['n']}, 0, {t['step_m']}, {t['cell_m']}, {q(t['path'])}, {size[t['path']]}, {t['trees']}, 'USGS 3DEP lidar 2019, 7 m cells, bare in late November from Sentinel-2 16 Nov 2023.', {q(t['leaf_path'])}, {size[t['leaf_path']]})" for t in tts)
           + "\non conflict (id) do nothing;\n"]
