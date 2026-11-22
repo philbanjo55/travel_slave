@@ -210,18 +210,35 @@ TILES = 3   # the house tiles: 3 x 3 over the close-up box (~1 km each)
 
 
 def ring_poly(m, cell=1.0, maxc=80):
-    """A cell mask -> right-angled outline (list of (x, y) in cells), or None. Up to maxc corners (the page triangulates any)."""
+    """A cell mask -> right-angled outline (list of (x, y) in cells) and its area, or (None, area). Up to maxc corners (the
+    page triangulates any). The 1 m survey's edges are ragged: the mask is tidied (closed, holes filled, opened) and,
+    when its edge still has too many corners, traced on 2 m and then 3 m cells (a cell kept when half of it is in)."""
     import build_buildings as bb
     from scipy import ndimage
+    m = ndimage.binary_closing(np.pad(m, 3), structure=np.ones((3, 3), bool))[3:-3, 3:-3] | m
     m = ndimage.binary_fill_holes(m)
+    o = ndimage.binary_opening(m, structure=np.ones((2, 2), bool)); m = o if o.sum() >= 0.8 * m.sum() else m
     lab, k = ndimage.label(m, structure=np.ones((3, 3), bool))
     if k > 1: m = lab == 1 + int(np.argmax(ndimage.sum(m, lab, range(1, k + 1))))
+    area = float(m.sum())
+    if not area: return None, 0.0
     rows = np.where(m.any(1))[0]; cols = np.where(m.any(0))[0]
-    r0, r1, c0, c1 = rows[0], rows[-1] + 1, cols[0], cols[-1] + 1; area = float(m.sum())
+    r0, r1, c0, c1 = rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
     if area / ((r1 - r0) * (c1 - c0)) >= 0.85: return [(c0, r0), (c1, r0), (c1, r1), (c0, r1)], area
-    pts = bb.trace(m[r0:r1, c0:c1]); pts = [(c0 + x, r0 + y) for x, y in pts]
-    pts = bb.simplify_ortho(pts, 1.6 / cell)
-    if 4 <= len(pts) <= maxc and bb.outline_ok(pts, area): return pts, area
+    sub = m[r0:r1, c0:c1]
+    for f in (1, 2, 3):
+        if f > 1:
+            H, W = -(-sub.shape[0] // f) * f, -(-sub.shape[1] // f) * f; q = np.zeros((H, W), bool); q[:sub.shape[0], :sub.shape[1]] = sub
+            q = q.reshape(H // f, f, W // f, f).mean((1, 3)) >= 0.5
+            if not q.any(): break
+            lab, k = ndimage.label(q, structure=np.ones((3, 3), bool))
+            if k > 1: q = lab == 1 + int(np.argmax(ndimage.sum(q, lab, range(1, k + 1))))
+        else: q = sub
+        pts = bb.trace(q)
+        if len(pts) > 3 * maxc: continue      # still ragged: coarser
+        pts = bb.simplify_ortho(pts, 1.6)
+        pts = [(c0 + x * f, r0 + y * f) for x, y in pts]
+        if 4 <= len(pts) <= maxc and bb.outline_ok(pts, area): return pts, area
     return None, area
 
 
@@ -248,6 +265,19 @@ def houses(a):
     solid = cand & ((sh3 < 0.35) | ((sh3 < 0.85) & (nd3 < 0.0)))
     for _ in range(3): solid |= bd.grow1(solid) & cand & ((sh3 < 0.9) & (nd3 < 0.03))   # lattice and pipework joined to a solid part
     solid = ndimage.binary_closing(solid, structure=np.ones((3, 3), bool)) & (cand | bd.grow1(solid))
+    # bridges: the survey's bridge decks (class 17) and 4 m round them (railings, lamps), and anything over the river
+    # (the wide water layer), never a block (drawn from the ground, a bridge would dam the river and wall off the rail yard)
+    bridge = ndimage.binary_dilation(cls == 17, iterations=4)
+    wp = f"{a.work}/wide_water.npz"
+    if os.path.exists(wp):
+        ww = np.load(wp); wb = ww['box']; wn = int(ww['n'])
+        rr = (((wb[0] - (box[0] - (np.arange(n) + .5) * (box[0] - box[1]) / n)) / (wb[0] - wb[1])) * wn).astype(int).clip(0, wn - 1)
+        cc = ((((box[2] + (np.arange(n) + .5) * (box[3] - box[2]) / n) - wb[2]) / (wb[3] - wb[2])) * wn).astype(int).clip(0, wn - 1)
+        bridge |= ww['cls'][np.ix_(rr, cc)] > 0
+    print(f"bridge / over-water cells taken out: {int((solid & bridge).sum()):,}", flush=True)
+    solid &= ~bridge
+    # roughness: the spread of the highest returns in 3 x 3 cells (measured here: roofs median 0.4 m, tree crowns 4.9 m)
+    top_ = np.where(has, g['top'], 0).astype(np.float64); mu = ndimage.uniform_filter(top_, 3); rough = np.sqrt(np.maximum(ndimage.uniform_filter(top_ * top_, 3) - mu * mu, 0))
     hs = ndimage.median_filter(np.where(solid, hag, 0), size=3); hs = np.where(solid, np.maximum(hs, np.minimum(hag, 2.0)), 0)
     lab, k = ndimage.label(solid, structure=np.ones((3, 3), bool)); objs = ndimage.find_objects(lab)
     print(f"{k:,} raised solid patches", flush=True)
@@ -255,7 +285,9 @@ def houses(a):
     T = TILES; tiles = {}; nb_ = dict(kept=0, cars=0, small=0, levels=0, blocks=0, simple=0, pieces=0)
     tbox = lambda tr, tc: (round(box[0] - tr * (box[0] - box[1]) / T, 6), round(box[0] - (tr + 1) * (box[0] - box[1]) / T, 6), round(box[2] + tc * (box[3] - box[2]) / T, 6), round(box[2] + (tc + 1) * (box[3] - box[2]) / T, 6))
     allb = []; struct = np.zeros((n, n), bool)
+    import time; t_0 = time.time()
     for idx, sl in enumerate(objs, start=1):
+        if idx % 2000 == 0: print(f"  {idx:,} of {k:,} patches, {time.time() - t_0:.0f} s", flush=True)
         if sl is None: continue
         r0, c0 = sl[0].start, sl[1].start; m = lab[sl] == idx; h = hs[sl]; area = float(m.sum())
         if area < 3: continue
@@ -265,6 +297,10 @@ def houses(a):
         u = xs * math.cos(t) + ys * math.sin(t); v = -xs * math.sin(t) + ys * math.cos(t); L, Wd = sorted([np.ptp(u) + 1, np.ptp(v) + 1], reverse=True)
         if (area < 25 and p90 < 2.6) or (area < 70 and p90 < 4.3 and Wd < 3.4): nb_['cars'] += 1; continue
         if area < 9 and p90 < 6: nb_['small'] += 1; continue
+        # a tree the solid test let through (bare crowns in a spring survey give single returns too): rough, and the photo
+        # reads a plant. Tall lattice (the furnaces) is rough too but reads no plant
+        rmed = float(np.median(rough[sl][m])); nmed = float(np.median(nd3[sl][m]))
+        if (rmed > 1.5 and nmed > 0.0) or (rmed > 2.5 and top < 25 and nmed > -0.03) or (nmed > 0.06 and top < 30): nb_['trees'] = nb_.get('trees', 0) + 1; continue
         nb_['kept'] += 1; struct[sl] |= m
         cc = (c0 + xs.mean() + 0.5, r0 + ys.mean() + 0.5); clat = box[0] - cc[1] * dlat; clng = box[2] + cc[0] * dlng
         tr, tc = min(T - 1, int((box[0] - clat) / (box[0] - box[1]) * T)), min(T - 1, int((clng - box[2]) / (box[3] - box[2]) * T))
@@ -277,10 +313,13 @@ def houses(a):
             rec = dict(p=[round(q, 1) for xy in P for q in xy], g=round(g0, 1), e=round(max(1.8, e), 1), r=round(max(e, r), 1), a=round(a_ % 180, 1), hw=round(hw, 1), roof=roof,
                        c=[round(sum(p[0] for p in P) / len(P), 1), round(sum(p[1] for p in P) / len(P), 1)] if c is None else c, n6=0, id=idx * 4 + min(part, 3), part=part, rc=rc)
             tiles.setdefault((tr, tc), []).append(rec); allb.append(dict(rec, obj=idx, lat=round(clat, 6), lng=round(clng, 6), area=area, top=round(top, 1)))
-        simple = (p90 - p10 <= 4.0 and top < 20 and area <= 6000)
+        simple = (top < 22 and area <= 8000) or (p90 - p10 <= 4.0 and top < 30 and area <= 20000)   # an ordinary building: walls and a fitted roof (one or two parts)
         if simple:   # one height: a block with its fitted roof (gable / flat), as the park-wide buildings
             uu = (xs + 0.5) * math.cos(t) + (ys + 0.5) * math.sin(t); vv = -(xs + 0.5) * math.sin(t) + (ys + 0.5) * math.cos(t)
             ps = bb.parts(uu, vv, hv.astype(np.float64), 1.0, 0.0)
+            if ps and ps[0][1] > 0 and len(ps[0][0]) == 4:   # a rectangle: only when it covers the cells well (an L of row houses is not one)
+                pu = np.array([p[0] for p in ps[0][0]]); pv = np.array([p[1] for p in ps[0][0]])
+                if area / max(1.0, (pu.max() - pu.min()) * (pv.max() - pv.min())) < 0.8: ps = None
             if ps:
                 nb_['simple'] += 1
                 for kk, (pts, ar, roof) in enumerate(ps):
@@ -292,6 +331,16 @@ def houses(a):
                         else: ru, rv = roof['c'], (pv.min() + pv.max()) / 2
                         cxy = [round(v_, 1) for v_ in to_tile(ru * math.cos(t) - rv * math.sin(t), ru * math.sin(t) + rv * math.cos(t))]
                     put(list(zip(X, Y)), roof['e'], roof['r'], roof['roof'], ang + (0 if roof['axis'] == 0 else 90), roof.get('hw', 0.0), kk, cxy)
+                continue
+            # a footprint the 12-corner outline cannot follow (a block of row houses round a corner): its own outline (up to 80
+            # corners) with a flat roof at the roofs' typical height, and the taller part (2 m or more above) as a second block
+            pts, ar = ring_poly(m)
+            if pts:
+                nb_['simple'] += 1; lo_h = float(np.percentile(hv, 70)); put(pts, lo_h, lo_h)
+                hi = m & (h > lo_h + 2.0)
+                if hi.sum() >= 0.1 * area and hi.sum() >= 20:
+                    p2, _ = ring_poly(hi)
+                    if p2: z2 = float(np.percentile(h[hi], 70)); put(p2, z2, z2, part=1)
                 continue
         # many heights: one block per height step
         nb_['levels'] += 1; part = 0
@@ -318,7 +367,7 @@ def houses(a):
     json.dump(rows, open(f"{a.work}/house_tiles.json", 'w'), indent=1); json.dump(allb, open(f"{a.work}/buildings.json", 'w'))
     np.save(f"{a.work}/struct1.npy", struct)
     print(f"structures kept {nb_['kept']:,} (one-height blocks {nb_['simple']:,}, stacked {nb_['levels']:,}: {nb_['blocks']:,} blocks, {nb_['pieces']:,} footprints cut in pieces); "
-          f"left out as vehicles {nb_['cars']:,}, too small {nb_['small']:,}; records {len(allb):,} in {len(rows)} tiles, {sum(r['bytes'] for r in rows) / 1e3:.0f} KB", flush=True)
+          f"left out as vehicles {nb_['cars']:,}, too small {nb_['small']:,}, trees {nb_.get('trees', 0):,}; records {len(allb):,} in {len(rows)} tiles, {sum(r['bytes'] for r in rows) / 1e3:.0f} KB", flush=True)
 
 
 # Late-autumn colour of the wide grid and the leaf-off call per tree: Copernicus Sentinel-2 L2A, 16 Nov 2023 16:02 UTC
@@ -438,7 +487,10 @@ def detail(a):
     rr = (((wb[0] - (box[0] - (np.arange(n) + .5) * (box[0] - box[1]) / n)) / (wb[0] - wb[1])) * wn).astype(int).clip(0, wn - 1)
     cc = ((((box[2] + (np.arange(n) + .5) * (box[3] - box[2]) / n) - wb[2]) / (wb[3] - wb[2])) * wn).astype(int).clip(0, wn - 1)
     wide_w = ww['cls'][np.ix_(rr, cc)] > 0
-    br = (g['cls'] == 17) & wide_w; g['cnt'] = np.where(br, 0, g['cnt']); g['gcnt'] = np.where(br, 0, g['gcnt'])
+    from scipy import ndimage
+    # the deck itself gives returns, so the wide layer has a gap under each bridge: closed across ~30 m
+    wide_c = ndimage.binary_closing(np.pad(wide_w, 20), structure=np.ones((3, 3), bool), iterations=int(math.ceil(15 / (SIDE / n))))[20:-20, 20:-20] | wide_w
+    br = (g['cls'] == 17) & wide_c; g['cnt'] = np.where(br, 0, g['cnt']); g['gcnt'] = np.where(br, 0, g['gcnt'])
     print(f"close-up box {DETAIL_ID}: {n} x {n} at {cell:g} m; bridge-deck cells over the river opened: {int(br.sum()):,}", flush=True)
     surf, mask, base, st = bd.clean(g, box, n, cell, [STAND, STOP], ww, no_bld=True)
     # no tree where a structure stands (the furnaces' lattice and pipes give several returns like a crown) or where the
@@ -447,13 +499,26 @@ def detail(a):
     if f > 1: struct = struct[:n * f, :n * f].reshape(n, f, n, f).any((1, 3)); nd = nd[:n * f, :n * f].reshape(n, f, n, f).mean((1, 3))
     from scipy import ndimage
     near_s = ndimage.binary_dilation(struct, iterations=max(1, int(round(2 / cell))))
-    tree = mask >= bd.TREE0; drop = tree & (near_s | (bd.box3(nd) < 0.0)); mask[drop] = 0; tree &= ~drop
-    # bare or evergreen in late November: Sentinel-2 16 Nov 2023 NDVI (10 m) over the crown. Measured on the box: oak /
-    # maple woods 0.2-0.45 (bare or brown leaves), conifers and holly 0.55+; between = a weak bare call (class 2)
+    tree = mask >= bd.TREE0; drop = tree & (near_s | (bd.box3(nd) < -0.05)); mask[drop] = 0; tree &= ~drop
+    # the river: the laser's water returns are patchy (a cell with one stray return reads as ground), so every cell of the
+    # wide water layer (closed across the bridges) whose ground lies within 1.5 m of the water level next to it is water
+    wl = bd.fill(np.where(mask == 3, surf, 0.0), mask == 3) if (mask == 3).any() else None
+    if wl is not None:
+        more = wide_c & (mask < bd.TREE0) & (np.abs(surf - wl) < 1.5) & (mask != 3)
+        more = ndimage.binary_opening(more | (mask == 3), structure=np.ones((2, 2), bool)) & more
+        mask[more] = 3; surf = np.where(more, wl, surf); print(f"  water cells added from the wide layer: {int(more.sum()):,}")
+        # the stray returns on the river (speckle): holes in the water up to ~12 m across, at the water's level, are water
+        k_ = max(2, int(round(6 / cell))); w0 = mask == 3
+        wc = ndimage.binary_closing(np.pad(w0, k_), structure=np.ones((3, 3), bool), iterations=k_)[k_:-k_, k_:-k_]
+        wc = ndimage.binary_fill_holes(wc) & ~w0 & (mask < bd.TREE0) & (np.abs(surf - wl) < 2.5)
+        mask[wc] = 3; surf = np.where(wc, wl, surf); print(f"  speckle in the river made water: {int(wc.sum()):,} cells")
+    # bare or evergreen in late November: Sentinel-2 16 Nov 2023 NDVI (10 m, mixes in the lawns: green in November too)
+    # and the NAIP photo of 29 Apr 2022 (1 m: the broadleaf trees bare or in first leaf, NDVI 0.06-0.3; conifers greener).
+    # Evergreen = both green; one of them = a weak bare call (class 2: drawn evergreen only near the stand spot)
     la = box[0] - (np.arange(n) + .5) * (box[0] - box[1]) / n; lo = box[2] + (np.arange(n) + .5) * (box[3] - box[2]) / n
     LO, LA = np.meshgrid(lo, la); au = Autumn(a.work, box, level=0); _, snd, used = au.sample(LO, LA)
     hgt = (mask.astype(np.float64) - bd.TREE0) * bd.TREE_STEP
-    k6 = np.clip(np.round(hgt / 0.6), 1, 81).astype(np.int64); cls6 = np.where(snd >= 0.55, 0, np.where(snd >= 0.48, 2, 1))
+    k6 = np.clip(np.round(hgt / 0.6), 1, 81).astype(np.int64); ndv = bd.box3(bd.box3(nd)); cls6 = np.where((snd >= 0.55) & (ndv >= 0.3), 0, np.where((snd >= 0.6) | (ndv >= 0.35), 2, 1))
     m6 = np.where(tree, 8 + 3 * k6 + cls6, mask).astype(np.uint8)
     F = f"{a.work}/files_{f}m"; os.makedirs(F, exist_ok=True)
     base_m = math.floor(float(surf.min())) - 5; suf = '' if f == 1 else f'_{f}m'
@@ -548,7 +613,7 @@ def sql(a):
     def w_m(b): return round((b['east'] - b['west']) * KX((b['north'] + b['south']) / 2), 1), round((b['north'] - b['south']) * KZ, 1)
     R = dict(REGION, base_m=REGION['base'], step_m=REGION['step'], ground='green', color_path='bethlehem_s2_nov.jpg')
     R['width_m'], R['depth_m'] = w_m(R)
-    R['color_credit'] = ('Heights: USGS 3DEP (lidar 2019, 1 m DEM; terrarium tiles beyond). Ground colour: Copernicus Sentinel-2 (ESA), 16 Nov 2023. '
+    R['color_credit'] = ('Heights: USGS 3DEP (lidar 2019, 1 m DEM, terrarium tiles beyond). Ground colour: Copernicus Sentinel-2 (ESA), 16 Nov 2023. '
                          'Aerial photos: USDA NAIP via USGS, April 2022. Buildings and trees: USGS 3DEP lidar 2019.')
     Nn = dict(NEAR, base_m=NEAR['base'], step_m=NEAR['step'], color_path='bth_bethlehem_steel_stacks_colour.jpg'); Nn['width_m'], Nn['depth_m'] = w_m(Nn)
     rng['width_m'], rng['depth_m'] = w_m(rng)
@@ -575,7 +640,7 @@ def sql(a):
 --   {len(hts)} house tiles (bthb_*, {nh:,} blocks): every building and structure the survey saw in the box, found by the returns
 --     (one return = solid) and the NAIP photo (no plant), the furnaces / casino as stacks of blocks by height step;
 --   {len(tts)} tree tiles (bthc_*, 7 m cells over the near box, bare bit in leaf_path).
--- Before applying: upload the {len(files)} files listed in upload.txt (bucket terrain, same names; {sum(size.values()):,} bytes).
+-- Before applying: upload the {len(files)} files listed in upload.txt (bucket terrain, same names, {sum(size.values()):,} bytes).
 -- No 'Teton' or 'Faroes' row is touched.
 insert into public.terrain_regions (id, north, south, west, east, n, width_m, depth_m, base_m, step_m, path, bytes, ground, note, color_path, color_bytes, color_credit) values
   ({q(R['id'])}, {R['north']}, {R['south']}, {R['west']}, {R['east']}, {R['n']}, {R['width_m']}, {R['depth_m']}, 0, 0.5, {q(R['path'])}, {R['bytes']}, 'green', 'Public terrarium tiles, zoom 12 (~29 m), glitches fixed. Late November, no snow.', {q(R['color_path'])}, {R['color_bytes']}, {q(R['color_credit'])})
@@ -592,7 +657,7 @@ on conflict (id) do nothing;
 insert into public.terrain_house_tiles (id, parent, north, south, west, east, path, bytes, count, note) values
 """ + ",\n".join(f"  ({q(t['id'])}, 'bethlehem', {t['north']}, {t['south']}, {t['west']}, {t['east']}, {q(t['path'])}, {size[t['path']]}, {t['count']}, 'USGS 3DEP lidar 2019: buildings and structures (furnaces, trestle, casino) as blocks by height step, roof colour from NAIP.')" for t in hts) + "\non conflict (id) do nothing;\n"
           + "insert into public.terrain_tree_tiles (id, parent, north, south, west, east, n, lod, step_m, cell_m, path, bytes, trees, note, leaf_path, leaf_bytes) values\n"
-          + ",\n".join(f"  ({q(t['id'])}, 'bethlehem', {t['north']}, {t['south']}, {t['west']}, {t['east']}, {t['n']}, 0, {t['step_m']}, {t['cell_m']}, {q(t['path'])}, {size[t['path']]}, {t['trees']}, 'USGS 3DEP lidar 2019, 7 m cells; bare in late November from Sentinel-2 16 Nov 2023.', {q(t['leaf_path'])}, {size[t['leaf_path']]})" for t in tts)
+          + ",\n".join(f"  ({q(t['id'])}, 'bethlehem', {t['north']}, {t['south']}, {t['west']}, {t['east']}, {t['n']}, 0, {t['step_m']}, {t['cell_m']}, {q(t['path'])}, {size[t['path']]}, {t['trees']}, 'USGS 3DEP lidar 2019, 7 m cells, bare in late November from Sentinel-2 16 Nov 2023.', {q(t['leaf_path'])}, {size[t['leaf_path']]})" for t in tts)
           + "\non conflict (id) do nothing;\n"]
     text = "".join(sq); assert ';' not in text.replace(";\n", "\n"), 'a semicolon inside a string literal'
     low = text.lower(); assert 'drop' not in low and 'delete from' not in low
