@@ -1,4 +1,4 @@
--- 3D sun view for the day shoot 'Bethlehem Steel Stacks' (trip 138477e5-0c0c-44b6-8958-25a31660eef7, Bethlehem PA, 25 Nov 2026), 22 Nov 2026. NOT applied.
+-- 3D sun view for the day shoot 'Bethlehem Steel Stacks' (trip 138477e5-0c0c-44b6-8958-25a31660eef7, Bethlehem PA, 25 Nov 2026), 22 Nov 2026. Applied 22 Nov 2026.
 -- Built by tools/sun3d/bethlehem/build_bethlehem.py (README.md there). The whole NEW_TRIP_SOP 4b stack, new rows only (ids bth*):
 --   wide region 'bethlehem' (60 x 61 km): terrarium tiles zoom 12 (~29 m), a 720 m spike and a source seam SW of Allentown
 --     fixed (despike + Copernicus GLO-30 over the seam). Colour: Sentinel-2 16 Nov 2023 (late-autumn, light of 11 AM divided out);
