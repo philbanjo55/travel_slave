@@ -73,11 +73,10 @@ function lookupReciprocity(metered: number, dataPoints: [number, number][]): num
 // straight from no correction at 0.99 s to the full 1 s figure (Tri-X: 1 s -> 2 s).
 const TRIX_DATA: [number, number][] = [[0.1, 0.1], [1, 2], [10, 50], [100, 1200]];     // Kodak F-4017 (10-21)
 const TMX_DATA: [number, number][] = [[0.1, 0.1], [1, 1.26], [10, 15], [100, 200]];    // Kodak F-4016: +1/3 at 1 s
-// T-Max 400: Kodak's current sheet by default, Bond's 2003 field test (older emulsion) as an option.
+// T-Max 400: Kodak's current sheet. (Until Nov 2026 this mixed the pre-2007 sheet,
+// T-Max 100's 100 s value and Bond's 2003 test: [[1,1],[10,15],[100,200],[240,540]].)
 const TMY_KODAK: [number, number][] = [[1, 1], [10, 12.6], [100, 300]];                 // Kodak F-4043 (2-16)
-const TMY_BOND: [number, number][] = [[1, 1], [10, 15], [100, 200], [240, 540]];        // Bond 2003 field test
 const TMY_SOURCE_KODAK = 'Kodak F-4043';
-const TMY_SOURCE_BOND = 'Bond 2003 field test (older emulsion)';
 
 type FilmStock = {
   name: string;
@@ -140,7 +139,9 @@ function calculate(stock: FilmStock, metered: number): number {
 // Ilford's published power-law method. calculate() is monotonic increasing, so
 // bisection inverts it for any film model (power, lookup, or special-case).
 function invertReciprocity(stock: FilmStock, targetCorrected: number): number {
-  if (targetCorrected <= 1) return targetCorrected; // identity domain (<1s, no correction)
+  // Identity below 1 s, except for lookups that ease in from 1/10 s (Tri-X, T-Max 100).
+  const startsLower = stock.method === 'lookup' && stock.data![0][0] < 1;
+  if (targetCorrected <= 1 && !startsLower) return targetCorrected;
   let lo = 0.001, hi = targetCorrected; // metered is always <= corrected
   for (let i = 0; i < 60; i++) {
     const mid = (lo + hi) / 2;
@@ -179,7 +180,6 @@ export default function ReciprocityScreen() {
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [deltaP, setDeltaP] = useState<1.26 | 1.20>(1.26);
   const [customP, setCustomP] = useState(1.26);
-  const [tmySource, setTmySource] = useState<'kodak' | 'bond'>('kodak');
   const [stopAdjust, setStopAdjust] = useState(0); // dial: +/- stops applied to metered base
   // Off (default): the reading was taken without the filters, so the stack is added before
   // reciprocity. On: the meter already read through them (or its ND EV field had them).
@@ -218,9 +218,7 @@ export default function ReciprocityScreen() {
     ? { ...rawStock, p: deltaP, source: `Ilford official (P=${deltaP})` }
     : rawStock.name === 'Custom'
       ? { ...rawStock, p: customP, source: `User defined (P=${customP.toFixed(2)})` }
-      : rawStock.name === 'T-Max 400' && tmySource === 'bond'
-        ? { ...rawStock, data: TMY_BOND, source: TMY_SOURCE_BOND, dataMax: 240 }
-        : rawStock;
+      : rawStock;
   const meteredBase = parseFloat(inputTime) || 0;
   // The dial shifts the METERED reading by +/- stops, and reciprocity is then
   // computed on the shifted value. Adjusting the *input* (not the corrected time)
@@ -488,25 +486,6 @@ export default function ReciprocityScreen() {
               >
                 <Text style={[styles.pToggleText, deltaP === p && styles.pToggleTextActive]}>
                   {p.toFixed(2)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {/* T-Max 400 source toggle: Kodak's current sheet or Bond's older field test */}
-        {rawStock.name === 'T-Max 400' && (
-          <View style={styles.pToggleRow}>
-            <Text style={styles.pToggleLabel}>Data:</Text>
-            {(['kodak', 'bond'] as const).map(src => (
-              <TouchableOpacity
-                key={src}
-                style={[styles.pToggleBtn, tmySource === src && styles.pToggleBtnActive]}
-                onPress={() => setTmySource(src)}
-                accessibilityLabel={`T-Max 400 data: ${src === 'kodak' ? 'Kodak' : 'Bond'}`}
-              >
-                <Text style={[styles.pToggleText, tmySource === src && styles.pToggleTextActive]}>
-                  {src === 'kodak' ? 'Kodak' : 'Bond'}
                 </Text>
               </TouchableOpacity>
             ))}
