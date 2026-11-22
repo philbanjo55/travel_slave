@@ -125,6 +125,7 @@ const CALL_TIMEOUT_MS = 12000;
 let regions: TerrainRegion[] | null = null;
 let nears: TerrainNear[] | null = null;
 let details: TerrainDetail[] | null = null;
+let detailsAt = 0;   // when the server last answered the detail list (22 Nov 2026: a box added while the app ran never showed)
 let treeTiles: TerrainTreeTile[] | null = null;
 let rangeList: TerrainRange[] | null = null;
 let houseList: TerrainHouseTile[] | null = null;
@@ -212,7 +213,7 @@ function askDetail(): Promise<TerrainDetail[] | null> {
       const [{ data: rows0, error }, r4] = (await Promise.race([Promise.all([call, call4]), timeout])) as any;
       if (error || !Array.isArray(rows0)) throw error ?? new Error('no detail list');
       const rows = [...rows0, ...(r4 && !r4.error && Array.isArray(r4.data) ? r4.data : [])];
-      details = rows as TerrainDetail[];
+      details = rows as TerrainDetail[]; detailsAt = Date.now(); detailAsk = null;
       try { await ensureDir(); await FileSystem.writeAsStringAsync(DETAIL_FILE, JSON.stringify(rows)); } catch { /* the list is still usable */ }
       return details;
     } catch {
@@ -222,9 +223,18 @@ function askDetail(): Promise<TerrainDetail[] | null> {
   })();
   return detailAsk;
 }
+// Asked again after DETAIL_FRESH_MS, and a saved copy is used only when the server has not answered within
+// DETAIL_WAIT_MS (22 Nov 2026: a new box, Emily's Pond, never showed: the saved list was used and the app kept the
+// first answer of the run for good). With no signal the wait costs DETAIL_WAIT_MS once.
+const DETAIL_FRESH_MS = 10 * 60 * 1000;
+const DETAIL_WAIT_MS = 2500;
 async function loadDetail(): Promise<TerrainDetail[]> {
-  if (details) return details;
+  if (details && Date.now() - detailsAt < DETAIL_FRESH_MS) return details;
   const ask = askDetail();
+  const wait = new Promise<null>(res => setTimeout(() => res(null), DETAIL_WAIT_MS));
+  const quick = await Promise.race([ask, wait]);
+  if (quick) return quick;
+  if (details) return details;
   try {
     const saved = JSON.parse(await FileSystem.readAsStringAsync(DETAIL_FILE));
     if (Array.isArray(saved)) return saved as TerrainDetail[];
