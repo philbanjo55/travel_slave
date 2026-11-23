@@ -1481,10 +1481,12 @@ def crop_checks():
         line = next((t for t in s.all_texts if '3:2 print:' in t), None)
         V.check('crop-3-2', line is not None, (line or 'no "3:2 print:" line after picking 3:2')[:110])
         V.check('crop-film-line', any(t.startswith('Uses ') and 'negative' in t for t in s.all_texts), 'what the crop uses of the film')
-        before = next((t for t in s.all_texts if t.endswith(' in') and t[:-3].isdigit()), None)
+        # the long side steps 0.5 in a tap since 7f9d369 ("30.5 in"), so a decimal counts
+        isin = lambda t: re.fullmatch(r'\d+(\.\d+)? in', t.strip()) is not None
+        before = next((t for t in s.all_texts if isin(t)), None)
         if V.tap_text(s, 'Longer print'):
             time.sleep(1); s2 = C.capture(1)
-            after = next((t for t in s2.all_texts if t.endswith(' in') and t[:-3].isdigit()), None)
+            after = next((t for t in s2.all_texts if isin(t)), None)
             V.check('crop-long-step', before is not None and after is not None and after != before, f'{before} -> {after}')
             V.tap_text(s2, 'Shorter print'); time.sleep(0.8)
         cut_off('3d-crop-panel', C.capture(1))
