@@ -90,6 +90,7 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
   // Find me (Phil, 23 Nov 2026): the phone's GPS spot on the picture. Works with no signal (GPS needs none).
   const me = useFindMe(on);
   const meSent = useRef(false);
+  const [meOut, setMeOut] = useState(false);   // the page says you're outside its map
   useEffect(() => {
     if (!on || !ready) return;
     if (!me.on || !me.pos) { run('window.S3D.overheadMe && window.S3D.overheadMe(null)'); meSent.current = false; return; }
@@ -102,10 +103,12 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
   const meLine = !me.on ? null
     : me.perm === 'no' ? 'Location is off for this app'
     : !me.pos ? 'Finding you…'
+    : meOut ? `You're outside this map${selPair ? ` · ${fmtDist(distanceM(me.pos, selPair.v))} to ${selPair.code ?? 'the shot'}` : ''}`
     : `You · ±${Math.max(1, Math.round(me.pos.acc ?? 0))} m${selPair ? ` · ${fmtDist(distanceM(me.pos, selPair.v))} to ${selPair.code ?? 'the shot'}` : ''}`;
 
   // true = the page's message was for the overhead view
   const onMessage = useCallback((m: any): boolean => {
+    if (m.type === 'overheadMe') { setMeOut(!!m.outside); return true; }
     if (m.type === 'overheadTap') { const p = pairsRef.current.find(x => x.vantage_id === m.id); if (p && pickRef.current) pickRef.current(p); return true; }
     if (m.type === 'overheadView' || m.type === 'overhead') {
       if (typeof m.up === 'number') setUp(m.up);

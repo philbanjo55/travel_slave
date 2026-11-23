@@ -2439,7 +2439,7 @@
   // Find me (Phil, 23 Nov 2026): the phone's GPS spot as a blue dot over everything, with a soft circle for its accuracy
   // and a fan the way the phone faces (S3D.overheadMe; no signal needed: the GPS, the terrain and the trails are on the phone)
   function ohMe() {
-    const me = OH.me, g = OH.g2; if (!me || !g || !FAR) return;
+    const me = OH.me, g = OH.g2; if (!me || !g || !FAR || OH.meOut) return;
     const w = window.innerWidth || 1, h = window.innerHeight || 1, q = ohXZ(me), p = ohProj(q.x, ohH(me), q.z, w, h), mpp = OH.span / w;
     const r = Math.max(10, (+me.acc || 5) / mpp);
     g.beginPath(); g.arc(p.x, p.y, r, 0, 2 * Math.PI); g.fillStyle = 'rgba(66,133,244,0.18)'; g.fill(); g.lineWidth = 1; g.strokeStyle = 'rgba(66,133,244,0.5)'; g.stroke();
@@ -2747,7 +2747,16 @@
     // overheadMe({ lat, lng, acc?, heading?, center? } | null): Find me's dot; center = put it in the middle of the screen
     overheadMe(o) {
       OH.me = o && Number.isFinite(+o.lat) && Number.isFinite(+o.lng) ? { lat: +o.lat, lng: +o.lng, acc: o.acc, heading: o.heading } : null;
-      if (OH.me && o.center && FAR) { OH.anchored = false; const q = ohXZ(OH.me); OH.cx = q.x; OH.cz = q.z; if (+o.span > 0) OH.span = Math.max(OH_MIN, Math.min(OH_MAX, +o.span)); ohClamp(); ohSay(); }
+      // outside the map (23 Nov 2026: at home the view went to the map's corner, all black): say so, keep the view on the shots
+      let out = false;
+      if (OH.me && FAR) { const q = ohXZ(OH.me); out = !(q.x >= 0 && q.x <= FAR.w && q.z >= 0 && q.z <= FAR.d); }
+      if (OH.me && o.center && FAR) {
+        if (out) ohFit();
+        else { OH.anchored = false; const q = ohXZ(OH.me); OH.cx = q.x; OH.cz = q.z; if (+o.span > 0) OH.span = Math.max(OH_MIN, Math.min(OH_MAX, +o.span)); ohClamp(); }
+        ohSay();
+      }
+      if (OH.me && out !== OH.meOut) { OH.meOut = out; post({ type: 'overheadMe', outside: out }); }
+      if (!OH.me) OH.meOut = undefined;
       dirty = true;
     },
     overheadMarks(v) { OH.marks = v !== false; dirty = true; },   // the cone, the other shots' wedges and the sun arrows / band on or off
