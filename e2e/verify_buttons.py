@@ -1713,18 +1713,11 @@ def emily_3d():
     box (10 m heights, water from the summer photo, no trees or buildings) comes in as the foreground."""
     if open_live() is None:
         return
-    p = C.capture(1)
-    found = False
-    for k in range(8):
-        if V.tap_text(p, 'Nov 17', exact=True):
-            found = True; break
-        C.adb('shell', 'input', 'swipe', '300', '384', '900', '384', '300'); p = C.capture(0.8)   # earlier days are to the left
-    V.check('em3d-day', found, 'Day 2 tab (Nov 17)')
-    if not found:
-        return
-    time.sleep(3)
+    # 23 Nov 2026: the practice round rolls every week, so the day is looked up, not hard-coded ('Nov 17' was Day 2 of the
+    # 16-22 Nov round)
     row = re.compile(r"^\d{1,2}:\d{2} [AP]M .*Emily.s Pond")
-    stop = sun3d_find_row(C.capture(1.0), row)
+    stop = open_stop_on_days(row, 'em3d', name="Emily")
+    V.check('em3d-day', stop is not None, 'a day holding Emily\'s Pond Levee')
     V.check('em3d-stop', stop is not None, (stop or "no Emily's Pond Levee row on Day 2")[:80])
     if stop is None:
         return
@@ -2129,8 +2122,321 @@ def find_spot():
     V.check('spot-back', alive and focus == V.PKG, f'back from Your spot keeps the app open (alive {alive}, focus {focus})')
 
 
+# ---- 23 Nov 2026: trail line, Find me (real GPS through the emulator) and the 3D framer's camera row -------------------
+def open_stop_on_days(row, tag, days=7, name=None):
+    """On the open trip page, step through the day tabs from today and open the first timeline row matching row.
+    Returns the row's label or None. (The practice trip rolls every week, so dates are never hard-coded.)"""
+    d0 = datetime.datetime.now(ZoneInfo('America/Denver'))
+    s = C.capture(1.0)
+    for k in range(days):
+        want = d0 + datetime.timedelta(days=k); short = f"{want.strftime('%b')} {want.day}"
+        scroll_top(6); t = C.capture(1.0); hit = False
+        for sw in ('left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right'):
+            if V.tap_text(t, short, exact=True):
+                hit = True; break
+            if sw == 'left':
+                C.adb('shell', 'input', 'swipe', '900', '384', '300', '384', '300')
+            else:
+                C.adb('shell', 'input', 'swipe', '300', '384', '900', '384', '300')
+            t = C.capture(0.8)
+        if not hit:
+            continue
+        s = C.capture(3.0)
+        # a quick look first: skip the slow row search on a day that does not hold the stop at all
+        seen, _ = V.texts_all(4)
+        if name and not any(name.lower() in x.lower() for x in seen):
+            continue
+        scroll_top(6); s = C.capture(1.0)
+        lab = sun3d_find_row(s, row)
+        if lab is not None:
+            print(f'INFO {tag}: opened "{lab[:60]}" on {short}', flush=True)
+            return lab
+    return None
+
+
+def section_to(st, needle='SUN & MOON', lo=0.18, hi=0.40):
+    """Bring the Sun & Moon heading to the upper part of the screen, scrolling either way (heading is plain text)."""
+    H = 2400
+    for _ in range(8):
+        y = next((((C.bounds(nd)[1] + C.bounds(nd)[3]) // 2) for nd in (st.root.iter('node') if st.root is not None else [])
+                  if nd.get('package') == V.PKG and (nd.get('text') or nd.get('content-desc') or '') == needle), None)
+        if y is not None and lo * H <= y <= hi * H:
+            return st
+        if y is None:
+            C.adb('shell', 'input', 'swipe', '540', '900', '540', '1500', '500')   # above us: move the content down
+        else:
+            d = max(-700, min(700, int(y - 0.28 * H)))
+            C.adb('shell', 'input', 'swipe', '540', str(int(0.6 * H)), '540', str(int(0.6 * H) - d), '600')
+        st = C.capture(1.2)
+    return st
+
+
+def screen_rgba():
+    """The screen as (w, h, bytes RGBA) from a raw screencap (no PNG decoding needed on the runner)."""
+    raw = C.adb('exec-out', 'screencap', binary=True, timeout=60)
+    if len(raw) < 16:
+        return None
+    import struct
+    w, h = struct.unpack('<II', raw[:8])
+    hdr = len(raw) - w * h * 4
+    if hdr < 12 or hdr > 32:
+        return None
+    return w, h, raw[hdr:]
+
+
+def count_colour(img, box, rgb, tol, skip=()):
+    """Pixels inside box (x1, y1, x2, y2) within tol of rgb on every channel; boxes in skip are left out."""
+    if img is None:
+        return -1
+    w, h, px = img
+    x1, y1, x2, y2 = max(0, box[0]), max(0, box[1]), min(w, box[2]), min(h, box[3])
+    try:
+        import numpy as np
+        a = np.frombuffer(px, dtype=np.uint8)[: w * h * 4].reshape(h, w, 4)[:, :, :3].astype(np.int16)
+        m = (np.abs(a - np.array(rgb, dtype=np.int16)) <= tol).all(axis=2)
+        keep = np.zeros((h, w), dtype=bool); keep[y1:y2, x1:x2] = True
+        for a1, b1, c1, d1 in skip:
+            keep[max(0, b1):max(0, d1), max(0, a1):max(0, c1)] = False
+        return int((m & keep).sum())
+    except ImportError:
+        pass
+    r0, g0, b0 = rgb; n = 0
+    for y in range(y1, y2, 1):
+        row = y * w * 4
+        for x in range(x1, x2, 1):
+            if any(a <= x < c and b <= y < d for a, b, c, d in skip):
+                continue
+            i = row + x * 4
+            if abs(px[i] - r0) <= tol and abs(px[i + 1] - g0) <= tol and abs(px[i + 2] - b0) <= tol:
+                n += 1
+    return n
+
+
+def node_box(st, start):
+    for nd in (st.root.iter('node') if st is not None and st.root is not None else []):
+        t = nd.get('content-desc') or nd.get('text') or ''
+        if nd.get('package') == V.PKG and t.startswith(start):
+            return C.bounds(nd), t
+    return None, None
+
+
+def btn_boxes(st, starts):
+    out = []
+    for nd in (st.root.iter('node') if st is not None and st.root is not None else []):
+        t = nd.get('content-desc') or nd.get('text') or ''
+        if nd.get('package') == V.PKG and t.startswith(starts):
+            out.append(tuple(C.bounds(nd)))
+    return out
+
+
+PINK = (0xFF, 0x5F, 0xA2)
+BLUE = (0x42, 0x85, 0xF4)
+JENNY_FIX = [(-110.73292, 43.7135), (-110.73292, 43.7162)]   # on the Jenny Lake ski route, then ~300 m north
+
+
+def geo(lng, lat, n=3):
+    for _ in range(n):
+        C.adb('emu', 'geo', 'fix', str(lng), str(lat)); time.sleep(1)
+
+
+def cam_row_checks():
+    """3D framer camera row (23 Nov 2026): 4x5 / 6x17 back / Fuji 6x9, then the lens tabs (none for the Fuji)."""
+    def lab0(c): return c['label'].split(' | ')[0]
+    def cam(st, say): return next((c for c in st.clickables if lab0(c) == say), None)
+    def lenses(st): return [lab0(c) for c in st.clickables if re.match(r'^\d+ millimetre lens', lab0(c))]
+    def caption(st): return next((t for t in st.all_texts if t.startswith('Looking ')), '')
+    st = C.capture(1)
+    have = [x for x in ('4 by 5 film', '6 by 17 back on the 4 by 5', 'Fuji 6 by 9, fixed 90 millimetre lens') if cam(st, x)]
+    V.check('cam617-row', len(have) == 3, f'camera tabs {have}')
+    if len(have) < 3:
+        print('INFO cam617 clickables: ' + ' ; '.join(c['label'][:40] for c in st.clickables)[:1500], flush=True); return
+    print(f'INFO cam617 before: caption "{caption(st)[:70]}" lenses {lenses(st)}', flush=True)
+    C.tap(cam(st, '6 by 17 back on the 4 by 5')['xy']); time.sleep(2.5); st = C.capture(1)
+    cap, ls = caption(st), lenses(st)
+    V.check('cam617-caption', 'on 6×17' in cap, cap[:80] or 'no caption')
+    V.check('cam617-lenses', len(ls) == 4 and all(x.endswith(' on 6 by 17') for x in ls), '; '.join(ls)[:160] or 'no lens tabs')
+    V.show('cam617-617', st)
+    C.tap(cam(st, 'Fuji 6 by 9, fixed 90 millimetre lens')['xy']); time.sleep(2.5); st = C.capture(1)
+    cap, ls = caption(st), lenses(st)
+    V.check('cam617-fuji-no-lens', not ls, 'lens tabs hidden' if not ls else 'still shown: ' + '; '.join(ls)[:120])
+    V.check('cam617-fuji-caption', '90 mm on 6×9' in cap, cap[:80] or 'no caption')
+    C.tap(cam(st, '4 by 5 film')['xy']); time.sleep(2.5); st = C.capture(1)
+    cap, ls = caption(st), lenses(st)
+    V.check('cam617-back-4x5', 'on 4×5' in cap and len(ls) == 4 and not any('6 by 17' in x for x in ls), f'{cap[:60]} / {"; ".join(ls)[:100]}')
+    V.check('cam617-alive', C.app_alive() and V.has(st, 'Looking '), 'view still drawn')
+
+
+def jenny_3d(denied=True):
+    """Jenny Lake on Teton Live: 3D tab camera row (cam617-*), Overhead -> 3D look: Phil's ski route as a pink line
+    (trail-*), Find me with real emulator GPS fixes (gps-*). Offline (offline_jenny) the same with no signal."""
+    C.adb('shell', 'cmd', 'location', 'set-location-enabled', 'true')
+    C.adb('shell', 'pm', 'grant', V.PKG, 'android.permission.ACCESS_FINE_LOCATION')
+    C.adb('shell', 'pm', 'grant', V.PKG, 'android.permission.ACCESS_COARSE_LOCATION')
+    geo(*JENNY_FIX[0])
+    if open_live() is None:
+        return
+    row = re.compile(r'^\d{1,2}:\d{2} [AP]M .*(Jenny Lake)')
+    lab = open_stop_on_days(row, 'jenny', name='Jenny Lake')
+    V.check('jenny-stop', lab is not None, (lab or 'no Jenny Lake row in the next 7 days')[:80])
+    if lab is None:
+        return
+    time.sleep(4)
+    st = scroll_find('SUN & MOON', 14)
+    if st is None:
+        V.check('jenny-section', False, 'no Sun & Moon section'); return
+    st = section_to(st)
+    V.tap_text(st, '3D', exact=True)   # 3D is the default tab
+    f0 = scroll_find('Open the 3D view full screen', 8)
+    if f0 is not None:
+        mid_screen(f0, 'Open the 3D view full screen')
+    t0 = time.time(); ok = False; c = C.capture(2)
+    for _ in range(40):
+        if V.has(c, 'Looking '):
+            ok = True; break
+        c = C.capture(3)
+    V.check('jenny-3d-ready', ok, f'drawn {time.time() - t0:.0f} s after the tab' if ok else 'no caption')
+    if ok and not OFFLINE:
+        try:
+            cam_row_checks()
+        except Exception as e:
+            V.check('cam617-run', False, f'stopped: {e!r}'[:120])
+    # Overhead tab, 3D look
+    st = section_to(C.capture(1), lo=0.15, hi=0.35)
+    V.check('trail-overhead-tab', V.tap_text(st, 'Overhead', exact=True), 'tap the Overhead tab')
+    t0 = time.time(); olab = None; o = None
+    for _ in range(50):
+        o = C.capture(2); box, olab = node_box(o, ('Overhead 3D', 'Overhead satellite'))
+        if olab and (olab.startswith('Overhead satellite') or ' ready' in olab or 'failed' in olab):
+            break
+    if olab and olab.startswith('Overhead satellite'):   # the look choice is kept on the phone: go to 3D
+        t3 = next((c for c in o.clickables if c['label'].split(' | ')[0].startswith('Overhead look: 3D')), None)
+        if t3: C.tap(t3['xy'])
+        for _ in range(45):
+            o = C.capture(2); box, olab = node_box(o, 'Overhead 3D')
+            if olab and ' ready' in olab: break
+    ready = bool(olab and olab.startswith('Overhead 3D') and ' ready' in olab)
+    V.check('trail-3d-ready', ready, f'{(olab or "no overhead view")[:50]} after {time.time() - t0:.0f} s')
+    if not ready:
+        print('INFO trail on screen: ' + ' | '.join(x for x in o.all_texts if len(x.strip()) > 2)[:1500], flush=True); return
+    # the whole overhead panel on screen, between the bars
+    top, nav, W, H = bars(o)
+    for _ in range(4):
+        box, olab = node_box(o, 'Overhead 3D')
+        if box is None or (box[1] >= top + 10 and box[3] <= nav - 10):
+            break
+        mid = (box[1] + box[3]) // 2; d = max(-700, min(700, mid - (top + nav) // 2))
+        C.adb('shell', 'input', 'swipe', '540', '1500', '540', str(1500 - d), '600'); o = C.capture(1.5)
+    box, olab = node_box(o, 'Overhead 3D')
+    clip = (box[0], max(box[1], top), box[2], min(box[3], nav)) if box else None
+    print(f'INFO trail panel {box} clip {clip} bars top {top} nav {nav}', flush=True)
+    skip = btn_boxes(o, ('Find me', 'Sun o', 'Cone and', 'Picture faces', 'Tap to face', 'Zoom', 'Open the overhead', 'Close the overhead'))
+    pink = 0; t1 = time.time()
+    for _ in range(6):   # the routes come from the server (or the phone's cache) a moment after the page is ready
+        pink = count_colour(screen_rgba(), clip, PINK, 40, skip) if clip else -1
+        if pink > 300: break
+        time.sleep(3)
+    C.screenshot('trail-jenny')
+    V.check('trail-pink', pink > 300, f'{pink} pink pixels (#FF5FA2 +-40) in the overhead view {time.time() - t1:.0f} s after ready')
+    # ---- Find me with real GPS fixes
+    blue0 = count_colour(screen_rgba(), clip, BLUE, 30, skip) if clip else -1
+    o = C.capture(1)
+    me = next((c for c in o.clickables if c['label'].split(' | ')[0] == 'Find me: show where you are'), None)
+    V.check('gps-button', me is not None, 'Find me button (off)' if me else 'no "Find me: show where you are" button')
+    if me is None:
+        return
+    geo(*JENNY_FIX[0], n=2); C.tap(me['xy'])
+    def pill(st): return next((t for t in st.all_texts if t.startswith(('You · ', 'Finding you', 'Location is off'))), None)
+    p = None; t2 = time.time()
+    for k in range(20):
+        if k % 3 == 0: geo(*JENNY_FIX[0], n=1)
+        st = C.capture(1.5); p = pill(st)
+        if p and p.startswith('You · ±') and ' to ' in p: break
+    V.check('gps-pill', bool(p and re.match(r'^You · ±\d+ m · [\d.]+ (m|km) to ', p)), f'"{p}" {time.time() - t2:.0f} s after the tap')
+    st = C.capture(1)
+    on = next((c['label'].split(' | ')[0] for c in st.clickables if c['label'].startswith('Find me')), None)
+    V.check('gps-button-on', bool(on and on.startswith('Find me is on')), on or 'button gone')
+    time.sleep(2)
+    skip2 = btn_boxes(st, ('Find me', 'Sun o', 'Cone and', 'Picture faces', 'Tap to face', 'Zoom', 'Open the overhead', 'Close the overhead'))
+    blue = count_colour(screen_rgba(), clip, BLUE, 30, skip2) if clip else -1
+    C.screenshot('gps-dot')
+    V.check('gps-dot', blue > 300 and blue > blue0 + 200, f'{blue} blue pixels (#4285F4 +-30) with Find me on, {blue0} before')
+    d1 = re.search(r'· ([\d.]+ (?:m|km)) to ', p or '')
+    geo(*JENNY_FIX[1], n=3)
+    p2 = None
+    for k in range(15):
+        if k % 3 == 0: geo(*JENNY_FIX[1], n=1)
+        st = C.capture(1.5); p2 = pill(st)
+        d2 = re.search(r'· ([\d.]+ (?:m|km)) to ', p2 or '')
+        if d1 and d2 and d2.group(1) != d1.group(1): break
+    d2 = re.search(r'· ([\d.]+ (?:m|km)) to ', p2 or '')
+    V.check('gps-moved', bool(d1 and d2 and d1.group(1) != d2.group(1)), f'"{p}" -> "{p2}" after moving the fix ~300 m north')
+    C.screenshot('gps-moved')
+    st = C.capture(1)
+    on = next((c for c in st.clickables if c['label'].startswith('Find me is on')), None)
+    if on is not None:
+        C.tap(on['xy']); time.sleep(2)
+    st = C.capture(1.5)
+    offl = next((c['label'].split(' | ')[0] for c in st.clickables if c['label'].startswith('Find me')), None)
+    V.check('gps-off', pill(st) is None and offl == 'Find me: show where you are', f'pill {pill(st)!r}, button {offl!r}')
+    V.check('gps-alive', C.app_alive())
+    if not denied or OFFLINE:
+        return
+    # ---- denied: take the permission away (Android stops the app), come back, tap Find me, answer Don't allow
+    C.adb('shell', 'pm', 'revoke', V.PKG, 'android.permission.ACCESS_FINE_LOCATION')
+    C.adb('shell', 'pm', 'revoke', V.PKG, 'android.permission.ACCESS_COARSE_LOCATION')
+    time.sleep(2)
+    try:
+        C.launch()
+        if open_live() is None or open_stop_on_days(row, 'jenny-denied', name='Jenny Lake') is None:
+            V.check('gps-denied', None, 'could not get back to Jenny Lake'); return
+        time.sleep(4)
+        st = scroll_find('SUN & MOON', 14)
+        st = section_to(st or C.capture(1), lo=0.15, hi=0.35)
+        V.tap_text(st, 'Overhead', exact=True)
+        me = None
+        for _ in range(30):
+            o = C.capture(2)
+            me = next((c for c in o.clickables if c['label'].split(' | ')[0] == 'Find me: show where you are'), None)
+            if me: break
+        if me is None:
+            V.check('gps-denied', False, 'no Find me button'); return
+        C.tap(me['xy']); said = None; answered = None
+        for _ in range(12):
+            time.sleep(1.5); root = C.dump()
+            no = next((n for n in (root.iter('node') if root is not None else [])
+                       if (n.get('text') or '').strip().lower() in ("don't allow", 'don’t allow', 'deny')), None)
+            if no is not None:
+                x1, y1, x2, y2 = C.bounds(no); C.tap(((x1 + x2) // 2, (y1 + y2) // 2)); answered = no.get('text'); time.sleep(2)
+            st = C.capture(0.5); said = pill(st)
+            if said and said.startswith('Location is off'): break
+        V.check('gps-denied', said == 'Location is off for this app', f'pill "{said}" (system question answered: {answered})')
+        C.screenshot('gps-denied')
+    finally:
+        C.adb('shell', 'pm', 'grant', V.PKG, 'android.permission.ACCESS_FINE_LOCATION')
+        C.adb('shell', 'pm', 'grant', V.PKG, 'android.permission.ACCESS_COARSE_LOCATION')
+
+
+def offline_jenny():
+    """Find me and the trail line with no signal (GPS needs none; the route and the terrain are saved on the phone).
+    Runs after jenny_3d on the same emulator, so the trip, its terrain and the Jenny Lake route are already saved."""
+    global OFFLINE
+    orig = V.check
+    C.adb('shell', 'svc', 'wifi', 'disable'); C.adb('shell', 'svc', 'data', 'disable'); time.sleep(6)
+    ping = (C.adb('shell', 'ping', '-c', '1', '-W', '2', '8.8.8.8') or '').strip().splitlines()
+    gone = not any(' 0% packet loss' in l for l in ping)
+    orig('gps-offline-network-off', gone, 'the emulator has no way out' if gone else 'the network is still up')
+    OFFLINE = True
+    V.check = lambda name, ok=None, note='': orig('gps-offline-' + name, ok, note)
+    try:
+        C.launch()
+        jenny_3d(denied=False)
+    finally:
+        V.check = orig; OFFLINE = False
+        C.adb('shell', 'svc', 'wifi', 'enable'); C.adb('shell', 'svc', 'data', 'enable'); time.sleep(10)
+
+
 def main():
-    sections = (find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d)
+    sections = (find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d, jenny_3d, offline_jenny)
     # E2E_ONLY = comma list of section names: the workflow runs the sections on several emulators at once (16 Nov 2026)
     only = [x.strip() for x in os.environ.get('E2E_ONLY', '').split(',') if x.strip()]
     if only:
@@ -2139,7 +2445,7 @@ def main():
     for st in sections:
         # Every section starts on a fresh app (16 Nov 2026): one software-graphics freeze in 3D used to leave the app hung
         # and fail every later section with 'no Training trips row'. offline_3d makes its own fresh start.
-        if st is not offline_3d:
+        if st not in (offline_3d, offline_jenny):
             try:
                 C.launch()
             except Exception as e:

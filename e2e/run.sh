@@ -7,6 +7,8 @@ adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.
 sleep 3
 echo "INFO navigation_mode=$(adb shell settings get secure navigation_mode | tr -d '\r') (0 = three buttons, 2 = gestures)"
 adb install -r -g apk/app.apk
+# numpy makes the pixel counts (trail-pink, gps-dot) quick; the checks fall back to plain Python without it
+python3 -m pip install --quiet --user --break-system-packages numpy >/dev/null 2>&1 || python3 -m pip install --quiet --user numpy >/dev/null 2>&1 || true
 adb shell pm grant "${APP_PKG:-com.philmframe.app.test}" android.permission.POST_NOTIFICATIONS || true
 adb emu geo fix -77.1067 38.8816 || true
 adb logcat -c || true

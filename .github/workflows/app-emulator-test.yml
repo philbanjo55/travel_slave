@@ -89,6 +89,10 @@ jobs:
             only: faroes_3d,overhead_walk,stops_page,today_auto_open
           - shard: d
             only: side_by_side_card,plan_check_card,replan_now_card,ghost_accept,plans_tab,tell_t,tell_t_setup
+          # 23 Nov 2026: Jenny Lake: camera row (cam617-*), trail line (trail-*), Find me with real emulator GPS (gps-*),
+          # then the same with no signal (gps-offline-*)
+          - shard: e
+            only: jenny_3d,offline_jenny
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

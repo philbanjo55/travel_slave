@@ -91,7 +91,7 @@ def read_mask(path):
 
 
 def box_mask_path(files, r):
-    p = os.path.join(files, r['mask_path'])
+    p = os.path.join(files, os.path.basename(r['mask_path']))   # a rows file may hold full paths (build_detail.py's detail.json)
     if not os.path.exists(p): sys.exit('no mask ' + p)
     return p
 
@@ -189,7 +189,7 @@ def boxes(a):
         cw_ = np.zeros(len(bare) + 1, bool); cw_[1:] = bare & (X[:, 0] >= E_STRONG); cell_weak = cw_[s['lab']]   # the weak calls (see Mask v6)
         k = np.clip(np.round(H / 0.6), 1, 81).astype(np.int32)
         m6 = np.where(m >= 8, 8 + 3 * k + np.where(cell_bare, np.where(cell_weak, 2, 1), 0), m).astype(np.uint8)
-        name = r['mask_path'].replace('_mask_v4.png', '_mask_v6.png'); path = os.path.join(a.out, name); bd.write_mask(path, m6)
+        name = os.path.basename(r['mask_path']).replace('_mask_v4.png', '_mask_v6.png'); path = os.path.join(a.out, name); bd.write_mask(path, m6)
         st = dict(id=r['id'], leaf_mask_path=name, leaf_mask_bytes=os.path.getsize(path), trees=int(len(bare2)), trees_4m=int((s2['h'] >= 4).sum()),
                   bare_4m=round(float(bare2[s2['h'] >= 4].mean()), 3), bare_cells=round(float(cell_bare[H > 0].mean()), 3),
                   weak_cells=round(float(cell_weak[H > 0].mean()), 3))

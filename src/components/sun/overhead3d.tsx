@@ -1,9 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import type { Pair } from '../../utils/sunEngine';
+import { distanceM } from '../../utils/sunEngine';
+import { declinationDeg } from '../../utils/declination';
 import { SUN, shortName } from './sunStyle';
 import { shotFov } from './shotFov';
+import type { TrailRoute } from '../../services/trailRoutes';
 
 // Overhead, our own 3D look (Phil, 16 Nov 2026): the 3D page (tools/sun3d/app_view.js) looking straight down over every
 // shot of the place, with our winter ground, buildings, trees and the real calculated shadows at the slider's time,
@@ -19,6 +23,7 @@ export type Overhead3D = {
   sunOn: boolean;
   onSun: (on: boolean) => void;
   shaded?: boolean;               // a ridge shades the picked shot's subject now (grey arrows); left out = the page works it out
+  routes?: TrailRoute[];          // Phil's AllTrails routes through the place (services/trailRoutes), a pink line on the ground
 };
 
 type Mode = 'view' | 'north' | 'turned';
@@ -73,6 +78,32 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [on, ready, shotsKey, sunOn, shaded, marks, run]);
 
+  // the trails, sent once the page is ready and again when they change (they come from the phone's cache or the server)
+  const routes = overhead?.routes ?? [];
+  const routesKey = routes.map(r => `${r.id}:${r.coords.length}`).join('|');
+  useEffect(() => {
+    if (!on || !ready) return;
+    run(`window.S3D.overheadRoutes && window.S3D.overheadRoutes(${JSON.stringify(routes)})`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [on, ready, routesKey, run]);
+
+  // Find me (Phil, 23 Nov 2026): the phone's GPS spot on the picture. Works with no signal (GPS needs none).
+  const me = useFindMe(on);
+  const meSent = useRef(false);
+  useEffect(() => {
+    if (!on || !ready) return;
+    if (!me.on || !me.pos) { run('window.S3D.overheadMe && window.S3D.overheadMe(null)'); meSent.current = false; return; }
+    const msg = { lat: me.pos.lat, lng: me.pos.lng, acc: me.pos.acc, heading: me.heading, center: !meSent.current, span: meSent.current ? undefined : 900 };
+    meSent.current = true;
+    run(`window.S3D.overheadMe && window.S3D.overheadMe(${JSON.stringify(msg)})`);
+  }, [on, ready, me.on, me.pos, me.heading, run]);
+  const recenter = () => { meSent.current = false; me.setOn(true); if (me.pos) run(`window.S3D.overheadMe && window.S3D.overheadMe(${JSON.stringify({ lat: me.pos.lat, lng: me.pos.lng, acc: me.pos.acc, heading: me.heading, center: true })})`); };
+  const selPair = (overhead?.pairs ?? []).find(p => p.vantage_id === overhead?.selId);
+  const meLine = !me.on ? null
+    : me.perm === 'no' ? 'Location is off for this app'
+    : !me.pos ? 'Finding you…'
+    : `You · ±${Math.max(1, Math.round(me.pos.acc ?? 0))} m${selPair ? ` · ${fmtDist(distanceM(me.pos, selPair.v))} to ${selPair.code ?? 'the shot'}` : ''}`;
+
   // true = the page's message was for the overhead view
   const onMessage = useCallback((m: any): boolean => {
     if (m.type === 'overheadTap') { const p = pairsRef.current.find(x => x.vantage_id === m.id); if (p && pickRef.current) pickRef.current(p); return true; }
@@ -123,12 +154,77 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
           <Text style={styles.zoomText}>−</Text>
         </TouchableOpacity>
       </View>
+      <TouchableOpacity
+        style={[styles.meBtn, me.on && styles.meBtnOn]}
+        onPress={() => (me.on && me.pos ? (meSent.current ? me.setOn(false) : recenter()) : recenter())}
+        onLongPress={() => me.setOn(false)}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: me.on }}
+        accessibilityLabel={me.on ? 'Find me is on. Tap to turn it off' : 'Find me: show where you are'}
+        hitSlop={4}
+      >
+        <Ionicons name="locate" size={20} color={me.on ? '#4285F4' : '#ffffff'} />
+      </TouchableOpacity>
+      {meLine ? (
+        <View style={styles.mePill} pointerEvents="none"><Text style={styles.meText} numberOfLines={1}>{meLine}</Text></View>
+      ) : null}
       <TouchableOpacity onPress={onFull} style={styles.fullBtn} accessibilityRole="button" accessibilityLabel={full ? 'Close the overhead view' : 'Open the overhead view full screen'} hitSlop={6}>
         <Ionicons name={full ? 'close' : 'expand-outline'} size={18} color="#ffffff" />
       </TouchableOpacity>
     </>
   );
   return { onMessage, controls };
+}
+
+const fmtDist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : `${Math.round(m / 10) * 10} m`);
+const normDeg = (d: number) => ((d % 360) + 360) % 360;
+let findMeOn = false;   // kept while the app is open, so full screen opens the way the small view was
+
+// The phone's position and facing while Find me is on (the same reading as WalkToShot: true north from the magnetic
+// heading plus the declination where the phone is, smoothed so the fan doesn't shake).
+function useFindMe(active: boolean) {
+  const [on, setOnState] = useState(findMeOn);
+  const setOn = useCallback((v: boolean) => { findMeOn = v; setOnState(v); }, []);
+  const [pos, setPos] = useState<{ lat: number; lng: number; acc: number | null } | null>(null);
+  const [heading, setHeading] = useState<number | null>(null);
+  const [perm, setPerm] = useState<'asking' | 'ok' | 'no'>('asking');
+  const posRef = useRef<{ lat: number; lng: number } | null>(null);
+  const smooth = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!active || !on) { setPos(null); setHeading(null); return; }
+    let alive = true;
+    const subs: { remove: () => void }[] = [];
+    smooth.current = null;
+    (async () => {
+      try {
+        const p = await Location.requestForegroundPermissionsAsync();
+        if (!alive) return;
+        if (p.status !== 'granted') { setPerm('no'); return; }
+        setPerm('ok');
+        subs.push(await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 1000, distanceInterval: 1 },
+          l => { if (!alive) return; posRef.current = { lat: l.coords.latitude, lng: l.coords.longitude }; setPos({ lat: l.coords.latitude, lng: l.coords.longitude, acc: l.coords.accuracy ?? null }); },
+        ));
+        try {
+          subs.push(await Location.watchHeadingAsync(h => {
+            if (!alive) return;
+            const q = posRef.current, dec = q ? declinationDeg(q.lat, q.lng) : null;
+            const deg = h.magHeading != null && h.magHeading >= 0 && dec != null ? normDeg(h.magHeading + dec)
+              : h.trueHeading != null && h.trueHeading >= 0 ? h.trueHeading : h.magHeading;
+            if (deg == null || deg < 0) return;
+            const r = (deg * Math.PI) / 180, s = smooth.current;
+            const n = s ? { x: s.x * 0.7 + Math.sin(r) * 0.3, y: s.y * 0.7 + Math.cos(r) * 0.3 } : { x: Math.sin(r), y: Math.cos(r) };
+            smooth.current = n;
+            setHeading(Math.round(normDeg((Math.atan2(n.x, n.y) * 180) / Math.PI)));
+          }));
+        } catch { /* no compass: the dot alone */ }
+      } catch {
+        if (alive) setPerm('no');
+      }
+    })();
+    return () => { alive = false; subs.forEach(s => { try { s.remove(); } catch { /* gone */ } }); };
+  }, [active, on]);
+  return { on, setOn, pos, heading, perm };
 }
 
 // Cone and sun arrows on / off, under the Sun button (both looks)
@@ -166,5 +262,9 @@ const styles = StyleSheet.create({
   zoomBtn: { width: 34, height: 32, alignItems: 'center', justifyContent: 'center' },
   zoomText: { color: '#ffffff', fontSize: 18, fontWeight: '600', lineHeight: 20 },
   zoomSep: { height: 1, backgroundColor: '#444444' },
+  meBtn: { position: 'absolute', right: 13, top: 153, width: 34, height: 34, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.85)', borderWidth: 1, borderColor: '#444444', alignItems: 'center', justifyContent: 'center' },
+  meBtnOn: { borderColor: '#4285F4' },
+  mePill: { position: 'absolute', bottom: 12, left: 52, right: 52, alignItems: 'center' },
+  meText: { color: '#ffffff', fontSize: 12, fontWeight: '700', backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden' },
   fullBtn: { position: 'absolute', left: 8, bottom: 8, width: 34, height: 34, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.85)', borderWidth: 1, borderColor: '#444444', alignItems: 'center', justifyContent: 'center' },
 });

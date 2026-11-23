@@ -3,6 +3,7 @@ import { View, StyleSheet, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Pair, SkyPos } from '../../utils/sunEngine';
 import Sun3DPanel from './Sun3DPanel';
+import { useTrailRoutes } from '../../services/trailRoutes';
 
 // Overhead, our own 3D look (Phil, 16 Nov 2026): every shot of the place seen from straight above on our terrain (winter
 // ground colour, buildings, trees, the real calculated shadows at the slider's time), with no signal needed. Same props
@@ -30,7 +31,8 @@ export default function Overhead3DPanel({ pairs, sel, onPick, sun, shaded, heigh
   const [sunOn, setSunOnState] = useState(lastSunOn);
   const setSunOn = (v: boolean) => { lastSunOn = v; setSunOnState(v); };
   const insets = useSafeAreaInsets();
-  const overhead = { pairs, selId: sel.vantage_id, onPick, sunOn, onSun: setSunOn, shaded };
+  const routes = useTrailRoutes(pairs.map(p => p.v));
+  const overhead = { pairs, selId: sel.vantage_id, onPick, sunOn, onSun: setSunOn, shaded, routes };
   const jump = onJump ?? (() => {});
   return (
     <>
