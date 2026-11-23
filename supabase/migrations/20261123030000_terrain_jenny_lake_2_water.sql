@@ -1,4 +1,4 @@
--- 3D sun view: Cottonwood Creek as water and the Highlands road bridge in the close-up box gtd15_jenny_lake_2 (23 Nov 2026, NOT applied).
+-- 3D sun view: Cottonwood Creek as water and the Highlands road bridge in the close-up box gtd15_jenny_lake_2 (23 Nov 2026, applied 23 Nov 2026).
 -- Before applying: upload these 4 files (1,324,713 bytes) to the public bucket `terrain`: gtd_jenny_lake_2_mask_v4w.png, gtd_jenny_lake_2w_mask_v6.png, gtd_jenny_lake_2_water_v4w.png, gtd_jenny_lake_2_bld.json.
 -- Why: the 2022 park survey has no water-class point on Cottonwood Creek, so tools/sun3d/lidar/build_detail.py found no water
 -- in this box (the creek drew as snow) and the box had no bridge. Shot 'highlands bridge' stands on the east bank at
