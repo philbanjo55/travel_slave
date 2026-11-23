@@ -93,7 +93,11 @@ jobs:
           # 23 Nov 2026: Jenny Lake: camera row (cam617-*), trail line (trail-*), Find me with real emulator GPS (gps-*),
           # then the same with no signal (gps-offline-*)
           - shard: e
-            only: jenny_3d,offline_jenny
+            only: jenny_3d
+          # 23 Nov 2026: offline Jenny on its own emulator (run 145: the online 3D views before it left the emulator
+          # frozen); it visits Jenny Lake online first (jenny_prep), then goes offline
+          - shard: f
+            only: offline_jenny
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

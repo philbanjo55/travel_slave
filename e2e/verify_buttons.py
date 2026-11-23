@@ -256,12 +256,27 @@ def replan_now_card():
         s = s2
     before = len(blocked_lines())
     # tap the button itself (its label 'Re-plan now with the cameras: the rest of today'), between the bars, and say where
+    # since 18 Nov 2026 the card's button is the one-pass Re-plan: label 'Re-plan: <today + the rest>. Plan again and
+    # Re-plan now with the cameras in one' (OnePassButton); the older build's 'Re-plan now with the cameras: the rest of today'
+    def rbtn(st):
+        cs = [c for c in st.clickables if c['label'].startswith(('Re-plan: ', 'Re-plan now with the cameras'))]
+        print('INFO Re-plan buttons: ' + ' ; '.join(f"{c['label'][:60]} @ {c['xy']}" for c in cs)[:600], flush=True)
+        if cs:
+            return cs[0]
+        for nd in (st.root.iter('node') if st.root is not None else []):   # not clickable + enabled: say what it is
+            t = nd.get('content-desc') or nd.get('text') or ''
+            if nd.get('package') == V.PKG and t.startswith(('Re-plan: ', 'Re-plan now with the cameras')):
+                x1, y1, x2, y2 = C.bounds(nd)
+                print(f"INFO Re-plan node not tappable as listed: {t[:60]!r} clickable={nd.get('clickable')} enabled={nd.get('enabled')} "
+                      f"selected={nd.get('selected')} bounds {[x1, y1, x2, y2]}", flush=True)
+                return {'label': t, 'xy': ((x1 + x2) // 2, (y1 + y2) // 2), 'y': y1}
+        return None
     top, nav, _, _ = bars(s)
-    btn = next((c for c in s.clickables if c['label'].startswith('Re-plan now with the cameras')), None)
+    btn = rbtn(s)
     if btn is not None and not (top + 20 <= btn['xy'][1] <= nav - 20):
         d = btn['xy'][1] - (top + nav) // 2
         C.adb('shell', 'input', 'swipe', '540', '1500', '540', str(1500 - max(-700, min(700, d))), '600'); s = C.capture(1.2)
-        btn = next((c for c in s.clickables if c['label'].startswith('Re-plan now with the cameras')), None)
+        btn = rbtn(s)
     if btn is not None:
         C.tap(btn['xy'])
     else:
@@ -979,10 +994,17 @@ def sun_3d():
                     w1 = C.capture(1)
                     V.check('walk-save-offered', V.has(w1, 'Save this as my stand spot for the shot'), 'Save as my spot button (not tapped)')
                     cut_off('walk-mode', w1)
-                    V.tap_text(w1, 'Back to my saved spot'); time.sleep(2)
-                    w2 = C.capture(1)
-                    back_ok = V.has(w2, 'Hold an arrow to walk') or V.has(w2, 'Tap the ground to jump there')
-                    V.check('walk-back', back_ok, 'back on the saved spot')
+                    hb = next((c for c in w1.clickables if c['label'].split(' | ')[0] == 'Back to my saved spot'), None)
+                    if hb is not None: C.tap(hb['xy'])
+                    else: V.tap_text(w1, 'Back to my saved spot')
+                    back_ok = False; w2 = None; t_b = time.time()
+                    for _ in range(8):   # the page answers with its new eye a moment later (software graphics: seconds)
+                        time.sleep(1.5); w2 = C.capture(0.5)
+                        back_ok = V.has(w2, 'Hold an arrow to walk') or V.has(w2, 'Tap the ground to jump there')
+                        if back_ok: break
+                    wl = next((t for t in (w2.all_texts if w2 else []) if t.startswith(("You've walked", 'Tap the ground', "That's as far", 'That is the edge', 'Saved'))), None)
+                    V.check('walk-back', back_ok, f'back on the saved spot ({time.time() - t_b:.0f} s)' if back_ok else
+                            f'walk line {wl!r} {time.time() - t_b:.0f} s after tapping Back to my saved spot (button {"found" if hb else "not found, tapped by text"})')
                     # tap to go (18 Nov 2026): a tap on the ground low in the picture jumps there
                     if back_ok and V.has(w2, 'Tap the ground to jump there'):
                         # well below the middle of the picture (1180 was just under the horizon: the ray met the
@@ -1301,6 +1323,9 @@ def ground_glass():
         print('INFO glass: no ground glass button (this build has none)', flush=True); return
     V.check('glass-button', True, b['label'][:60])
     C.tap(b['xy']); time.sleep(2); g = C.capture(1)
+    for _ in range(4):   # an empty read (0 controls) while the view redraws upside down
+        if g.clickables: break
+        time.sleep(2); g = C.capture(1)
     on = next((c for c in g.clickables if c['label'].startswith('Ground glass on')), None)
     if on is None:
         b2 = next((c for c in g.clickables if c['label'].split(' | ')[0].startswith('Ground glass')), None)
@@ -1312,7 +1337,12 @@ def ground_glass():
     if on is not None:
         C.tap(on['xy']); time.sleep(1.5)
     off = C.capture(1)
-    V.check('glass-off', any(c['label'].startswith('Ground glass: turn') for c in off.clickables) and C.app_alive(), 'back the right way up')
+    for _ in range(4):   # an empty read (0 controls: the screen reader busy while the view redraws) is not an answer
+        if off.clickables: break
+        time.sleep(2); off = C.capture(1)
+    labs = [c['label'].split(' | ')[0] for c in off.clickables if c['label'].startswith('Ground glass')]
+    V.check('glass-off', any(l.startswith('Ground glass: turn') for l in labs) and C.app_alive(),
+            'back the right way up' if any(l.startswith('Ground glass: turn') for l in labs) else f'glass button now {labs} ({len(off.clickables)} controls read, tapped {"on" if on else "nothing"})')
 
 
 def overhead_walk():
@@ -2385,11 +2415,14 @@ def jenny_3d(denied=True):
     V.check('jenny-stop', lab is not None, (lab or 'no Jenny Lake row in the next 7 days')[:80])
     if lab is None:
         return
+    if not OFFLINE: JENNY_SEEN[0] = True
     time.sleep(4)
     st = scroll_find('SUN & MOON', 14)
     if st is None:
         V.check('jenny-section', False, 'no Sun & Moon section'); return
     st = section_to(st)
+    if OFFLINE:   # offline only the overhead matters here (offline 3D is shard b's): one web view less on the emulator
+        return jenny_overhead()
     V.tap_text(st, '3D', exact=True)   # 3D is the default tab
     f0 = scroll_find('Open the 3D view full screen', 8)
     if f0 is not None:
@@ -2405,6 +2438,13 @@ def jenny_3d(denied=True):
             cam_row_checks()
         except Exception as e:
             V.check('cam617-run', False, f'stopped: {e!r}'[:120])
+    jenny_overhead(denied)
+
+
+def jenny_overhead(denied=False):
+    """Jenny Lake's stop page, Sun & Moon on screen: Overhead -> 3D look, the routes' colours (trail-*), Find me (gps-*),
+    then (denied) Find me with the permission taken away."""
+    row = re.compile(r'^\d{1,2}:\d{2} [AP]M .*(Jenny Lake)')
     # Overhead tab, 3D look. The panel's own "Overhead 3D ready" label never shows in uiautomator dumps (23 Nov 2026 runs:
     # 246 s with the view drawn), so ready = our 3D compass button is on screen and the loading cover text is gone.
     st = section_to(C.capture(1), lo=0.15, hi=0.35)
@@ -2460,7 +2500,12 @@ def jenny_3d(denied=True):
     V.check('gps-button', me is not None, 'Find me button (off)' if me else 'no "Find me: show where you are" button')
     if me is None:
         return
-    geo(*JENNY_FIX[0], n=2); C.tap(me['xy'])
+    geo(*JENNY_FIX[0], n=2)
+    for k in range(3):   # a tap can be lost to a system dialog on the busy emulator (23 Nov run: 'Process system isn't responding')
+        C.tap(me['xy']); time.sleep(3)
+        on0 = next((c['label'].split(' | ')[0] for c in C.capture(0.5).clickables if c['label'].startswith('Find me')), None)
+        print(f'INFO gps Find me tap {k + 1}: button now {on0!r}', flush=True)
+        if on0 is None or on0.startswith('Find me is on'): break
     def pill(st): return next((t for t in st.all_texts if t.startswith(('You · ', 'Finding you', 'Location is off'))), None)
     p = None; t2 = time.time()
     for k in range(20):
@@ -2532,11 +2577,42 @@ def jenny_3d(denied=True):
         C.adb('shell', 'pm', 'grant', V.PKG, 'android.permission.ACCESS_COARSE_LOCATION')
 
 
+JENNY_SEEN = [False]
+
+
+def jenny_prep():
+    """Online: open Jenny Lake, Overhead -> 3D look until drawn and the routes are in (so the trip, its terrain and the
+    routes are saved on the phone for offline_jenny). Checks prep-*."""
+    C.adb('shell', 'pm', 'grant', V.PKG, 'android.permission.ACCESS_FINE_LOCATION')
+    if open_live() is None:
+        return
+    lab = open_stop_on_days(re.compile(r'^\d{1,2}:\d{2} [AP]M .*(Jenny Lake)'), 'jenny-prep', name='Jenny Lake')
+    if lab is None:
+        V.check('prep-jenny-stop', False, 'no Jenny Lake'); return
+    time.sleep(4)
+    st = section_to(scroll_find('SUN & MOON', 14) or C.capture(1), lo=0.15, hi=0.35)
+    V.tap_text(st, 'Overhead', exact=True)
+    t0 = time.time(); look = cover = None
+    for _ in range(60):
+        o = C.capture(2); look, cover = overhead_look(o)
+        if look == 'sat':
+            t3 = next((c for c in o.clickables if c['label'].split(' | ')[0].startswith('Overhead look: 3D')), None)
+            if t3: C.tap(t3['xy'])
+            continue
+        if look == '3d' and cover is None: break
+    V.check('prep-overhead', look == '3d' and cover is None, f'online overhead drawn {time.time() - t0:.0f} s after the tab (saves terrain and routes)')
+    time.sleep(20)
+    JENNY_SEEN[0] = True
+
+
 def offline_jenny():
     """Find me and the trail line with no signal (GPS needs none; the route and the terrain are saved on the phone).
-    Runs after jenny_3d on the same emulator, so the trip, its terrain and the Jenny Lake route are already saved."""
+    Runs after jenny_3d on the same emulator, so the trip, its terrain and the Jenny Lake route are already saved.
+    On its own emulator (shard f) an online visit to Jenny Lake's overhead comes first (jenny_prep)."""
     global OFFLINE
     orig = V.check
+    if not JENNY_SEEN[0]:
+        jenny_prep()
     C.adb('shell', 'svc', 'wifi', 'disable'); C.adb('shell', 'svc', 'data', 'disable'); time.sleep(6)
     ping = (C.adb('shell', 'ping', '-c', '1', '-W', '2', '8.8.8.8') or '').strip().splitlines()
     gone = not any(' 0% packet loss' in l for l in ping)
