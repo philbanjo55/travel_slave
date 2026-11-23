@@ -2123,9 +2123,45 @@ def find_spot():
 
 
 # ---- 23 Nov 2026: trail line, Find me (real GPS through the emulator) and the 3D framer's camera row -------------------
+def open_stop_card(name, tag):
+    """Trip page -> Stops tab (every place once) -> the card named name, tapped mid-screen. Returns its label or None."""
+    s = C.capture(1.5)
+    tab = next((c for c in s.clickables if c['label'].lower().startswith('stops: all')), None)
+    if tab is None:
+        day = next((c for c in s.clickables if re.match(r'day \d', c['label'].lower())), None)
+        ty = str(day['xy'][1]) if day else '384'
+        for _ in range(3):
+            C.adb('shell', 'input', 'swipe', '150', ty, '1000', ty, '300'); s = C.capture(0.8)
+            tab = next((c for c in s.clickables if c['label'].lower().startswith('stops: all')), None)
+            if tab is not None:
+                break
+    if tab is None:
+        print(f'INFO {tag}: no Stops tab', flush=True); return None
+    C.tap(tab['xy']); v = C.capture(2.5)
+    want = 'stop card: ' + name.lower()
+    for _ in range(14):
+        card = next((c for c in v.clickables if c['label'].lower().startswith(want)), None)
+        if card is not None and 0.25 * 2400 <= card['xy'][1] <= 0.75 * 2400:
+            C.tap(card['xy']); print(f'INFO {tag}: opened "{card["label"][:70]}" from the Stops view', flush=True)
+            return card['label']
+        if card is not None and card['xy'][1] < 0.25 * 2400:
+            C.adb('shell', 'input', 'swipe', '540', '1000', '540', '1400', '500')
+        else:
+            C.adb('shell', 'input', 'swipe', '540', '1500', '540', '1000', '500')
+        v = C.capture(1.2)
+    print(f'INFO {tag}: no "{name}" card; cards seen last: ' + ' ; '.join(c['label'][:40] for c in v.clickables if 'stop card' in c['label'].lower())[:600], flush=True)
+    return None
+
+
 def open_stop_on_days(row, tag, days=7, name=None):
-    """On the open trip page, step through the day tabs from today and open the first timeline row matching row.
-    Returns the row's label or None. (The practice trip rolls every week, so dates are never hard-coded.)"""
+    """On the open trip page, open a stop: from the Stops view when name is given, else (or when that fails) step through
+    the day tabs from today and open the first timeline row matching row. Returns the label or None.
+    (The practice trip rolls every week, so dates are never hard-coded.)"""
+    if name:
+        got = open_stop_card(name, tag)
+        if got is not None:
+            return got
+        V.back(); time.sleep(1); open_live()
     d0 = datetime.datetime.now(ZoneInfo('America/Denver'))
     s = C.capture(1.0)
     for k in range(days):
@@ -2151,6 +2187,10 @@ def open_stop_on_days(row, tag, days=7, name=None):
         if lab is not None:
             print(f'INFO {tag}: opened "{lab[:60]}" on {short}', flush=True)
             return lab
+        if name:   # say what the page holds for that name, so a miss can be read from the log
+            st = C.capture(1)
+            print(f'INFO {tag} {short}: texts with "{name}": ' + ' ; '.join(t[:60] for t in seen if name.lower() in t.lower())[:400]
+                  + ' | clickables: ' + ' ; '.join(c['label'][:60] for c in st.clickables if name.lower() in c['label'].lower())[:400], flush=True)
     return None
 
 
