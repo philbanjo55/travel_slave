@@ -133,6 +133,14 @@ const LENSES: Lens[] = [
 ];
 const FOCALS = ['75', '90', '135', '300'];
 const is617 = (id: string) => id.startsWith('617-');
+const CAMERAS = [
+  { id: '45', label: '4×5', say: '4 by 5 film' },
+  { id: '617', label: '6×17', say: '6 by 17 back on the 4 by 5' },
+  { id: '69', label: '6×9', say: 'Fuji 6 by 9, fixed 90 millimetre lens' },
+] as const;
+const camOf = (id: string) => (id === 'gw690' ? '69' : is617(id) ? '617' : '45');
+const focalOf = (id: string): string | null => (id === 'gw690' ? null : is617(id) ? id.slice(4) : id);
+let lastFocal = '135';   // the lens you had on before the Fuji, so 4x5 / 6x17 come back to it
 const lensShort = (l: Lens | undefined, id: string) => !l ? `${id} mm` : l.format === '6×9 (GW690)' ? '6×9' : l.format === '6×17' ? `6×17 ${l.f} mm` : `${l.f} mm`;
 type FrameMode = 'land' | 'port' | 'off';
 const FRAME_NEXT: Record<FrameMode, FrameMode> = { land: 'port', port: 'off', off: 'land' };
@@ -959,29 +967,39 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ) : null}
         {oh.controls}
         <View style={[styles.topRow, preview || overhead ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
-          <View style={styles.lens} accessibilityRole="tablist">
-            {LENSES.filter(l => l.format === (is617(lensId) ? '6×17' : '4×5') || l.id === 'gw690').map(l => (
-              <TouchableOpacity
-                key={l.id}
-                onPress={() => setLens(l.id)}
-                style={[styles.lensBtn, lensId === l.id && styles.lensOn]}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: lensId === l.id }}
-                accessibilityLabel={l.id === 'gw690' ? 'Fuji 6 by 9, 90 millimetre lens' : `${l.f} millimetre lens${l.format === '6×17' ? ' on 6 by 17' : ''}`}
-              >
-                <Text style={[styles.lensText, lensId === l.id && styles.lensTextOn]}>{l.label}</Text>
-              </TouchableOpacity>
-            ))}
-            {/* 4x5 or 6x17 film (Phil, 23 Nov 2026): the same lens on the other back, so the frame is the film's own size */}
-            <TouchableOpacity
-              onPress={() => setLens(is617(lensId) ? lensId.slice(4) : `617-${FOCALS.includes(lensId) ? lensId : '90'}`)}
-              style={[styles.lensBtn, { marginLeft: 6 }, is617(lensId) && styles.lensOn]}
-              accessibilityRole="switch"
-              accessibilityState={{ checked: is617(lensId) }}
-              accessibilityLabel={is617(lensId) ? '6 by 17 back. Tap for 4 by 5' : '4 by 5 back. Tap for 6 by 17'}
-            >
-              <Text style={[styles.lensText, is617(lensId) && styles.lensTextOn]}>6×17</Text>
-            </TouchableOpacity>
+          {/* Camera, then lens (Phil, 23 Nov 2026): 4x5 and 6x17 are backs on the same camera with the same four lenses;
+              the Fuji 6x9 is its own camera with a fixed 90 mm, so it has no lens choice */}
+          <View style={styles.camRow}>
+            <View style={styles.lens} accessibilityRole="tablist">
+              {CAMERAS.map(c => (
+                <TouchableOpacity
+                  key={c.id}
+                  onPress={() => setLens(c.id === '69' ? 'gw690' : c.id === '617' ? `617-${focalOf(lensId) ?? lastFocal}` : (focalOf(lensId) ?? lastFocal))}
+                  style={[styles.lensBtn, camOf(lensId) === c.id && styles.lensOn]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: camOf(lensId) === c.id }}
+                  accessibilityLabel={c.say}
+                >
+                  <Text style={[styles.lensText, camOf(lensId) === c.id && styles.lensTextOn]}>{c.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {camOf(lensId) !== '69' ? (
+              <View style={styles.lens} accessibilityRole="tablist">
+                {FOCALS.map(n => (
+                  <TouchableOpacity
+                    key={n}
+                    onPress={() => { lastFocal = n; setLens(camOf(lensId) === '617' ? `617-${n}` : n); }}
+                    style={[styles.lensBtn, focalOf(lensId) === n && styles.lensOn]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: focalOf(lensId) === n }}
+                    accessibilityLabel={`${n} millimetre lens${camOf(lensId) === '617' ? ' on 6 by 17' : ''}`}
+                  >
+                    <Text style={[styles.lensText, focalOf(lensId) === n && styles.lensTextOn]}>{n}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
           </View>
           <View style={styles.rightBtns}>
             {hdCfg && region && b64 ? (
@@ -1303,6 +1321,7 @@ const styles = StyleSheet.create({
   // The buttons wrap onto a second line when they don't fit: with HD, frame, foreground and frozen lakes the row ran past
   // the right edge of a 1080-px-wide phone and the full-screen button was off screen (emulator, 13 Nov 2026).
   topRow: { position: 'absolute', top: 8, left: 8, right: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', rowGap: 6, columnGap: 6 },
+  camRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   lens: { flexDirection: 'row', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   lensBtn: { minWidth: 36, minHeight: 32, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   lensOn: { backgroundColor: '#ffffff' },
