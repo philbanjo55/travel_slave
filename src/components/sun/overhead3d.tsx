@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { Pair } from '../../utils/sunEngine';
 import { SUN, shortName } from './sunStyle';
 import { shotFov } from './shotFov';
+import type { TrailRoute } from '../../services/trailRoutes';
 
 // Overhead, our own 3D look (Phil, 16 Nov 2026): the 3D page (tools/sun3d/app_view.js) looking straight down over every
 // shot of the place, with our winter ground, buildings, trees and the real calculated shadows at the slider's time,
@@ -19,6 +20,7 @@ export type Overhead3D = {
   sunOn: boolean;
   onSun: (on: boolean) => void;
   shaded?: boolean;               // a ridge shades the picked shot's subject now (grey arrows); left out = the page works it out
+  routes?: TrailRoute[];          // Phil's AllTrails routes through the place (services/trailRoutes), a pink line on the ground
 };
 
 type Mode = 'view' | 'north' | 'turned';
@@ -72,6 +74,15 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
     run(`window.S3D.overhead && window.S3D.overhead(${JSON.stringify(msg)})`);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [on, ready, shotsKey, sunOn, shaded, marks, run]);
+
+  // the trails, sent once the page is ready and again when they change (they come from the phone's cache or the server)
+  const routes = overhead?.routes ?? [];
+  const routesKey = routes.map(r => `${r.id}:${r.coords.length}`).join('|');
+  useEffect(() => {
+    if (!on || !ready) return;
+    run(`window.S3D.overheadRoutes && window.S3D.overheadRoutes(${JSON.stringify(routes)})`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [on, ready, routesKey, run]);
 
   // true = the page's message was for the overhead view
   const onMessage = useCallback((m: any): boolean => {

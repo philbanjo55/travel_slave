@@ -2442,6 +2442,15 @@
     const g = OH.g2; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
     const sel = ohSelShot(), K = 3 * Math.hypot(w, h); OH.dots = [];
     if (!sel) return;
+    // Phil's AllTrails routes (S3D.overheadRoutes, 23 Nov 2026): a pink line on the ground with a dark edge, under the marks
+    for (const rt of OH.routes || []) {
+      if (!rt.g) rt.g = rt.coords.map(c => { const v = { lat: c[1], lng: c[0] }, q = ohXZ(v); return { x: q.x, y: ohH(v), z: q.z }; });
+      const sp = rt.g.map(q => ohProj(q.x, q.y, q.z, w, h));
+      g.lineJoin = 'round'; g.lineCap = 'round'; g.setLineDash([]);
+      for (const [lw, col] of [[7, 'rgba(0,0,0,0.55)'], [3.5, '#FF5FA2']]) {
+        g.beginPath(); sp.forEach((s, i) => i ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y)); g.lineWidth = lw; g.strokeStyle = col; g.stroke();
+      }
+    }
     const P = OH.shots.map(s => { const q = ohXZ(s.v), y = ohH(s.v); return { s, q, y, p: ohProj(q.x, y, q.z, w, h) }; });
     // a compass direction from a ground point, as a unit vector on the screen
     const sdir = (d, az) => { const f = ohProj(d.q.x + Math.sin(az) * 1000, d.y, d.q.z - Math.cos(az) * 1000, w, h), x = f.x - d.p.x, y = f.y - d.p.y, l = Math.hypot(x, y) || 1; return { x: x / l, y: y / l }; };
@@ -2687,6 +2696,8 @@
     others(list) { OTH.list = Array.isArray(list) ? list.filter(o => o && Number.isFinite(+o.lat) && Number.isFinite(+o.lng)) : []; othCalc(); dirty = true; },
     eyeHeight(m) { const v = Math.max(0.3048, Math.min(10000, +m)); if (!Number.isFinite(v)) return; EYE = v; touch('walk'); if (eye) told(); },
     othersOn(v) { OTH.on = v !== false; dirty = true; },
+    // overheadRoutes([{ id, name, coords: [[lng, lat], ...] }]): the stop's trails drawn on the view from above (none = [])
+    overheadRoutes(list) { OH.routes = Array.isArray(list) ? list.filter(r => r && Array.isArray(r.coords) && r.coords.length > 1).map(r => ({ id: r.id, name: r.name, coords: r.coords })) : []; dirty = true; },
     overheadMarks(v) { OH.marks = v !== false; dirty = true; },   // the cone, the other shots' wedges and the sun arrows / band on or off
     overheadFit() { ohFit(); dirty = true; ohSay(); },
     // overheadZoom(k): k > 1 closer, < 1 farther, about the middle of the screen (the small view's + / - buttons)
