@@ -2,17 +2,22 @@ import { useEffect, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from './supabase';
 
-// Phil's AllTrails routes (GPX exports, table trail_routes, 23 Nov 2026) for the 3D view from above: a route belongs to
-// the place where it runs, so a stop (on the real trip or a practice copy) gets every route whose box holds one of its
-// shots' stand spots or the stop itself (1 km of slack). Saved on the phone, so the line shows with no signal.
+// Phil's AllTrails routes (GPX exports, table trail_routes, 23 Nov 2026) for the 3D view from above. Every stop shows
+// all the routes of its area (Phil: "each 3D map should have the routes, all of them, each its own color", with where
+// each starts and ends): every route within ~80 km of the stop's shots, so the real trip, its practice copies and a
+// stop with no AllTrails link of its own all see them. Each route keeps one colour everywhere (by name). Saved on the
+// phone, so the lines show with no signal.
 
-export type TrailRoute = { id: string; name: string; coords: [number, number][] };   // [lng, lat]
+export type TrailRoute = { id: string; name: string; coords: [number, number][]; color?: string };   // [lng, lat]
+
+// Clear of the picture's own marks: the sun's orange, the picked stand spot's red, Find me's blue
+const COLORS = ['#FF5FA2', '#A3E635', '#B47CFF', '#2DD4BF', '#FFD60A', '#F5F5F5'];
 type RouteMeta = { id: string; name: string; north: number; south: number; west: number; east: number; updated_at: string };
 
 const DIR = `${FileSystem.documentDirectory}pf_cache/`;
 const LIST = `${DIR}trail_routes.json`;
 const routeFile = (m: RouteMeta) => `${DIR}trail_${m.id}_${Date.parse(m.updated_at) || 0}.json`;
-const SLACK_DEG = 0.009;   // ~1 km
+const SLACK_DEG = 0.72;   // ~80 km: the routes of the area, not another trip's
 
 async function readJson<T>(f: string): Promise<T | null> {
   try { return JSON.parse(await FileSystem.readAsStringAsync(f)) as T; } catch { return null; }
@@ -72,8 +77,9 @@ export async function trailRoutesNear(points: { lat: number; lng: number }[]): P
   const list = await loadList();
   const hit = list.filter(m => pts.some(p =>
     p.lat <= m.north + SLACK_DEG && p.lat >= m.south - SLACK_DEG && p.lng >= m.west - SLACK_DEG * 1.4 && p.lng <= m.east + SLACK_DEG * 1.4));
+  const order = [...list].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).map(m => m.id);
   const routes = await Promise.all(hit.map(loadRoute));
-  return routes.filter((r): r is TrailRoute => !!r);
+  return routes.filter((r): r is TrailRoute => !!r).map(r => ({ ...r, color: COLORS[Math.max(0, order.indexOf(r.id)) % COLORS.length] }));
 }
 
 // The routes for a set of points (a stop's stand spots), loaded once per set

@@ -255,9 +255,26 @@ def replan_now_card():
     if V.has(s2, 'Re-plan now with the cameras'):
         s = s2
     before = len(blocked_lines())
-    V.tap_text(s, 'Re-plan now with the cameras')
-    time.sleep(6)
-    after = blocked_lines()[before:]
+    # tap the button itself (its label 'Re-plan now with the cameras: the rest of today'), between the bars, and say where
+    top, nav, _, _ = bars(s)
+    btn = next((c for c in s.clickables if c['label'].startswith('Re-plan now with the cameras')), None)
+    if btn is not None and not (top + 20 <= btn['xy'][1] <= nav - 20):
+        d = btn['xy'][1] - (top + nav) // 2
+        C.adb('shell', 'input', 'swipe', '540', '1500', '540', str(1500 - max(-700, min(700, d))), '600'); s = C.capture(1.2)
+        btn = next((c for c in s.clickables if c['label'].startswith('Re-plan now with the cameras')), None)
+    if btn is not None:
+        C.tap(btn['xy'])
+    else:
+        V.tap_text(s, 'Re-plan now with the cameras')
+    print(f"INFO Re-plan now tap: {(btn['label'][:70] + ' at ' + str(btn['xy'])) if btn else 'no clickable, tapped by text'} (bars {top}-{nav})", flush=True)
+    after = []
+    for _ in range(10):
+        time.sleep(2)
+        after = blocked_lines()[before:]
+        if any(('planner_t_now' in a) or ('planner_t_replan_one' in a) for a in after): break
+    if not after:
+        aft0 = C.capture(0.5)
+        print('INFO after the tap: ' + ' | '.join(t for t in aft0.all_texts if 'plan' in t.lower() or 'blocked' in t.lower())[:600], flush=True)
     print('INFO blocked after Re-plan now: ' + ' | '.join(a[-160:] for a in after)[:800], flush=True)
     # the one Re-plan button (18 Nov 2026) sends planner_t_replan_one (Re-plan now + the rest of the trip)
     V.check('btn-replan-now-sent', any(('planner_t_now' in a) or ('planner_t_replan_one' in a) for a in after), 'the tap sent planner_t_now / planner_t_replan_one (blocked)')
@@ -1348,11 +1365,15 @@ def overhead_walk():
         o = C.capture(2); lab = label(o)
         if lab and (lab.startswith('Overhead satellite') or ' ready' in lab or 'failed' in lab or 'error' in lab):
             break
+        if overhead_look(o) in (('3d', None), ('sat', None)):   # the panel's label is not in dumps: compass up, cover gone
+            break
     if lab is None and o is not None and any(c['label'].startswith('Picture faces the shot') or c['label'].startswith('Tap to face the shot') for c in o.clickables):
         lab = 'Overhead 3D (its compass is up)'
     V.check('over-shown', lab is not None, (lab or 'no overhead view')[:80])
     if lab and lab.startswith('Overhead 3D'):
-        V.check('over-3d-ready', True if ' ready' in lab else None, f'{lab[:60]} after {time.time() - t0:.0f} s' + ('' if ' ready' in lab else ' (ready tag not readable here)'))
+        lk, cv = overhead_look(o)
+        drawn = ' ready' in lab or (lk == '3d' and cv is None)
+        V.check('over-3d-ready', True if drawn else None, f'{lab[:60]} after {time.time() - t0:.0f} s' + ('' if ' ready' in lab else ', loading cover gone' if drawn else f', still {cv!r}'))
     V.check('over-look-switch', look_tab(o, '3D') is not None and look_tab(o, 'satellite') is not None, '3D / Satellite switch under the view')
     V.show('over-inline', o)
     sun = next((c for c in o.clickables if c['label'].split(' | ')[0] in ('Sun on', 'Sun off')), None)
@@ -1784,7 +1805,7 @@ def faroes_3d():
         V.check('fo3d-trip', False, 'no Faroes Live row'); return
     p = C.capture(6)
     V.check('fo3d-trip', V.has(p, 'DAY '), 'Faroes Live open')
-    skip = ('Cottages', 'Sleep', 'Hotel', 'Depart', 'Check', 'Return', 'Airport', 'Ferry')
+    skip = ('Cottages', 'Sleep', 'Hotel', 'Depart', 'Check', 'Return', 'Airport', 'Ferry', 'Lunch', 'Dinner', 'Breakfast')
     row = re.compile(r'^\d{1,2}:\d{2} [AP]M (.+)')
     tried = set(); opened = None
     # today first, then the next days (14 Nov 2026: an arrival day has no shot stop, so the check never ran)
@@ -1814,6 +1835,12 @@ def faroes_3d():
           st = scroll_find('SUN & MOON', 14)
           if st is None:
               V.back(); time.sleep(2); continue
+          # a stop with no shot (23 Nov 2026: 'Lunch — Sørvágur') has a Sun & Moon section but no 3D tab
+          st2 = section_to(st, lo=0.18, hi=0.45)
+          if not any(c['label'].split(' | ')[0].strip(', ') == '3D' for c in st2.clickables) and '3D' not in st2.all_texts:
+              print(f"INFO fo3d {hit['label'][:40]!r}: no 3D tab (no shot), next stop", flush=True)
+              V.back(); time.sleep(2); continue
+          st = st2
           opened = hit['label'][:60]; break
     V.check('fo3d-stop', opened is not None, (opened or 'no shot stop with a Sun & Moon section today'))
     if opened is None:
@@ -2272,6 +2299,42 @@ def btn_boxes(st, starts):
 
 
 PINK = (0xFF, 0x5F, 0xA2)
+YELLOW = (0xFF, 0xD6, 0x0A)
+# every route of the area in its own colour (trailRoutes.ts COLORS, by route name order)
+TRAIL_COLOURS = {'pink': PINK, 'yellow': YELLOW, 'lime': (0xA3, 0xE6, 0x35), 'purple': (0xB4, 0x7C, 0xFF), 'teal': (0x2D, 0xD4, 0xBF)}
+OH_COVER = ('Finding the terrain', 'Getting the terrain', 'Drawing the terrain', 'Getting the HD picture', 'No 3D terrain',
+            "Couldn't get the terrain", 'The 3D view stopped')
+
+
+def overhead_look(st):
+    """('3d' | 'sat' | None, cover text or None): which Overhead look is on screen, told by its compass button
+    (3D: 'Picture faces the shot' / 'Tap to face the shot'; satellite: 'Map faces the shot' / 'Map is north up'),
+    and the 3D panel's loading cover text while it is still coming up."""
+    if st is None or st.root is None:
+        return None, None
+    labs = [c['label'].split(' | ')[0] for c in st.clickables]
+    look = ('3d' if any(l.startswith(('Picture faces the shot', 'Tap to face the shot')) for l in labs)
+            else 'sat' if any(l.startswith(('Map faces the shot', 'Map is north up')) for l in labs) else None)
+    cover = next((t for t in st.all_texts if t.startswith(OH_COVER)), None)
+    return look, cover
+
+
+def overhead_box(st):
+    """The overhead picture's box on screen: the web view node holding the compass button, else the 208 dp panel
+    right above the 3D / Satellite look tabs. Returns (box, how)."""
+    if st is None or st.root is None:
+        return None, None
+    comp = next((c['xy'] for c in st.clickables if c['label'].split(' | ')[0].startswith(('Picture faces the shot', 'Tap to face the shot'))), None)
+    for nd in st.root.iter('node'):
+        if 'WebView' in (nd.get('class') or ''):
+            b = C.bounds(nd)
+            if b[3] - b[1] >= 300 and (comp is None or (b[0] <= comp[0] <= b[2] and b[1] <= comp[1] <= b[3])):
+                return tuple(b), 'web view node'
+    lk = node_box(st, 'Overhead look: 3D')[0]
+    if lk is not None:
+        bottom = lk[1] - 4
+        return (lk[0], bottom - 546, 1080 - lk[0], bottom), 'above the look tabs'
+    return None, None
 BLUE = (0x42, 0x85, 0xF4)
 JENNY_FIX = [(-110.73292, 43.7135), (-110.73292, 43.7162)]   # on the Jenny Lake ski route, then ~300 m north
 
@@ -2342,43 +2405,54 @@ def jenny_3d(denied=True):
             cam_row_checks()
         except Exception as e:
             V.check('cam617-run', False, f'stopped: {e!r}'[:120])
-    # Overhead tab, 3D look
+    # Overhead tab, 3D look. The panel's own "Overhead 3D ready" label never shows in uiautomator dumps (23 Nov 2026 runs:
+    # 246 s with the view drawn), so ready = our 3D compass button is on screen and the loading cover text is gone.
     st = section_to(C.capture(1), lo=0.15, hi=0.35)
     V.check('trail-overhead-tab', V.tap_text(st, 'Overhead', exact=True), 'tap the Overhead tab')
-    t0 = time.time(); olab = None; o = None
-    for _ in range(50):
-        o = C.capture(2); box, olab = node_box(o, ('Overhead 3D', 'Overhead satellite'))
-        if olab and (olab.startswith('Overhead satellite') or ' ready' in olab or 'failed' in olab):
+    t0 = time.time(); o = None; look = None; switched = False
+    for _ in range(60):
+        o = C.capture(2); look, cover = overhead_look(o)
+        if look == 'sat' and not switched:   # the look choice is kept on the phone: go to 3D
+            t3 = next((c for c in o.clickables if c['label'].split(' | ')[0].startswith('Overhead look: 3D')), None)
+            if t3: C.tap(t3['xy']); switched = True
+            continue
+        if look == '3d' and cover is None:
             break
-    if olab and olab.startswith('Overhead satellite'):   # the look choice is kept on the phone: go to 3D
-        t3 = next((c for c in o.clickables if c['label'].split(' | ')[0].startswith('Overhead look: 3D')), None)
-        if t3: C.tap(t3['xy'])
-        for _ in range(45):
-            o = C.capture(2); box, olab = node_box(o, 'Overhead 3D')
-            if olab and ' ready' in olab: break
-    ready = bool(olab and olab.startswith('Overhead 3D') and ' ready' in olab)
-    V.check('trail-3d-ready', ready, f'{(olab or "no overhead view")[:50]} after {time.time() - t0:.0f} s')
+    ready = look == '3d' and cover is None
+    V.check('trail-3d-ready', ready, f'3D overhead drawn (compass up, no cover) {time.time() - t0:.0f} s after the tab'
+            + (' (switched from satellite)' if switched else '') if ready else f'look {look}, cover {cover!r} after {time.time() - t0:.0f} s')
     if not ready:
-        print('INFO trail on screen: ' + ' | '.join(x for x in o.all_texts if len(x.strip()) > 2)[:1500], flush=True); return
+        print('INFO trail on screen: ' + ' | '.join(x for x in o.all_texts if len(x.strip()) > 2)[:1500], flush=True)
+        print('INFO trail clickables: ' + ' ; '.join(c['label'][:40] for c in o.clickables)[:1500], flush=True); return
     # the whole overhead panel on screen, between the bars
     top, nav, W, H = bars(o)
     for _ in range(4):
-        box, olab = node_box(o, 'Overhead 3D')
+        box, how = overhead_box(o)
         if box is None or (box[1] >= top + 10 and box[3] <= nav - 10):
             break
         mid = (box[1] + box[3]) // 2; d = max(-700, min(700, mid - (top + nav) // 2))
         C.adb('shell', 'input', 'swipe', '540', '1500', '540', str(1500 - d), '600'); o = C.capture(1.5)
-    box, olab = node_box(o, 'Overhead 3D')
+    box, how = overhead_box(o)
     clip = (box[0], max(box[1], top), box[2], min(box[3], nav)) if box else None
-    print(f'INFO trail panel {box} clip {clip} bars top {top} nav {nav}', flush=True)
+    print(f'INFO trail panel {box} ({how}) clip {clip} bars top {top} nav {nav}', flush=True)
     skip = btn_boxes(o, ('Find me', 'Sun o', 'Cone and', 'Picture faces', 'Tap to face', 'Zoom', 'Open the overhead', 'Close the overhead'))
-    pink = 0; t1 = time.time()
-    for _ in range(6):   # the routes come from the server (or the phone's cache) a moment after the page is ready
-        pink = count_colour(screen_rgba(), clip, PINK, 40, skip) if clip else -1
-        if pink > 300: break
+    def counts():
+        img = screen_rgba()
+        return {k: (count_colour(img, clip, rgb, 40, skip) if clip else -1) for k, rgb in TRAIL_COLOURS.items()}
+    n = {}; t1 = time.time()
+    for _ in range(8):   # the routes come from the server (or the phone's cache) a moment after the page is ready
+        n = counts()
+        if n['pink'] > 300 and n['yellow'] > 300: break
         time.sleep(3)
+    zoomed = False
+    if n.get('pink', 0) > 300 and n.get('yellow', 0) <= 300:   # Taggart Lake Loop may sit just outside the first frame
+        zo = next((c for c in C.capture(0.5).clickables if c['label'].split(' | ')[0] == 'Zoom out'), None)
+        if zo is not None:
+            C.tap(zo['xy']); zoomed = True; time.sleep(4); n = counts()
     C.screenshot('trail-jenny')
-    V.check('trail-pink', pink > 300, f'{pink} pink pixels (#FF5FA2 +-40) in the overhead view {time.time() - t1:.0f} s after ready')
+    print('INFO trail colours: ' + ', '.join(f'{k} {v}' for k, v in n.items()) + (' (after one Zoom out)' if zoomed else ''), flush=True)
+    V.check('trail-pink', n.get('pink', -1) > 300, f"{n.get('pink')} pink pixels (#FF5FA2 +-40, jenny lake ski route) {time.time() - t1:.0f} s after ready")
+    V.check('trail-yellow', n.get('yellow', -1) > 300, f"{n.get('yellow')} yellow pixels (#FFD60A +-40, Taggart Lake Loop)" + (' after one Zoom out' if zoomed else ''))
     # ---- Find me with real GPS fixes
     blue0 = count_colour(screen_rgba(), clip, BLUE, 30, skip) if clip else -1
     o = C.capture(1)
@@ -2477,8 +2551,78 @@ def offline_jenny():
         C.adb('shell', 'svc', 'wifi', 'enable'); C.adb('shell', 'svc', 'data', 'enable'); time.sleep(10)
 
 
+TRIP_TETON, TRIP_FAROES = 'Grand Teton Winter 2026', 'Faroe Islands 2027'
+
+
+def trip_rows_y(st):
+    """{title: top y} of the trips list's title texts (exact text), for the two real trips."""
+    out = {}
+    for nd in (st.root.iter('node') if st is not None and st.root is not None else []):
+        t = (nd.get('text') or '').strip()
+        if nd.get('package') == V.PKG and t in (TRIP_TETON, TRIP_FAROES) and t not in out:
+            out[t] = C.bounds(nd)[1]
+    return out
+
+
+def cold_first_frame(tag):
+    """Force-stop, start, and read the trips list as soon as it can be read (no waiting, no pull to refresh).
+    Returns (seconds after start, {title: y}, all titles in screen order) of the first read showing both trips."""
+    C.adb('shell', 'am', 'force-stop', V.PKG); time.sleep(1)
+    t0 = time.time()
+    C.adb('shell', 'am', 'start', '-n', f'{V.PKG}/.MainActivity')
+    reads = 0
+    while time.time() - t0 < 40:
+        root = C.dump(); reads += 1
+        st = C.State(root)
+        ys = trip_rows_y(st)
+        if len(ys) == 2:
+            order = [t for t in st.all_texts if t in (TRIP_TETON, TRIP_FAROES, 'Bethlehem Steel Stacks')]
+            print(f'INFO {tag}: read {reads} at {time.time() - t0:.1f} s: {ys}, titles in order {order}', flush=True)
+            return time.time() - t0, ys, order
+        if ys:
+            print(f'INFO {tag}: read {reads} at {time.time() - t0:.1f} s shows only {ys}', flush=True)
+    return None, {}, []
+
+
+def trip_order():
+    """Trips list order on a cold start (Phil, 23 Nov 2026: the Faroes showed above the Tetons after an update): the saved
+    list used to get the last trip opened appended at its end, and on the next start that list showed until the server's
+    date-sorted one came. Open the Faroes, then the Tetons (the old code put the Tetons last), then cold-start and read the
+    list at once: online (first read) and with no signal (the saved list only)."""
+    s = V.home()
+    opened = []
+    for title in (TRIP_FAROES, TRIP_TETON):
+        s = C.capture(1)
+        if not V.tap_text(s, title, exact=True):
+            V.find_scroll(title); s = C.capture(1)
+            if not V.tap_text(s, title, exact=True):
+                print(f'INFO triporder: no row {title!r}', flush=True); continue
+        p = None
+        for _ in range(8):
+            p = C.capture(2)
+            if V.has(p, 'DAY ') or V.has(p, 'Open the Planner'): break
+        ok = p is not None and (V.has(p, 'DAY ') or V.has(p, 'Open the Planner'))
+        if ok: opened.append(title)
+        time.sleep(6)   # the trip is saved for offline as it loads
+        V.back(); time.sleep(2)
+    V.check('triporder-opened', len(opened) == 2, 'opened ' + ', '.join(opened) + ' (the Tetons last)')
+    if not opened:
+        return
+    secs, ys, order = cold_first_frame('triporder online')
+    V.check('triporder-first-frame', len(ys) == 2 and ys[TRIP_TETON] < ys[TRIP_FAROES],
+            f'first read {secs:.1f} s after start: Tetons y {ys.get(TRIP_TETON)}, Faroes y {ys.get(TRIP_FAROES)}' if secs is not None else 'both trips never on screen in 40 s')
+    V.net(False)
+    try:
+        secs, ys, order = cold_first_frame('triporder offline')
+        V.check('triporder-offline-first-frame', len(ys) == 2 and ys[TRIP_TETON] < ys[TRIP_FAROES],
+                f'no signal (saved list only), first read {secs:.1f} s after start: Tetons y {ys.get(TRIP_TETON)}, Faroes y {ys.get(TRIP_FAROES)}' if secs is not None else 'both trips never on screen in 40 s')
+    finally:
+        V.net(True)
+    V.check('triporder-alive', C.app_alive())
+
+
 def main():
-    sections = (find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d, jenny_3d, offline_jenny)
+    sections = (trip_order, find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d, jenny_3d, offline_jenny)
     # E2E_ONLY = comma list of section names: the workflow runs the sections on several emulators at once (16 Nov 2026)
     only = [x.strip() for x in os.environ.get('E2E_ONLY', '').split(',') if x.strip()]
     if only:

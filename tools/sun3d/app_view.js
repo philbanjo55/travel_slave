@@ -2460,14 +2460,42 @@
     const g = OH.g2; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
     const sel = ohSelShot(), K = 3 * Math.hypot(w, h); OH.dots = [];
     if (!sel) return;
-    // Phil's AllTrails routes (S3D.overheadRoutes, 23 Nov 2026): a pink line on the ground with a dark edge, under the marks
+    // Phil's AllTrails routes (S3D.overheadRoutes, 23 Nov 2026): every route of the area, each in its own colour on the
+    // ground with a dark edge, under the marks; where it starts and ends is a ringed dot with a label (one dot "Start / end"
+    // for a loop that comes back within 60 m)
+    const ends = [];
     for (const rt of OH.routes || []) {
       if (!rt.g) rt.g = rt.coords.map(c => { const v = { lat: c[1], lng: c[0] }, q = ohXZ(v); return { x: q.x, y: ohH(v), z: q.z }; });
-      const sp = rt.g.map(q => ohProj(q.x, q.y, q.z, w, h));
+      const sp = rt.g.map(q => ohProj(q.x, q.y, q.z, w, h)), col = rt.color || '#FF5FA2';
       g.lineJoin = 'round'; g.lineCap = 'round'; g.setLineDash([]);
-      for (const [lw, col] of [[7, 'rgba(0,0,0,0.55)'], [3.5, '#FF5FA2']]) {
-        g.beginPath(); sp.forEach((s, i) => i ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y)); g.lineWidth = lw; g.strokeStyle = col; g.stroke();
+      for (const [lw, c] of [[7, 'rgba(0,0,0,0.55)'], [3.5, col]]) {
+        g.beginPath(); sp.forEach((s, i) => i ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y)); g.lineWidth = lw; g.strokeStyle = c; g.stroke();
       }
+      const a = rt.coords[0], b = rt.coords[rt.coords.length - 1];
+      const loop = ohDist({ lat: a[1], lng: a[0] }, { lat: b[1], lng: b[0] }) < 60, nm = String(rt.name || 'Trail');
+      ends.push({ p: sp[0], col, start: true, text: (loop ? 'Start / end · ' : 'Start · ') + nm });
+      if (!loop) ends.push({ p: sp[sp.length - 1], col, start: false, text: 'End · ' + nm });
+    }
+    // ends at the same place (two routes from one lot) share a spot: their dots side by side, their labels one under another
+    const groups = [];
+    for (const e of ends) {
+      if (e.p.x < -40 || e.p.y < -40 || e.p.x > w + 40 || e.p.y > h + 40) continue;
+      const gr = groups.find(q => Math.hypot(q.p.x - e.p.x, q.p.y - e.p.y) < 22);
+      if (gr) gr.items.push(e); else groups.push({ p: e.p, items: [e] });
+    }
+    for (const gr of groups) {
+      const n = gr.items.length;
+      gr.items.forEach((e, i) => {
+        const x = gr.p.x + (i - (n - 1) / 2) * 12, y = gr.p.y;
+        g.beginPath(); g.arc(x, y, 7, 0, 2 * Math.PI); g.fillStyle = e.start ? e.col : '#111111'; g.fill();
+        g.lineWidth = 3; g.strokeStyle = e.start ? '#ffffff' : e.col; g.stroke();
+      });
+      const lx = gr.p.x + (n - 1) * 6 + 12;
+      gr.items.forEach((e, i) => {
+        const ly = gr.p.y + (i - (n - 1) / 2) * 16;
+        g.beginPath(); g.arc(lx + 4, ly, 4, 0, 2 * Math.PI); g.fillStyle = e.col; g.fill();
+        ohLabel(g, e.text.length > 34 ? e.text.slice(0, 33) + '…' : e.text, lx + 12, ly, false);
+      });
     }
     const P = OH.shots.map(s => { const q = ohXZ(s.v), y = ohH(s.v); return { s, q, y, p: ohProj(q.x, y, q.z, w, h) }; });
     // a compass direction from a ground point, as a unit vector on the screen
@@ -2715,7 +2743,7 @@
     eyeHeight(m) { const v = Math.max(0.3048, Math.min(10000, +m)); if (!Number.isFinite(v)) return; EYE = v; touch('walk'); if (eye) told(); },
     othersOn(v) { OTH.on = v !== false; dirty = true; },
     // overheadRoutes([{ id, name, coords: [[lng, lat], ...] }]): the stop's trails drawn on the view from above (none = [])
-    overheadRoutes(list) { OH.routes = Array.isArray(list) ? list.filter(r => r && Array.isArray(r.coords) && r.coords.length > 1).map(r => ({ id: r.id, name: r.name, coords: r.coords })) : []; dirty = true; },
+    overheadRoutes(list) { OH.routes = Array.isArray(list) ? list.filter(r => r && Array.isArray(r.coords) && r.coords.length > 1).map(r => ({ id: r.id, name: r.name, coords: r.coords, color: r.color })) : []; dirty = true; },
     // overheadMe({ lat, lng, acc?, heading?, center? } | null): Find me's dot; center = put it in the middle of the screen
     overheadMe(o) {
       OH.me = o && Number.isFinite(+o.lat) && Number.isFinite(+o.lng) ? { lat: +o.lat, lng: +o.lng, acc: o.acc, heading: o.heading } : null;

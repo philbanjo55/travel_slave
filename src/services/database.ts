@@ -196,7 +196,9 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<bool
     // Trips list stays in AsyncStorage: a few kilobytes.
     const existing = await getCachedTrips();
     const others = existing.filter((t: any) => t.id !== tripData.trip.id);
-    await AsyncStorage.setItem(TRIPS_KEY, JSON.stringify([...others, tripData.trip]));
+    // kept in trip date order (23 Nov 2026: appending put the last trip opened at the end, so after an
+    // update the list briefly showed the Faroes above the Tetons until the server's sorted list arrived)
+    await AsyncStorage.setItem(TRIPS_KEY, JSON.stringify(byStartDate([...others, tripData.trip])));
 
     const pruned = await pruneLegacyEntries();
     if (pruned) console.log(`[trip] removed ${pruned} legacy AsyncStorage cache entries`);
@@ -225,10 +227,15 @@ export async function cacheFullTrip(tripId: string, tripData: any): Promise<bool
   }
 }
 
+// The trips list in the order the server gives it (start date, earliest first), for lists saved before that rule
+function byStartDate(trips: any[]): any[] {
+  return [...trips].sort((a, b) => String(a?.start_date ?? '').localeCompare(String(b?.start_date ?? '')));
+}
+
 export async function getCachedTrips(): Promise<any[]> {
   try {
     const raw = await AsyncStorage.getItem(TRIPS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    return raw ? byStartDate(JSON.parse(raw)) : [];
   } catch {
     return [];
   }
