@@ -125,7 +125,15 @@ const LENSES: Lens[] = [
   { id: '135', f: 135, long: 120, short: 96, label: '135', format: '4×5' },
   { id: '300', f: 300, long: 120, short: 96, label: '300', format: '4×5' },
   { id: 'gw690', f: 90, long: 82.6, short: 56, label: '6×9', format: '6×9 (GW690)' },
+  // Phil (23 Nov 2026): the same four lenses on a 6x17 roll back (56 x 168 mm open); a 6x17 is its own film, not a 4x5 crop
+  { id: '617-75', f: 75, long: 168, short: 56, label: '75', format: '6×17' },
+  { id: '617-90', f: 90, long: 168, short: 56, label: '90', format: '6×17' },
+  { id: '617-135', f: 135, long: 168, short: 56, label: '135', format: '6×17' },
+  { id: '617-300', f: 300, long: 168, short: 56, label: '300', format: '6×17' },
 ];
+const FOCALS = ['75', '90', '135', '300'];
+const is617 = (id: string) => id.startsWith('617-');
+const lensShort = (l: Lens | undefined, id: string) => !l ? `${id} mm` : l.format === '6×9 (GW690)' ? '6×9' : l.format === '6×17' ? `6×17 ${l.f} mm` : `${l.f} mm`;
 type FrameMode = 'land' | 'port' | 'off';
 const FRAME_NEXT: Record<FrameMode, FrameMode> = { land: 'port', port: 'off', off: 'land' };
 const FRAME_SAY: Record<FrameMode, string> = { land: 'landscape', port: 'portrait', off: 'off' };
@@ -900,7 +908,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   }, [tripId, stopId, vid, run]);
   const framedLine = queued.frame ? 'Saved on the phone, sends when you have signal.'
     : addShot ? 'Not a shot yet: saving adds it'
-    : framing ? `Framed ${framedDay(framing.at)} · ${LENSES.find(l => l.id === framing.lens)?.format === '6×9 (GW690)' ? '6×9' : `${framing.lens} mm`} · ${framing.orient}${framing.eye != null ? ` · camera ${feetIn(framing.eye)} up` : ''}${framing.photo ? ' · photo placed' : ''}${framing.crop ? ` · crop ${cropName(framing.crop, (() => { const fl = lensOf(framing.lens, framing.orient); return fl ? { fw: fl.fw, fh: fl.fh } : film; })())}` : ''}`
+    : framing ? `Framed ${framedDay(framing.at)} · ${lensShort(LENSES.find(l => l.id === framing.lens), framing.lens)} · ${framing.orient}${framing.eye != null ? ` · camera ${feetIn(framing.eye)} up` : ''}${framing.photo ? ' · photo placed' : ''}${framing.crop ? ` · crop ${cropName(framing.crop, (() => { const fl = lensOf(framing.lens, framing.orient); return fl ? { fw: fl.fw, fh: fl.fh } : film; })())}` : ''}`
     : 'Not framed yet';
 
   const waiting = phase === 'finding' ? 'Finding the terrain for this spot…'
@@ -952,18 +960,28 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         {oh.controls}
         <View style={[styles.topRow, preview || overhead ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
           <View style={styles.lens} accessibilityRole="tablist">
-            {LENSES.map(l => (
+            {LENSES.filter(l => l.format === (is617(lensId) ? '6×17' : '4×5') || l.id === 'gw690').map(l => (
               <TouchableOpacity
                 key={l.id}
                 onPress={() => setLens(l.id)}
                 style={[styles.lensBtn, lensId === l.id && styles.lensOn]}
                 accessibilityRole="tab"
                 accessibilityState={{ selected: lensId === l.id }}
-                accessibilityLabel={l.id === 'gw690' ? 'Fuji 6 by 9, 90 millimetre lens' : `${l.f} millimetre lens`}
+                accessibilityLabel={l.id === 'gw690' ? 'Fuji 6 by 9, 90 millimetre lens' : `${l.f} millimetre lens${l.format === '6×17' ? ' on 6 by 17' : ''}`}
               >
                 <Text style={[styles.lensText, lensId === l.id && styles.lensTextOn]}>{l.label}</Text>
               </TouchableOpacity>
             ))}
+            {/* 4x5 or 6x17 film (Phil, 23 Nov 2026): the same lens on the other back, so the frame is the film's own size */}
+            <TouchableOpacity
+              onPress={() => setLens(is617(lensId) ? lensId.slice(4) : `617-${FOCALS.includes(lensId) ? lensId : '90'}`)}
+              style={[styles.lensBtn, { marginLeft: 6 }, is617(lensId) && styles.lensOn]}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: is617(lensId) }}
+              accessibilityLabel={is617(lensId) ? '6 by 17 back. Tap for 4 by 5' : '4 by 5 back. Tap for 6 by 17'}
+            >
+              <Text style={[styles.lensText, is617(lensId) && styles.lensTextOn]}>6×17</Text>
+            </TouchableOpacity>
           </View>
           <View style={styles.rightBtns}>
             {hdCfg && region && b64 ? (
@@ -1172,7 +1190,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       ) : null}
       {full && cropOpen && frame !== 'off' ? (
         <View style={pad}>
-          <CropPanel crop={crop} film={film} filmName={pickLens.format === '6×9 (GW690)' ? '6×9' : '4×5'} longIn={longIn} onPick={pickCrop} onLong={onLong} />
+          <CropPanel crop={crop} film={film} filmName={pickLens.format === '6×9 (GW690)' ? '6×9' : pickLens.format === '6×17' ? '6×17' : '4×5'} longIn={longIn} onPick={pickCrop} onLong={onLong} />
         </View>
       ) : null}
       {full && !hd && ready ? (
