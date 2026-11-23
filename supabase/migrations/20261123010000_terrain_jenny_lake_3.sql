@@ -1,4 +1,4 @@
--- 3D sun view: one more 1.5 km close-up box on the Grand Teton trip, gtd15_jenny_lake_3 (23 Nov 2026, NOT applied).
+-- 3D sun view: one more 1.5 km close-up box on the Grand Teton trip, gtd15_jenny_lake_3 (23 Nov 2026, applied 23 Nov 2026).
 -- Before applying: upload these 6 files (2,317,014 bytes) to the public bucket `terrain`: gtd_jenny_lake_3_lidar_v4.png, gtd_jenny_lake_3_mask_v4.png, gtd_jenny_lake_3_trees_v4.png, gtd_jenny_lake_3_water_v4.png, gtd_jenny_lake_3_colour_v4.jpg, gtd_jenny_lake_3_mask_v6.png.
 -- Why: the Jenny Lake shot 'Grand (your photo)' stands at 43.69885, -110.72699 (Teton Park Road shoulder just north of the
 -- Cottonwood Creek bridge) and no close-up box held it (its 3D had only the fine box gt_taggart_bradley_lakes). Find spot
