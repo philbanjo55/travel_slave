@@ -6,6 +6,8 @@
                                                            summer aerial photos (NAIP) turned to winter
   python3 build_teton_colour.py sql    <work dir> [out.sql] upload.txt + the migration (default <work dir>/terrain_teton_colour.sql)
   python3 build_teton_colour.py all    <work dir>
+  python3 build_teton_colour.py rows   <work dir> <detail.json> <files dir>   laser boxes listed in a rows file (build_detail.py's
+                                                           detail.json), masks from <files dir>: <id>_colour_v4.jpg beside them
 
 Needs: pip install pyproj tifffile imagecodecs numpy scipy pillow requests. Everything downloaded is cached under
 <work dir>/cache, so a rerun costs nothing. Rows come from the database through TRIP_Q (a script that takes one SQL
@@ -363,6 +365,26 @@ def boxes(work, win=None):
     return win
 
 
+def detail_rows(work, rows_json, files, win=None):
+    """The laser boxes' colour from a rows file instead of the database (build_detail.py's detail.json: id, north,
+    south, west, east, n, mask_path), masks read from `files`: the same steps as boxes() (NAIP at the box's n, the winter
+    picture, winterize with the mask). Writes <files>/<mask name with _mask -> _colour, .jpg>, e.g. gtd_x_colour_v4.jpg
+    (the 1.5 km boxes of terrain_detail_regions_v4; one new box, Jenny Lake 3, 23 Nov 2026)."""
+    win = win or Winter(work)
+    Ep = os.path.join(work, 'cache', 'wide_E.npy')
+    if not os.path.exists(Ep): wide(work, win)
+    E = np.load(Ep); made = []
+    for r in json.load(open(rows_json)):
+        n = r['n']; mask = os.path.join(files, os.path.basename(r['mask_path']))
+        nb = naip(work, r, n, n); fs, nd = winter_at(win, E, r, n, n)
+        kind = np.array(Image.open(mask)); assert kind.shape == (n, n), (r['id'], kind.shape)
+        seen, st = winterize(nb, fs, nd, kind)
+        p = os.path.join(files, os.path.basename(r['mask_path']).replace('_mask', '_colour').replace('.png', '.jpg')); nbytes = save_jpeg(p, seen, 82)
+        made.append(dict(id=r['id'], path=os.path.basename(p), bytes=nbytes, px=n, **st)); log('detail', r['id'], n, nbytes, st)
+    json.dump(made, open(os.path.join(work, 'detail_rows_colour.json'), 'w'), indent=1)
+    return made
+
+
 # ---------------------------------------------------------------- upload list + the migration's rows
 CREDIT = 'Ground colour: Copernicus Sentinel-2 (ESA), 30 Dec 2025. Aerial photos: USDA NAIP via USGS, July 2022, snow added.'
 
@@ -420,3 +442,4 @@ if __name__ == '__main__':
     if cmd in ('wide', 'all'): W = wide(work)
     if cmd in ('boxes', 'all'): W = boxes(work, W)
     if cmd in ('sql', 'all'): sql(work, sys.argv[3] if len(sys.argv) > 3 else None)
+    if cmd == 'rows': detail_rows(work, sys.argv[3], sys.argv[4])

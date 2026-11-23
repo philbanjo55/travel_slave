@@ -3,6 +3,7 @@
 
   build_detail.py plan  <work dir> (--trip <uuid> | --pins pins.json) [options]     the boxes only, nothing fetched
   build_detail.py build <work dir> (--trip <uuid> | --pins pins.json) [options]
+  build_detail.py build <work dir> --box <n,s,w,e | lat,lng> --name <id> [--stands "lat,lng;..."] [options]   one box by hand
 
 Source: a USGS lidar survey as an Entwine EPT on AWS (--project, default WY_GrandTetonNP_1_D22: Grand Teton, 2022,
 about 7 points per 0.5 m cell; classes 2 ground, 6 building, 9 water, 1 everything else incl. trees, 7 / 18 noise).
@@ -427,6 +428,31 @@ def plan(pins, a):
     return out
 
 
+def one_box(pins, a):
+    """--box: one box given by hand (a stand spot no planned box covers, e.g. Jenny Lake 'Grand (your photo)', 23 Nov 2026).
+    Same files and cleaning as the planned boxes; only where the box sits is chosen by hand."""
+    assert a.name, '--box needs --name'
+    v = [float(x) for x in a.box.split(',')]; cell = a.cell; kz = 111132
+    if len(v) == 2:
+        clat, clng = v; kxl = 111320 * math.cos(math.radians(clat)); side = a.side or 1504.0
+        n = int(math.ceil(side / cell / 8) * 8); side = n * cell
+        box = tuple(round(x, 6) for x in (clat + side / 2 / kz, clat - side / 2 / kz, clng - side / 2 / kxl, clng + side / 2 / kxl))
+    else:
+        assert len(v) == 4, '--box: 2 or 4 numbers'
+        box = tuple(v); clat, clng = (box[0] + box[1]) / 2, (box[2] + box[3]) / 2; kxl = 111320 * math.cos(math.radians(clat))
+        n = int(round((box[0] - box[1]) * kz / cell)); side = n * cell
+    stands = [tuple(float(x) for x in p.split(',')) for p in a.stands.split(';')] if a.stands else [(clat, clng)]
+    regions = pins.get('regions') or []
+    if not regions:
+        q = a.q or os.environ.get('TRIP_Q'); assert q, '--box needs --q / $TRIP_Q (for the wide regions) or --pins'
+        regions = pins['regions'] = json.loads(subprocess.run([q, "select id, north, south, west, east, n, width_m, depth_m, base_m, step_m, path, bytes, ground from terrain_regions"], capture_output=True, text=True, check=True).stdout)
+    region = next((r for r in regions if r['south'] <= clat <= r['north'] and r['west'] <= clng <= r['east']), None)
+    for la, lo in stands:
+        inside = min((box[0] - la) * kz, (la - box[1]) * kz, (lo - box[2]) * kxl, (box[3] - lo) * kxl)
+        print(f"  stand spot {la}, {lo}: {inside:.0f} m inside the box")
+    return [dict(id=f"{a.prefix}_{a.name}", box=box, n=n, cell=cell, side=side, stops=[a.name], stands=stands, region=region['id'] if region else None, outside=[])]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0]); ap.add_argument('cmd', choices=['plan', 'build']); ap.add_argument('work')
     ap.add_argument('--trip'); ap.add_argument('--pins'); ap.add_argument('--q')
@@ -436,6 +462,9 @@ def main():
     ap.add_argument('--side', type=float, default=0, help='every box this many metres a side (moved inside its fine box)'); ap.add_argument('--cell', type=float, default=1.0)
     ap.add_argument('--max-depth', type=int, default=99, help='read the survey no deeper (10 = about 0.5 m apart: enough for 1 m cells)')
     ap.add_argument('--no-buildings', action='store_true', help='buildings on the ground (the park-wide building files draw them)')
+    ap.add_argument('--box', help='ONE box, no planning: "north,south,west,east" (exact bounds) or "lat,lng" (its middle; a --side square, rounded as plan() does)')
+    ap.add_argument('--name', help='with --box: the box id after the prefix (e.g. jenny_lake_3 -> gtd_jenny_lake_3)')
+    ap.add_argument('--stands', help='with --box: the stand spots in it, "lat,lng;lat,lng" (pin report; no building is kept within 4 m of one)')
     ap.add_argument('--wide-file', help="the region's wide file, to print how the survey's ground sits against it"); ap.add_argument('--migration', default='terrain_detail.sql')
     a = ap.parse_args(); os.makedirs(a.work, exist_ok=True)
     if not a.pins and not a.trip and os.path.exists(f"{a.work}/pins.json"): a.pins = f"{a.work}/pins.json"
@@ -444,7 +473,7 @@ def main():
         q = a.q or os.environ.get('TRIP_Q')
         pins['nears'] = json.loads(subprocess.run([q, "select id, parent, north, south, west, east, n, width_m, depth_m from terrain_near_regions"], capture_output=True, text=True, check=True).stdout)
         json.dump(pins, open(f"{a.work}/pins.json", 'w'), indent=1)
-    boxes = plan(pins, a)
+    boxes = one_box(pins, a) if a.box else plan(pins, a)
     if a.only: boxes = [b for b in boxes if b['id'] in a.only.split(',')]
     print(f"{len(boxes)} detail boxes:")
     for b in boxes:
