@@ -23,7 +23,7 @@ export type Overhead3D = {
   sunOn: boolean;
   onSun: (on: boolean) => void;
   shaded?: boolean;               // a ridge shades the picked shot's subject now (grey arrows); left out = the page works it out
-  routes?: TrailRoute[];          // Phil's AllTrails routes through the place (services/trailRoutes), a pink line on the ground
+  routes?: TrailRoute[];          // Phil's AllTrails routes of the area (services/trailRoutes), each its own colour, start / end marked
 };
 
 type Mode = 'view' | 'north' | 'turned';
@@ -80,7 +80,7 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
 
   // the trails, sent once the page is ready and again when they change (they come from the phone's cache or the server)
   const routes = overhead?.routes ?? [];
-  const routesKey = routes.map(r => `${r.id}:${r.coords.length}`).join('|');
+  const routesKey = routes.map(r => `${r.id}:${r.coords.length}:${r.color ?? ''}`).join('|');
   useEffect(() => {
     if (!on || !ready) return;
     run(`window.S3D.overheadRoutes && window.S3D.overheadRoutes(${JSON.stringify(routes)})`);
