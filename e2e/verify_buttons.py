@@ -277,16 +277,24 @@ def replan_now_card():
         d = btn['xy'][1] - (top + nav) // 2
         C.adb('shell', 'input', 'swipe', '540', '1500', '540', str(1500 - max(-700, min(700, d))), '600'); s = C.capture(1.2)
         btn = rbtn(s)
-    if btn is not None:
-        C.tap(btn['xy'])
-    else:
-        V.tap_text(s, 'Re-plan now with the cameras')
-    print(f"INFO Re-plan now tap: {(btn['label'][:70] + ' at ' + str(btn['xy'])) if btn else 'no clickable, tapped by text'} (bars {top}-{nav})", flush=True)
+    time.sleep(2)   # 23 Nov 2026: a tap while the page still glides after the swipe only stops the glide
+    sent = lambda: any(('planner_t_now' in a) or ('planner_t_replan_one' in a) for a in blocked_lines()[before:])
     after = []
-    for _ in range(10):
-        time.sleep(2)
-        after = blocked_lines()[before:]
-        if any(('planner_t_now' in a) or ('planner_t_replan_one' in a) for a in after): break
+    for k in range(3):
+        if btn is not None:
+            C.tap(btn['xy'])
+        else:
+            V.tap_text(s, 'Re-plan now with the cameras')
+        print(f"INFO Re-plan now tap {k + 1}: {(btn['label'][:70] + ' at ' + str(btn['xy'])) if btn else 'no clickable, tapped by text'} (bars {top}-{nav})", flush=True)
+        for _ in range(5):
+            time.sleep(2)
+            if sent(): break
+        st_k = C.capture(0.5)
+        print('INFO after tap ' + str(k + 1) + ': ' + ' | '.join(c['label'][:50] for c in st_k.clickables if c['label'].startswith('Re-plan'))
+              + ' / texts ' + ' | '.join(t[:50] for t in st_k.all_texts if 'plan' in t.lower())[:400], flush=True)
+        if sent(): break
+        btn = rbtn(st_k) or btn
+    after = blocked_lines()[before:]
     if not after:
         aft0 = C.capture(0.5)
         print('INFO after the tap: ' + ' | '.join(t for t in aft0.all_texts if 'plan' in t.lower() or 'blocked' in t.lower())[:600], flush=True)
@@ -1867,7 +1875,8 @@ def faroes_3d():
               V.back(); time.sleep(2); continue
           # a stop with no shot (23 Nov 2026: 'Lunch — Sørvágur') has a Sun & Moon section but no 3D tab
           st2 = section_to(st, lo=0.18, hi=0.45)
-          if not any(c['label'].split(' | ')[0].strip(', ') == '3D' for c in st2.clickables) and '3D' not in st2.all_texts:
+          has3d = any(c['label'].split(' | ')[0].strip(', ') == '3D' for c in st2.clickables) or '3D' in st2.all_texts
+          if not has3d and 'SUN & MOON' in st2.all_texts and any(t in st2.all_texts for t in ('Horizon', 'Overhead', 'Photo')):
               print(f"INFO fo3d {hit['label'][:40]!r}: no 3D tab (no shot), next stop", flush=True)
               V.back(); time.sleep(2); continue
           st = st2
