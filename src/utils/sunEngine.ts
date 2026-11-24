@@ -156,6 +156,7 @@ export type Pair = {
   photo_id?: string | null;    // the vantage's reference photo (a stop photo)
   photo_url?: string | null;
   framing?: Framing | null;    // the 3D view's saved framing (trip_sun_plan, after 20261114040000_vantage_framing)
+  framing_more?: Framing[] | null;   // the shot's other framings after the default (20261124030000_vantage_more_framings)
   starred?: boolean;           // the stop's starred shot (same migration; older plans leave it out)
   ideal?: IdealLight | null;   // the shot's saved ideal light (trip_sun_plan, after 20261118090000_vantage_ideal_light)
 };
