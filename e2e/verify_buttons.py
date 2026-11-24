@@ -1141,7 +1141,9 @@ def framing():
         C.tap(walk_on['xy']); time.sleep(1.5); s = C.capture(1)
     H = 2400
     def framing_row(st):
-        return next((t for t in st.all_texts if t.startswith(('Framing: ', 'Not framed yet', 'Framed ', 'Saved on the phone'))), None)
+        return next((t for t in st.all_texts if t.startswith(('Framing: ', 'Not framed yet', 'Framed ', 'Saved on the phone')) or re.match(r'Framing \d+ of \d+', t)), None)
+    # a framed shot: the old "Framed ..." line, or (24 Nov 2026, several framings) a chip "Framing 1 of n: 4×5 · 135. ..."
+    framed = lambda t: (t or '').startswith('Framed ') or bool(re.match(r'Framing \d+ of \d+', t or ''))
     for _ in range(4):   # the row may sit below the fold of the area under the picture: a small swipe inside it
         if framing_row(s) and any('Save framing for this shot' in c['label'] for c in s.clickables):
             break
@@ -1154,12 +1156,39 @@ def framing():
                  and 'Save framing for this shot' in (nd.get('content-desc') or '')), None)
     lit = any('Save framing for this shot' in c['label'] for c in s.clickables)
     V.check('frame-save-button', node is not None or lit, 'Save framing button')
-    if (line or '').startswith('Framed ') and not lit:
+    if framed(line):
+        chips = [c for c in s.clickables if re.match(r'Framing \d+ of \d+', c['label'])]
+        V.check('frame-chips', len(chips) > 0 or (line or '').startswith('Framed '), f'{len(chips)} framing chip(s): ' + ' / '.join(c['label'].split('. ')[0] for c in chips)[:90])
+        plus_node = next((nd for nd in (s.root.iter('node') if s.root is not None else []) if nd.get('package') == V.PKG
+                          and 'Add this view as another framing' in (nd.get('content-desc') or '')), None)
+        if chips:
+            V.check('frame-plus', plus_node is not None, '"+" (add another framing) next to the chips')
+            # long press on the first chip: its menu (Delete / Cancel), always cancelled
+            C.adb('shell', 'input', 'swipe', str(chips[0]['xy'][0]), str(chips[0]['xy'][1]), str(chips[0]['xy'][0]), str(chips[0]['xy'][1]), '900')
+            m = C.capture(1.5)
+            menu = V.has(m, 'Delete') and V.has(m, 'practice copies included')
+            V.check('frame-chip-menu', menu, 'long press: menu with Delete' if menu else 'no menu after a long press on the chip')
+            if menu:
+                V.tap_text(m, 'Cancel', exact=True); time.sleep(1.2)
+            else:
+                V.back(); time.sleep(1)
+            s = C.capture(1)
+    if framed(line) and not lit:
         V.check('frame-save-grey-unchanged', True, 'greyed while the view is the saved framing')
         if V.tap_text(s, 'Aim at subject'):
             time.sleep(2.5); s = C.capture(1)
         lit = any('Save framing for this shot' in c['label'] for c in s.clickables)
         V.check('frame-save-lights-after-change', lit, 'Save framing lights up once the view moves')
+        # "+" lights up too: its question, always cancelled (it would add a framing to the real trip's shot)
+        if V.tap_text(s, 'Add this view as another framing'):
+            q = C.capture(1.5)
+            asked = V.has(q, 'Add another framing?')
+            V.check('frame-plus-asks', asked, 'question before adding' if asked else 'no "Add another framing?" question')
+            if asked:
+                V.tap_text(q, 'Cancel', exact=True); time.sleep(1.2)
+            else:
+                V.back(); time.sleep(1)
+            s = C.capture(1)
     V.check('frame-aim-button', any('Aim at subject' in c['label'] for c in s.clickables), 'Aim at subject button')
     cut_off('3d-framing', s)
     # Save framing: its question, then Cancel (never Save, see above)
@@ -1189,7 +1218,7 @@ def framing():
         time.sleep(2); b = C.capture(1)
         V.check('frame-aim', V.has(b, 'Looking ') and C.app_alive(), 'view still drawn after Aim at subject')
         # Reset framing (18 Nov 2026): on a framed shot, back to the saved framing; Save framing greys out again
-        if (line or '').startswith('Framed '):
+        if framed(line):
             rb = next((c for c in b.clickables if c['label'].split(' | ')[0].startswith('Reset framing')), None)
             V.check('frame-reset-button', rb is not None, 'Reset framing button on a framed shot')
             if rb is not None and V.tap_text(b, 'Reset framing'):

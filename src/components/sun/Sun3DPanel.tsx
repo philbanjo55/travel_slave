@@ -8,7 +8,7 @@ import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
 import { detailBuildings, detailColor, detailFor, detailLeaf, detailMask, detailTrees, TREE_STYLE, treeTilesLeaf, detailWater, houseTileFile, houseTilesFor, nearColor, nearFor, rangeFile, rangeFor, regionColor, regionFor, terrainData, TerrainDetail, TerrainHouseTile, TerrainNear, TerrainRange, TerrainRegion, TerrainTreeTile, treeTileFile, treeTilesFor, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
-import { framingOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
+import { framingsOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
 import type { Framing, Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -210,6 +210,16 @@ const FAROES_CREDIT = 'Heights, ground photos, buildings and water: Faroese Envi
 
 // The page's framing from a saved one: { yaw_deg, pitch_deg } (null = aim at the subject).
 const pageFraming = (f: Framing | null) => (f ? { yaw_deg: f.heading, pitch_deg: f.pitch } : null);
+// A framing's chip: "4×5 · 135", "6×17 · 90", "6×9", plus "portrait" when it is.
+function chipName(f: Framing): string {
+  const cam = camOf(f.lens), fo = focalOf(f.lens);
+  const base = cam === '69' ? '6×9' : `${cam === '617' ? '6×17' : '4×5'} · ${fo ?? f.lens}`;
+  return f.orient === 'portrait' ? `${base} · portrait` : base;
+}
+// "Framed 14 Nov · camera 6'0" up · photo placed · crop 3:2"
+function framingDetail(f: Framing): string {
+  return [f.at ? `Framed ${framedDay(f.at)}` : 'Framed', f.eye != null ? `camera ${feetIn(f.eye)} up` : '', f.photo ? 'photo placed' : '', f.crop ? `crop ${f.crop.ratio === 'custom' ? 'custom' : f.crop.ratio}` : ''].filter(Boolean).join(' · ');
+}
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // "14 Nov" (the phone's own date)
 function framedDay(at: string): string {
@@ -275,7 +285,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const setFrame = useCallback((m: FrameMode) => { lastFrame = m; pickedFor = vid; setFrameState(m); }, [vid]);
   // The shot's saved framing (a save made on this phone first, sent or waiting, then the trip's sun plan).
   useShotSaves();   // re-render when a save is made, sent or dropped
-  const framing = framingOf(vid === pair.vantage_id ? pair : { ...pair, vantage_id: vid });
+  // Several framings on one shot (Phil, 24 Nov 2026): the default first (the one the shot opens with); a chip picks
+  // which one the view, Reset and Save framing are about. Back to the default on another shot.
+  const framings = framingsOf(vid === pair.vantage_id ? pair : { ...pair, vantage_id: vid });
+  const [selS, setSelS] = useState<{ vid: string; i: number }>({ vid, i: 0 });
+  const selI = selS.vid === vid ? Math.max(0, Math.min(selS.i, framings.length - 1)) : 0;
+  const framing: Framing | null = framings[selI] ?? null;
+  const [applyN, setApplyN] = useState(0);   // bumped when a chip (or a save) should put its framing on the view
+  const framingsRef = useRef<Framing[]>(framings);
+  framingsRef.current = framings;
   const framingRef = useRef<Framing | null>(framing);
   framingRef.current = framing;
   const queued = waitingFor(vid);   // saves of this shot still waiting for signal
@@ -865,9 +883,10 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
 
   // ---- Framing ----
   const canFrame = !!(tripId && stopId);
-  const saveFraming = useCallback(() => {
+  // The framing the view shows now. photo / crop undefined = as the framing it replaces had them.
+  const buildFraming = useCallback((base: Framing | null): { f: Framing; withPhoto: boolean } | null => {
     const lk = lookRef.current;
-    if (!tripId || !stopId || !lk) return;
+    if (!lk) return null;
     const f: Framing = {
       heading: Math.round((((lk.yaw % 360) + 360) % 360) * 100) / 100, pitch: Math.round(lk.pitch * 100) / 100,
       lens: pickLens.id, orient: frame === 'port' ? 'portrait' : 'landscape', at: new Date().toISOString(),
@@ -876,39 +895,66 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     // the photo goes with the framing when it is on screen or was moved; else the saved placement (if any) stays
     const withPhoto = !!(refKey && pic && (refMode === 'see' || photoMoved));
     if (withPhoto && pic) f.photo = { key: refKey, s: refXf.s, x: refXf.x, y: refXf.y, w: pic.w, h: pic.h };
-    else if (framingRef.current?.photo !== undefined) f.photo = framingRef.current?.photo ?? null;
-    // the crop goes with the framing; null clears a saved one (left out when there is neither)
-    if (crop || framingRef.current?.crop) f.crop = crop;
+    else f.photo = base?.photo ?? null;
+    f.crop = crop ?? null;   // the crop goes with the framing; null = none
+    return { f, withPhoto };
+  }, [pickLens, frame, refKey, pic, refMode, photoMoved, refXf, camH, crop]);
+  // Writes the shot's whole list of framings (the default first) and shows framing `show` of it.
+  const commitFramings = useCallback(async (list: Framing[], show: number, note: string | null) => {
+    if (!tripId || !stopId) return;
+    setSavingFrame(true);
+    try {
+      const id = await ensureShot();
+      await saveShot({ kind: 'frames', tripId, stopId, vantageId: id, list });
+      setSelS({ vid: id, i: show });
+      setPhotoMoved(false);
+      pickedFor = null;   // the saved framing (lens, landscape / portrait) is what this shot opens with from now on
+      if (!list.length) run('window.S3D.view(null)');
+      else setApplyN(n => n + 1);   // the view shows framing `show` (later re-aims, e.g. walk's home, keep it)
+      setFrameNote(note);   // null: the chips (or a waits-for-signal line) say the rest
+    } catch (e: any) { setFrameNote(`Couldn't save the framing: ${e?.message || 'try again'}`); }
+    finally { setSavingFrame(false); }
+  }, [tripId, stopId, ensureShot, run]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const saveFraming = useCallback(() => {
+    if (!tripId || !stopId) return;
+    const b = buildFraming(framingRef.current);
+    if (!b) return;
+    const { f, withPhoto } = b;
     const tilt = Math.abs(f.pitch) < 0.5 ? 'level' : `tilted ${f.pitch > 0 ? 'up' : 'down'} ${Math.abs(f.pitch).toFixed(1)}°`;
     Alert.alert(
       'Save this framing?',
-      `${addShot ? ADD_FIRST : ''}The shot will open looking ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}${f.eye != null ? `, camera ${feetIn(f.eye)} up` : ''}${crop ? `, cropped ${cropName(crop, film)}` : ''}.${withPhoto ? ' Your photo stays where you put it.' : ''} It changes the shot on every trip that uses it, practice copies included.`,
+      `${addShot ? ADD_FIRST : ''}${framingsRef.current.length > 1 && selI > 0 ? `${chipName(framingsRef.current[selI])} will look` : 'The shot will open looking'} ${compassPoint(f.heading)} ${Math.round(f.heading)}°, ${tilt}, ${pickLens.f} mm on ${pickLens.format}, ${f.orient}${f.eye != null ? `, camera ${feetIn(f.eye)} up` : ''}${crop ? `, cropped ${cropName(crop, film)}` : ''}.${withPhoto ? ' Your photo stays where you put it.' : ''} It changes the shot on every trip that uses it, practice copies included.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Save', onPress: async () => {
-            setSavingFrame(true);
-            try {
-              const id = await ensureShot();
-              const r = await saveShot({ kind: 'frame', tripId, stopId, vantageId: id, framing: f });
-              setPhotoMoved(false);
-              pickedFor = null;   // the saved framing (lens, landscape / portrait) is what this shot opens with from now on
-              run(`window.S3D.view(${JSON.stringify(pageFraming(f))})`);   // later re-aims (foreground, walk's home) keep it
-              setFrameNote(null);   // the framing line says Framed, or that it waits for signal
-            } catch (e: any) { setFrameNote(`Couldn't save the framing: ${e?.message || 'try again'}`); }
-            finally { setSavingFrame(false); }
+          text: 'Save', onPress: () => {
+            const list = framingsRef.current.slice();
+            if (list.length) list[selI] = f; else list.push(f);
+            commitFramings(list, list.length > 1 ? selI : 0, null);
           },
         },
       ],
     );
-  }, [tripId, stopId, pickLens, frame, run, addShot, ensureShot, refKey, pic, refMode, photoMoved, refXf, camH, crop, film]);
+  }, [tripId, stopId, pickLens, addShot, crop, film, buildFraming, commitFramings, selI]);
+  // "+": the view as it is now becomes another framing of this shot (the default stays first).
+  const addFraming = useCallback(() => {
+    if (!tripId || !stopId) return;
+    const b = buildFraming(null);
+    if (!b) return;
+    const list = [...framingsRef.current, b.f];
+    if (list.length > 8) { setFrameNote('A shot keeps at most 8 framings.'); return; }
+    Alert.alert('Add another framing?', `${chipName(b.f)}, looking ${compassPoint(b.f.heading)} ${Math.round(b.f.heading)}°. It is added to this shot on every trip that uses it, practice copies included.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Add', onPress: () => { commitFramings(list, list.length - 1, null); } },
+    ]);
+  }, [tripId, stopId, buildFraming, commitFramings]);
   const aimAtSubject = useCallback(() => {
     run('window.S3D.view(null)');
     setFrameNote(framingRef.current ? 'Aimed at the subject. Your saved framing is kept.' : null);
   }, [run]);
   // Reset framing (Phil, 18 Nov 2026): back to the last saved framing (direction, tilt, lens, landscape / portrait and,
   // when one was saved with it, where the photo sat), instead of aiming at the subject.
-  const resetFraming = useCallback(() => {
+  const resetFraming = useCallback((quiet?: boolean) => {
     const f = framingRef.current;
     if (!f) return;
     pickedFor = null;
@@ -920,27 +966,35 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const fl = lensOf(f.lens, f.orient);
     setCrop(refitCrop(f.crop ?? null, fl ? { fw: fl.fw, fh: fl.fh } : film));
     setPhotoMoved(false);
-    setFrameNote('Back to your saved framing.');
+    if (quiet !== true) setFrameNote('Back to your saved framing.');
   }, [run, savedSc, refKey, savedH, film]);
-  const forgetFraming = useCallback(() => {
+  // A chip: show that framing (view, lens, landscape / portrait, height, crop, photo), once this render has its values.
+  const resetRef = useRef(resetFraming);
+  resetRef.current = resetFraming;
+  useEffect(() => { if (applyN) resetRef.current(true); }, [applyN]);
+  const pickFraming = useCallback((i: number) => { setSelS({ vid, i }); setApplyN(n => n + 1); setFrameNote(null); }, [vid]);
+  // Long press on a chip: open the shot with it, or delete it.
+  const chipMenu = useCallback((i: number) => {
     if (!tripId || !stopId) return;
-    Alert.alert('Forget this framing?', 'The shot will open aimed at the subject again, on every trip that uses it.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Forget', style: 'destructive', onPress: async () => {
-          try {
-            const r = await saveShot({ kind: 'unframe', tripId, stopId, vantageId: vid, at: new Date().toISOString() });
-            run('window.S3D.view(null)');
-            setFrameNote(r === 'queued' ? null : 'Framing forgotten: the shot opens aimed at the subject.');
-          } catch (e: any) { setFrameNote(`Couldn't forget the framing: ${e?.message || 'try again'}`); }
-        },
+    const list = framingsRef.current;
+    const f = list[i];
+    if (!f) return;
+    const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [{ text: 'Cancel', style: 'cancel' }];
+    if (i > 0) buttons.push({ text: 'Open the shot with it', onPress: () => { commitFramings([f, ...list.filter((_, k) => k !== i)], 0, `The shot opens with ${chipName(f)} now.`); } });
+    buttons.push({
+      text: 'Delete', style: 'destructive', onPress: () => {
+        const rest = list.filter((_, k) => k !== i);
+        commitFramings(rest, 0, rest.length ? 'Framing deleted.' : 'Framing deleted: the shot opens aimed at the subject.');
       },
-    ]);
-  }, [tripId, stopId, vid, run]);
+    });
+    Alert.alert(chipName(f), `${framingDetail(f)}${i === 0 ? '\nThe shot opens with this one.' : ''}\nChanges the shot on every trip that uses it, practice copies included.`, buttons);
+  }, [tripId, stopId, commitFramings]);
+  // the line over the buttons: a one-off note, a save waiting for signal, or nothing framed yet (else the chips say it)
   const framedLine = queued.frame ? 'Saved on the phone, sends when you have signal.'
     : addShot ? 'Not a shot yet: saving adds it'
-    : framing ? `Framed ${framedDay(framing.at)} · ${lensShort(LENSES.find(l => l.id === framing.lens), framing.lens)} · ${framing.orient}${framing.eye != null ? ` · camera ${feetIn(framing.eye)} up` : ''}${framing.photo ? ' · photo placed' : ''}${framing.crop ? ` · crop ${cropName(framing.crop, (() => { const fl = lensOf(framing.lens, framing.orient); return fl ? { fw: fl.fw, fh: fl.fh } : film; })())}` : ''}`
+    : framing ? null
     : 'Not framed yet';
+  const lineText = frameNote ?? framedLine;
 
   const waiting = phase === 'finding' ? 'Finding the terrain for this spot…'
     : phase === 'loading' ? 'Getting the terrain (once, a few MB)…'
@@ -1265,13 +1319,29 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       ) : null}
       {full && !hd && ready ? (
         <View style={[styles.walkRow, pad]}>
-          <Text style={styles.walkText} accessibilityLabel={`Framing: ${frameNote ?? framedLine}`}>{frameNote ?? framedLine}</Text>
+          {lineText ? <Text style={styles.walkText} accessibilityLabel={`Framing: ${lineText}`}>{lineText}</Text> : null}
+          {framings.length && !addShot ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.frameChips}>
+              {framings.map((f, i) => (
+                <TouchableOpacity key={`${i}|${f.lens}|${f.heading}`} onPress={() => pickFraming(i)} onLongPress={() => chipMenu(i)} delayLongPress={400}
+                  style={[styles.frameChip, i === selI && styles.heightChipOn]} accessibilityRole="button" accessibilityState={{ selected: i === selI }}
+                  accessibilityLabel={`Framing ${i + 1} of ${framings.length}: ${chipName(f)}. ${framingDetail(f)}${i === 0 ? '. The shot opens with this one' : ''}`}>
+                  <Text style={[styles.frameChipText, i === selI && { color: '#000000' }]}>{chipName(f)}</Text>
+                </TouchableOpacity>
+              ))}
+              {canFrame && framings.length < 8 ? (
+                <TouchableOpacity onPress={addFraming} disabled={savingFrame || look == null || frameUnchanged} style={[styles.frameChip, { paddingHorizontal: 16 }, frameUnchanged && { opacity: 0.4 }]} accessibilityRole="button" accessibilityLabel="Add this view as another framing" accessibilityState={{ disabled: frameUnchanged }}>
+                  <Text style={[styles.frameChipText, { fontSize: 16 }]}>+</Text>
+                </TouchableOpacity>
+              ) : null}
+            </ScrollView>
+          ) : null}
           <View style={styles.walkBtns}>
             <TouchableOpacity onPress={aimAtSubject} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Aim at subject">
               <Text style={styles.walkBtnText}>Aim at subject</Text>
             </TouchableOpacity>
             {framing && !addShot ? (
-              <TouchableOpacity onPress={resetFraming} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Reset framing to the saved one" accessibilityState={{ disabled: frameUnchanged }} disabled={frameUnchanged}>
+              <TouchableOpacity onPress={() => resetFraming()} style={styles.walkBtn} accessibilityRole="button" accessibilityLabel="Reset framing to the saved one" accessibilityState={{ disabled: frameUnchanged }} disabled={frameUnchanged}>
                 <Text style={[styles.walkBtnText, frameUnchanged && { opacity: 0.4 }]}>Reset framing</Text>
               </TouchableOpacity>
             ) : null}
@@ -1279,11 +1349,6 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
               {savingFrame ? <ActivityIndicator size="small" color="#000000" /> : <Text style={styles.walkBtnMainText}>Save framing</Text>}
             </TouchableOpacity>
           </View>
-          {framing && canFrame && !addShot && !queued.frame ? (
-            <TouchableOpacity onPress={forgetFraming} accessibilityRole="button" accessibilityLabel="Forget the saved framing" hitSlop={{ top: 6, bottom: 6 }}>
-              <Text style={[styles.streetLink, { marginTop: 0 }]}>Forget framing</Text>
-            </TouchableOpacity>
-          ) : null}
         </View>
       ) : null}
 
@@ -1403,6 +1468,9 @@ const styles = StyleSheet.create({
   heightChip: { minHeight: 32, paddingHorizontal: 10, borderRadius: 16, borderWidth: 1, borderColor: '#444444', justifyContent: 'center' },
   heightChipOn: { backgroundColor: '#ffffff', borderColor: '#ffffff' },
   heightChipText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
+  frameChips: { gap: 8, paddingRight: 8 },
+  frameChip: { minHeight: 34, paddingHorizontal: 12, borderRadius: 17, borderWidth: 1, borderColor: '#444444', justifyContent: 'center' },
+  frameChipText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   walkText: { color: colors.textSecondary, fontSize: 13 },
   walkBtns: { flexDirection: 'row', gap: 8 },
   walkBtn: { flex: 1, minHeight: 40, borderRadius: 8, borderWidth: 1, borderColor: '#444444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
