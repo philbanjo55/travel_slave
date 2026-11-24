@@ -85,8 +85,6 @@
 // walls and a roof (snow on it where the ground is snow), standing on the ground as drawn, lit by the sun its ground
 // gets from the hills (the finest light map there); inside the detail box they also throw a drawn shadow (BSHADOW).
 // NEVER in lit() / the sun times. `houses` {ok, count, ms} or {ok: false, msg}.
-// Split (24 Nov 2026): S3D.split({ on, frac, shots }) draws the eye view over the view from above in this one canvas;
-// S3D.goTo(lat, lng), S3D.yaw(deg), S3D.liveLook(bool) for a map outside the page. See "Split" before tick().
 // Built into src/components/sun/sun3dHtml.ts by tools/sun3d/build_app_html.js. Do not edit the generated file.
 (function () {
   const post = m => { try { window.ReactNativeWebView.postMessage(JSON.stringify(m)); } catch (e) { /* not in the app */ } };
@@ -113,11 +111,6 @@
   const OHM = new Set();
   function ohMat(m) { OHM.add(m); if (OHU.value) { m.defines = Object.assign({}, m.defines, { OH: 1 }); m.needsUpdate = true; } return m; }
   function ohDefines(on) { for (const m of OHM) { const d = Object.assign({}, m.defines); if (on) d.OH = 1; else delete d.OH; m.defines = d; m.needsUpdate = true; } }   // the view from above is on (S3D.overhead): shaders draw trees as crowns seen from over them
-  // Split (S3D.split, see "Split" before tick()): the eye view on top, the view from above under it, in one canvas.
-  // on / frac = the top's share of the height; cache = keep the view from above in a picture of its own and draw it again
-  // only when something in it changed (an eye-view drag then costs the top half only); live = post `look` while a drag
-  // turns the eye view (the app's own map draws the cone then).
-  const SPL = { on: false, frac: 0.5, cache: true, live: false, rt: null, blit: null, key: '', ptr: new Map(), turn: null, dot: null, handle: null, fogD: null, disc: null, follow: null, lastLook: 0, lightN: 0, renders: 0 };
   let eye = null, eye0 = null, target = null, framed = null, yaw = 0, pitch = 0, focal = 50, lens = { f: 135, fw: 120, fh: 96, box: true }, inline = false, sun = { az: 180, alt: 20 }, dirty = true, relight = true;
   const G = 768;  // mesh points per side
 
@@ -1970,7 +1963,7 @@
   // and a quarter of the quick one each way, made when a slow phone first needs them)
   const tgt = (o, k) => k < 0 ? o.hi : k === 0 ? o.lo : (o.lite[k] || (o.lite[k] = R.ctx.rt(Math.max(64, o.lo.width >> k))));
   function lightPass(k) {
-    const r = R.renderer, t = tgt(R, k); SPL.lightN++;
+    const r = R.renderer, t = tgt(R, k);
     R.quad.material = R.lightMat; r.setRenderTarget(t); r.render(R.lightScene, R.lightCam);
     R.terrMat.uniforms.lmap.value = t.texture;
     if (R.range) {
@@ -2064,34 +2057,30 @@
   // The view is drawn a little wider than the lens, so the whole frame shows with a margin and the box marks it.
   // Exact for a lens focused far away with no rise, fall or shift.
   function lensFov() {
-    const vp = eyeVP(), a = (R && R.cam.aspect) || (vp.w / vp.h);
+    const a = (R && R.cam.aspect) || ((window.innerWidth || 1) / (window.innerHeight || 1));
     const th = lens.fw / (2 * lens.f), tv = lens.fh / (2 * lens.f), k = Math.max(th / (a * 0.9), tv / 0.9);
     const el = document.getElementById('frame');
     if (el) {   // written only when it changes: this runs every frame, and a style write makes the web view lay the page out again
-      const only = !!(lens.box && lens.only), disp = lens.box ? 'block' : 'none', sp = splitOn();
-      // split: the box sits in the middle of the top half, sized in px (the page's % would be of the whole height), and
-      // frame only's black is clipped to the top half
-      const fw = th / (k * a) * vp.w, fh = tv / k * vp.h, wd = sp ? fw + 'px' : (th / (k * a) * 100) + '%', ht = sp ? fh + 'px' : (tv / k * 100) + '%';
-      const top = sp ? (vp.h / 2) + 'px' : '50%', clip = sp && only ? `inset(${-(vp.h - fh) / 2}px ${-(vp.w - fw) / 2}px ${-(vp.h - fh) / 2}px ${-(vp.w - fw) / 2}px)` : '', key = disp + wd + ht + only + top + clip;
+      const only = !!(lens.box && lens.only), disp = lens.box ? 'block' : 'none', wd = (th / (k * a) * 100) + '%', ht = (tv / k * 100) + '%', key = disp + wd + ht + only;
       if (key !== lensKey) {
-        lensKey = key; el.style.display = disp; el.style.width = wd; el.style.height = ht; el.style.top = top; el.style.clipPath = clip;
+        lensKey = key; el.style.display = disp; el.style.width = wd; el.style.height = ht;
         // frame only (17 Nov 2026): a huge black shadow round the box hides everything outside it
         el.style.boxShadow = only ? '0 0 0 1px rgba(0,0,0,.55), 0 0 0 4000px #000' : '';
       }
     }
     return 2 * Math.atan(k);
   }
-  function place(pxH) {
-    const q = cr(eye), e = pick(eye), cam = R.cam; pxH = pxH || R.canvas.height;   // pxH: the view's height in canvas pixels (split: the top half's)
+  function place() {
+    const q = cr(eye), e = pick(eye), cam = R.cam;
     cam.position.set((q.c + 0.5) * FAR.dx, eyeH(e), (q.r + 0.5) * FAR.dz); cam.rotation.set(pitch, -yaw, 0);
     // a low camera (0.3-1 m) must not cut the ground in front of it: the near plane comes in with the eye height
     if (R.nearBase == null) R.nearBase = cam.near;
     cam.near = Math.min(R.nearBase, Math.max(0.15, EYE * 0.4));
     cam.fov = lensFov() * 180 / Math.PI; cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
-    if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = pxH / (2 * Math.tan(cam.fov * Math.PI / 360)) / (R.det.inst ? 1 : Math.sqrt(R.thin));   // a point's metres -> pixels at 1 m
-    if (R.wide) R.wide.mat.uniforms.pscale.value = pxH / (2 * Math.tan(cam.fov * Math.PI / 360));
+    if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360)) / (R.det.inst ? 1 : Math.sqrt(R.thin));   // a point's metres -> pixels at 1 m
+    if (R.wide) R.wide.mat.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360));
   }
-  function resize() { const w = window.innerWidth, h = window.innerHeight; if (!R || !w || !h) return; const vp = eyeVP(); R.cam.aspect = vp.w / vp.h; dirty = true; }   // draw() sizes the canvas
+  function resize() { const w = window.innerWidth, h = window.innerHeight; if (!R || !w || !h) return; R.cam.aspect = w / h; dirty = true; }   // draw() sizes the canvas
 
   // A change from outside (the view dragged, a sun position, a walk step): a movement begins or goes on, drawn at the
   // phone's level. The first change cannot be told from a single tap, so a tap is drawn the same way; on a phone that
@@ -2176,29 +2165,8 @@
     const P = R.det && R.det.points; let pts = 0;
     if (P) P.visible = treesOn;
     if (P && treesOn) { pts = Math.max(1, Math.floor(R.det.count * q.trees)); if (R.det.inst) P.geometry.instanceCount = pts; else if (P.geometry.drawRange.count !== pts) P.geometry.setDrawRange(0, pts); R.thin = q.trees; }   // fewer points are drawn larger (place)
-    let wpts = 0;
-    if (splitOn()) wpts = drawSplit(q, cw, ch, w, h);
-    else {
-      if (OH.on) placeOH(R.cam, ch); else place(ch);
-      wpts = pass(R.cam, q, () => { if (OH.on) R.disc.visible = R.halo.visible = false; });
-      if (OH.on) ohOverlay(); else othOverlay();
-    }
-    dirty = false; frames++;
-    owe = quick || q !== QL[0]; sharp = false;
-    if (owe && restTimer == null && !resting) restTimer = setTimeout(rested, REST.sun);   // a light change nobody touched for (the foreground coming in, ice on / off)
-    if (a) { a.px = cw * ch; a.pts = pts; a.wpts = wpts; }
-    gate.t0 = t0; gate.act = a; gate.gov = !fresh && foreState !== 1 && wideState !== 1 && rangeState !== 1 && houseState !== 1;
-    if (!gate.off && !R.lost) {
-      const gl = R.gl; let sy = null;
-      try { sy = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); } catch (e) { sy = null; }
-      if (sy) { gate.sync = sy; if (a) gate.poll = setTimeout(poll, 3); } else gate.off = true;   // while moving the fence is asked every few ms, so the time is finer than a screen refresh
-    }
-    if (gate.off) gate.wait = true;
-  }
-  // One picture with one camera into the renderer's current viewport: only the blocks in its view, the level's share of
-  // the park-wide trees, the sun disc placed for it. `pre` runs just before the render. Returns the tree points drawn.
-  function pass(cam, q, pre) {
-    const v = R.sv;
+    if (OH.on) placeOH(); else place();
+    const cam = R.cam, v = R.sv;
     cam.updateMatrixWorld(); _fr.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, _iv.copy(cam.matrixWorld).invert()));
     // (the wide mesh: none of its blocks wholly under the range's box, where it would only be discarded)
     cull(R.ctx.terrain, R.fx, R.fz, q.geo > 1 ? BSTART2 : BSTART, R.range ? [holeOf(RG)] : null); if (R.near) cullWarped(R.near, NR, q.geo ? BSTART2 : BSTART); if (R.det) cullWarped(R.det, DT, q.geo ? BSTART2 : BSTART); if (R.range) cullWarped(R.range, RG, BSTART2);
@@ -2210,9 +2178,19 @@
     }
     R.disc.position.set(cam.position.x + v.x * 190000, cam.position.y + v.y * 190000, cam.position.z + v.z * 190000); R.disc.lookAt(cam.position);
     R.halo.position.copy(R.disc.position); R.halo.lookAt(cam.position);
-    if (pre) pre();
-    R.renderer.render(R.scene, cam); SPL.renders++;
-    return wpts;
+    if (OH.on) R.disc.visible = R.halo.visible = false;
+    R.renderer.render(R.scene, cam); dirty = false; frames++;
+    if (OH.on) ohOverlay(); else othOverlay();
+    owe = quick || q !== QL[0]; sharp = false;
+    if (owe && restTimer == null && !resting) restTimer = setTimeout(rested, REST.sun);   // a light change nobody touched for (the foreground coming in, ice on / off)
+    if (a) { a.px = cw * ch; a.pts = pts; a.wpts = wpts; }
+    gate.t0 = t0; gate.act = a; gate.gov = !fresh && foreState !== 1 && wideState !== 1 && rangeState !== 1 && houseState !== 1;
+    if (!gate.off && !R.lost) {
+      const gl = R.gl; let sy = null;
+      try { sy = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); } catch (e) { sy = null; }
+      if (sy) { gate.sync = sy; if (a) gate.poll = setTimeout(poll, 3); } else gate.off = true;   // while moving the fence is asked every few ms, so the time is finer than a screen refresh
+    }
+    if (gate.off) gate.wait = true;
   }
   // ---- From above (Phil, 16 Nov 2026: the stop page's Overhead tab, "3D from above") ----
   // S3D.overhead({ on, shots: [{ id, code, name, subject?, v: {lat, lng}, s?: {lat, lng}, heading_deg: number | null,
@@ -2264,16 +2242,16 @@
   // shot, the compass, + / - and a new fit take it again. After a two-finger turn it keeps the place it had.
   function ohHold() { OH.anchored = true; if (OH.upMode === 'view') OH.ak = 0.15; else if (OH.upMode !== 'turned') OH.ak = 0; }
   function ohAnchor() {
-    const sel = ohSelShot(), at = splitOn() && eye ? eye : sel && sel.v; if (!OH.anchored || !FAR || !at) return;   // (split: held on where the eye view stands)
-    const { w, h } = ohVP(), p = ohXZ(at), U = ohU(), k = OH.span * h / w * OH.ak;
+    const sel = ohSelShot(); if (!OH.anchored || !FAR || !sel) return;
+    const w = window.innerWidth || 1, h = window.innerHeight || 1, p = ohXZ(sel.v), U = ohU(), k = OH.span * h / w * OH.ak;
     OH.cx = p.x + U.x * k; OH.cz = p.z + U.z * k; ohClamp();
   }
   // the start: wide enough for every stand spot of the place around the picked one (as the satellite Overhead)
   function ohFit() {
     OH.needFit = false; ohHold();
-    const sel = ohSelShot(), at = splitOn() && eye ? eye : sel && sel.v; if (!FAR || !at) return;
-    const { w, h } = ohVP(); let spread = 30;
-    for (const s of OH.shots) spread = Math.max(spread, ohDist(at, s.v));
+    const sel = ohSelShot(); if (!FAR || !sel) return;
+    const w = window.innerWidth || 1, h = window.innerHeight || 1; let spread = 30;
+    for (const s of OH.shots) spread = Math.max(spread, ohDist(sel.v, s.v));
     OH.span = w * (spread * 2.4 + 100) / Math.max(80, Math.min(w, h) - 70); ohClamp(); ohAnchor();
   }
   function ohCanvas() {
@@ -2299,9 +2277,9 @@
     if (OH.cv) { OH.cv.style.display = 'none'; OH.g2.clearRect(0, 0, OH.cv.width, OH.cv.height); }
     if (R) { aim(); relight = dirty = true; }
   }
-  function placeOH(cam, pxH) {
+  function placeOH() {
     ohAnchor();
-    const a = cam.aspect || 1, tH = Math.tan(OH_FOVH / 2); pxH = pxH || R.canvas.height;
+    const cam = R.cam, a = cam.aspect || 1, tH = Math.tan(OH_FOVH / 2);
     let g; try { g = groundAt(OH.cx, OH.cz); } catch (e) { g = NaN; }
     if (!Number.isFinite(g)) g = gh(FAR, OH.cx / FAR.dx - 0.5, OH.cz / FAR.dz - 0.5);
     const hgt = (OH.span / 2) / tH, y = g + hgt;
@@ -2309,12 +2287,12 @@
     cam.position.set(OH.cx, y, OH.cz); cam.rotation.set(-Math.PI / 2, -OH.rot, 0);
     cam.near = Math.max(0.5, Math.min(hgt * 0.2, y - maxH - 50)); cam.far = y - Math.min(minH, g) + 2000;
     cam.updateProjectionMatrix(); R.sky.position.copy(cam.position);
-    if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = pxH / (2 * Math.tan(cam.fov * Math.PI / 360)) / (R.det.inst ? 1 : Math.sqrt(R.thin));
-    if (R.wide) R.wide.mat.uniforms.pscale.value = pxH / (2 * Math.tan(cam.fov * Math.PI / 360));
+    if (R.det && R.det.points) R.det.points.material.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360)) / (R.det.inst ? 1 : Math.sqrt(R.thin));
+    if (R.wide) R.wide.mat.uniforms.pscale.value = R.canvas.height / (2 * Math.tan(cam.fov * Math.PI / 360));
   }
   // screen point (CSS px) <-> ground (far grid metres), at the middle's ground height
-  function ohS2W(sx, sy) { const { w, h } = ohVP(), m = OH.span / w, U = ohU(), Rt = ohRt(), ox = (sx - w / 2) * m, oy = (sy - h / 2) * m; return { x: OH.cx + ox * Rt.x - oy * U.x, z: OH.cz + ox * Rt.z - oy * U.z }; }
-  function ohPut(W, sx, sy) { const { w, h } = ohVP(), m = OH.span / w, U = ohU(), Rt = ohRt(), ox = (sx - w / 2) * m, oy = (sy - h / 2) * m; OH.cx = W.x - ox * Rt.x + oy * U.x; OH.cz = W.z - ox * Rt.z + oy * U.z; ohClamp(); }
+  function ohS2W(sx, sy) { const w = window.innerWidth || 1, h = window.innerHeight || 1, m = OH.span / w, U = ohU(), Rt = ohRt(), ox = (sx - w / 2) * m, oy = (sy - h / 2) * m; return { x: OH.cx + ox * Rt.x - oy * U.x, z: OH.cz + ox * Rt.z - oy * U.z }; }
+  function ohPut(W, sx, sy) { const w = window.innerWidth || 1, h = window.innerHeight || 1, m = OH.span / w, U = ohU(), Rt = ohRt(), ox = (sx - w / 2) * m, oy = (sy - h / 2) * m; OH.cx = W.x - ox * Rt.x + oy * U.x; OH.cz = W.z - ox * Rt.z + oy * U.z; ohClamp(); }
   function ohDown(e) {
     OH.ptr.set(e.pointerId, { x: e.clientX, y: e.clientY });
     try { R.canvas.setPointerCapture(e.pointerId); } catch (x) { /* fine */ }
@@ -2360,7 +2338,7 @@
     return OH.shadeVal;
   }
   const _ohv = new THREE.Vector3(), _ohc = new THREE.Vector3();
-  function ohProj(x, y, z, w, h) { _ohv.set(x, y, z).project(ohCam()); return { x: (_ohv.x + 1) / 2 * w, y: (1 - _ohv.y) / 2 * h }; }
+  function ohProj(x, y, z, w, h) { _ohv.set(x, y, z).project(R.cam); return { x: (_ohv.x + 1) / 2 * w, y: (1 - _ohv.y) / 2 * h }; }
   // a screen vector no longer than k (a ray drawn toward a point km away stays a sane number of pixels)
   // The stop's other stand spots in the normal 3D view (Phil, 17 Nov 2026: "how far, treacherous"): a marker on each,
   // labelled with the distance, how much higher / lower, and the steepest ground on the straight line from where you
@@ -2392,8 +2370,7 @@
     // pins sent while the ground was not ready to be read (or none could be placed yet): try again every 2 s
     // (17 Nov 2026: offline the stop page's pins never showed although the app had sent them)
     if (OTH.list.length && !OTH.calc.length && R && eye && (performance.now() - (OTH.tried || 0)) > 2000) { OTH.tried = performance.now(); othCalc(); }
-    const c = othCanvas(), { w, h } = eyeVP(), dpr = Math.min(2, window.devicePixelRatio || 1);
-    { const hp = splitOn() ? h + 'px' : '100%'; if (c.style.height !== hp) c.style.height = hp; }   // (split: the top half only)
+    const c = othCanvas(), w = window.innerWidth || 1, h = window.innerHeight || 1, dpr = Math.min(2, window.devicePixelRatio || 1);
     const cw = Math.round(w * dpr), ch = Math.round(h * dpr); if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
     const g = OTH.g2; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h); OTH.dots = [];
     c.style.display = OTH.on && OTH.calc.length ? 'block' : 'none';
@@ -2463,7 +2440,7 @@
   // and a fan the way the phone faces (S3D.overheadMe; no signal needed: the GPS, the terrain and the trails are on the phone)
   function ohMe() {
     const me = OH.me, g = OH.g2; if (!me || !g || !FAR || OH.meOut) return;
-    const { w, h } = ohVP(), q = ohXZ(me), p = ohProj(q.x, ohH(me), q.z, w, h), mpp = OH.span / w;
+    const w = window.innerWidth || 1, h = window.innerHeight || 1, q = ohXZ(me), p = ohProj(q.x, ohH(me), q.z, w, h), mpp = OH.span / w;
     const r = Math.max(10, (+me.acc || 5) / mpp);
     g.beginPath(); g.arc(p.x, p.y, r, 0, 2 * Math.PI); g.fillStyle = 'rgba(66,133,244,0.18)'; g.fill(); g.lineWidth = 1; g.strokeStyle = 'rgba(66,133,244,0.5)'; g.stroke();
     if (me.heading != null && Number.isFinite(+me.heading)) {
@@ -2476,10 +2453,9 @@
     }
     g.beginPath(); g.arc(p.x, p.y, 8, 0, 2 * Math.PI); g.fillStyle = '#4285F4'; g.fill(); g.lineWidth = 3; g.strokeStyle = '#ffffff'; g.stroke();
   }
-  function ohOverlay() { ohMarks(); ohMe(); if (splitOn()) ohViewer(); }
+  function ohOverlay() { ohMarks(); ohMe(); }
   function ohMarks() {
-    const c = ohCanvas(), vp = ohVP(), w = vp.w, h = vp.h, dpr = Math.min(2, window.devicePixelRatio || 1);
-    { const tp = vp.y + 'px', hp = splitOn() ? h + 'px' : '100%'; if (c.style.top !== tp) c.style.top = tp; if (c.style.height !== hp) c.style.height = hp; }   // (split: the bottom half only)
+    const c = ohCanvas(), w = window.innerWidth || 1, h = window.innerHeight || 1, dpr = Math.min(2, window.devicePixelRatio || 1);
     const cw = Math.round(w * dpr), ch = Math.round(h * dpr); if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
     const g = OH.g2; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
     const sel = ohSelShot(), K = 3 * Math.hypot(w, h); OH.dots = [];
@@ -2541,7 +2517,7 @@
     // the picked shot's subject on the screen (17 Nov 2026, Phil: the line, the cone and the sun arrows reach the subject,
     // as the Map tab drew them); a peak higher than the camera is placed at the stand spot's height (its direction counts)
     let SP = null;
-    if (sel.s) { const sq = ohXZ(sel.s), cy = ohCam().position.y, hs0 = ohH(sel.s), hs = cy - hs0 > 0.5 * (cy - ds.y) ? hs0 : ds.y; SP = ohProj(sq.x, hs, sq.z, w, h); }
+    if (sel.s) { const sq = ohXZ(sel.s), cy = R.cam.position.y, hs0 = ohH(sel.s), hs = cy - hs0 > 0.5 * (cy - ds.y) ? hs0 : ds.y; SP = ohProj(sq.x, hs, sq.z, w, h); }
     const toS = SP ? Math.hypot(SP.x - ds.p.x, SP.y - ds.p.y) : 0;
     const [s1, s2] = wedgeTo(ds, SP ? Math.min(Math.max(toS, 40), K) : 110);
     if (OH.marks) {
@@ -2579,7 +2555,7 @@
     }
     if (sel.s) {   // the subject: a mark where it is, or a tag at the screen's edge on the line toward it
       // (a peak higher than the camera is placed at the stand spot's height: its direction is what counts)
-      const sq = ohXZ(sel.s), cy = ohCam().position.y, hs0 = ohH(sel.s), hs = cy - hs0 > 0.5 * (cy - ds.y) ? hs0 : ds.y, sp = ohProj(sq.x, hs, sq.z, w, h), nm = ohShort(sel.subject || sel.name), km = ohKm(ohDist(sel.v, sel.s)), m = 8;
+      const sq = ohXZ(sel.s), cy = R.cam.position.y, hs0 = ohH(sel.s), hs = cy - hs0 > 0.5 * (cy - ds.y) ? hs0 : ds.y, sp = ohProj(sq.x, hs, sq.z, w, h), nm = ohShort(sel.subject || sel.name), km = ohKm(ohDist(sel.v, sel.s)), m = 8;
       const se = ohCap(ds.p, sp, K);
       if (sp.x >= m && sp.x <= w - m && sp.y >= m && sp.y <= h - m) {
         g.beginPath(); g.arc(sp.x, sp.y, 7, 0, 2 * Math.PI); g.fillStyle = '#000000'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#ffffff'; g.stroke();
@@ -2623,181 +2599,6 @@
     }
     if (!OH.posted) { OH.posted = true; post({ type: 'overhead', ok: true, span: Math.round(OH.span), up: Math.round(ohDeg(OH.rot) * 10) / 10, mode: ohMode() }); }
   }
-  // ---- Split (Phil, 24 Nov 2026: the eye view over the view from above, as Google's Street View split) ----
-  // S3D.split({ on, frac?, shots?, sel?, heading_up_deg?, cache? }): the full-screen view is cut in two at frac of its
-  // height (the top's share, 0.2-0.8, default 0.5): on top the eye view exactly as before (its camera, the frame box, the
-  // other stand spots), under it the view from above (S3D.overhead's drawing: the same shots, routes, Find me, + / -),
-  // both in this one canvas (two web views would load the terrain twice). shots / sel / heading_up_deg as for overhead().
-  // The view from above always uses the sun at the slider's time (overheadSun does not apply). Over it the page draws
-  // where the eye view stands now (a blue dot) and the way it looks (a cone as wide as the lens's horizontal angle, with
-  // a round handle at its end). One finger on the view from above: a tap jumps the eye view there (on a stand dot: onto
-  // that shot's stand spot exactly; the look direction is kept, Back undoes it: 'eye' as for tap to go); a drag that
-  // starts on the dot or the handle turns the eye view (`look`); any other drag pans, two fingers pinch and turn as
-  // full-screen overhead does. Turning the eye view turns the cone at once. S3D.split({ on: false }) gives the whole
-  // view back to the eye. While S3D.overhead is on, split does nothing. Nothing here reaches lit() / the sun times.
-  // cache (default on): the view from above is kept in a picture of its own and drawn again only when something in it
-  // changed (its camera, the light, the level, the foreground), so a drag of the eye view pays for the top half only.
-  // S3D.goTo(lat, lng): the same jump from outside (the app's own satellite map under a smaller web view);
-  // S3D.yaw(deg): turn the eye view to a compass heading; S3D.liveLook(bool): post `look` while the eye view is dragged
-  // (at most every 80 ms), so a map outside the page can turn its cone with it.
-  function splitOn() { return SPL.on && !OH.on && !!R; }
-  function splitTop() { const h = window.innerHeight || 1; return Math.max(1, Math.min(h - 1, Math.round(h * SPL.frac))); }
-  // the eye view's and the view from above's rectangles, CSS px from the page's top-left (each the whole page unless split)
-  function eyeVP() { const w = window.innerWidth || 1, h = window.innerHeight || 1; return SPL.on && !OH.on ? { y: 0, w, h: splitTop() } : { y: 0, w, h }; }
-  function ohVP() { const w = window.innerWidth || 1, h = window.innerHeight || 1; if (!(SPL.on && !OH.on)) return { y: 0, w, h }; const t = splitTop(); return { y: t, w, h: h - t }; }
-  function ohCam() { return splitOn() && R.ohCam ? R.ohCam : R.cam; }
-  // ground (far grid metres) -> a point on the view from above, at the middle's ground height (ohS2W the other way)
-  function ohW2S(P) { const { w, h } = ohVP(), m = OH.span / w, U = ohU(), Rt = ohRt(), dx = P.x - OH.cx, dz = P.z - OH.cz; return { x: w / 2 + (dx * Rt.x + dz * Rt.z) / m, y: h / 2 - (dx * U.x + dz * U.z) / m }; }
-  const xzLL = (x, z) => ({ lat: FAR.north - z / FAR.d * (FAR.north - FAR.south), lng: FAR.west + x / FAR.w * (FAR.east - FAR.west) });
-  // the scene's settings for one half: the view from above has no fog, sky or sun disc, the tree shaders' from-above
-  // drawing (OH define) and the overhead's dark clear colour; the eye view gets everything back as it was
-  function viewLook(oh) {
-    const F = R.ctx.fog;
-    if (oh) {
-      if (!OHU.value) { OHU.value = 1; ohDefines(true); }
-      if (SPL.fogD == null) { SPL.fogD = F.fogD.value; F.fogD.value = 0; }
-      if (SPL.disc == null) { SPL.disc = R.disc.visible; R.disc.visible = R.halo.visible = false; }
-      R.sky.visible = false; R.renderer.setClearColor(0x111111, 1);
-    } else {
-      if (OHU.value) { OHU.value = 0; ohDefines(false); }
-      if (SPL.fogD != null) { F.fogD.value = SPL.fogD; SPL.fogD = null; }
-      if (SPL.disc != null) { R.disc.visible = R.halo.visible = SPL.disc; SPL.disc = null; }
-      R.sky.visible = true; R.renderer.setClearColor(0x000000, 1);
-    }
-  }
-  // what the view from above shows, apart from its marks: while this is unchanged its last picture is drawn again
-  const _mk = [];
-  function ohKey(cw, oPx, q, oc) {
-    _mk.length = 0;
-    _mk.push(cw, oPx, QL.indexOf(q), SPL.lightN, treesOn ? 1 : 0, ice ? 1 : 0, foreState, rangeState, houseState, wideState, R.scene.children.length, R.lost ? 1 : 0);
-    for (const o of [R.near, R.det, R.range]) if (o) { const f = o.mat.uniforms.focus.value; _mk.push(f.x, f.y); }
-    if (R.wide && R.wide.at) _mk.push(R.wide.at.lat, R.wide.at.lng);
-    const me = oc.matrixWorld.elements, pe = oc.projectionMatrix.elements; for (let i = 0; i < 16; i++) _mk.push(me[i], pe[i]);
-    return _mk.join(',');
-  }
-  function splitBlit() {
-    if (SPL.blit) return SPL.blit;
-    const scene = new THREE.Scene(), cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const mat = new THREE.MeshBasicMaterial({ depthTest: false, depthWrite: false, fog: false, toneMapped: false });
-    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat); quad.frustumCulled = false; scene.add(quad);
-    return (SPL.blit = { scene, cam, mat });
-  }
-  function splitFree() { if (SPL.rt) { try { SPL.rt.dispose(); } catch (e) { /* gone with the context */ } } SPL.rt = null; SPL.key = ''; }
-  // the two halves into the one canvas (cw x ch device pixels; w x h CSS px): the eye view on top, the view from above
-  // under it, then both 2D layers. Returns the tree points the eye view drew.
-  function drawSplit(q, cw, ch, w, h) {
-    const t = splitTop(), ePx = Math.max(1, Math.min(ch - 1, Math.round(ch * t / h))), oPx = ch - ePx, r = R.renderer, cam = R.cam;
-    if (!R.ohCam) { R.ohCam = new THREE.PerspectiveCamera(15, 1, 1, 100000); R.ohCam.rotation.order = cam.rotation.order; }
-    const oc = R.ohCam;
-    r.setScissorTest(true);
-    // the eye view (GL's y counts from the bottom)
-    viewLook(false); cam.aspect = w / t;
-    r.setViewport(0, oPx, cw, ePx); r.setScissor(0, oPx, cw, ePx);
-    place(ePx); const wpts = pass(cam, q);
-    // the view from above follows the eye when it has gone near the edge of its picture (a tap there keeps the map still)
-    if (SPL.follow !== eye && eye && FAR) {
-      SPL.follow = eye;
-      if (!OH.anchored) { const vp = ohVP(), s = ohW2S(ohXZ(eye)); if (s.x < vp.w * 0.12 || s.x > vp.w * 0.88 || s.y < vp.h * 0.12 || s.y > vp.h * 0.88) ohHold(); }
-    }
-    oc.aspect = w / (h - t);
-    r.setViewport(0, 0, cw, oPx); r.setScissor(0, 0, cw, oPx);
-    placeOH(oc, oPx); oc.updateMatrixWorld();
-    if (!SPL.cache) { viewLook(true); pass(oc, q); SPL.key = ''; }
-    else {
-      const key = ohKey(cw, oPx, q, oc);
-      if (key !== SPL.key || !SPL.rt) {
-        if (!SPL.rt || SPL.rt.width !== cw || SPL.rt.height !== oPx) {
-          splitFree();
-          const MS = THREE.WebGLMultisampleRenderTarget;   // the canvas is drawn with antialiasing: so is this picture
-          SPL.rt = MS ? new MS(cw, oPx, { depthBuffer: true, stencilBuffer: false }) : new THREE.WebGLRenderTarget(cw, oPx, { depthBuffer: true, stencilBuffer: false });
-          if (MS) SPL.rt.samples = 4;
-          SPL.rt.texture.minFilter = SPL.rt.texture.magFilter = THREE.NearestFilter; SPL.rt.texture.generateMipmaps = false;
-        }
-        viewLook(true); r.setRenderTarget(SPL.rt); pass(oc, q); r.setRenderTarget(null);
-        r.setViewport(0, 0, cw, oPx); r.setScissor(0, 0, cw, oPx);
-        SPL.key = key;
-      }
-      const B = splitBlit(); B.mat.map = SPL.rt.texture; r.render(B.scene, B.cam);
-    }
-    viewLook(false);
-    r.setScissorTest(false); r.setViewport(0, 0, cw, ch); r.setScissor(0, 0, cw, ch);
-    othOverlay(); ohOverlay();
-    return wpts;
-  }
-  // where the eye view stands and looks, on the view from above: the cone (the lens's horizontal angle), the handle that
-  // turns it, the dot
-  function ohViewer() {
-    const g = OH.g2; SPL.dot = SPL.handle = null; if (!g || !eye || !FAR) return;
-    const { w, h } = ohVP(), q = ohXZ(eye), y = ohH(eye), p = ohProj(q.x, y, q.z, w, h);
-    const f = ohProj(q.x + Math.sin(yaw) * 1000, y, q.z - Math.cos(yaw) * 1000, w, h), a = Math.atan2(f.x - p.x, -(f.y - p.y));
-    const half = Math.atan(lens.fw / (2 * lens.f)), L = Math.max(60, Math.min(110, Math.min(w, h) * 0.28));
-    const at = b => ({ x: p.x + Math.sin(b) * L, y: p.y - Math.cos(b) * L });
-    const e1 = at(a - half), e2 = at(a + half);
-    g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(e1.x, e1.y); g.arc(p.x, p.y, L, a - half - Math.PI / 2, a + half - Math.PI / 2); g.closePath();
-    const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, L); gr.addColorStop(0, 'rgba(66,133,244,0.55)'); gr.addColorStop(1, 'rgba(66,133,244,0.08)'); g.fillStyle = gr; g.fill();
-    g.lineWidth = 1.5; g.strokeStyle = 'rgba(66,133,244,0.9)'; g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(p.x, p.y); g.lineTo(e2.x, e2.y); g.stroke();
-    const H = { x: p.x + Math.sin(a) * (L + 14), y: p.y - Math.cos(a) * (L + 14) };   // the handle: a white disc with an arrow the way the view looks
-    g.beginPath(); g.moveTo(p.x + Math.sin(a) * L * 0.6, p.y - Math.cos(a) * L * 0.6); g.lineTo(H.x, H.y); g.lineWidth = 2; g.strokeStyle = 'rgba(255,255,255,0.85)'; g.stroke();
-    g.beginPath(); g.arc(H.x, H.y, 13, 0, 2 * Math.PI); g.fillStyle = '#ffffff'; g.fill(); g.lineWidth = 2.5; g.strokeStyle = '#4285F4'; g.stroke();
-    g.save(); g.translate(H.x, H.y); g.rotate(a); g.beginPath(); g.moveTo(0, -7); g.lineTo(6, 4); g.lineTo(-6, 4); g.closePath(); g.fillStyle = '#4285F4'; g.fill(); g.restore();
-    g.beginPath(); g.arc(p.x, p.y, 9, 0, 2 * Math.PI); g.fillStyle = '#4285F4'; g.fill(); g.lineWidth = 3; g.strokeStyle = '#ffffff'; g.stroke();
-    SPL.dot = { x: p.x, y: p.y }; SPL.handle = H;
-  }
-  // a pointer on the view from above, in its own coordinates
-  const splitLocal = e => ({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY - splitTop(), type: e.type, timeStamp: e.timeStamp });
-  const ohPx = m => m * ohVP().w / OH.span;   // metres on the ground -> px on the view from above
-  function splitDown(e) {
-    const l = splitLocal(e), near = (a, k) => a && Math.hypot(a.x - l.clientX, a.y - l.clientY) < k;
-    if (OH.ptr.size === 0 && !SPL.turn && (near(SPL.handle, 30) || near(SPL.dot, 22))) {   // on the dot or the handle: this finger turns the eye view
-      SPL.turn = { id: e.pointerId }; touched = true; try { R.canvas.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } return;
-    }
-    ohDown(l);
-  }
-  function splitMove(e) {
-    const l = splitLocal(e);
-    if (SPL.turn && SPL.turn.id === e.pointerId) {
-      const W = ohS2W(l.clientX, l.clientY), E = ohXZ(eye), dx = W.x - E.x, dz = W.z - E.z;
-      if (ohPx(Math.hypot(dx, dz)) < 6) return;   // too close to the dot to tell a direction
-      yaw = Math.atan2(dx, -dz); touch('look'); liveLook(true); return;
-    }
-    ohMove(l);
-  }
-  function splitUp(e) {
-    if (SPL.turn && SPL.turn.id === e.pointerId) { SPL.turn = null; heading(); if (act && act.kind === 'look') rest(); return; }
-    const l = splitLocal(e), had = OH.ptr.has(e.pointerId); OH.ptr.delete(e.pointerId);
-    const t = OH.tap;
-    if (had && t && !t.moved && OH.ptr.size === 0 && performance.now() - t.t < 600 && e.type === 'pointerup') {
-      let best = null, bd = 26;
-      for (const d of OH.dots || []) { const k = Math.hypot(d.x - l.clientX, d.y - l.clientY); if (k < bd) { bd = k; best = d.id; } }
-      const s = best != null ? OH.shots.find(x => x.id === best) : null;
-      const W = ohS2W(l.clientX, l.clientY), p = s ? { lat: +s.v.lat, lng: +s.v.lng } : xzLL(W.x, W.z);
-      OH.anchored = false;   // the map stays still under the finger; the dot goes where it was tapped
-      if (goTo(p)) SPL.follow = eye;
-    }
-    if (OH.ptr.size === 0) { OH.tap = null; if (t && t.moved) ohSay(); if (act && act.kind === 'look') rest(); }
-  }
-  // jump the eye view to a spot, the look direction kept; Back (S3D.back) undoes it
-  function goTo(p) {
-    if (!R || !eye || !FAR || !p || !Number.isFinite(+p.lat) || !Number.isFinite(+p.lng)) return false;
-    const q = { lat: +p.lat, lng: +p.lng };
-    if (!inside(q)) { post({ type: 'walk', stopped: 'edge' }); return false; }
-    TAPGO.hist.push(eye); if (TAPGO.hist.length > 50) TAPGO.hist.shift();
-    eye = q; touch('walk'); told(); return true;
-  }
-  function liveLook(force) { const t = performance.now(); if ((SPL.live || force) && t - SPL.lastLook >= 80) { SPL.lastLook = t; heading(); } }
-  function splitApply() {
-    if (!R) return;
-    ohCanvas().style.display = 'block';
-    if (OH.needFit || !OH.shotKey) ohFit();
-    SPL.follow = eye; lensKey = ''; resize(); relight = dirty = true;
-  }
-  function splitLeave() {
-    if (!SPL.on) return;
-    SPL.on = false; SPL.ptr.clear(); SPL.turn = null; SPL.dot = SPL.handle = null; OH.ptr.clear(); OH.tap = null;
-    if (OH.cv && !OH.on) { OH.cv.style.display = 'none'; OH.g2.clearRect(0, 0, OH.cv.width, OH.cv.height); OH.cv.style.top = '0px'; OH.cv.style.height = '100%'; }
-    if (OTH.cv) OTH.cv.style.height = '100%';
-    if (R) { viewLook(false); splitFree(); lensKey = ''; resize(); relight = dirty = true; }
-  }
   function tick() {
     if (resting) rest();
     if (R) { const t = performance.now(), free = gpuFree(t); if (dirty && free) draw(t); }
@@ -2823,7 +2624,7 @@
   const TAPGO = { on: false, ids: new Set(), hist: [] };   // ids: fingers down now (by pointer id: a lost 'up' cannot stick)   // hist: where each jump came from (Back undoes the last)
   function tapGo(px, py) {
     if (!R || !eye || !eye0 || !FAR) return;
-    const { w, h } = eyeVP();
+    const w = window.innerWidth || 1, h = window.innerHeight || 1;
     const v = new THREE.Vector3((px / w) * 2 - 1, -(py / h) * 2 + 1, 0.5).unproject(R.cam);
     const o = R.cam.position, d = v.sub(o).normalize();
     if (d.y > 0.02) { post({ type: 'walk', stopped: 'sky' }); return; }
@@ -2847,12 +2648,11 @@
   }
   function wire() {
     const c = R.canvas;
-    c.addEventListener('pointerdown', e => { if (OH.on) return ohDown(e); if (splitOn()) { const oh = e.clientY >= splitTop(); SPL.ptr.set(e.pointerId, oh ? 'oh' : 'eye'); if (oh) return splitDown(e); } if (e.isPrimary !== false) TAPGO.ids.clear(); TAPGO.ids.add(e.pointerId); drag = { x: e.clientX, y: e.clientY }; OTH.tap = TAPGO.ids.size > 1 ? null : { x: e.clientX, y: e.clientY, t: e.timeStamp, far: 0 }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
+    c.addEventListener('pointerdown', e => { if (OH.on) return ohDown(e); if (e.isPrimary !== false) TAPGO.ids.clear(); TAPGO.ids.add(e.pointerId); drag = { x: e.clientX, y: e.clientY }; OTH.tap = TAPGO.ids.size > 1 ? null : { x: e.clientX, y: e.clientY, t: e.timeStamp, far: 0 }; try { c.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
     c.addEventListener('webglcontextlost', e => { e.preventDefault(); if (R) R.lost = true; post({ type: 'lost', fore: foreState > 0 }); });
-    c.addEventListener('pointermove', e => { if (OH.on) return ohMove(e); if (SPL.ptr.get(e.pointerId) === 'oh') return splitMove(e); if (OTH.tap) OTH.tap.far = Math.max(OTH.tap.far, Math.hypot(e.clientX - OTH.tap.x, e.clientY - OTH.tap.y)); if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / eyeVP().h; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; touch('look'); if (SPL.live) liveLook(); });
+    c.addEventListener('pointermove', e => { if (OH.on) return ohMove(e); if (OTH.tap) OTH.tap.far = Math.max(OTH.tap.far, Math.hypot(e.clientX - OTH.tap.x, e.clientY - OTH.tap.y)); if (!drag) return; touched = true; const per = (R.cam.fov * Math.PI / 180) / window.innerHeight; yaw -= (e.clientX - drag.x) * per; if (!inline) pitch = Math.max(-1.2, Math.min(1.2, pitch + (e.clientY - drag.y) * per)); drag = { x: e.clientX, y: e.clientY }; touch('look'); });
     const drop = e => {
       if (OH.on) return ohUp(e);
-      { const reg = e && SPL.ptr.get(e.pointerId); if (reg) SPL.ptr.delete(e.pointerId); if (reg === 'oh') return splitUp(e); }
       const tp = OTH.tap; OTH.tap = null; TAPGO.ids.delete(e && e.pointerId);
       if (tp && e && e.type === 'pointerup' && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) < 10 && e.timeStamp - tp.t < 600 && OTH.on) {   // a tap on another stand spot's marker
         let best = null, bd = 26; for (const d of OTH.dots) { const dd = Math.hypot(d.x - e.clientX, d.y - e.clientY); if (dd < bd) { bd = dd; best = d; } }
@@ -2882,7 +2682,7 @@
         if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");
         if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.');
         await load(); build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
-        if (OH.on) ohApplyR(); else if (SPL.on) splitApply();
+        if (OH.on) ohApplyR();
         const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length || (cfg.canopy && cnAny()) || (cfg.range && rparts.length) || (cfg.houses && hsAny()));
         post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: 0, fore }); heading();
         othCalc();
@@ -2915,31 +2715,6 @@
       if (R.wide && wideState === 2 && Math.hypot((eye.lat - R.wide.at.lat) * 111132, (eye.lng - R.wide.at.lng) * 111320 * Math.cos(eye.lat * Math.PI / 180)) > 300) { wideState = 0; queueWide(); }   // the park-wide trees again, around the new spot
     },
     recenter() { if (R) { aim(); dirty = true; heading(); } },
-    // ---- split: the eye view over the view from above (see "Split" before tick()) ----
-    split(o) {
-      if (!o || o.on === false) { splitLeave(); return; }
-      if (o.frac != null && Number.isFinite(+o.frac)) SPL.frac = Math.max(0.2, Math.min(0.8, +o.frac));
-      if (o.cache != null) { SPL.cache = !!o.cache; splitFree(); }
-      if (Array.isArray(o.shots)) {
-        const shots = o.shots.filter(s => s && s.id != null && s.v && Number.isFinite(+s.v.lat) && Number.isFinite(+s.v.lng));
-        const key = shots.map(s => `${s.id}:${(+s.v.lat).toFixed(6)},${(+s.v.lng).toFixed(6)}`).join('|');
-        OH.shots = shots; const flagged = shots.find(s => s.sel);
-        if (o.sel != null) OH.sel = o.sel; else if (flagged) OH.sel = flagged.id; else if (!shots.some(s => s.id === OH.sel)) OH.sel = shots.length ? shots[0].id : null;
-        if (key !== OH.shotKey) { OH.shotKey = key; OH.needFit = true; }
-      } else if (o.sel != null) OH.sel = o.sel;
-      if (o.marks != null) OH.marks = !!o.marks;
-      const up = o.heading_up_deg !== undefined ? o.heading_up_deg : o.up, first = !SPL.on;
-      SPL.on = true;
-      if (up !== undefined) ohSetUp(up); else if (first) ohSetUp(OH.upMode === 'north' ? 'north' : 'view'); else if (OH.upMode === 'view') OH.rot = ohRad(ohAim(ohSelShot()));
-      if (first) { OH.needFit = true; OH.ptr.clear(); OH.tap = null; }
-      if (R) { if (first) splitApply(); else { if (OH.needFit) ohFit(); lensKey = ''; resize(); dirty = true; } }
-    },
-    goTo(lat, lng) { if (lat && typeof lat === 'object') { lng = lat.lng; lat = lat.lat; } goTo({ lat, lng }); },
-    yaw(deg) { if (!R || !Number.isFinite(+deg)) return; yaw = +deg * Math.PI / 180; touched = true; touch('look'); heading(); },
-    liveLook(on) { SPL.live = !!on; },
-    // for tests: where the split's dot and handle are (CSS px in the view from above), the top's height, the heading
-    _split() { return { on: splitOn(), top: splitTop(), dot: SPL.dot, handle: SPL.handle, yaw: Math.round(((yaw * 180 / Math.PI) % 360 + 360) % 360 * 100) / 100, eye, renders: SPL.renders, anchored: OH.anchored, span: OH.span }; },
-    _splitCache(c) { SPL.cache = !!c; splitFree(); dirty = true; },
     // ---- from above (see "From above" before tick()) ----
     overhead(o) {
       if (!o || o.on === false) { ohLeave(); return; }
