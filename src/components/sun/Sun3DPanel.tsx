@@ -14,6 +14,7 @@ import { compassPoint } from './sunStyle';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
 import { Overhead3D, useOverhead3D } from './overhead3d';
+import { SplitIcon, SplitLayer, SplitMode } from './SplitMap';
 import { CropOverlay, CropPanel, cropName, fitCrop, longInNow, readLongIn, refitCrop, setLongInStored } from './CropOverlay';
 import type { CropRatio, FrameCrop } from '../../utils/sunEngine';
 
@@ -154,6 +155,10 @@ let lastTrees = true;   // the foreground's trees (Phil, 16 Nov 2026: a "no tree
 let lastIce: boolean | null = null;
 let pickedFor: string | null = null;   // the shot whose lens / frame box the user changed by hand: its framing's lens is not put back over that
 let lastGlass = false;
+// Split (Phil, 24 Nov 2026): full screen cut in two, the eye view over the view from above. Kept while the app is open.
+let lastSplit = false;
+let lastSplitMode: SplitMode = 'terrain';
+let lastSplitFrac = 0.5;
 let lastOthersOn = true;
 const EYE_H = 1.73, CAM_MIN = 0.3048, CAM_MAX = 10000;   // camera height above the ground, metres (5'8" = 1.73; min 1 ft, no real top)
 const INCH = 0.0254;
@@ -301,6 +306,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const pairIdRef = useRef(pair.vantage_id);
   pairIdRef.current = pair.vantage_id;
   const lookRef = useRef<{ yaw: number; pitch: number } | null>(null);   // where the view points now, to 0.01 deg (page's `look`)
+  const splitSink = useRef<((m: any) => void) | null>(null);   // the split layer's own message handler, while it is mounted
   // Where you stand and look, kept through a restart of the view (Phil, 17 Nov 2026: switching the foreground off / on
   // restarts the page and put him back on the saved spot): per shot, cleared when another shot is shown.
   const placedRef = useRef<string | null>(null);   // the shot and pins last sent to the page (see the place effect)
@@ -373,15 +379,31 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // "Move photo" (pinch / drag the see-through photo to match the framing): on only while see-through; where the photo
   // sits is kept across photos and lenses and put back to fit when the photo is closed.
   const [refMove, setRefMove] = useState(false);
+  // ---- Split (Phil, 24 Nov 2026, mockup docs/mockups/split_3d_mockup.png): full screen only, not over HD ----
+  // Terrain: the page draws both halves in its one canvas (S3D.split; one terrain load, as the Overhead tab keeps one web
+  // view at a time). Satellite: the web view takes the top part only and Google's satellite map (SplitMap) the rest.
+  const [splitWant, setSplitWantState] = useState(lastSplit);
+  const setSplitWant = useCallback((v: boolean) => { lastSplit = v; setSplitWantState(v); }, []);
+  const [splitMode, setSplitModeState] = useState<SplitMode>(lastSplitMode);
+  const setSplitMode = useCallback((m: SplitMode) => { lastSplitMode = m; setSplitModeState(m); }, []);
+  const [splitFrac, setSplitFracState] = useState(lastSplitFrac);
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null);   // the picture's whole area (dp)
+  const splitOn = !!full && splitWant && !hd && !overhead && !preview;
+  const splitSat = splitOn && splitMode === 'satellite', splitTer = splitOn && splitMode === 'terrain';
+  const setSplitFrac = useCallback((f: number) => { lastSplitFrac = f; setSplitFracState(f); }, []);
+  const splitTop = splitOn && box ? Math.round(box.h * splitFrac) : 0;   // where the halves meet, dp from the top
+  const mapH = splitOn && box ? box.h - splitTop : 0;                    // the lower half's height: the eye view's overlays sit above it
   // Ground glass (Phil, 16 Nov 2026): the picture and the shot's photo turned upside down and left-right (a 180 degree
   // turn), as a view camera's ground glass shows them, so he can frame without turning the phone. Buttons stay upright.
   // Full screen only; kept while stepping between shots.
   const [glass, setGlassState] = useState(lastGlass);
   const setGlass = useCallback((on: boolean) => { lastGlass = on; setGlassState(on); }, []);
-  const glassOn = !!full && glass && !overhead;
+  const glassOn = !!full && glass && !overhead && !splitOn;   // (not in split: the map would turn too)
   // The picture's size (dp): a photo placement saved with the framing (Phil, 18 Nov 2026) is put back on a view of
   // about the same size (full screen on the same phone), scaled to small differences; on another size it opens fitted.
-  const [pic, setPic] = useState<{ w: number; h: number } | null>(null);
+  const [picRaw, setPic] = useState<{ w: number; h: number } | null>(null);
+  // the eye view's own size: in Terrain split the web view covers both halves, so it is the top part of it
+  const pic = useMemo(() => (splitTer && picRaw ? { w: picRaw.w, h: splitTop } : picRaw), [splitTer, picRaw, splitTop]);
   const savedPhoto = framing?.photo ?? null;
   const [shape, setShape] = useState<number | null>(() => photoShape.get(refKey) ?? null);
   useEffect(() => { setShape(photoShape.get(refKey) ?? null); }, [refKey]);
@@ -701,6 +723,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     let m: any = null;
     try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
     if (!m || typeof m.type !== 'string') return;
+    if (splitSink.current && (m.type === 'look' || m.type === 'overheadMe')) splitSink.current(m);   // (split only; look goes on below too)
     if (oh.onMessage(m)) return;
     if (m.type === 'boot') { booted.current = true; foreSent.current = false; setPerf(null); start(); }
     else if (m.type === 'perf') {
@@ -935,10 +958,20 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     { label: `Last sun on ${subject}`, minute: moments.lastSubject },
   ] : [];
 
+  // the reference photo and the crop over the eye view (a fragment: the plain view's tree is exactly as before split)
+  const eyeOverlays = (
+    <>
+      {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} onSize={onPhotoSize} /> : null}
+      {frame !== 'off' && pic && !overhead && !preview ? (
+        <CropOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={crop} editing={!!full && cropOpen} only={!!lens.only} flip={glassOn} longIn={longIn} onChange={setCrop} />
+      ) : null}
+    </>
+  );
   return (
-    <View style={full ? styles.fullWrap : undefined} accessibilityLabel={overhead ? `Overhead 3D ${ready ? 'ready' : phase}, ${overhead.pairs.length} shots` : `3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}`}>
-      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}>
-        <View style={[styles.web, glassOn ? styles.glass : null]} pointerEvents="box-none"
+    <View style={full ? styles.fullWrap : undefined} accessibilityLabel={overhead ? `Overhead 3D ${ready ? 'ready' : phase}, ${overhead.pairs.length} shots` : `3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}${splitOn ? ` · split ${splitMode}` : ''}`}>
+      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}
+        onLayout={full ? (e => { const { width: w, height: h } = e.nativeEvent.layout; setBox(b => (b && Math.abs(b.w - w) < 0.5 && Math.abs(b.h - h) < 0.5 ? b : { w, h })); }) : undefined}>
+        <View style={[styles.web, glassOn ? styles.glass : null, splitSat && box ? { position: 'absolute', top: 0, left: 0, right: 0, height: splitTop, flex: undefined } : null]} pointerEvents="box-none"
           onLayout={e => { const { width: w, height: h } = e.nativeEvent.layout; setPic(p => (p && Math.abs(p.w - w) < 0.5 && Math.abs(p.h - h) < 0.5 ? p : { w, h })); }}>
         {region && b64 && !holding ? (
           <Web
@@ -957,11 +990,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             style={styles.web}
           />
         ) : null}
-        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} onSize={onPhotoSize} /> : null}
-        {frame !== 'off' && pic && !overhead && !preview ? (
-          <CropOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={crop} editing={!!full && cropOpen} only={!!lens.only} flip={glassOn} longIn={longIn} onChange={setCrop} />
-        ) : null}
+        {splitTer && box ? (
+          // Terrain split: the web view covers both halves; the photo and the crop belong to the eye view on top
+          <View style={[styles.eyeBox, { height: splitTop }]} pointerEvents="box-none">{eyeOverlays}</View>
+        ) : eyeOverlays}
         </View>
+        {splitOn && box ? (
+          <SplitLayer
+            run={run} ready={ready} readyN={readyN} mode={splitMode} onMode={setSplitMode} top={splitTop} h={box.h} frac={splitFrac} onFrac={setSplitFrac}
+            pair={pair} others={others} eye={at ?? (keepRef.current?.id === pair.vantage_id && keepRef.current.eye ? keepRef.current.eye : pair.v)}
+            lens={lens} jumps={jumps} walking={walking} sink={splitSink}
+          />
+        ) : null}
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
@@ -1002,6 +1042,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             ) : null}
           </View>
           <View style={styles.rightBtns}>
+            {full && !hd && !overhead && !preview && ready ? (
+              <TouchableOpacity
+                onPress={() => setSplitWant(!splitWant)}
+                style={[styles.fullBtn, splitWant && styles.splitOn]}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: splitWant }}
+                accessibilityLabel={splitWant ? 'Split view: on. Tap for the 3D view alone' : 'Split view: the 3D view over the map from above'}
+                hitSlop={6}
+              >
+                <SplitIcon on={splitWant} />
+              </TouchableOpacity>
+            ) : null}
             {hdCfg && region && b64 ? (
               <TouchableOpacity
                 onPress={() => { setHdNote(null); setWant(!want); }}
@@ -1129,7 +1181,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           </View>
         </View>
         {walking && full && !hd && ready ? (
-          <View style={styles.pad} pointerEvents="box-none">
+          <View style={[styles.pad, mapH ? { bottom: 44 + mapH } : null]} pointerEvents="box-none">
             {([['Walk forward', 'chevron-up', 1, 0, styles.padUp], ['Step left', 'chevron-back', 0, -1, styles.padLeft], ['Step right', 'chevron-forward', 0, 1, styles.padRight], ['Walk back', 'chevron-down', -1, 0, styles.padDown]] as const).map(([label, icon, f, r, where]) => (
               <TouchableOpacity
                 key={label}
@@ -1150,14 +1202,14 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ) : null}
         {refOn && refMode === 'see' ? (
           // above the caption; while walking, above the walk arrows (bottom-left, up to 192 dp)
-          <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('off')} bottom={walking ? 200 : 34} move={refMove} onMove={setRefMove} />
+          <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('off')} bottom={(walking ? 200 : 34) + mapH} move={refMove} onMove={setRefMove} />
         ) : null}
         {ready && look != null && !overhead ? (
-          <Text style={[styles.caption, hd ? styles.captionHd : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format}{preview ? '' : ` · ${hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}`}</Text>
+          <Text style={[styles.caption, hd ? styles.captionHd : null, mapH ? { bottom: 8 + mapH + 10 } : null]} pointerEvents="none">Looking {compassPoint(look)} {look}° · {focal} mm on {pickLens.format}{preview ? '' : ` · ${hd && hdLoading ? 'loading the picture…' : full ? 'drag to look around' : 'drag sideways to look'}`}</Text>
         ) : null}
       </View>
 
-      <Below full={full} max={belowMax} hide={preview || !!overhead}>
+      <Below full={full} max={splitOn ? Math.round(belowMax * 0.6) : belowMax} hide={preview || !!overhead}>
       {ready && lit ? (
         <Text style={[styles.status, pad]}>
           <Text style={lit.subjectLit ? styles.sunOn : undefined}>{subject}: {lit.subjectLit ? 'in the sun' : lit.up ? 'in shadow' : 'no sun'}</Text>
@@ -1328,6 +1380,8 @@ const styles = StyleSheet.create({
   lensText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   lensTextOn: { color: '#000000' },
   aboutRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4, marginTop: 6 },
+  splitOn: { backgroundColor: '#5aaa7a', borderColor: '#5aaa7a' },
+  eyeBox: { position: 'absolute', top: 0, left: 0, right: 0 },
   rightBtns: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 1, marginLeft: 'auto' },
   hdBtn: { minWidth: 40, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   fullBtn: { width: 36, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
