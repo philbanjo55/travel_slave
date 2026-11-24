@@ -1345,6 +1345,12 @@ def split_view():
         return st, False
     s = C.capture(1)
     b = next((c for c in s.clickables if lab(c).startswith('Split view')), None)
+    if b is None and any('Google' in x for x in s.all_texts):   # (run 153: full screen opened on the HD page, where split is hidden)
+        hd = next((c for c in s.clickables if 'HD picture from Google' in c['label']), None)
+        print(f'INFO split: full screen is on the HD page, {"turning HD off" if hd else "no HD button to turn off"}', flush=True)
+        if hd is not None:
+            C.tap(hd['xy']); time.sleep(8); s = C.capture(1)
+            b = next((c for c in s.clickables if lab(c).startswith('Split view')), None)
     if b is None:
         print('INFO split: no split button (this build has none)', flush=True); return
     V.check('split-button', True, lab(b)[:70])
