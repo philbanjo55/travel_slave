@@ -1060,6 +1060,10 @@ def sun_3d():
                 refphoto()
             except Exception as e:
                 V.check('refphoto-run', False, f'reference photo checks stopped: {e!r}'[:120])
+            try:
+                split_view()
+            except Exception as e:
+                V.check('split-run', False, f'split view checks stopped: {e!r}'[:120])
             V.show('sun3d-full-drawn', g)
             c_ = C.capture(1)
             closed = V.tap_text(c_, 'Close the 3D view')
@@ -1321,6 +1325,71 @@ def shot_checks_hold():
         V.check('shotcheck-undo', back is not None and (('shot done' in back['label']) == was), 'held again: back as it was')
     V.check('shotcheck-alive', C.app_alive())
 
+
+
+def split_view():
+    """Split view (24 Nov 2026, Phil: 'view both overhead and 3d at the same time'): in full-screen 3D a button puts the
+    3D view over a map from above (Terrain = the same page draws both halves; Satellite = Google's map under a shorter
+    web view). A tap on the map moves the eye there (Back chip undoes it). Checks split-*; leaves split off."""
+    lab = lambda c: c['label'].split(' | ')[0]
+    def root_mode(st):
+        t = next((x for x in st.all_texts if x.startswith('3D view ')), '')
+        return 'satellite' if '· split satellite' in t else 'terrain' if '· split terrain' in t else 'off'
+    def wait(test, tries=8):
+        st = C.capture(1)
+        for _ in range(tries):
+            if test(st): return st, True
+            time.sleep(2); st = C.capture(1)
+        return st, False
+    s = C.capture(1)
+    b = next((c for c in s.clickables if lab(c).startswith('Split view')), None)
+    if b is None:
+        print('INFO split: no split button (this build has none)', flush=True); return
+    V.check('split-button', True, lab(b)[:70])
+    C.tap(b['xy'])
+    g, ok = wait(lambda st: root_mode(st) == 'terrain' and any(lab(c).startswith('Terrain') for c in st.clickables))
+    V.check('split-terrain-on', ok and C.app_alive(), f'mode {root_mode(g)}, view label {next((x for x in g.all_texts if x.startswith("3D view ")), "none")[:70]}')
+    V.show('split-terrain', g)
+    cut_off('3d-split', g)
+    div = next((n for n in g.root.iter('node') if (n.get('content-desc') or '').startswith('Drag to resize')), None) if g.root is not None else None
+    V.check('split-divider', div is not None, 'divider bar' if div is not None else 'no "Drag to resize" bar')
+    V.check('split-hint', V.has(g, 'Tap the map to stand there'), 'hint line on the map')
+    if div is not None:
+        x1, y1, x2, y2 = C.bounds(div)
+        zin = next((c for c in g.clickables if lab(c).startswith('Zoom the map in')), None)
+        ty = y2 + 260
+        C.tap(((x1 + x2) * 3 // 10, ty)); 
+        m, moved = wait(lambda st: any(lab(c).startswith('Back: undo the last move') for c in st.clickables), 6)
+        V.check('split-map-tap', moved and C.app_alive(), 'Back chip after a tap on the map' if moved else 'no Back chip after a tap on the map')
+        if moved:
+            bk = next(c for c in m.clickables if lab(c).startswith('Back: undo the last move'))
+            C.tap(bk['xy'])
+            m2, gone = wait(lambda st: not any(lab(c).startswith('Back: undo the last move') for c in st.clickables), 5)
+            V.check('split-map-back', gone, 'Back took the move back' if gone else 'Back chip still there')
+        if zin is not None:
+            C.tap(zin['xy']); time.sleep(2)
+            V.check('split-zoom-alive', C.app_alive() and root_mode(C.capture(1)) == 'terrain', 'zoom in, still split')
+    sat = next((c for c in C.capture(1).clickables if lab(c).startswith('Satellite')), None)
+    V.check('split-sat-chip', sat is not None, 'Satellite chip')
+    if sat is not None:
+        C.tap(sat['xy'])
+        h, ok = wait(lambda st: root_mode(st) == 'satellite')
+        mapv = any(x.startswith('Satellite map under the 3D view') for x in h.all_texts)
+        V.check('split-satellite-on', ok and C.app_alive(), f'mode {root_mode(h)}' + ('' if mapv else ' (map view not listed)'))
+        V.show('split-satellite', h)
+        cut_off('3d-split-sat', h)
+        V.check('split-sat-3d-drawn', V.has(h, 'Looking '), '3D caption still there over the satellite map')
+        ter = next((c for c in h.clickables if lab(c).startswith('Terrain')), None)
+        if ter is not None:
+            C.tap(ter['xy']); time.sleep(3)
+    s2 = C.capture(1)
+    b2 = next((c for c in s2.clickables if lab(c).startswith('Split view')), None)
+    if b2 is not None:
+        C.tap(b2['xy'])
+        o, ok = wait(lambda st: root_mode(st) == 'off')
+        V.check('split-off', ok and V.has(o, 'Looking ') and C.app_alive(), f'mode {root_mode(o)}')
+    else:
+        V.check('split-off', False, 'no split button to turn it off')
 
 def ground_glass():
     """Ground glass (16 Nov 2026): in full-screen 3D a button turns the picture (and the shot's photo) upside down and
