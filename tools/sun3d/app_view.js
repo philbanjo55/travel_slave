@@ -2699,8 +2699,8 @@
     }
     oc.aspect = w / (h - t);
     r.setViewport(0, 0, cw, oPx); r.setScissor(0, 0, cw, oPx);
-    viewLook(true); placeOH(oc, oPx); oc.updateMatrixWorld();
-    if (!SPL.cache) { pass(oc, q); SPL.key = ''; }
+    placeOH(oc, oPx); oc.updateMatrixWorld();
+    if (!SPL.cache) { viewLook(true); pass(oc, q); SPL.key = ''; }
     else {
       const key = ohKey(cw, oPx, q, oc);
       if (key !== SPL.key || !SPL.rt) {
@@ -2711,7 +2711,7 @@
           if (MS) SPL.rt.samples = 4;
           SPL.rt.texture.minFilter = SPL.rt.texture.magFilter = THREE.NearestFilter; SPL.rt.texture.generateMipmaps = false;
         }
-        r.setRenderTarget(SPL.rt); pass(oc, q); r.setRenderTarget(null);
+        viewLook(true); r.setRenderTarget(SPL.rt); pass(oc, q); r.setRenderTarget(null);
         r.setViewport(0, 0, cw, oPx); r.setScissor(0, 0, cw, oPx);
         SPL.key = key;
       }

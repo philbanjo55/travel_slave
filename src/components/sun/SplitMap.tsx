@@ -159,8 +159,10 @@ export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, 
     }).catch(() => {});
   };
   // + / - and Find me from the controls
+  const reqSeen = useRef(req.n);   // (a request made before this map was shown is not done again)
   useEffect(() => {
-    if (!req.n) return;
+    if (!req.n || req.n === reqSeen.current) return;
+    reqSeen.current = req.n;
     const z = req.zoom != null ? Math.min(21, Math.max(3, shown.zoom + Math.log2(req.zoom))) : shown.zoom;
     mapRef.current?.animateCamera({ center: coord(req.center ?? { lat: shown.lat, lng: shown.lng }), heading: shown.heading, pitch: 0, zoom: z }, { duration: 250 });
   // eslint-disable-next-line react-hooks/exhaustive-deps
