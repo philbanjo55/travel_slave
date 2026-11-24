@@ -1332,9 +1332,11 @@ def split_view():
     3D view over a map from above (Terrain = the same page draws both halves; Satellite = Google's map under a shorter
     web view). A tap on the map moves the eye there (Back chip undoes it). Checks split-*; leaves split off."""
     lab = lambda c: c['label'].split(' | ')[0]
-    def root_mode(st):
-        t = next((x for x in st.all_texts if x.startswith('3D view ')), '')
-        return 'satellite' if '· split satellite' in t else 'terrain' if '· split terrain' in t else 'off'
+    def root_mode(st):   # the view's own label is not listed by uiautomator: read the divider and the chip marked selected
+        nodes = list(st.root.iter('node')) if st.root is not None else []
+        if not any((n.get('content-desc') or '').startswith('Drag to resize') for n in nodes): return 'off'
+        sel = [(n.get('content-desc') or '') for n in nodes if n.get('selected') == 'true']
+        return 'satellite' if any(x.startswith('Satellite:') for x in sel) else 'terrain' if any(x.startswith('Terrain:') for x in sel) else 'on (no chip selected)'
     def wait(test, tries=8):
         st = C.capture(1)
         for _ in range(tries):
@@ -1348,7 +1350,7 @@ def split_view():
     V.check('split-button', True, lab(b)[:70])
     C.tap(b['xy'])
     g, ok = wait(lambda st: root_mode(st) == 'terrain' and any(lab(c).startswith('Terrain') for c in st.clickables))
-    V.check('split-terrain-on', ok and C.app_alive(), f'mode {root_mode(g)}, view label {next((x for x in g.all_texts if x.startswith("3D view ")), "none")[:70]}')
+    V.check('split-terrain-on', ok and C.app_alive(), f'mode {root_mode(g)}')
     V.show('split-terrain', g)
     cut_off('3d-split', g)
     div = next((n for n in g.root.iter('node') if (n.get('content-desc') or '').startswith('Drag to resize')), None) if g.root is not None else None
