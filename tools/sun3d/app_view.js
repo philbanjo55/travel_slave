@@ -85,6 +85,8 @@
 // walls and a roof (snow on it where the ground is snow), standing on the ground as drawn, lit by the sun its ground
 // gets from the hills (the finest light map there); inside the detail box they also throw a drawn shadow (BSHADOW).
 // NEVER in lit() / the sun times. `houses` {ok, count, ms} or {ok: false, msg}.
+// Split (24 Nov 2026): S3D.split({ on, frac, shots }) draws the eye view over the view from above in this one canvas;
+// S3D.goTo(lat, lng), S3D.yaw(deg), S3D.liveLook(bool) for a map outside the page. See "Split" before tick().
 // Built into src/components/sun/sun3dHtml.ts by tools/sun3d/build_app_html.js. Do not edit the generated file.
 (function () {
   const post = m => { try { window.ReactNativeWebView.postMessage(JSON.stringify(m)); } catch (e) { /* not in the app */ } };
