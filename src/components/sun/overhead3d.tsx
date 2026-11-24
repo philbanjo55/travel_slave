@@ -179,13 +179,13 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
   return { onMessage, controls };
 }
 
-const fmtDist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : `${Math.round(m / 10) * 10} m`);
+export const fmtDist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : `${Math.round(m / 10) * 10} m`);
 const normDeg = (d: number) => ((d % 360) + 360) % 360;
 let findMeOn = false;   // kept while the app is open, so full screen opens the way the small view was
 
 // The phone's position and facing while Find me is on (the same reading as WalkToShot: true north from the magnetic
 // heading plus the declination where the phone is, smoothed so the fan doesn't shake).
-function useFindMe(active: boolean) {
+export function useFindMe(active: boolean) {
   const [on, setOnState] = useState(findMeOn);
   const setOn = useCallback((v: boolean) => { findMeOn = v; setOnState(v); }, []);
   const [pos, setPos] = useState<{ lat: number; lng: number; acc: number | null } | null>(null);
