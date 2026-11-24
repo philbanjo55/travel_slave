@@ -5,7 +5,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Pair, LatLng, destination, distanceM } from '../../utils/sunEngine';
 import { SUN } from './sunStyle';
 import { shotFov } from './shotFov';
+import { useTrailRoutes } from '../../services/trailRoutes';
 import type { TrailRoute } from '../../services/trailRoutes';
+import { fmtDist, overheadShots, useFindMe } from './overhead3d';
 
 // Split 3D (Phil, 24 Nov 2026, mockup docs/mockups/split_3d_mockup.png): full-screen 3D cut in two, the eye view on top
 // and the view from above under it, as Google's Street View split. Sun3DPanel holds the state; this file has the parts
@@ -306,4 +308,102 @@ const styles = StyleSheet.create({
   handleArrow: { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 11, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#4285F4', marginBottom: 2 },
   meDot: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#4285F4', borderWidth: 3, borderColor: '#ffffff' },
   hit: { position: 'absolute' },
+  mapBox: { position: 'absolute', left: 0, right: 0, bottom: 0, overflow: 'hidden', backgroundColor: '#0b0e0c' },
 });
+
+// Everything the split needs that the plain view must not pay for (Jenny Lake froze the emulator while these hooks
+// lived in Sun3DPanel with split off): the stop's shots and trails, Find me, the page told what each half is, the lower
+// half's controls, the satellite map and the divider. Sun3DPanel mounts this ONLY while split is on (full screen, chosen,
+// not HD); on unmount the page gets the whole view back. `sink`: Sun3DPanel hands it the page's 'look' / 'overheadMe'
+// messages (none of them reach Sun3DPanel's own state).
+export function SplitLayer({ run, ready, readyN, mode, onMode, top, h, frac, onFrac, pair, others, eye, lens, jumps, walking, sink }: {
+  run: (js: string) => void; ready: boolean; readyN: number; mode: SplitMode; onMode: (m: SplitMode) => void;
+  top: number; h: number; frac: number; onFrac: (f: number) => void; pair: Pair; others?: Pair[]; eye: LatLng;
+  lens: { f: number; fw: number }; jumps: number; walking: boolean; sink: React.MutableRefObject<((m: any) => void) | null>;
+}) {
+  const ter = mode === 'terrain', sat = !ter;
+  const pairs = useMemo(() => {
+    const list = others && others.length ? others : [pair];
+    return list.some(p => p.vantage_id === pair.vantage_id) ? list : [pair, ...list];
+  }, [others, pair]);
+  const shotsKey = JSON.stringify(overheadShots(pairs, pair.vantage_id));
+  const routes = useTrailRoutes(useMemo(() => pairs.map(p => p.v), [pairs]));
+  const routesKey = routes.map(r => `${r.id}:${r.coords.length}:${r.color ?? ''}`).join('|');
+  const fracRef = useRef(frac);
+  // Terrain: the page draws both halves; Satellite: the page is the plain eye view and posts `look` while dragged
+  useEffect(() => {
+    if (!ready) return;
+    run(ter ? `window.S3D.split && window.S3D.split({ "on": true, "frac": ${fracRef.current.toFixed(4)}, "shots": ${shotsKey} })` : 'window.S3D.split && window.S3D.split({ on: false })');
+    run(`window.S3D.liveLook && window.S3D.liveLook(${sat ? 'true' : 'false'})`);
+  }, [ready, readyN, ter, sat, shotsKey, run]);
+  useEffect(() => () => { run('window.S3D.split && window.S3D.split({ on: false })'); run('window.S3D.liveLook && window.S3D.liveLook(false)'); }, [run]);
+  useEffect(() => {
+    if (ready) run(`window.S3D.overheadRoutes && window.S3D.overheadRoutes(${JSON.stringify(routes)})`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, readyN, routesKey, run]);
+  // the divider: the page follows at most every 50 ms, and once more when the finger lifts
+  const fracSent = useRef<{ t: number; timer: ReturnType<typeof setTimeout> | null }>({ t: 0, timer: null });
+  useEffect(() => () => { if (fracSent.current.timer) clearTimeout(fracSent.current.timer); }, []);
+  const dividerMoved = (f: number, done: boolean) => {
+    fracRef.current = f; onFrac(f);
+    if (!ter) return;
+    const c = fracSent.current, send = () => { c.t = Date.now(); c.timer = null; run(`window.S3D.split && window.S3D.split({ on: true, frac: ${fracRef.current.toFixed(4)} })`); };
+    if (c.timer) clearTimeout(c.timer);
+    const wait = done ? 0 : 50 - (Date.now() - c.t);
+    if (wait <= 0) send(); else c.timer = setTimeout(send, wait);
+  };
+  // the page's messages for the split: the eye view's heading (Satellite's cone, in whole degrees) and Find me off the map
+  const [yaw, setYaw] = useState<number | null>(null);
+  const [meOut, setMeOut] = useState(false);
+  useEffect(() => {
+    sink.current = m => {
+      if (m.type === 'overheadMe') setMeOut(!!m.outside);
+      else if (m.type === 'look' && sat && typeof m.yaw === 'number') { const y = Math.round(m.yaw); setYaw(p => (p === y ? p : y)); }
+    };
+    return () => { sink.current = null; };
+  }, [sink, sat]);
+  const me = useFindMe(true);
+  const meSent = useRef(false);
+  const [req, setReq] = useState<SatReq>({ n: 0 });
+  useEffect(() => { meSent.current = false; }, [mode]);
+  useEffect(() => {
+    if (!ready || !ter) return;
+    if (!me.on || !me.pos) { run('window.S3D.overheadMe && window.S3D.overheadMe(null)'); meSent.current = false; return; }
+    const msg = { lat: me.pos.lat, lng: me.pos.lng, acc: me.pos.acc, heading: me.heading, center: !meSent.current, span: meSent.current ? undefined : 900 };
+    meSent.current = true;
+    run(`window.S3D.overheadMe && window.S3D.overheadMe(${JSON.stringify(msg)})`);
+  }, [ready, ter, me.on, me.pos, me.heading, run]);
+  useEffect(() => {   // Satellite: centre on you the first time Find me has a fix
+    if (!sat || !me.on || !me.pos || meSent.current) return;
+    meSent.current = true; setReq(r => ({ n: r.n + 1, center: { lat: me.pos!.lat, lng: me.pos!.lng } }));
+  }, [sat, me.on, me.pos]);
+  const zoom = (k: number) => { if (ter) run(`window.S3D.overheadZoom(${k})`); else setReq(r => ({ n: r.n + 1, zoom: k })); };
+  const findMe = () => {
+    meSent.current = false; me.setOn(true);
+    if (!me.pos) return;
+    meSent.current = true;
+    if (ter) run(`window.S3D.overheadMe && window.S3D.overheadMe(${JSON.stringify({ lat: me.pos.lat, lng: me.pos.lng, acc: me.pos.acc, heading: me.heading, center: true })})`);
+    else setReq(r => ({ n: r.n + 1, center: { lat: me.pos!.lat, lng: me.pos!.lng } }));
+  };
+  const meLine = !me.on ? null : me.perm === 'no' ? 'Location is off for this app' : !me.pos ? 'Finding you…'
+    : `${meOut && ter ? "You're outside this map" : `You · ±${Math.max(1, Math.round(me.pos.acc ?? 0))} m`} · ${fmtDist(distanceM(me.pos, pair.v))} to ${pair.code ?? 'the shot'}`;
+  return (
+    <>
+      {sat ? (
+        <View style={[styles.mapBox, { top }]}>
+          <SplitSatMap
+            pairs={pairs} sel={pair} eye={eye} yaw={yaw} fov={(2 * Math.atan(lens.fw / (2 * lens.f)) * 180) / Math.PI} routes={routes}
+            me={me.on && me.pos ? me.pos : null} req={req}
+            onGo={p => run(`window.S3D.goTo && window.S3D.goTo(${p.lat},${p.lng})`)}
+            onYaw={deg => { setYaw(Math.round(deg)); run(`window.S3D.yaw && window.S3D.yaw(${deg.toFixed(2)})`); }}
+          />
+        </View>
+      ) : null}
+      {ready ? (
+        <SplitControls top={top} mode={mode} onMode={onMode} onZoom={zoom} meOn={me.on} onMe={findMe} onMeOff={() => me.setOn(false)}
+          meLine={meLine} jumps={jumps} walking={walking} onBack={() => run('window.S3D.back && window.S3D.back()')} />
+      ) : null}
+      <SplitDivider top={top} h={h} onFrac={dividerMoved} />
+    </>
+  );
+}

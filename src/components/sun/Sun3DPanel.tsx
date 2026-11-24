@@ -7,15 +7,14 @@ import { SUN3D_HTML } from './sun3dHtml';
 import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
 import { detailBuildings, detailColor, detailFor, detailLeaf, detailMask, detailTrees, TREE_STYLE, treeTilesLeaf, detailWater, houseTileFile, houseTilesFor, nearColor, nearFor, rangeFile, rangeFor, regionColor, regionFor, terrainData, TerrainDetail, TerrainHouseTile, TerrainNear, TerrainRange, TerrainRegion, TerrainTreeTile, treeTileFile, treeTilesFor, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
-import { distanceM, fmtMinute, sunPosition } from '../../utils/sunEngine';
+import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { framingOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
 import type { Framing, Pair, SkyPos } from '../../utils/sunEngine';
 import { compassPoint } from './sunStyle';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
-import { Overhead3D, fmtDist, overheadShots, useFindMe, useOverhead3D } from './overhead3d';
-import { SatReq, SplitControls, SplitDivider, SplitIcon, SplitMode, SplitSatMap } from './SplitMap';
-import { useTrailRoutes } from '../../services/trailRoutes';
+import { Overhead3D, useOverhead3D } from './overhead3d';
+import { SplitIcon, SplitLayer, SplitMode } from './SplitMap';
 import { CropOverlay, CropPanel, cropName, fitCrop, longInNow, readLongIn, refitCrop, setLongInStored } from './CropOverlay';
 import type { CropRatio, FrameCrop } from '../../utils/sunEngine';
 
@@ -307,7 +306,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const pairIdRef = useRef(pair.vantage_id);
   pairIdRef.current = pair.vantage_id;
   const lookRef = useRef<{ yaw: number; pitch: number } | null>(null);   // where the view points now, to 0.01 deg (page's `look`)
-  const [viewYaw, setViewYaw] = useState<number | null>(null);   // the same, for the split's satellite cone
+  const splitSink = useRef<((m: any) => void) | null>(null);   // the split layer's own message handler, while it is mounted
   // Where you stand and look, kept through a restart of the view (Phil, 17 Nov 2026: switching the foreground off / on
   // restarts the page and put him back on the saved spot): per shot, cleared when another shot is shown.
   const placedRef = useRef<string | null>(null);   // the shot and pins last sent to the page (see the place effect)
@@ -391,6 +390,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);   // the picture's whole area (dp)
   const splitOn = !!full && splitWant && !hd && !overhead && !preview;
   const splitSat = splitOn && splitMode === 'satellite', splitTer = splitOn && splitMode === 'terrain';
+  const setSplitFrac = useCallback((f: number) => { lastSplitFrac = f; setSplitFracState(f); }, []);
   const splitTop = splitOn && box ? Math.round(box.h * splitFrac) : 0;   // where the halves meet, dp from the top
   const mapH = splitOn && box ? box.h - splitTop : 0;                    // the lower half's height: the eye view's overlays sit above it
   // Ground glass (Phil, 16 Nov 2026): the picture and the shot's photo turned upside down and left-right (a 180 degree
@@ -447,63 +447,6 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
 
   const run = useCallback((js: string) => { web.current?.injectJavaScript(`${js};true;`); }, []);
   const oh = useOverhead3D({ overhead, ready, run, full, onFull });
-  // Split: the stop's shots, its trails, Find me, and the page told which half is what
-  const splitPairs = useMemo(() => {
-    const list = others && others.length ? others : [pair];
-    return list.some(p => p.vantage_id === pair.vantage_id) ? list : [pair, ...list];
-  }, [others, pair]);
-  const splitShots = useMemo(() => overheadShots(splitPairs, pair.vantage_id), [splitPairs, pair.vantage_id]);
-  const splitShotsKey = JSON.stringify(splitShots);
-  const splitRoutes = useTrailRoutes(splitOn ? splitPairs.map(p => p.v) : []);
-  const splitRoutesKey = splitRoutes.map(r => `${r.id}:${r.coords.length}:${r.color ?? ''}`).join('|');
-  const fracSent = useRef<{ t: number; timer: ReturnType<typeof setTimeout> | null }>({ t: 0, timer: null });
-  useEffect(() => {
-    if (!ready || hd || overhead) return;
-    if (!splitTer) { run('window.S3D.split && window.S3D.split({ on: false })'); return; }
-    run(`window.S3D.split && window.S3D.split(${JSON.stringify({ on: true, frac: lastSplitFrac, shots: splitShots })})`);
-  // the divider's drags go on their own (setSplitFrac)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, readyN, hd, overhead, splitTer, splitShotsKey, run]);
-  useEffect(() => {
-    if (!ready || hd || overhead || !splitOn) return;
-    run(`window.S3D.overheadRoutes && window.S3D.overheadRoutes(${JSON.stringify(splitRoutes)})`);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, readyN, hd, overhead, splitOn, splitRoutesKey, run]);
-  // Satellite: the page posts `look` while the eye view is dragged, so the map's cone turns with it
-  useEffect(() => { if (ready && !hd) run(`window.S3D.liveLook && window.S3D.liveLook(${splitSat ? 'true' : 'false'})`); }, [ready, readyN, hd, splitSat, run]);
-  const setSplitFrac = useCallback((f: number, done: boolean) => {
-    lastSplitFrac = f; setSplitFracState(f);
-    if (!splitTer) return;
-    const c = fracSent.current, send = () => { c.t = Date.now(); c.timer = null; run(`window.S3D.split && window.S3D.split({ on: true, frac: ${lastSplitFrac.toFixed(4)} })`); };
-    if (c.timer) clearTimeout(c.timer);
-    const wait = done ? 0 : 50 - (Date.now() - c.t);
-    if (wait <= 0) send(); else c.timer = setTimeout(send, wait);
-  }, [splitTer, run]);
-  const me = useFindMe(splitOn);
-  const meSent = useRef(false);
-  const [meOut, setMeOut] = useState(false);
-  const [satReq, setSatReq] = useState<SatReq>({ n: 0 });
-  useEffect(() => {
-    if (!ready || hd || !splitTer) return;
-    if (!me.on || !me.pos) { run('window.S3D.overheadMe && window.S3D.overheadMe(null)'); meSent.current = false; return; }
-    const msg = { lat: me.pos.lat, lng: me.pos.lng, acc: me.pos.acc, heading: me.heading, center: !meSent.current, span: meSent.current ? undefined : 900 };
-    meSent.current = true;
-    run(`window.S3D.overheadMe && window.S3D.overheadMe(${JSON.stringify(msg)})`);
-  }, [ready, hd, splitTer, me.on, me.pos, me.heading, run]);
-  useEffect(() => {   // Satellite: centre on you the first time Find me has a fix
-    if (!splitSat || !me.on || !me.pos || meSent.current) return;
-    meSent.current = true; setSatReq(r => ({ n: r.n + 1, center: { lat: me.pos!.lat, lng: me.pos!.lng } }));
-  }, [splitSat, me.on, me.pos]);
-  useEffect(() => { meSent.current = false; }, [splitMode]);
-  const splitZoom = useCallback((k: number) => {
-    if (splitTer) run(`window.S3D.overheadZoom(${k})`); else setSatReq(r => ({ n: r.n + 1, zoom: k }));
-  }, [splitTer, run]);
-  const splitMe = useCallback(() => {
-    meSent.current = false; me.setOn(true);
-    if (!me.pos) return;
-    if (splitTer) { meSent.current = true; run(`window.S3D.overheadMe && window.S3D.overheadMe(${JSON.stringify({ lat: me.pos.lat, lng: me.pos.lng, acc: me.pos.acc, heading: me.heading, center: true })})`); }
-    else { meSent.current = true; setSatReq(r => ({ n: r.n + 1, center: { lat: me.pos!.lat, lng: me.pos!.lng } })); }
-  }, [splitTer, me, run]);
   // the stop's other stand spots in the picture (not from above: Overhead draws its own)
   const [othersOn, setOthersOnState] = useState(lastOthersOn);
   const setOthersOn = useCallback((v: boolean) => { lastOthersOn = v; setOthersOnState(v); }, []);
@@ -780,6 +723,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     let m: any = null;
     try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
     if (!m || typeof m.type !== 'string') return;
+    if (splitSink.current && (m.type === 'look' || m.type === 'overheadMe')) splitSink.current(m);   // (split only; look goes on below too)
     if (oh.onMessage(m)) return;
     if (m.type === 'boot') { booted.current = true; foreSent.current = false; setPerf(null); start(); }
     else if (m.type === 'perf') {
@@ -799,9 +743,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       lookRef.current = typeof m.deg === 'number' ? { yaw: typeof m.yaw === 'number' ? m.yaw : m.deg, pitch: typeof m.pitch === 'number' ? m.pitch : 0 } : null;
       if (lookRef.current && !overhead) keepRef.current = { id: pairIdRef.current, eye: keepRef.current?.id === pairIdRef.current ? keepRef.current.eye : null, view: lookRef.current };
       setLookTilt(typeof m.pitch === 'number' ? Math.round(m.pitch * 10) / 10 : null);
-      setViewYaw(lookRef.current ? lookRef.current.yaw : null);
     }
-    else if (m.type === 'overheadMe') setMeOut(!!m.outside);
     else if (m.type === 'eye') {
       setAt({ lat: m.lat, lng: m.lng, moved: m.moved || 0 }); setWalkNote(null); walkAnsweredRef.current();
       if (typeof m.back === 'number') setJumps(m.back);
@@ -1016,6 +958,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     { label: `Last sun on ${subject}`, minute: moments.lastSubject },
   ] : [];
 
+  // the reference photo and the crop over the eye view (a fragment: the plain view's tree is exactly as before split)
+  const eyeOverlays = (
+    <>
+      {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} onSize={onPhotoSize} /> : null}
+      {frame !== 'off' && pic && !overhead && !preview ? (
+        <CropOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={crop} editing={!!full && cropOpen} only={!!lens.only} flip={glassOn} longIn={longIn} onChange={setCrop} />
+      ) : null}
+    </>
+  );
   return (
     <View style={full ? styles.fullWrap : undefined} accessibilityLabel={overhead ? `Overhead 3D ${ready ? 'ready' : phase}, ${overhead.pairs.length} shots` : `3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}${splitOn ? ` · split ${splitMode}` : ''}`}>
       <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}
@@ -1039,35 +990,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             style={styles.web}
           />
         ) : null}
-        {/* Terrain split: the web view covers both halves; the photo and the crop belong to the eye view on top */}
-        <View style={splitTer && box ? [styles.eyeBox, { height: splitTop }] : StyleSheet.absoluteFill} pointerEvents="box-none">
-        {refOn && refMode === 'see' && refPhoto ? <RefPhotoGhost photo={refPhoto} opacity={refOpacity} xf={refXf} move={refMove} onXf={setRefXf} onSize={onPhotoSize} /> : null}
-        {frame !== 'off' && pic && !overhead && !preview ? (
-          <CropOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={crop} editing={!!full && cropOpen} only={!!lens.only} flip={glassOn} longIn={longIn} onChange={setCrop} />
-        ) : null}
+        {splitTer && box ? (
+          // Terrain split: the web view covers both halves; the photo and the crop belong to the eye view on top
+          <View style={[styles.eyeBox, { height: splitTop }]} pointerEvents="box-none">{eyeOverlays}</View>
+        ) : eyeOverlays}
         </View>
-        </View>
-        {splitSat && box ? (
-          <View style={[styles.mapBox, { top: splitTop }]}>
-            <SplitSatMap
-              pairs={splitPairs} sel={pair} eye={at ?? (keepRef.current?.id === pair.vantage_id && keepRef.current.eye ? keepRef.current.eye : pair.v)}
-              yaw={viewYaw} fov={(2 * Math.atan(lens.fw / (2 * lens.f)) * 180) / Math.PI} routes={splitRoutes}
-              me={me.on && me.pos ? me.pos : null} req={satReq}
-              onGo={p => run(`window.S3D.goTo && window.S3D.goTo(${p.lat},${p.lng})`)}
-              onYaw={(deg, done) => { setViewYaw(deg); run(`window.S3D.yaw && window.S3D.yaw(${deg.toFixed(2)})`); void done; }}
-            />
-          </View>
-        ) : null}
-        {splitOn && box && ready ? (
-          <SplitControls
-            top={splitTop} mode={splitMode} onMode={setSplitMode} onZoom={splitZoom}
-            meOn={me.on} onMe={splitMe} onMeOff={() => me.setOn(false)} jumps={jumps} walking={walking}
-            onBack={() => run('window.S3D.back && window.S3D.back()')}
-            meLine={!me.on ? null : me.perm === 'no' ? 'Location is off for this app' : !me.pos ? 'Finding you…'
-              : `${meOut && splitTer ? "You're outside this map" : `You · ±${Math.max(1, Math.round(me.pos.acc ?? 0))} m`} · ${fmtDist(distanceM(me.pos, pair.v))} to ${pair.code ?? 'the shot'}`}
+        {splitOn && box ? (
+          <SplitLayer
+            run={run} ready={ready} readyN={readyN} mode={splitMode} onMode={setSplitMode} top={splitTop} h={box.h} frac={splitFrac} onFrac={setSplitFrac}
+            pair={pair} others={others} eye={at ?? (keepRef.current?.id === pair.vantage_id && keepRef.current.eye ? keepRef.current.eye : pair.v)}
+            lens={lens} jumps={jumps} walking={walking} sink={splitSink}
           />
         ) : null}
-        {splitOn && box ? <SplitDivider top={splitTop} h={box.h} onFrac={setSplitFrac} /> : null}
         {waiting ? (
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
@@ -1448,7 +1382,6 @@ const styles = StyleSheet.create({
   aboutRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4, marginTop: 6 },
   splitOn: { backgroundColor: '#5aaa7a', borderColor: '#5aaa7a' },
   eyeBox: { position: 'absolute', top: 0, left: 0, right: 0 },
-  mapBox: { position: 'absolute', left: 0, right: 0, bottom: 0, overflow: 'hidden', backgroundColor: '#0b0e0c' },
   rightBtns: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 1, marginLeft: 'auto' },
   hdBtn: { minWidth: 40, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
   fullBtn: { width: 36, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
