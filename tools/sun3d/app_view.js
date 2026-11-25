@@ -2600,8 +2600,9 @@
       }
     }
     for (const d of [...P.filter(d => d.s !== sel), ds]) {   // the stand spots, the selected one last (on top)
-      const on = d.s === sel, r = on ? 8 : 6;
-      g.beginPath(); g.arc(d.p.x, d.p.y, r, 0, 2 * Math.PI); g.fillStyle = on ? '#E5484D' : '#000000'; g.fill(); g.lineWidth = on ? 2.5 : 2; g.strokeStyle = '#ffffff'; g.stroke();
+      const on = d.s === sel, r = on ? 9 : 6;   // filled with its lens's colour (the app sends it; 25 Nov 2026), the shot you are on bigger
+      g.beginPath(); g.arc(d.p.x, d.p.y, r + (on ? 2.5 : 2), 0, 2 * Math.PI); g.fillStyle = 'rgba(0,0,0,0.85)'; g.fill();   // a dark edge: yellow and grey read on snow
+      g.beginPath(); g.arc(d.p.x, d.p.y, r, 0, 2 * Math.PI); g.fillStyle = d.s.color || (on ? '#E5484D' : '#000000'); g.fill(); g.lineWidth = on ? 3 : 2; g.strokeStyle = '#ffffff'; g.stroke();
       OH.dots.push({ id: d.s.id, x: d.p.x, y: d.p.y });
     }
     const boxes = [];   // their codes, the selected one first; a code that would sit on another is left out (zoomed far out)

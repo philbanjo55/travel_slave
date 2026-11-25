@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LensLegend, shotColor } from './lensColors';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -46,7 +47,7 @@ export function overheadShots(pairs: Pair[], selId: string) {
     return {
       id: p.vantage_id, code: p.code ?? null, name: p.shot_name ?? p.vantage_name ?? null, subject: shortName(p.subject_name),
       v: p.v, s: p.s, heading_deg: p.framing ? p.framing.heading : null, fov_deg: Math.round(f.fov * 10) / 10,
-      star: !!p.starred, sel: p.vantage_id === selId,
+      star: !!p.starred, sel: p.vantage_id === selId, color: shotColor(p),   // the dot: its lens's colour (lensColors)
     };
   });
 }
@@ -133,6 +134,7 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
         <Text style={[styles.sunText, sunOn && { color: '#000000' }]}>☀ SUN</Text>
       </TouchableOpacity>
       <MarksButton on={marks} onPress={() => setMarks(!marks)} />
+      <LensLegend pairs={overhead!.pairs} style={{ left: 8, top: 86 }} />
       <TouchableOpacity
         style={styles.compassBtn}
         onPress={compass}

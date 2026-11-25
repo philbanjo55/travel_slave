@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { LensLegend, shotColor } from './lensColors';
 import { View, Text, StyleSheet, TouchableOpacity, PanResponder, LayoutChangeEvent } from 'react-native';
 import MapView, { Circle, Marker, Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
@@ -256,7 +257,7 @@ export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, 
               <Marker key={`m-${p.vantage_id}-${on ? 1 : 0}`} coordinate={coord(p.v)} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={track}
                 onPress={() => (!on && onPick ? onPick(p.vantage_id) : onGo(p.v))} accessibilityLabel={on ? `Stand at shot ${p.code ?? ''}` : `Open shot ${p.code ?? ''}`}>
                 <View style={styles.spotWrap}>
-                  <View style={[styles.spot, on && styles.spotOn]} />
+                  <View style={[styles.spot, { backgroundColor: shotColor(p) }, on && styles.spotOn]} />
                   <Text style={styles.pinLabel}>{on && p.starred ? '★ ' : ''}{p.code || '•'}</Text>
                 </View>
               </Marker>
@@ -298,8 +299,8 @@ const styles = StyleSheet.create({
   hint: { alignItems: 'center' },
   hintText: { color: '#ffffff', fontSize: 12, fontWeight: '600', backgroundColor: 'rgba(0,0,0,0.78)', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden', maxWidth: '100%' },
   spotWrap: { alignItems: 'center' },
-  spot: { width: 14, height: 14, borderRadius: 7, backgroundColor: '#000000', borderWidth: 2, borderColor: '#ffffff' },
-  spotOn: { backgroundColor: '#E5484D' },
+  spot: { width: 14, height: 14, borderRadius: 7, backgroundColor: '#000000', borderWidth: 2, borderColor: '#ffffff', shadowColor: '#000000', shadowOpacity: 0.9, shadowRadius: 1.5, elevation: 2 },
+  spotOn: { width: 18, height: 18, borderRadius: 9, borderWidth: 3 },   // the shot you are on: bigger (its colour is its lens)
   pinLabel: { marginTop: 1, color: '#ffffff', fontSize: 12, fontWeight: '700', textShadowColor: '#000000', textShadowRadius: 3, textShadowOffset: { width: 0, height: 0 } },
   handle: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#ffffff', borderWidth: 2.5, borderColor: '#4285F4', alignItems: 'center', justifyContent: 'center' },
   handleArrow: { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 11, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#4285F4', marginBottom: 2 },
@@ -398,6 +399,7 @@ export function SplitLayer({ run, ready, readyN, mode, onMode, top, h, frac, onF
           />
         </View>
       ) : null}
+      {ready ? <LensLegend pairs={pairs} style={{ left: 12, top: top + 12 }} /> : null}
       {ready ? (
         <SplitControls top={top} mode={mode} onMode={onMode} onZoom={zoom} meOn={me.on} onMe={findMe} onMeOff={() => me.setOn(false)}
           meLine={meLine} jumps={jumps} walking={walking} onBack={() => run('window.S3D.back && window.S3D.back()')} />
