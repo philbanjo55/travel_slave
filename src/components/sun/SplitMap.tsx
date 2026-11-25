@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { LensLegend, shotColor, useLensFilter, visibleShots } from './lensColors';
+import { hiddenIds, LensLegend, shotColor, useLensFilter, visibleShots } from './lensColors';
 import { View, Text, StyleSheet, TouchableOpacity, PanResponder, LayoutChangeEvent } from 'react-native';
 import MapView, { Circle, Marker, Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
@@ -341,7 +341,9 @@ export function SplitLayer({ run, ready, readyN, mode, onMode, top, h, frac, onF
   }, [others, pair]);
   const hide = useLensFilter();   // the lenses unticked in the map's key (the shot you are on always shows)
   const shown = useMemo(() => visibleShots(pairs, pair.vantage_id, hide), [pairs, pair.vantage_id, hide]);
-  const shotsKey = JSON.stringify(overheadShots(shown, pair.vantage_id));
+  const shotsKey = JSON.stringify(overheadShots(pairs, pair.vantage_id));   // every shot: the filter only hides dots (below)
+  const hideKey = useMemo(() => JSON.stringify(hiddenIds(pairs, pair.vantage_id, hide)), [pairs, pair.vantage_id, hide]);
+  useEffect(() => { if (ready && ter) run(`window.S3D.shotsHide && window.S3D.shotsHide(${hideKey})`); }, [ready, readyN, ter, hideKey, run]);
   const routes = useTrailRoutes(useMemo(() => pairs.map(p => p.v), [pairs]));
   const routesKey = routes.map(r => `${r.id}:${r.coords.length}:${r.color ?? ''}`).join('|');
   const fracRef = useRef(frac);

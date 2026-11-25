@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LensLegend, shotColor, useLensFilter, visibleShots } from './lensColors';
+import { hiddenIds, LensLegend, shotColor, useLensFilter } from './lensColors';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -66,8 +66,11 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
   pickRef.current = overhead?.onPick ?? null;
   const on = !!overhead;
   const hide = useLensFilter();   // the lenses unticked in the map's key
-  const shots = useMemo(() => (overhead ? overheadShots(visibleShots(overhead.pairs, overhead.selId, hide), overhead.selId) : []), [overhead?.pairs, overhead?.selId, hide]);
+  const shots = useMemo(() => (overhead ? overheadShots(overhead.pairs, overhead.selId) : []), [overhead?.pairs, overhead?.selId]);
   const shotsKey = JSON.stringify(shots);
+  // the filter goes to the page on its own: it only hides dots (sending a shorter list refit and redrew the whole map)
+  const hideKey = useMemo(() => JSON.stringify(overhead ? hiddenIds(overhead.pairs, overhead.selId, hide) : []), [overhead?.pairs, overhead?.selId, hide]);
+  useEffect(() => { if (on && ready) run(`window.S3D.shotsHide && window.S3D.shotsHide(${hideKey})`); }, [on, ready, hideKey, run]);
   const sunOn = overhead?.sunOn ?? true, shaded = overhead?.shaded;
   const [marks, setMarks] = useOverheadMarks();
   const firstSent = useRef(false);

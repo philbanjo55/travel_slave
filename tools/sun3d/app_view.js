@@ -2523,7 +2523,8 @@
         ohLabel(g, e.text.length > 34 ? e.text.slice(0, 33) + '…' : e.text, lx + 12, ly, false);
       });
     }
-    const P = OH.shots.map(s => { const q = ohXZ(s.v), y = ohH(s.v); return { s, q, y, p: ohProj(q.x, y, q.z, w, h) }; });
+    // the lens filter (S3D.shotsHide) only leaves dots out of this drawing: no refit, no new picture from above
+    const P = OH.shots.filter(s => !OH.hide || !OH.hide.has(s.id) || s.id === OH.sel).map(s => { const q = ohXZ(s.v), y = ohH(s.v); return { s, q, y, p: ohProj(q.x, y, q.z, w, h) }; });
     // a compass direction from a ground point, as a unit vector on the screen
     const sdir = (d, az) => { const f = ohProj(d.q.x + Math.sin(az) * 1000, d.y, d.q.z - Math.cos(az) * 1000, w, h), x = f.x - d.p.x, y = f.y - d.p.y, l = Math.hypot(x, y) || 1; return { x: x / l, y: y / l }; };
     const wedgeTo = (d, L) => {   // the two edges of a shot's framing, L px long
@@ -2948,6 +2949,8 @@
     yaw(deg) { if (!R || !Number.isFinite(+deg)) return; yaw = +deg * Math.PI / 180; touched = true; touch('look'); heading(); },
     liveLook(on) { SPL.live = !!on; },
     // for tests: where the split's dot and handle are (CSS px in the view from above), the top's height, the heading
+    // the lenses unticked in the map's key (Phil, 25 Nov 2026: filtering redrew everything): shot ids left off the map
+    shotsHide(ids) { OH.hide = new Set(Array.isArray(ids) ? ids : []); dirty = true; },
     // the colour of the lens you look through, for your dot and cone on the map ('#rrggbb')
     viewColor(hex) { const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '')); SPL.rgb = m ? [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16)) : null; dirty = true; },
     _split() { return { on: splitOn(), top: splitTop(), dot: SPL.dot, handle: SPL.handle, yaw: Math.round(((yaw * 180 / Math.PI) % 360 + 360) % 360 * 100) / 100, eye, renders: SPL.renders, anchored: OH.anchored, span: OH.span }; },

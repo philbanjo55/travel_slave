@@ -41,6 +41,8 @@ export function useLensFilter(): Set<string> {
   useEffect(() => { const f = () => setN(x => x + 1); subs.add(f); return () => { subs.delete(f); }; }, []);
   return hidden;
 }
+export const hiddenIds = (pairs: Pair[], selId: string, hide: Set<string>): string[] =>
+  (hide.size ? pairs.filter(p => p.vantage_id !== selId && hide.has(lensKeyOf(p))).map(p => p.vantage_id) : []);
 export const visibleShots = (pairs: Pair[], selId: string, hide: Set<string>) =>
   (hide.size ? pairs.filter(p => p.vantage_id === selId || !hide.has(lensKeyOf(p))) : pairs);
 
