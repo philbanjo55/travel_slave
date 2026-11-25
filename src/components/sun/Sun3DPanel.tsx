@@ -10,6 +10,7 @@ import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { framingsOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
 import type { Framing, Pair, SkyPos } from '../../utils/sunEngine';
+import { lensColor } from './lensColors';
 import { compassPoint } from './sunStyle';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
@@ -1291,6 +1292,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             <TouchableOpacity key={`${i}|${f.lens}|${f.heading}`} onPress={() => pickFraming(i)}
               style={[styles.frameChip, i === selI && styles.heightChipOn]} accessibilityRole="button" accessibilityState={{ selected: i === selI }}
               accessibilityLabel={`Framing ${i + 1} of ${framings.length}: ${chipName(f)}. ${framingDetail(f)}${i === 0 ? '. The shot opens with this one' : ''}`}>
+              <View style={[styles.lensDot, { backgroundColor: lensColor(f.lens) }]} />
               <Text style={[styles.frameChipText, i === selI && { color: '#000000' }]}>{chipName(f)}</Text>
             </TouchableOpacity>
           ))}
@@ -1358,6 +1360,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
                 <TouchableOpacity key={`${i}|${f.lens}|${f.heading}`} onPress={() => pickFraming(i)} onLongPress={() => chipMenu(i)} delayLongPress={400}
                   style={[styles.frameChip, i === selI && styles.heightChipOn]} accessibilityRole="button" accessibilityState={{ selected: i === selI }}
                   accessibilityLabel={`Framing ${i + 1} of ${framings.length}: ${chipName(f)}. ${framingDetail(f)}${i === 0 ? '. The shot opens with this one' : ''}`}>
+                  <View style={[styles.lensDot, { backgroundColor: lensColor(f.lens) }]} />
                   <Text style={[styles.frameChipText, i === selI && { color: '#000000' }]}>{chipName(f)}</Text>
                 </TouchableOpacity>
               ))}
@@ -1503,7 +1506,8 @@ const styles = StyleSheet.create({
   frameChips: { gap: 8, paddingRight: 8 },
   foldBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 30 },
   foldText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
-  frameChip: { minHeight: 34, paddingHorizontal: 12, borderRadius: 17, borderWidth: 1, borderColor: '#444444', justifyContent: 'center' },
+  frameChip: { minHeight: 34, paddingHorizontal: 12, borderRadius: 17, borderWidth: 1, borderColor: '#444444', justifyContent: 'center', alignItems: 'center', flexDirection: 'row', gap: 6 },
+  lensDot: { width: 10, height: 10, borderRadius: 5, borderWidth: 1.5, borderColor: '#888888' },
   frameChipText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   walkText: { color: colors.textSecondary, fontSize: 13 },
   walkBtns: { flexDirection: 'row', gap: 8 },
