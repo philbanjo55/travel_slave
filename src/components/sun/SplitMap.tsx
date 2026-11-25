@@ -119,15 +119,23 @@ export function SplitControls({ top, mode, onMode, onZoom, meOn, onMe, onMeOff, 
   );
 }
 
+// '#rrggbb' -> 'rgba(r,g,b,a)' (blue when there is no lens colour)
+const withAlpha = (hex: string | undefined, a: number) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex ?? '');
+  const c = m ? [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16)) : [66, 133, 244];
+  return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+};
+
 type Cam = { lat: number; lng: number; heading: number; zoom: number };
 export type SatReq = { n: number; zoom?: number; center?: LatLng };
 
 // The satellite half. `eye` = where the eye view stands now, `yaw` = where it looks (compass degrees), `fov` = the lens's
 // horizontal angle (degrees). onGo / onYaw move and turn the eye view (the panel sends them to the page).
-export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, onYaw, onPick }: {
+export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, onYaw, onPick, viewColor }: {
   pairs: Pair[]; sel: Pair; eye: LatLng; yaw: number | null; fov: number; routes: TrailRoute[];
   me: { lat: number; lng: number } | null; req: SatReq; onGo: (p: LatLng) => void; onYaw: (deg: number, done: boolean) => void;
   onPick?: (vantageId: string) => void;   // another shot's dot: open that shot as saved (25 Nov 2026)
+  viewColor?: string;
 }) {
   const mapRef = useRef<MapView>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -267,9 +275,9 @@ export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, 
               </Marker>
             );
           })}
-          <Polygon coordinates={cone} fillColor="rgba(66,133,244,0.35)" strokeColor="rgba(66,133,244,0.9)" strokeWidth={1.5} />
+          <Polygon coordinates={cone} fillColor={withAlpha(viewColor, 0.35)} strokeColor={withAlpha(viewColor, 0.9)} strokeWidth={1.5} />
           <Marker coordinate={coord(eye)} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={track}>
-            <View style={styles.meDot} />
+            <View style={[styles.meDot, viewColor ? { backgroundColor: '#ffffff', borderColor: viewColor, borderWidth: 5, width: 22, height: 22, borderRadius: 11 } : null]} />
           </Marker>
         </MapView>
       ) : null}
@@ -318,12 +326,14 @@ const styles = StyleSheet.create({
 // half's controls, the satellite map and the divider. Sun3DPanel mounts this ONLY while split is on (full screen, chosen,
 // not HD); on unmount the page gets the whole view back. `sink`: Sun3DPanel hands it the page's 'look' / 'overheadMe'
 // messages (none of them reach Sun3DPanel's own state).
-export function SplitLayer({ run, ready, readyN, mode, onMode, top, h, frac, onFrac, pair, others, eye, lens, jumps, walking, sink, onPick }: {
+export function SplitLayer({ run, ready, readyN, mode, onMode, top, h, frac, onFrac, pair, others, eye, lens, jumps, walking, sink, onPick, viewColor }: {
   run: (js: string) => void; ready: boolean; readyN: number; mode: SplitMode; onMode: (m: SplitMode) => void;
   top: number; h: number; frac: number; onFrac: (f: number) => void; pair: Pair; others?: Pair[]; eye: LatLng;
   lens: { f: number; fw: number }; jumps: number; walking: boolean; sink: React.MutableRefObject<((m: any) => void) | null>;
   onPick?: (vantageId: string) => void;
+  viewColor?: string;   // the lens you look through: your dot and cone take its colour (25 Nov 2026)
 }) {
+  useEffect(() => { if (ready) run(`window.S3D.viewColor && window.S3D.viewColor(${JSON.stringify(viewColor ?? '')})`); }, [ready, readyN, viewColor, run]);
   const ter = mode === 'terrain', sat = !ter;
   const pairs = useMemo(() => {
     const list = others && others.length ? others : [pair];
@@ -401,7 +411,7 @@ export function SplitLayer({ run, ready, readyN, mode, onMode, top, h, frac, onF
             me={me.on && me.pos ? me.pos : null} req={req}
             onGo={p => run(`window.S3D.goTo && window.S3D.goTo(${p.lat},${p.lng})`)}
             onYaw={deg => { setYaw(Math.round(deg)); run(`window.S3D.yaw && window.S3D.yaw(${deg.toFixed(2)})`); }}
-            onPick={onPick}
+            onPick={onPick} viewColor={viewColor}
           />
         </View>
       ) : null}

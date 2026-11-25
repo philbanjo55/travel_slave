@@ -1066,7 +1066,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           <SplitLayer
             run={run} ready={ready} readyN={readyN} mode={splitMode} onMode={setSplitMode} top={splitTop} h={box.h} frac={splitFrac} onFrac={setSplitFrac}
             pair={pair} others={others} eye={at ?? (keepRef.current?.id === pair.vantage_id && keepRef.current.eye ? keepRef.current.eye : pair.v)}
-            lens={lens} jumps={jumps} walking={walking} sink={splitSink} onPick={id => pickOtherRef.current?.(id)}
+            lens={lens} jumps={jumps} walking={walking} sink={splitSink} onPick={id => pickOtherRef.current?.(id)} viewColor={lensColor(pickLens.id)}
           />
         ) : null}
         {waiting ? (

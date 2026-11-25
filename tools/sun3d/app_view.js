@@ -2740,10 +2740,15 @@
     const at = b => ({ x: p.x + Math.sin(b) * L, y: p.y - Math.cos(b) * L });
     const e1 = at(a - half), e2 = at(a + half);
     g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(e1.x, e1.y); g.arc(p.x, p.y, L, a - half - Math.PI / 2, a + half - Math.PI / 2); g.closePath();
-    const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, L); gr.addColorStop(0, 'rgba(66,133,244,0.55)'); gr.addColorStop(1, 'rgba(66,133,244,0.08)'); g.fillStyle = gr; g.fill();
-    g.lineWidth = 1.5; g.strokeStyle = 'rgba(66,133,244,0.9)'; g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(p.x, p.y); g.lineTo(e2.x, e2.y); g.stroke();
+    // the cone and the dot in the colour of the lens you are looking through (Phil, 25 Nov 2026: no blue for "you")
+    const cc = SPL.rgb || [66, 133, 244], rgba = a => `rgba(${cc[0]},${cc[1]},${cc[2]},${a})`;
+    const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, L); gr.addColorStop(0, rgba(0.55)); gr.addColorStop(1, rgba(0.08)); g.fillStyle = gr; g.fill();
+    g.lineWidth = 1.5; g.strokeStyle = rgba(0.9); g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(p.x, p.y); g.lineTo(e2.x, e2.y); g.stroke();
     // (the round arrow handle at the cone's end was taken off, Phil 25 Nov 2026: "I don't like it"; the dot still turns it)
-    g.beginPath(); g.arc(p.x, p.y, 9, 0, 2 * Math.PI); g.fillStyle = '#4285F4'; g.fill(); g.lineWidth = 3; g.strokeStyle = '#ffffff'; g.stroke();
+    // where you stand: white in the middle, a thick ring in the lens's colour, a dark edge (like the shot you are on)
+    g.beginPath(); g.arc(p.x, p.y, 12.5, 0, 2 * Math.PI); g.fillStyle = 'rgba(0,0,0,0.85)'; g.fill();
+    g.beginPath(); g.arc(p.x, p.y, 10, 0, 2 * Math.PI); g.fillStyle = rgba(1); g.fill();
+    g.beginPath(); g.arc(p.x, p.y, 5.5, 0, 2 * Math.PI); g.fillStyle = '#ffffff'; g.fill();
     SPL.dot = { x: p.x, y: p.y }; SPL.handle = null;
   }
   // a pointer on the view from above, in its own coordinates
@@ -2943,6 +2948,8 @@
     yaw(deg) { if (!R || !Number.isFinite(+deg)) return; yaw = +deg * Math.PI / 180; touched = true; touch('look'); heading(); },
     liveLook(on) { SPL.live = !!on; },
     // for tests: where the split's dot and handle are (CSS px in the view from above), the top's height, the heading
+    // the colour of the lens you look through, for your dot and cone on the map ('#rrggbb')
+    viewColor(hex) { const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '')); SPL.rgb = m ? [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16)) : null; dirty = true; },
     _split() { return { on: splitOn(), top: splitTop(), dot: SPL.dot, handle: SPL.handle, yaw: Math.round(((yaw * 180 / Math.PI) % 360 + 360) % 360 * 100) / 100, eye, renders: SPL.renders, anchored: OH.anchored, span: OH.span }; },
     _splitCache(c) { SPL.cache = !!c; splitFree(); dirty = true; },
     // ---- from above (see "From above" before tick()) ----
