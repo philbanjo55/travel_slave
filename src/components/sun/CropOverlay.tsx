@@ -277,6 +277,39 @@ export function GridOverlay({ pic, unit, lens, crop, box }: { pic: { w: number; 
     </View>
   );
 }
+// The Chamonix 4x5 focusing screen (Phil, 25 Nov 2026, photo of his screen): a 1 cm grid from the middle of the glass
+// and dashed outlines, centred, of the roll-film formats it marks: 6x4.5, 6x7, 6x9 and 6x12 (56 mm high, the long side
+// across; turned with the camera in portrait). Drawn in millimetres on the frame box, so it fits any lens; on the 6x17
+// back or the Fuji only the 1 cm grid is drawn (the outlines belong to the 4x5 glass).
+const ROLL = [{ label: '6×4.5', w: 41.5, right: true }, { label: '6×7', w: 69.5, right: true }, { label: '6×9', w: 84, right: false }, { label: '6×12', w: 112, right: false }];   // labels where the screen has them
+export function ChamonixOverlay({ pic, unit, lens }: { pic: { w: number; h: number }; unit: number; lens: { f: number; fw: number; fh: number } }) {
+  const k = unit / lens.f;   // dp per mm on the film
+  const fW = lens.fw * k, fH = lens.fh * k, fx = (pic.w - fW) / 2, fy = (pic.h - fH) / 2, mx = fx + fW / 2, my = fy + fH / 2;
+  const hair = StyleSheet.hairlineWidth * 2;
+  const lines: any[] = [];
+  for (let d = 10; d < lens.fw / 2; d += 10) for (const sgn of [-1, 1]) lines.push({ left: mx + sgn * d * k, top: fy, width: hair, height: fH });
+  for (let d = 10; d < lens.fh / 2; d += 10) for (const sgn of [-1, 1]) lines.push({ left: fx, top: my + sgn * d * k, width: fW, height: hair });
+  lines.push({ left: mx, top: fy, width: hair, height: fH }, { left: fx, top: my, width: fW, height: hair });
+  const is45 = Math.abs(Math.max(lens.fw, lens.fh) - 120) < 1 && Math.abs(Math.min(lens.fw, lens.fh) - 96) < 1;
+  const land = lens.fw >= lens.fh;
+  const boxes = is45 ? ROLL.map(r => {
+    const w = (land ? r.w : 56) * k, h = (land ? 56 : r.w) * k;
+    return { label: r.label, right: r.right, left: mx - w / 2, top: my - h / 2, width: w, height: h };
+  }) : [];
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {lines.map((l, i) => <View key={`l${i}`} style={[gridStyles.fine, l]} />)}
+      {boxes.map(b => (
+        <View key={b.label} style={[gridStyles.roll, { left: b.left, top: b.top, width: b.width, height: b.height }]}>
+          <Text style={[gridStyles.rollText, b.right ? { right: 3 } : { left: 3 }]}>{b.label}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
 const gridStyles = StyleSheet.create({
+  fine: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.45)' },
+  roll: { position: 'absolute', borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.85)' },
+  rollText: { position: 'absolute', top: 2, color: 'rgba(255,255,255,0.9)', fontSize: 9, fontWeight: '700', textShadowColor: '#000000', textShadowRadius: 2, textShadowOffset: { width: 0, height: 0 } },
   line: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.7)', shadowColor: '#000000', shadowOpacity: 0.8, shadowRadius: 1, shadowOffset: { width: 0, height: 0 }, elevation: 1 },
 });

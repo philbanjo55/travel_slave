@@ -16,7 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
 import { Overhead3D, useOverhead3D } from './overhead3d';
 import { SplitIcon, SplitLayer, SplitMode } from './SplitMap';
-import { CropOverlay, CropPanel, cropName, fitCrop, GridOverlay, longInNow, readLongIn, refitCrop, setLongInStored } from './CropOverlay';
+import { CropOverlay, CropPanel, cropName, fitCrop, ChamonixOverlay, GridOverlay, longInNow, readLongIn, refitCrop, setLongInStored } from './CropOverlay';
 import type { CropRatio, FrameCrop } from '../../utils/sunEngine';
 
 // 3D view of the shot (TEST app, Phil 12 Nov 2026): the real terrain from the
@@ -162,7 +162,8 @@ let lastSplitMode: SplitMode = 'terrain';
 let lastSplitFrac = 0.5;
 let lastOthersOn = true;
 let lastBelowShut = false;
-let lastGrid = false;   // grid lines (thirds) in the framer, kept while the app is open (Phil, 25 Nov 2026)   // split: the controls under the map folded away (Phil, 25 Nov 2026), kept while the app is open
+type GridMode = 'off' | 'thirds' | 'chamonix';
+let lastGrid: GridMode = 'off';   // grid lines in the framer: thirds, or Phil's Chamonix 4x5 screen; kept while the app is open (25 Nov 2026)   // split: the controls under the map folded away (Phil, 25 Nov 2026), kept while the app is open
 const EYE_H = 1.73, CAM_MIN = 0.3048, CAM_MAX = 10000;   // camera height above the ground, metres (5'8" = 1.73; min 1 ft, no real top)
 const INCH = 0.0254;
 const feetIn = (m: number) => { const t = Math.round(m / 0.0254); return t >= 1200 ? `${Math.round(t / 12)} ft` : `${Math.floor(t / 12)}'${t % 12}"`; };   // the stop's other stand spots shown in the 3D view (kept while the app is open)
@@ -312,8 +313,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   }, [vid]);
   // What the page needs for the lens: focal length, the film's width and height as the camera is turned, box on / off.
   // Frame only (Phil, 17 Nov 2026): just what the lens sees, the rest of the picture black. Kept while the app is open.
-  const [gridOn, setGridOnState] = useState(lastGrid);
-  const setGridOn = useCallback((v: boolean) => { lastGrid = v; setGridOnState(v); }, []);
+  const [grid, setGridState] = useState<GridMode>(lastGrid);
+  const nextGrid = useCallback(() => setGridState(g => { const n: GridMode = g === 'off' ? 'thirds' : g === 'thirds' ? 'chamonix' : 'off'; lastGrid = n; return n; }), []);
+  const gridOn = grid !== 'off';
   const [frameOnly, setFrameOnlyState] = useState(lastFrameOnly);
   const setFrameOnly = useCallback((v: boolean) => { lastFrameOnly = v; setFrameOnlyState(v); }, []);
   const lens = useMemo(() => ({
@@ -1035,7 +1037,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       {frame !== 'off' && pic && !overhead && !preview ? (
         <CropOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={crop} editing={!!full && cropOpen} only={!!lens.only} flip={glassOn} longIn={longIn} onChange={setCrop} />
       ) : null}
-      {gridOn && pic && !overhead && !preview && !hd ? <GridOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={frame !== 'off' ? crop : null} box={frame !== 'off'} /> : null}
+      {grid === 'thirds' && pic && !overhead && !preview && !hd ? <GridOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={frame !== 'off' ? crop : null} box={frame !== 'off'} /> : null}
+      {grid === 'chamonix' && pic && !overhead && !preview && !hd ? <ChamonixOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} /> : null}
     </>
   );
   return (
@@ -1184,14 +1187,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             ) : null}
             {!hd ? (
               <TouchableOpacity
-                onPress={() => setGridOn(!gridOn)}
+                onPress={nextGrid}
                 style={[styles.fullBtn, gridOn && styles.lensOn]}
-                accessibilityRole="switch"
-                accessibilityState={{ checked: gridOn }}
-                accessibilityLabel={gridOn ? 'Grid lines: on. Tap to hide' : 'Grid lines: off. Tap to show thirds in the frame'}
+                accessibilityRole="button"
+                accessibilityState={{ selected: gridOn }}
+                accessibilityLabel={grid === 'off' ? 'Grid lines: off. Tap for thirds' : grid === 'thirds' ? 'Grid lines: thirds. Tap for the Chamonix screen' : 'Grid lines: Chamonix screen. Tap to hide'}
                 hitSlop={6}
               >
-                <Ionicons name="grid-outline" size={17} color={gridOn ? '#000000' : '#ffffff'} />
+                {grid === 'chamonix' ? <Text style={[styles.lensText, { color: '#000000', fontSize: 12 }]}>CH</Text>
+                  : <Ionicons name="grid-outline" size={17} color={gridOn ? '#000000' : '#ffffff'} />}
               </TouchableOpacity>
             ) : null}
             {hasFore && !hd ? (
