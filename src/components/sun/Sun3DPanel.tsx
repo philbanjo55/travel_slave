@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
 import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
-import { detailBuildings, detailColor, detailFor, detailLeaf, detailMask, detailTrees, TREE_STYLE, treeTilesLeaf, detailWater, houseTileFile, houseTilesFor, nearColor, nearFor, rangeFile, rangeFor, regionColor, regionFor, terrainData, TerrainDetail, TerrainHouseTile, TerrainNear, TerrainRange, TerrainRegion, TerrainTreeTile, treeTileFile, treeTilesFor, tripTerrainLine, useTripTerrain } from '../../services/terrain';
+import { detailForStop, houseTilesForStop, nearForStop, rangeForStop, detailBuildings, detailColor, detailFor, detailLeaf, detailMask, detailTrees, TREE_STYLE, treeTilesLeaf, detailWater, houseTileFile, houseTilesFor, nearColor, nearFor, rangeFile, rangeFor, regionColor, regionFor, terrainData, TerrainDetail, TerrainHouseTile, TerrainNear, TerrainRange, TerrainRegion, TerrainTreeTile, treeTileFile, treeTilesFor, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { framingsOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
@@ -520,12 +520,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // Which terrain files this shot needs (the wide one for the stand spot, plus a fine box around the
   // stand spot when there is one), then the files themselves (from the phone when saved).
   const vLat = pair.v.lat, vLng = pair.v.lng, sLat = pair.s.lat, sLng = pair.s.lng;
+  // every shot of the stop: the pieces are picked for the whole stop, so going shot to shot keeps the view (25 Nov 2026)
+  const groupKey = JSON.stringify((others ?? []).map(p => [p.v.lat, p.v.lng, p.s.lat, p.s.lng]));
+  const group = useMemo(() => (JSON.parse(groupKey) as number[][]).map(a => ({ stand: { lat: a[0], lng: a[1] }, subject: { lat: a[2], lng: a[3] } })), [groupKey]);
   useEffect(() => {
     let alive = true;
     (async () => {
       const stand = { lat: vLat, lng: vLng };
       const r = await regionFor(stand);
-      const nr = r ? await nearFor(r, stand, { lat: sLat, lng: sLng }) : null;
+      const nr = r ? await nearForStop(r, stand, { lat: sLat, lng: sLng }, group) : null;
       if (!alive) return;
       if (!(r && loaded.current === `${r.id}|${nr?.id ?? ''}`)) {   // (same files: the page only gets the new view)
         loaded.current = null; loadedDetail.current = ''; nearUsed.current = null; booted.current = false; sent.current = false; foreSent.current = false;
@@ -545,12 +548,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       // The foreground's files come behind the plain view, never before it: the detail box for this shot (it must sit
       // inside the fine box the page really has), its mask, the tree returns and the wide water; in the Faroes also the
       // detail box's photo and buildings, and the fine box's photo (which comes even without a detail box).
-      const dt0 = await detailFor(r, nearUsed.current, stand, { lat: sLat, lng: sLng });
+      const dt0 = await detailForStop(r, nearUsed.current, stand, { lat: sLat, lng: sLng }, group);
       const nck = nearUsed.current ? nearColor(nearUsed.current) : null;
       const wck = r ? regionColor(r) : null;   // Tetons: the wide grid's winter colour, a foreground of its own
       const tts = r ? await treeTilesFor(r, stand) : [];   // Tetons: the park-wide tree tiles within reach of this stand spot
-      const rg = r ? await rangeFor(r, stand, { lat: sLat, lng: sLng }) : null;   // Tetons: the sharp range around the subject
-      const hts = r ? await houseTilesFor(r, stand) : [];   // Tetons: the building tiles within reach
+      const rg = r ? await rangeForStop(r, stand, { lat: sLat, lng: sLng }, group) : null;   // Tetons: the sharp range around the subject
+      const hts = r ? await houseTilesForStop(r, stand, group) : [];   // Tetons: the building tiles within reach
       // (the tree tiles only by whether there are any: another shot of the same boxes keeps the page and its tiles, and
       // the page builds its trees again around the new stand spot; a few tiles at the 12 km edge may differ, no restart)
       // the building tiles by their set, not their order (sorted by distance, they changed order between two shots a few
@@ -585,7 +588,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       if (dt0 && dd) { setMaskB64(md); setTreesB64(td); setWaterB64(wd); setColorB64(cd); setBldB64(bd); setDetailB64(dd); setDetail(dt0); }
     })();
     return () => { alive = false; };
-  }, [vLat, vLng, sLat, sLng, preview]);
+  }, [vLat, vLng, sLat, sLng, preview, group]);
 
   const dayPath = useMemo(() => {
     const out: number[][] = [];
