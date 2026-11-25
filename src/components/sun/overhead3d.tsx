@@ -82,7 +82,7 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
 
   // the trails, sent once the page is ready and again when they change (they come from the phone's cache or the server)
   const routes = overhead?.routes ?? [];
-  const routesKey = routes.map(r => `${r.id}:${r.coords.length}:${r.color ?? ''}`).join('|');
+  const routesKey = routes.map(r => `${r.id}:${r.coords.length}:${r.color ?? ''}:${r.dash ? 1 : 0}`).join('|');
   useEffect(() => {
     if (!on || !ready) return;
     run(`window.S3D.overheadRoutes && window.S3D.overheadRoutes(${JSON.stringify(routes)})`);

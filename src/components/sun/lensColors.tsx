@@ -7,13 +7,14 @@ import { framingOf } from '../../services/shotSaves';
 // I can compare where/what shots I take ... give each their own distinct color"). A shot's dot on the maps (split view,
 // Overhead) takes the colour of its framing's lens (the framing the shot opens with); a shot not framed yet is grey.
 // Blue is left out on purpose (the "you are here" dot), and white (it vanishes on snow; the shot you are on is white
-// in the middle with a ring in its lens's colour).
+// in the middle with a ring in its lens's colour). Kept apart from the trail colours (trailRoutes.ts: white, sky blue,
+// indigo, sand).
 export const LENS_COLORS: { id: string; label: string; color: string }[] = [
   { id: '75', label: '4×5 · 75', color: '#E53935' },
   { id: '90', label: '4×5 · 90', color: '#FB8C00' },
   { id: '135', label: '4×5 · 135', color: '#FDD835' },
-  { id: '300', label: '4×5 · 300', color: '#43A047' },
-  { id: '617-75', label: '6×17 · 75', color: '#00BCD4' },
+  { id: '300', label: '4×5 · 300', color: '#2E7D32' },
+  { id: '617-75', label: '6×17 · 75', color: '#00897B' },
   { id: '617-90', label: '6×17 · 90', color: '#7E57C2' },
   { id: '617-135', label: '6×17 · 135', color: '#EC407A' },
   { id: '617-300', label: '6×17 · 300', color: '#795548' },

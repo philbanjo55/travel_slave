@@ -2493,8 +2493,10 @@
       const sp = rt.g.map(q => ohProj(q.x, q.y, q.z, w, h)), col = rt.color || '#FF5FA2';
       g.lineJoin = 'round'; g.lineCap = 'round'; g.setLineDash([]);
       for (const [lw, c] of [[7, 'rgba(0,0,0,0.55)'], [3.5, col]]) {
+        g.setLineDash(rt.dash && lw < 7 ? [10, 7] : []);   // a fifth route and on: the same colours dashed (25 Nov 2026)
         g.beginPath(); sp.forEach((s, i) => i ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y)); g.lineWidth = lw; g.strokeStyle = c; g.stroke();
       }
+      g.setLineDash([]);
       const a = rt.coords[0], b = rt.coords[rt.coords.length - 1];
       const loop = ohDist({ lat: a[1], lng: a[0] }, { lat: b[1], lng: b[0] }) < 60, nm = String(rt.name || 'Trail');
       ends.push({ p: sp[0], col, start: true, text: (loop ? 'Start / end · ' : 'Start · ') + nm });
@@ -2971,7 +2973,7 @@
     eyeHeight(m) { const v = Math.max(0.3048, Math.min(10000, +m)); if (!Number.isFinite(v)) return; EYE = v; touch('walk'); if (eye) told(); },
     othersOn(v) { OTH.on = v !== false; dirty = true; },
     // overheadRoutes([{ id, name, coords: [[lng, lat], ...] }]): the stop's trails drawn on the view from above (none = [])
-    overheadRoutes(list) { OH.routes = Array.isArray(list) ? list.filter(r => r && Array.isArray(r.coords) && r.coords.length > 1).map(r => ({ id: r.id, name: r.name, coords: r.coords, color: r.color })) : []; dirty = true; },
+    overheadRoutes(list) { OH.routes = Array.isArray(list) ? list.filter(r => r && Array.isArray(r.coords) && r.coords.length > 1).map(r => ({ id: r.id, name: r.name, coords: r.coords, color: r.color, dash: !!r.dash })) : []; dirty = true; },
     // overheadMe({ lat, lng, acc?, heading?, center? } | null): Find me's dot; center = put it in the middle of the screen
     overheadMe(o) {
       OH.me = o && Number.isFinite(+o.lat) && Number.isFinite(+o.lng) ? { lat: +o.lat, lng: +o.lng, acc: o.acc, heading: o.heading } : null;

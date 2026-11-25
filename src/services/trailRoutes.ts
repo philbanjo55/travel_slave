@@ -8,10 +8,13 @@ import { supabase } from './supabase';
 // stop with no AllTrails link of its own all see them. Each route keeps one colour everywhere (by name). Saved on the
 // phone, so the lines show with no signal.
 
-export type TrailRoute = { id: string; name: string; coords: [number, number][]; color?: string };   // [lng, lat]
+export type TrailRoute = { id: string; name: string; coords: [number, number][]; color?: string; dash?: boolean };   // [lng, lat]
 
 // Clear of the picture's own marks: the sun's orange, the picked stand spot's red, Find me's blue
-const COLORS = ['#FF5FA2', '#A3E635', '#B47CFF', '#2DD4BF', '#FFD60A', '#F5F5F5'];
+// Trail colours kept apart from the shot dots' lens colours (Phil, 25 Nov 2026: "make sure the colors don't clash with
+// the colored tracks"; lensColors.tsx has red, orange, yellow, green, teal, purple, pink, brown, black, grey): white,
+// sky blue, indigo and sand; a fifth route and on draws the same four dashed.
+const COLORS = ['#FFFFFF', '#80D8FF', '#3F51B5', '#D7B98E'];
 type RouteMeta = { id: string; name: string; north: number; south: number; west: number; east: number; updated_at: string };
 
 const DIR = `${FileSystem.documentDirectory}pf_cache/`;
@@ -77,9 +80,13 @@ export async function trailRoutesNear(points: { lat: number; lng: number }[]): P
   const list = await loadList();
   const hit = list.filter(m => pts.some(p =>
     p.lat <= m.north + SLACK_DEG && p.lat >= m.south - SLACK_DEG && p.lng >= m.west - SLACK_DEG * 1.4 && p.lng <= m.east + SLACK_DEG * 1.4));
-  const order = [...list].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).map(m => m.id);
+  // colours by name order among the routes shown together (not the whole list: the Teton routes once shared colours)
+  const order = [...hit].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).map(m => m.id);
   const routes = await Promise.all(hit.map(loadRoute));
-  return routes.filter((r): r is TrailRoute => !!r).map(r => ({ ...r, color: COLORS[Math.max(0, order.indexOf(r.id)) % COLORS.length] }));
+  return routes.filter((r): r is TrailRoute => !!r).map(r => {
+    const i = Math.max(0, order.indexOf(r.id));
+    return { ...r, color: COLORS[i % COLORS.length], dash: Math.floor(i / COLORS.length) % 2 === 1 };
+  });
 }
 
 // The routes for a set of points (a stop's stand spots), loaded once per set

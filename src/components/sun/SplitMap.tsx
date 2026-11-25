@@ -244,7 +244,11 @@ export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, 
           moveOnMarkerPress={false}
         >
           {routes.map(r => (
-            <Polyline key={`rt-${r.id}`} coordinates={r.coords.map(c => ({ latitude: c[1], longitude: c[0] }))} strokeColor={r.color ?? '#FF5FA2'} strokeWidth={3.5} />
+            <React.Fragment key={`rt-${r.id}`}>
+              {/* a dark edge under the colour, as on the terrain map (white and sand read on snow too) */}
+              <Polyline coordinates={r.coords.map(c => ({ latitude: c[1], longitude: c[0] }))} strokeColor="rgba(0,0,0,0.55)" strokeWidth={7} />
+              <Polyline coordinates={r.coords.map(c => ({ latitude: c[1], longitude: c[0] }))} strokeColor={r.color ?? '#FFFFFF'} strokeWidth={3.5} lineDashPattern={r.dash ? [10, 7] : undefined} />
+            </React.Fragment>
           ))}
           {selFov.aim != null ? (
             <Polyline coordinates={[coord(destination(sel.v, selFov.aim - selFov.fov / 2, Math.max(distanceM(sel.v, sel.s), 20 * mpp))), coord(sel.v), coord(destination(sel.v, selFov.aim + selFov.fov / 2, Math.max(distanceM(sel.v, sel.s), 20 * mpp)))]} strokeColor={SUN} strokeWidth={2} />
