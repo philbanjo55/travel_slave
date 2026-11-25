@@ -1797,7 +1797,7 @@ def stops_page(fresh=True):
     xs = sorted({c['xy'][0] // 100 for c in cards})
     V.check('stops-two-columns', len(xs) >= 2 if len(cards) > 1 else None, f'card columns at x ~{[x * 100 for x in xs]}')
     lines = [t for t in v.all_texts if re.search(r'\d+/\d+ framed', t)]
-    V.check('stops-framed-line', bool(lines), (lines[0] if lines else 'no "n/m framed" line (sun plan not loaded?)')[:80])
+    V.check('stops-framed-line', not lines, 'no "n/m framed" count on the cards (taken off 25 Nov 2026)' if not lines else lines[0][:80])
     # No day on screen while the Stops view is shown (its MAP button and timeline belong to a day)
     V.check('stops-no-day', not V.has(v, 'MAP'), 'day header hidden' if not V.has(v, 'MAP') else 'MAP button still on screen')
     # Open a card that sits in the middle of the screen; Back must come back to the Stops view
