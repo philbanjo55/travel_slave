@@ -178,7 +178,10 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
     savedStars(Object.keys(planStops)).then(v => { if (alive) setStars(v); });
     return () => { alive = false; };
   }, [full3d, planStops]);
-  const tour = useMemo(() => (full3d ? buildTour(plan ?? null, tripDays, stars) : []), [full3d, plan, tripDays, stars]);
+  // Only this stop's shots, by their code (T3, T4, T8, T13...): Phil, 25 Nov 2026 ("only let me go thru shots within a stop")
+  const tour = useMemo(() => (full3d ? buildTour(plan ?? null, tripDays, stars).filter(t => t.stopId === stopId)
+    .sort((x, y) => (x.pair.code ? 0 : 1) - (y.pair.code ? 0 : 1) || (x.pair.code ?? '').localeCompare(y.pair.code ?? '', undefined, { numeric: true })) : []),
+  [full3d, plan, tripDays, stars, stopId]);
   // kept as ids and looked up in the tour, so a save (new stand spot) that refreshes the sun plan shows at once
   const [awayKey, setAwayKey] = useState<{ stopId: string; vid: string } | null>(null);
   useEffect(() => { if (!full3d) setAwayKey(null); }, [full3d]);
@@ -441,7 +444,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
                   <Ionicons name="chevron-back" size={20} color="#ffffff" />
                 </TouchableOpacity>
                 <Text style={styles.tourText} numberOfLines={1} accessibilityLabel={`Shot ${tourAt + 1} of ${tour.length}, ${fStopName}, ${shotName(fPair)}`}>
-                  Shot {tourAt + 1} of {tour.length} · {fStopName} · {shotName(fPair)}
+                  Shot {tourAt + 1} of {tour.length} · {fPair.code ? `${fPair.code} · ` : ''}{shotName(fPair)}
                 </Text>
                 <TouchableOpacity onPress={() => goTour(tourAt + 1)} disabled={tourAt >= tour.length - 1} style={[styles.tourBtn, tourAt >= tour.length - 1 && { opacity: 0.35 }]} accessibilityRole="button" accessibilityLabel="Next shot" hitSlop={6}>
                   <Ionicons name="chevron-forward" size={20} color="#ffffff" />
