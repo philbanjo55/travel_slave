@@ -55,9 +55,8 @@ function CardPhoto({ photo, nailed }: { photo: any | null; nailed: boolean }) {
 function StopCard({ p, width, onOpen }: { p: Place; width: number; onOpen: (p: Place) => void }) {
   const nailed = p.status === 'nailed';
   const better = p.status === 'got';
-  const pct = p.shots > 0 ? Math.max(0, Math.min(1, p.framed / p.shots)) : 0;
-  const line = [p.shotsKnown ? `${p.framed}/${p.shots} framed` : null, p.minutes ? minutesToHoursMin(p.minutes) : null]
-    .filter(Boolean).join(' · ');
+  // (the "3/3 framed" count and its green bar were taken off, Phil 25 Nov 2026: "I don't need it anymore")
+  const line = p.minutes ? minutesToHoursMin(p.minutes) : '';
   return (
     <TouchableOpacity style={[styles.card, { width }, nailed && styles.faded]} onPress={() => onOpen(p)} onLongPress={() => { cyclePlaceMark(p); }} activeOpacity={0.8}
       accessibilityRole="button" accessibilityLabel={`Stop card: ${p.name}${p.checked ? ', reviewed' : p.review ? ', working on it' : ''}`}
@@ -67,7 +66,6 @@ function StopCard({ p, width, onOpen }: { p: Place; width: number; onOpen: (p: P
         {nailed ? <View style={styles.darken} /> : null}
         {nailed ? <View style={styles.nailedWrap}><Text style={styles.nailedText}>NAILED</Text></View> : null}
         {better ? <Text style={styles.goBack}>GO BACK</Text> : null}
-        <View style={styles.barTrack}><View style={[styles.barFill, { width: `${Math.round(pct * 100)}%` }]} /></View>
         {p.checked || p.review ? <View style={[styles.markDot, { backgroundColor: p.checked ? colors.signalOk : WORKING }]} /> : null}
       </View>
       <Text style={styles.name} numberOfLines={2}>{p.name}</Text>
