@@ -277,39 +277,58 @@ export function GridOverlay({ pic, unit, lens, crop, box }: { pic: { w: number; 
     </View>
   );
 }
-// The Chamonix 4x5 focusing screen (Phil, 25 Nov 2026, photo of his screen): a 1 cm grid from the middle of the glass
-// and dashed outlines, centred, of the roll-film formats it marks: 6x4.5, 6x7, 6x9 and 6x12 (56 mm high, the long side
-// across; turned with the camera in portrait). Drawn in millimetres on the frame box, so it fits any lens; on the 6x17
-// back or the Fuji only the 1 cm grid is drawn (the outlines belong to the 4x5 glass).
-const ROLL = [{ label: '6×4.5', w: 41.5, right: true }, { label: '6×7', w: 69.5, right: true }, { label: '6×9', w: 84, right: false }, { label: '6×12', w: 112, right: false }];   // labels where the screen has them
+// The Chamonix 4x5 focusing screen, drawn like Phil's own (photo of it, 25 Nov 2026): a 1 cm grid from the middle of
+// the glass (11 lines across, 9 down on 4x5), dashed lines right across the glass 3 cm either side of the middle, and
+// corner brackets of the roll-film formats 6x4.5, 6x7, 6x9 and 6x12 (56 mm high, the long side across) with their
+// names (6x12 and 6x9 at the left, 6x4.5 and 6x7 at the right, as on the glass). Millimetres on the frame box, so it
+// fits any lens; turned with the camera in portrait. On the 6x17 back or the Fuji only the 1 cm grid.
+const ROLL = [{ label: '6×4.5', w: 41.5, right: true }, { label: '6×7', w: 69.5, right: true }, { label: '6×9', w: 84, right: false }, { label: '6×12', w: 112, right: false }];
 export function ChamonixOverlay({ pic, unit, lens }: { pic: { w: number; h: number }; unit: number; lens: { f: number; fw: number; fh: number } }) {
   const k = unit / lens.f;   // dp per mm on the film
   const fW = lens.fw * k, fH = lens.fh * k, fx = (pic.w - fW) / 2, fy = (pic.h - fH) / 2, mx = fx + fW / 2, my = fy + fH / 2;
-  const hair = StyleSheet.hairlineWidth * 2;
-  const lines: any[] = [];
-  for (let d = 10; d < lens.fw / 2; d += 10) for (const sgn of [-1, 1]) lines.push({ left: mx + sgn * d * k, top: fy, width: hair, height: fH });
-  for (let d = 10; d < lens.fh / 2; d += 10) for (const sgn of [-1, 1]) lines.push({ left: fx, top: my + sgn * d * k, width: fW, height: hair });
-  lines.push({ left: mx, top: fy, width: hair, height: fH }, { left: fx, top: my, width: fW, height: hair });
+  const t = StyleSheet.hairlineWidth * 2, T = 1.5;
+  const fine: any[] = [], dash: any[] = [], marks: any[] = [], names: { label: string; x: number; y: number; right: boolean }[] = [];
+  for (let d = 0; d < lens.fw / 2; d += 10) for (const sg of d ? [-1, 1] : [1]) fine.push({ left: mx + sg * d * k - t / 2, top: fy, width: t, height: fH });
+  for (let d = 0; d < lens.fh / 2; d += 10) for (const sg of d ? [-1, 1] : [1]) fine.push({ left: fx, top: my + sg * d * k - t / 2, width: fW, height: t });
   const is45 = Math.abs(Math.max(lens.fw, lens.fh) - 120) < 1 && Math.abs(Math.min(lens.fw, lens.fh) - 96) < 1;
-  const land = lens.fw >= lens.fh;
-  const boxes = is45 ? ROLL.map(r => {
-    const w = (land ? r.w : 56) * k, h = (land ? 56 : r.w) * k;
-    return { label: r.label, right: r.right, left: mx - w / 2, top: my - h / 2, width: w, height: h };
-  }) : [];
+  if (is45) {
+    const land = lens.fw >= lens.fh;
+    // a point on the glass in mm from the middle, u along the long side, v along the short side -> screen (dp)
+    const at = (u: number, v: number) => (land ? { x: mx + u * k, y: my + v * k } : { x: mx + v * k, y: my + u * k });
+    const seg = (u0: number, v0: number, u1: number, v1: number, out: any[]) => {
+      const a = at(u0, v0), b = at(u1, v1);
+      out.push({ left: Math.min(a.x, b.x) - T / 2, top: Math.min(a.y, b.y) - T / 2, width: Math.abs(b.x - a.x) + T, height: Math.abs(b.y - a.y) + T });
+    };
+    const L = 60, S = 48;   // half the glass, long and short side (mm)
+    for (const c of [-30, 30]) {   // the dashed lines: 3 mm dashes, 2 mm gaps
+      for (let u = -L; u < L; u += 5) seg(u, c, Math.min(u + 3, L), c, dash);
+      for (let v = -S; v < S; v += 5) seg(c, v, c, Math.min(v + 3, S), dash);
+    }
+    const arm = 4;
+    for (const r of ROLL) {
+      const hu = r.w / 2, hv = 28;
+      for (const su of [-1, 1]) for (const sv of [-1, 1]) {
+        seg(su * hu, sv * hv, su * (hu - arm), sv * hv, marks);
+        seg(su * hu, sv * hv, su * hu, sv * (hv - arm), marks);
+      }
+      const p = at(r.right ? hu : -hu, -hv);
+      names.push({ label: r.label, x: p.x, y: p.y, right: r.right });
+    }
+  }
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      {lines.map((l, i) => <View key={`l${i}`} style={[gridStyles.fine, l]} />)}
-      {boxes.map(b => (
-        <View key={b.label} style={[gridStyles.roll, { left: b.left, top: b.top, width: b.width, height: b.height }]}>
-          <Text style={[gridStyles.rollText, b.right ? { right: 3 } : { left: 3 }]}>{b.label}</Text>
-        </View>
+      {fine.map((l, i) => <View key={`f${i}`} style={[gridStyles.fine, l]} />)}
+      {dash.map((l, i) => <View key={`d${i}`} style={[gridStyles.mark, l]} />)}
+      {marks.map((l, i) => <View key={`m${i}`} style={[gridStyles.mark, l]} />)}
+      {names.map(n => (
+        <Text key={n.label} style={[gridStyles.rollText, n.right ? { right: pic.w - n.x, top: n.y - 13 } : { left: n.x, top: n.y - 13 }]}>{n.label}</Text>
       ))}
     </View>
   );
 }
 const gridStyles = StyleSheet.create({
   fine: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.45)' },
-  roll: { position: 'absolute', borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.85)' },
-  rollText: { position: 'absolute', top: 2, color: 'rgba(255,255,255,0.9)', fontSize: 9, fontWeight: '700', textShadowColor: '#000000', textShadowRadius: 2, textShadowOffset: { width: 0, height: 0 } },
+  mark: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.85)' },
+  rollText: { position: 'absolute', color: 'rgba(255,255,255,0.9)', fontSize: 9, fontWeight: '700', textShadowColor: '#000000', textShadowRadius: 2, textShadowOffset: { width: 0, height: 0 } },
   line: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.7)', shadowColor: '#000000', shadowOpacity: 0.8, shadowRadius: 1, shadowOffset: { width: 0, height: 0 }, elevation: 1 },
 });
