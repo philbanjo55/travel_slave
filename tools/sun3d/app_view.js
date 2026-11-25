@@ -2770,6 +2770,8 @@
       let best = null, bd = 26;
       for (const d of OH.dots || []) { const k = Math.hypot(d.x - l.clientX, d.y - l.clientY); if (k < bd) { bd = k; best = d.id; } }
       const s = best != null ? OH.shots.find(x => x.id === best) : null;
+      // another shot's dot (Phil, 25 Nov 2026): the app opens that shot as saved (stand spot, camera, lens, aim)
+      if (s && s.id !== OH.sel) { post({ type: 'otherTap', id: s.id }); OH.tap = null; return; }
       const W = ohS2W(l.clientX, l.clientY), p = s ? { lat: +s.v.lat, lng: +s.v.lng } : xzLL(W.x, W.z);
       OH.anchored = false;   // the map stays still under the finger; the dot goes where it was tapped
       if (goTo(p)) SPL.follow = eye;

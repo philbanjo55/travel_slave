@@ -161,7 +161,13 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   const idealAt = (p: Pair, d0: number) => { const i = idealOf(p); return i ? idealClock(i, d0) : null; };
   const pairIdeal = idealAt(pair, day0);
   // No ideal saved: the stop's own time (Phil, 18 Nov 2026), else the evening golden hour as before.
+  // Going shot to shot inside full screen keeps the time (Phil, 25 Nov 2026: a new time on every shot made the view
+  // redraw while he cycled); opening full screen or the 3D tab still starts at the shot's ideal light.
+  const fullWas = useRef(false);
   useEffect(() => {
+    const cycling = full3d && fullWas.current;
+    fullWas.current = full3d;
+    if (cycling) return;
     if (tab === '3d' || full3d) setMinute(pairIdeal ?? home);
   }, [tab, full3d, pair.vantage_id, stop.date, pairIdeal]);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -178,7 +184,10 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
     savedStars(Object.keys(planStops)).then(v => { if (alive) setStars(v); });
     return () => { alive = false; };
   }, [full3d, planStops]);
-  const tour = useMemo(() => (full3d ? buildTour(plan ?? null, tripDays, stars) : []), [full3d, plan, tripDays, stars]);
+  // Only this stop's shots, by their code (T3, T4, T8, T13...): Phil, 25 Nov 2026 ("only let me go thru shots within a stop")
+  const tour = useMemo(() => (full3d ? buildTour(plan ?? null, tripDays, stars).filter(t => t.stopId === stopId)
+    .sort((x, y) => (x.pair.code ? 0 : 1) - (y.pair.code ? 0 : 1) || (x.pair.code ?? '').localeCompare(y.pair.code ?? '', undefined, { numeric: true })) : []),
+  [full3d, plan, tripDays, stars, stopId]);
   // kept as ids and looked up in the tour, so a save (new stand spot) that refreshes the sun plan shows at once
   const [awayKey, setAwayKey] = useState<{ stopId: string; vid: string } | null>(null);
   useEffect(() => { if (!full3d) setAwayKey(null); }, [full3d]);
@@ -441,7 +450,7 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
                   <Ionicons name="chevron-back" size={20} color="#ffffff" />
                 </TouchableOpacity>
                 <Text style={styles.tourText} numberOfLines={1} accessibilityLabel={`Shot ${tourAt + 1} of ${tour.length}, ${fStopName}, ${shotName(fPair)}`}>
-                  Shot {tourAt + 1} of {tour.length} · {fStopName} · {shotName(fPair)}
+                  Shot {tourAt + 1} of {tour.length} · {fPair.code ? `${fPair.code} · ` : ''}{shotName(fPair)}
                 </Text>
                 <TouchableOpacity onPress={() => goTour(tourAt + 1)} disabled={tourAt >= tour.length - 1} style={[styles.tourBtn, tourAt >= tour.length - 1 && { opacity: 0.35 }]} accessibilityRole="button" accessibilityLabel="Next shot" hitSlop={6}>
                   <Ionicons name="chevron-forward" size={20} color="#ffffff" />

@@ -160,6 +160,7 @@ let lastSplit = false;
 let lastSplitMode: SplitMode = 'terrain';
 let lastSplitFrac = 0.5;
 let lastOthersOn = true;
+let lastBelowShut = false;   // split: the controls under the map folded away (Phil, 25 Nov 2026), kept while the app is open
 const EYE_H = 1.73, CAM_MIN = 0.3048, CAM_MAX = 10000;   // camera height above the ground, metres (5'8" = 1.73; min 1 ft, no real top)
 const INCH = 0.0254;
 const feetIn = (m: number) => { const t = Math.round(m / 0.0254); return t >= 1200 ? `${Math.round(t / 12)} ft` : `${Math.floor(t / 12)}'${t % 12}"`; };   // the stop's other stand spots shown in the 3D view (kept while the app is open)
@@ -340,6 +341,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [heavy, setHeavy] = useState(foregroundTooHeavy);
   const loaded = useRef<string | null>(null);   // the files the plain view holds: "<region>|<fine box or nothing>"
   const loadedDetail = useRef('');               // the detail box whose files are loaded (or loading) for this shot
+  const loadedHouses = useRef<Set<string>>(new Set());   // the building tiles the page holds (by id)
   const nearUsed = useRef<TerrainNear | null>(null);
   const ready = phase === 'ready';
   // Walk mode (full screen, offline view): the arrows step the viewpoint; `at` is where it now stands.
@@ -407,6 +409,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [splitFrac, setSplitFracState] = useState(lastSplitFrac);
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);   // the picture's whole area (dp)
   const splitOn = !!full && splitWant && !hd && !overhead && !preview;
+  const [belowShut, setBelowShutState] = useState(lastBelowShut);
+  const setBelowShut = useCallback((v: boolean) => { lastBelowShut = v; setBelowShutState(v); }, []);
   const splitSat = splitOn && splitMode === 'satellite', splitTer = splitOn && splitMode === 'terrain';
   const setSplitFrac = useCallback((f: number) => { lastSplitFrac = f; setSplitFracState(f); }, []);
   const splitTop = splitOn && box ? Math.round(box.h * splitFrac) : 0;   // where the halves meet, dp from the top
@@ -549,13 +553,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       const hts = r ? await houseTilesFor(r, stand) : [];   // Tetons: the building tiles within reach
       // (the tree tiles only by whether there are any: another shot of the same boxes keeps the page and its tiles, and
       // the page builds its trees again around the new stand spot; a few tiles at the 12 km edge may differ, no restart)
-      const key = `${dt0?.id ?? ''}|${nck?.id ?? ''}|${wck?.id ?? ''}|${tts.length ? 'trees' : ''}|${rg?.id ?? ''}|${hts.map(t => t.id).join(',')}`;
+      // the building tiles by their set, not their order (sorted by distance, they changed order between two shots a few
+      // hundred metres apart and the whole view restarted: Phil, 25 Nov 2026); a set the page already holds keeps it
+      const hNew = hts.map(t => t.id).sort();
+      const hKey = hNew.length && hNew.every(id => loadedHouses.current.has(id)) ? [...loadedHouses.current].sort().join(',') : hNew.join(',');
+      const key = `${dt0?.id ?? ''}|${nck?.id ?? ''}|${wck?.id ?? ''}|${tts.length ? 'trees' : ''}|${rg?.id ?? ''}|${hKey}`;
       if (!alive || key === loadedDetail.current || (key === '|||||' && loadedDetail.current === '')) return;
       if (foreSent.current) {   // the page already holds another box's foreground: start it afresh for this one
         booted.current = false; sent.current = false; foreSent.current = false;
         setLit(null); setMoments(null); setLook(null); setShapes(false); setWideTrees(0); setRangeIn(false); setHousesIn(0); setPhotoFore(false); setForeBusy(false); setPhase(p => (p === 'ready' ? 'starting' : p)); setGen(g => g + 1);
       }
       loadedDetail.current = key;
+      loadedHouses.current = new Set(hNew);
       setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null); setWideColorB64(null); setTreeTiles(null); setRangeBox(null); setHouseTiles(null);
       if (!dt0 && !nck && !wck && !tts.length && !rg && !hts.length) return;
       const mk = dt0 && detailMask(dt0), tk = dt0 && detailTrees(dt0), wk = dt0 && detailWater(dt0), ck = dt0 && detailColor(dt0), bk = dt0 && detailBuildings(dt0);
@@ -1053,7 +1062,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           <SplitLayer
             run={run} ready={ready} readyN={readyN} mode={splitMode} onMode={setSplitMode} top={splitTop} h={box.h} frac={splitFrac} onFrac={setSplitFrac}
             pair={pair} others={others} eye={at ?? (keepRef.current?.id === pair.vantage_id && keepRef.current.eye ? keepRef.current.eye : pair.v)}
-            lens={lens} jumps={jumps} walking={walking} sink={splitSink}
+            lens={lens} jumps={jumps} walking={walking} sink={splitSink} onPick={id => pickOtherRef.current?.(id)}
           />
         ) : null}
         {waiting ? (
@@ -1263,7 +1272,27 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         ) : null}
       </View>
 
-      <Below full={full} max={splitOn ? Math.round(belowMax * 0.6) : belowMax} hide={preview || !!overhead}>
+      {splitOn && ready ? (
+        <TouchableOpacity onPress={() => setBelowShut(!belowShut)} style={styles.foldBar} accessibilityRole="button"
+          accessibilityLabel={belowShut ? 'Show the controls under the map' : 'Hide the controls under the map'} hitSlop={{ top: 4, bottom: 4 }}>
+          <Ionicons name={belowShut ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textSecondary} />
+          <Text style={styles.foldText}>{belowShut ? 'Show controls' : 'Hide controls'}</Text>
+        </TouchableOpacity>
+      ) : null}
+      <Below full={full} max={splitOn ? Math.round(belowMax * 0.6) : belowMax} hide={preview || !!overhead || (splitOn && belowShut)}>
+      {/* the shot's framings on the stop page (Phil, 25 Nov 2026): only with 2 or more; a tap shows that one. Adding,
+          deleting and which one the shot opens with stay in full screen. */}
+      {!full && ready && !hd && !addShot && framings.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }} contentContainerStyle={styles.frameChips}>
+          {framings.map((f, i) => (
+            <TouchableOpacity key={`${i}|${f.lens}|${f.heading}`} onPress={() => pickFraming(i)}
+              style={[styles.frameChip, i === selI && styles.heightChipOn]} accessibilityRole="button" accessibilityState={{ selected: i === selI }}
+              accessibilityLabel={`Framing ${i + 1} of ${framings.length}: ${chipName(f)}. ${framingDetail(f)}${i === 0 ? '. The shot opens with this one' : ''}`}>
+              <Text style={[styles.frameChipText, i === selI && { color: '#000000' }]}>{chipName(f)}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      ) : null}
       {ready && lit ? (
         <Text style={[styles.status, pad]}>
           <Text style={lit.subjectLit ? styles.sunOn : undefined}>{subject}: {lit.subjectLit ? 'in the sun' : lit.up ? 'in shadow' : 'no sun'}</Text>
@@ -1469,6 +1498,8 @@ const styles = StyleSheet.create({
   heightChipOn: { backgroundColor: '#ffffff', borderColor: '#ffffff' },
   heightChipText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   frameChips: { gap: 8, paddingRight: 8 },
+  foldBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 30 },
+  foldText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
   frameChip: { minHeight: 34, paddingHorizontal: 12, borderRadius: 17, borderWidth: 1, borderColor: '#444444', justifyContent: 'center' },
   frameChipText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   walkText: { color: colors.textSecondary, fontSize: 13 },
