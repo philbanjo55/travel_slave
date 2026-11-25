@@ -2736,12 +2736,9 @@
     g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(e1.x, e1.y); g.arc(p.x, p.y, L, a - half - Math.PI / 2, a + half - Math.PI / 2); g.closePath();
     const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, L); gr.addColorStop(0, 'rgba(66,133,244,0.55)'); gr.addColorStop(1, 'rgba(66,133,244,0.08)'); g.fillStyle = gr; g.fill();
     g.lineWidth = 1.5; g.strokeStyle = 'rgba(66,133,244,0.9)'; g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(p.x, p.y); g.lineTo(e2.x, e2.y); g.stroke();
-    const H = { x: p.x + Math.sin(a) * (L + 14), y: p.y - Math.cos(a) * (L + 14) };   // the handle: a white disc with an arrow the way the view looks
-    g.beginPath(); g.moveTo(p.x + Math.sin(a) * L * 0.6, p.y - Math.cos(a) * L * 0.6); g.lineTo(H.x, H.y); g.lineWidth = 2; g.strokeStyle = 'rgba(255,255,255,0.85)'; g.stroke();
-    g.beginPath(); g.arc(H.x, H.y, 13, 0, 2 * Math.PI); g.fillStyle = '#ffffff'; g.fill(); g.lineWidth = 2.5; g.strokeStyle = '#4285F4'; g.stroke();
-    g.save(); g.translate(H.x, H.y); g.rotate(a); g.beginPath(); g.moveTo(0, -7); g.lineTo(6, 4); g.lineTo(-6, 4); g.closePath(); g.fillStyle = '#4285F4'; g.fill(); g.restore();
+    // (the round arrow handle at the cone's end was taken off, Phil 25 Nov 2026: "I don't like it"; the dot still turns it)
     g.beginPath(); g.arc(p.x, p.y, 9, 0, 2 * Math.PI); g.fillStyle = '#4285F4'; g.fill(); g.lineWidth = 3; g.strokeStyle = '#ffffff'; g.stroke();
-    SPL.dot = { x: p.x, y: p.y }; SPL.handle = H;
+    SPL.dot = { x: p.x, y: p.y }; SPL.handle = null;
   }
   // a pointer on the view from above, in its own coordinates
   const splitLocal = e => ({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY - splitTop(), type: e.type, timeStamp: e.timeStamp });

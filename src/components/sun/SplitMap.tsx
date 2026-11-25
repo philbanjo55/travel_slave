@@ -21,7 +21,7 @@ import { fmtDist, overheadShots, useFindMe } from './overhead3d';
 // Terrain (our own 3D from above, works offline) is drawn by the 3D page itself in the same canvas (S3D.split).
 
 export const SPLIT_MIN = 0.3, SPLIT_MAX = 0.7;
-export const SPLIT_HINT = 'Tap the map to stand there · drag the arrow to turn';
+export const SPLIT_HINT = 'Tap the map to stand there · drag the blue dot to turn';
 const coord = (p: LatLng) => ({ latitude: p.lat, longitude: p.lng });
 const MPD_LAT = 110540;
 const norm = (d: number) => ((d % 360) + 360) % 360;
@@ -263,16 +263,12 @@ export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, 
             );
           })}
           <Polygon coordinates={cone} fillColor="rgba(66,133,244,0.35)" strokeColor="rgba(66,133,244,0.9)" strokeWidth={1.5} />
-          <Marker coordinate={coord(tip)} anchor={{ x: 0.5, y: 0.5 }} flat rotation={look} tracksViewChanges={track}>
-            <View style={styles.handle}><View style={styles.handleArrow} /></View>
-          </Marker>
           <Marker coordinate={coord(eye)} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={track}>
             <View style={styles.meDot} />
           </Marker>
         </MapView>
       ) : null}
       {/* where a finger can take hold of the dot or the arrow (the map's own markers cannot be dragged without a long press) */}
-      {inMap(tipPt) ? <View style={[styles.hit, { left: tipBox.current.x, top: tipBox.current.y, width: HIT, height: HIT, borderRadius: HIT / 2 }]} {...tipPan.panHandlers} accessibilityLabel="Drag the arrow to turn the view" /> : null}
       {inMap(dotPt) ? <View style={[styles.hit, { left: dotBox.current.x, top: dotBox.current.y, width: DOT, height: DOT, borderRadius: DOT / 2 }]} {...dotPan.panHandlers} accessibilityLabel="Where you stand in the view. Drag to turn" /> : null}
     </View>
   );
