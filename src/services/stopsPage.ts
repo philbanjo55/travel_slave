@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import { fetchTripSettings, ShotStatus, TripSetting } from './planner';
 import { useSunPlan } from './sunPlan';
-import { framingOf, useShotSaves } from './shotSaves';
+import { framingOf, framingsOf, useShotSaves } from './shotSaves';
 import { stopPagePhotos } from '../utils/photoGroups';
 import type { Pair } from '../utils/sunEngine';
 
@@ -25,6 +25,7 @@ export type Place = {
   photo: any | null;            // the first photo the stop page shows
   shots: number;
   framed: number;
+  takes: number;                // every framing of every shot (a shot not framed yet counts once): the card's "6 shots"
   shotsKnown: boolean;          // false until the sun plan (or its saved copy) is in
   minutes: number | null;
   stopIds: string[];            // every visit of the place (the Stops page marks set all of them)
@@ -78,6 +79,7 @@ export function tripPlaces(tripData: any, settings: Map<string, TripSetting>, pa
     out.push({
       key: first.s.id, name: first.s.name ?? '', tier, status, stopId: first.s.id, dayId: first.dayId, photo,
       shots: pairs.length, framed: pairs.filter(p => !!framingOf(p)).length, shotsKnown: known,
+      takes: pairs.reduce((n, p) => n + Math.max(1, framingsOf(p).length), 0),
       minutes: first.s.duration_minutes ?? null,
       stopIds: g.map(v => v.s.id),
       checked: g.some(v => !!v.s.checked), review: !g.some(v => !!v.s.checked) && g.some(v => !!v.s.review),
