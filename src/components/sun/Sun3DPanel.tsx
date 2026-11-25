@@ -1264,6 +1264,19 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       </View>
 
       <Below full={full} max={splitOn ? Math.round(belowMax * 0.6) : belowMax} hide={preview || !!overhead}>
+      {/* the shot's framings on the stop page (Phil, 25 Nov 2026): only with 2 or more; a tap shows that one. Adding,
+          deleting and which one the shot opens with stay in full screen. */}
+      {!full && ready && !hd && !addShot && framings.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }} contentContainerStyle={styles.frameChips}>
+          {framings.map((f, i) => (
+            <TouchableOpacity key={`${i}|${f.lens}|${f.heading}`} onPress={() => pickFraming(i)}
+              style={[styles.frameChip, i === selI && styles.heightChipOn]} accessibilityRole="button" accessibilityState={{ selected: i === selI }}
+              accessibilityLabel={`Framing ${i + 1} of ${framings.length}: ${chipName(f)}. ${framingDetail(f)}${i === 0 ? '. The shot opens with this one' : ''}`}>
+              <Text style={[styles.frameChipText, i === selI && { color: '#000000' }]}>{chipName(f)}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      ) : null}
       {ready && lit ? (
         <Text style={[styles.status, pad]}>
           <Text style={lit.subjectLit ? styles.sunOn : undefined}>{subject}: {lit.subjectLit ? 'in the sun' : lit.up ? 'in shadow' : 'no sun'}</Text>
