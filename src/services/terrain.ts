@@ -616,7 +616,10 @@ export async function detailForStop(region: TerrainRegion, near: TerrainNear | n
   const ok = (r: TerrainDetail, p: Point) => inRegion(r, p) && insideM(r, p) >= 100;
   const cands = all.filter(r => r.parent === region.id && ok(r, stand)
     && !(near && !(r.north <= near.north && r.south >= near.south && r.west >= near.west && r.east <= near.east)));
-  return cands.length ? groupPick(cands, ok, group, r => (r.north - r.south) * (r.east - r.west)) : null;
+  // a tie goes to the box the shots sit deepest in, as a single shot's pick does (Phil, 25 Nov 2026: Shane Cabins lost its
+  // 1.5 km box to the older 500 m one when the smaller box won ties)
+  const depth = (r: TerrainDetail) => Math.min(insideM(r, stand), ...group.filter(g => ok(r, g.stand)).map(g => insideM(r, g.stand)));
+  return cands.length ? groupPick(cands, ok, group, r => -depth(r)) : null;
 }
 // the range box most of the stop's shots would pick, when it also holds this shot's subject (or the shot has none of
 // its own); else this shot's own
