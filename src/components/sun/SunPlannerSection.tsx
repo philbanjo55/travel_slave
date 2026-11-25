@@ -161,7 +161,13 @@ function Planner({ stop, tripId, stopId, timeLabel, onEdit, plan, stopName, stop
   const idealAt = (p: Pair, d0: number) => { const i = idealOf(p); return i ? idealClock(i, d0) : null; };
   const pairIdeal = idealAt(pair, day0);
   // No ideal saved: the stop's own time (Phil, 18 Nov 2026), else the evening golden hour as before.
+  // Going shot to shot inside full screen keeps the time (Phil, 25 Nov 2026: a new time on every shot made the view
+  // redraw while he cycled); opening full screen or the 3D tab still starts at the shot's ideal light.
+  const fullWas = useRef(false);
   useEffect(() => {
+    const cycling = full3d && fullWas.current;
+    fullWas.current = full3d;
+    if (cycling) return;
     if (tab === '3d' || full3d) setMinute(pairIdeal ?? home);
   }, [tab, full3d, pair.vantage_id, stop.date, pairIdeal]);   // eslint-disable-line react-hooks/exhaustive-deps
 

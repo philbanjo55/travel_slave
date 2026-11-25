@@ -341,6 +341,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [heavy, setHeavy] = useState(foregroundTooHeavy);
   const loaded = useRef<string | null>(null);   // the files the plain view holds: "<region>|<fine box or nothing>"
   const loadedDetail = useRef('');               // the detail box whose files are loaded (or loading) for this shot
+  const loadedHouses = useRef<Set<string>>(new Set());   // the building tiles the page holds (by id)
   const nearUsed = useRef<TerrainNear | null>(null);
   const ready = phase === 'ready';
   // Walk mode (full screen, offline view): the arrows step the viewpoint; `at` is where it now stands.
@@ -552,13 +553,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       const hts = r ? await houseTilesFor(r, stand) : [];   // Tetons: the building tiles within reach
       // (the tree tiles only by whether there are any: another shot of the same boxes keeps the page and its tiles, and
       // the page builds its trees again around the new stand spot; a few tiles at the 12 km edge may differ, no restart)
-      const key = `${dt0?.id ?? ''}|${nck?.id ?? ''}|${wck?.id ?? ''}|${tts.length ? 'trees' : ''}|${rg?.id ?? ''}|${hts.map(t => t.id).join(',')}`;
+      // the building tiles by their set, not their order (sorted by distance, they changed order between two shots a few
+      // hundred metres apart and the whole view restarted: Phil, 25 Nov 2026); a set the page already holds keeps it
+      const hNew = hts.map(t => t.id).sort();
+      const hKey = hNew.length && hNew.every(id => loadedHouses.current.has(id)) ? [...loadedHouses.current].sort().join(',') : hNew.join(',');
+      const key = `${dt0?.id ?? ''}|${nck?.id ?? ''}|${wck?.id ?? ''}|${tts.length ? 'trees' : ''}|${rg?.id ?? ''}|${hKey}`;
       if (!alive || key === loadedDetail.current || (key === '|||||' && loadedDetail.current === '')) return;
       if (foreSent.current) {   // the page already holds another box's foreground: start it afresh for this one
         booted.current = false; sent.current = false; foreSent.current = false;
         setLit(null); setMoments(null); setLook(null); setShapes(false); setWideTrees(0); setRangeIn(false); setHousesIn(0); setPhotoFore(false); setForeBusy(false); setPhase(p => (p === 'ready' ? 'starting' : p)); setGen(g => g + 1);
       }
       loadedDetail.current = key;
+      loadedHouses.current = new Set(hNew);
       setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null); setWideColorB64(null); setTreeTiles(null); setRangeBox(null); setHouseTiles(null);
       if (!dt0 && !nck && !wck && !tts.length && !rg && !hts.length) return;
       const mk = dt0 && detailMask(dt0), tk = dt0 && detailTrees(dt0), wk = dt0 && detailWater(dt0), ck = dt0 && detailColor(dt0), bk = dt0 && detailBuildings(dt0);
