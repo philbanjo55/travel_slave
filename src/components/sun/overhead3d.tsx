@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LensLegend, shotColor } from './lensColors';
+import { LensLegend, shotColor, useLensFilter, visibleShots } from './lensColors';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -65,7 +65,8 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
   const pickRef = useRef<((p: Pair) => void) | null>(null);
   pickRef.current = overhead?.onPick ?? null;
   const on = !!overhead;
-  const shots = useMemo(() => (overhead ? overheadShots(overhead.pairs, overhead.selId) : []), [overhead?.pairs, overhead?.selId]);
+  const hide = useLensFilter();   // the lenses unticked in the map's key
+  const shots = useMemo(() => (overhead ? overheadShots(visibleShots(overhead.pairs, overhead.selId, hide), overhead.selId) : []), [overhead?.pairs, overhead?.selId, hide]);
   const shotsKey = JSON.stringify(shots);
   const sunOn = overhead?.sunOn ?? true, shaded = overhead?.shaded;
   const [marks, setMarks] = useOverheadMarks();
