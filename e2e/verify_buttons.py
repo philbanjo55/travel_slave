@@ -1424,7 +1424,14 @@ def split_view():
     if b2 is not None:
         C.tap(b2['xy'])
         o, ok = wait(lambda st: root_mode(st) == 'off')
-        V.check('split-off', ok and V.has(o, 'Looking ') and C.app_alive(), f'mode {root_mode(o)}')
+        # the caption comes back once the single view has drawn again (a few seconds on the emulator's software graphics)
+        for _ in range(6):
+            if not ok or V.has(o, 'Looking '):
+                break
+            time.sleep(2); o = C.capture(1)
+        V.check('split-off', ok and V.has(o, 'Looking ') and C.app_alive(), f'mode {root_mode(o)}, caption {"back" if V.has(o, "Looking ") else "missing"}, alive {C.app_alive()}')
+        if not V.has(o, 'Looking '):
+            print('INFO split-off screen: ' + ' | '.join(t for t in o.all_texts if len(t.strip()) > 1)[:600], flush=True)
     else:
         V.check('split-off', False, 'no split button to turn it off')
 
@@ -2291,9 +2298,13 @@ def find_spot():
     V.show('spot-after-close', C.capture(1.5))
     print('INFO spot before back: ' + ' | '.join(l.strip() for l in (C.adb('shell', 'dumpsys', 'activity', 'activities') or '').splitlines() if 'mResumedActivity' in l or 'topResumedActivity' in l)[:400], flush=True)
     V.back(); time.sleep(2.5)
-    print('INFO spot after back: ' + ' | '.join(t for t in C.capture(1.0).all_texts if len(t.strip()) > 1)[:400], flush=True)
+    ab = C.capture(1.0)
+    print('INFO spot after back: ' + ' | '.join(t for t in ab.all_texts if len(t.strip()) > 1)[:400], flush=True)
     alive, focus = C.app_alive(), C.focus_pkg()
-    V.check('spot-back', alive and focus == V.PKG, f'back from Your spot keeps the app open (alive {alive}, focus {focus})')
+    # the window focus can read the launcher while a stray launcher window (its own "isn't responding" box) holds it;
+    # what counts is that our app's stop page is what the screen shows (25 Nov 2026)
+    ours = any(nd.get('package') == V.PKG for nd in (ab.root.iter('node') if ab.root is not None else []))
+    V.check('spot-back', alive and (focus == V.PKG or ours), f'back from Your spot keeps the app open (alive {alive}, focus {focus}, our screen {ours})')
 
 
 # ---- 23 Nov 2026: trail line, Find me (real GPS through the emulator) and the 3D framer's camera row -------------------
