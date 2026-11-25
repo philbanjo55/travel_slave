@@ -256,3 +256,27 @@ const styles = StyleSheet.create({
   result: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
   film: { color: '#888888', fontSize: 12 },
 });
+
+// Grid lines in the framer (Phil, 25 Nov 2026: "an option to view grid lines in the viewer / framer"): thirds inside the
+// crop (or the whole frame box; with the frame box off, the whole picture). Drawn only, never touched.
+export function GridOverlay({ pic, unit, lens, crop, box }: { pic: { w: number; h: number }; unit: number; lens: { f: number; fw: number; fh: number }; crop: FrameCrop | null; box: boolean }) {
+  let x = 0, y = 0, w = pic.w, h = pic.h;
+  if (box) {
+    const fW = (unit * lens.fw) / lens.f, fH = (unit * lens.fh) / lens.f;
+    const fx = (pic.w - fW) / 2, fy = (pic.h - fH) / 2;
+    w = crop ? crop.w * fW : fW; h = crop ? crop.h * fH : fH;
+    x = fx + (crop ? crop.cx * fW : fW / 2) - w / 2; y = fy + (crop ? crop.cy * fH : fH / 2) - h / 2;
+  }
+  const lines = [1, 2].flatMap(k => [
+    { left: x + (w * k) / 3, top: y, width: StyleSheet.hairlineWidth * 2, height: h },
+    { left: x, top: y + (h * k) / 3, width: w, height: StyleSheet.hairlineWidth * 2 },
+  ]);
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {lines.map((l, i) => <View key={i} style={[gridStyles.line, l]} />)}
+    </View>
+  );
+}
+const gridStyles = StyleSheet.create({
+  line: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.7)', shadowColor: '#000000', shadowOpacity: 0.8, shadowRadius: 1, shadowOffset: { width: 0, height: 0 }, elevation: 1 },
+});
