@@ -282,7 +282,7 @@ export function GridOverlay({ pic, unit, lens, crop, box }: { pic: { w: number; 
 // corner brackets of the roll-film formats 6x4.5, 6x7, 6x9 and 6x12 (56 mm high, the long side across) with their
 // names (6x12 and 6x9 at the left, 6x4.5 and 6x7 at the right, as on the glass). Millimetres on the frame box, so it
 // fits any lens; turned with the camera in portrait. On the 6x17 back or the Fuji only the 1 cm grid.
-const SHOW_ROLL = false;   // Phil, 25 Nov 2026: "I don't need the 6x markings just the grid" (the grid and the dashed lines stay)
+const SHOW_ROLL = true;   // Phil, 25 Nov 2026: off ("just the grid"), then back on ("if they're accurate keep them")
 const ROLL = [{ label: '6×4.5', w: 41.5, right: true }, { label: '6×7', w: 69.5, right: true }, { label: '6×9', w: 84, right: false }, { label: '6×12', w: 112, right: false }];
 export function ChamonixOverlay({ pic, unit, lens }: { pic: { w: number; h: number }; unit: number; lens: { f: number; fw: number; fh: number } }) {
   const k = unit / lens.f;   // dp per mm on the film
