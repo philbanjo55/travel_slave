@@ -911,7 +911,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       eye: Math.abs(camH - EYE_H) < 0.005 ? null : Math.round(camH * 10000) / 10000,   // camera height goes with the framing
     };
     // the photo goes with the framing when it is on screen or was moved; else the saved placement (if any) stays
-    const withPhoto = !!(refKey && pic && (refMode === 'see' || photoMoved));
+    // (only a placement with real numbers: a NaN went to the server as null and broke later saves, 25 Nov 2026)
+    const withPhoto = !!(refKey && pic && (refMode === 'see' || photoMoved)) && [refXf.s, refXf.x, refXf.y, pic?.w, pic?.h].every(v => typeof v === 'number' && Number.isFinite(v));
     if (withPhoto && pic) f.photo = { key: refKey, s: refXf.s, x: refXf.x, y: refXf.y, w: pic.w, h: pic.h };
     else f.photo = base?.photo ?? null;
     f.crop = crop ?? null;   // the crop goes with the framing; null = none
@@ -923,7 +924,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     setSavingFrame(true);
     try {
       const id = await ensureShot();
-      await saveShot({ kind: 'frames', tripId, stopId, vantageId: id, list });
+      // an incomplete photo placement on any framing goes as none, never as a broken one
+      const clean = list.map(f => (f.photo && (typeof f.photo.key !== 'string' || ![f.photo.s, f.photo.x, f.photo.y, f.photo.w, f.photo.h].every(v => typeof v === 'number' && Number.isFinite(v))) ? { ...f, photo: null } : f));
+      await saveShot({ kind: 'frames', tripId, stopId, vantageId: id, list: clean });
       setSelS({ vid: id, i: show });
       setPhotoMoved(false);
       pickedFor = null;   // the saved framing (lens, landscape / portrait) is what this shot opens with from now on
