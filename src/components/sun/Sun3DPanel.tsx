@@ -16,7 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
 import { Overhead3D, useOverhead3D } from './overhead3d';
 import { SplitIcon, SplitLayer, SplitMode } from './SplitMap';
-import { CropOverlay, CropPanel, cropName, fitCrop, ChamonixOverlay, FrameOnlyTaps, GridOverlay, longInNow, readLongIn, refitCrop, setLongInStored } from './CropOverlay';
+import { CropOverlay, CropPanel, cropName, fitCrop, ChamonixOverlay, GridOverlay, longInNow, readLongIn, refitCrop, setLongInStored } from './CropOverlay';
 import type { CropRatio, FrameCrop } from '../../utils/sunEngine';
 
 // 3D view of the shot (TEST app, Phil 12 Nov 2026): the real terrain from the
@@ -418,7 +418,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [belowShut, setBelowShutState] = useState(lastBelowShut);
   const setBelowShut = useCallback((v: boolean) => { lastBelowShut = v; setBelowShutState(v); }, []);
   const splitSat = splitOn && splitMode === 'satellite', splitTer = splitOn && splitMode === 'terrain';
-  // Frame only on (Phil, 26 Nov 2026): no button over the view at all; a tap on the black brings them back
+  // Frame only on (Phil, 26 Nov 2026): every other button leaves the view; the view turns from anywhere, black included;
+  // only the Frame only button stays, and tapping it again brings the rest back
   const clean = frame !== 'off' && frameOnly && !hd && !overhead && !preview;
   const setSplitFrac = useCallback((f: number) => { lastSplitFrac = f; setSplitFracState(f); }, []);
   const splitTop = splitOn && box ? Math.round(box.h * splitFrac) : 0;   // where the halves meet, dp from the top
@@ -1044,7 +1045,6 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       ) : null}
       {grid === 'thirds' && pic && !overhead && !preview && !hd ? <GridOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={frame !== 'off' ? crop : null} box={frame !== 'off'} /> : null}
       {grid === 'chamonix' && pic && !overhead && !preview && !hd ? <ChamonixOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} /> : null}
-      {clean && pic ? <FrameOnlyTaps pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={crop} onTap={() => setFrameOnly(false)} /> : null}
     </>
   );
   return (
@@ -1273,6 +1273,18 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             ) : null}
           </View>
         </View>
+        {clean ? (
+          <TouchableOpacity
+            onPress={() => setFrameOnly(false)}
+            style={[styles.fullBtn, styles.lensOn, styles.cleanBtn]}
+            accessibilityRole="button"
+            accessibilityState={{ selected: true }}
+            accessibilityLabel="Frame only: on. Tap to see around the frame"
+            hitSlop={6}
+          >
+            <Ionicons name="crop-outline" size={17} color="#000000" />
+          </TouchableOpacity>
+        ) : null}
         {walking && full && !hd && ready && !clean ? (
           <View style={[styles.pad, mapH ? { bottom: 44 + mapH } : null]} pointerEvents="box-none">
             {([['Walk forward', 'chevron-up', 1, 0, styles.padUp], ['Step left', 'chevron-back', 0, -1, styles.padLeft], ['Step right', 'chevron-forward', 0, 1, styles.padRight], ['Walk back', 'chevron-down', -1, 0, styles.padDown]] as const).map(([label, icon, f, r, where]) => (
@@ -1498,6 +1510,7 @@ const styles = StyleSheet.create({
   coverText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
   // The buttons wrap onto a second line when they don't fit: with HD, frame, foreground and frozen lakes the row ran past
   // the right edge of a 1080-px-wide phone and the full-screen button was off screen (emulator, 13 Nov 2026).
+  cleanBtn: { position: 'absolute', top: 8, right: 8 },
   topRow: { position: 'absolute', top: 8, left: 8, right: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', rowGap: 6, columnGap: 6 },
   camRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   lens: { flexDirection: 'row', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },
