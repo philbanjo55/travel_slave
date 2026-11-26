@@ -22,7 +22,7 @@ import { fmtDist, overheadShots, useFindMe } from './overhead3d';
 // Terrain (our own 3D from above, works offline) is drawn by the 3D page itself in the same canvas (S3D.split).
 
 export const SPLIT_MIN = 0.3, SPLIT_MAX = 0.7;
-export const SPLIT_HINT = 'Tap the map to stand there · drag the blue dot to turn';
+export const SPLIT_HINT = 'Tap the map to stand there · drag your dot to turn';
 const coord = (p: LatLng) => ({ latitude: p.lat, longitude: p.lng });
 const MPD_LAT = 110540;
 const norm = (d: number) => ((d % 360) + 360) % 360;
