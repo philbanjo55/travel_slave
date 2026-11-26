@@ -2326,7 +2326,7 @@ def open_stop_card(name, tag):
     want = 'stop card: ' + name.lower()
     for _ in range(14):
         card = next((c for c in v.clickables if c['label'].lower().startswith(want)), None)
-        if card is not None and 0.25 * 2400 <= card['xy'][1] <= 0.75 * 2400:
+        if card is not None and 0.25 * 2400 <= card['xy'][1] <= 0.9 * 2400:   # the last row can't scroll higher
             C.tap(card['xy']); print(f'INFO {tag}: opened "{card["label"][:70]}" from the Stops view', flush=True)
             return card['label']
         if card is not None and card['xy'][1] < 0.25 * 2400:
@@ -2457,7 +2457,8 @@ def btn_boxes(st, starts):
 PINK = (0xFF, 0x5F, 0xA2)
 YELLOW = (0xFF, 0xD6, 0x0A)
 # every route of the area in its own colour (trailRoutes.ts COLORS, by route name order)
-TRAIL_COLOURS = {'pink': PINK, 'yellow': YELLOW, 'lime': (0xA3, 0xE6, 0x35), 'purple': (0xB4, 0x7C, 0xFF), 'teal': (0x2D, 0xD4, 0xBF)}
+# trail colours since 25 Nov 2026 (kept apart from the lens colours): white, sky, indigo, sand; white is not counted (snow)
+TRAIL_COLOURS = {'sky': (0x80, 0xD8, 0xFF), 'indigo': (0x3F, 0x51, 0xB5), 'sand': (0xD7, 0xB9, 0x8E)}
 OH_COVER = ('Finding the terrain', 'Getting the terrain', 'Drawing the terrain', 'Getting the HD picture', 'No 3D terrain',
             "Couldn't get the terrain", 'The 3D view stopped')
 
@@ -2608,17 +2609,17 @@ def jenny_overhead(denied=False):
     n = {}; t1 = time.time()
     for _ in range(8):   # the routes come from the server (or the phone's cache) a moment after the page is ready
         n = counts()
-        if n['pink'] > 300 and n['yellow'] > 300: break
+        if sum(v > 300 for v in n.values()) >= 2: break
         time.sleep(3)
     zoomed = False
-    if n.get('pink', 0) > 300 and n.get('yellow', 0) <= 300:   # Taggart Lake Loop may sit just outside the first frame
+    if sum(v > 300 for v in n.values()) < 2:   # a route may sit just outside the first frame
         zo = next((c for c in C.capture(0.5).clickables if c['label'].split(' | ')[0] == 'Zoom out'), None)
         if zo is not None:
             C.tap(zo['xy']); zoomed = True; time.sleep(4); n = counts()
     C.screenshot('trail-jenny')
     print('INFO trail colours: ' + ', '.join(f'{k} {v}' for k, v in n.items()) + (' (after one Zoom out)' if zoomed else ''), flush=True)
-    V.check('trail-pink', n.get('pink', -1) > 300, f"{n.get('pink')} pink pixels (#FF5FA2 +-40, jenny lake ski route) {time.time() - t1:.0f} s after ready")
-    V.check('trail-yellow', n.get('yellow', -1) > 300, f"{n.get('yellow')} yellow pixels (#FFD60A +-40, Taggart Lake Loop)" + (' after one Zoom out' if zoomed else ''))
+    got = [k for k, v in n.items() if v > 300]
+    V.check('trail-colours', len(got) >= 2, f"route colours over 300 px: {got or 'none'} ({n}) {time.time() - t1:.0f} s after ready" + (' after one Zoom out' if zoomed else ''))
     # ---- Find me with real GPS fixes
     blue0 = count_colour(screen_rgba(), clip, BLUE, 30, skip) if clip else -1
     o = C.capture(1)
