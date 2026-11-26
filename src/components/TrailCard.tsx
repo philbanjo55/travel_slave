@@ -11,7 +11,10 @@ import { minutesToHoursMin } from '../utils/helpers';
 export default function TrailCard({ trail, stayMin }: { trail: TrailInfo; stayMin?: number | null }) {
   const prof = trail.profile.length > 1 ? trail.profile : null;
   const ups = prof ? prof.map(p => p[1]) : [];
-  const lo = prof ? Math.min(...ups) : 0, hi = prof ? Math.max(...ups) : 0, span = Math.max(1, hi - lo);
+  const lo = prof ? Math.min(...ups) : 0, hi = prof ? Math.max(...ups) : 0;
+  // the height axis spans at least 500 ft (152 m), so a nearly flat route draws nearly flat (Phil, 26 Nov 2026: "how do
+  // I know if the low to high is 1 foot or 5k feet"); its top and bottom are labelled in feet
+  const span = Math.max(152.4, hi - lo), top = lo + span;
   return (
     <View style={styles.card} accessibilityLabel={`${trailWord(trail)} route: ${trailLine(trail)}, ${feet(trail.climb_m)} feet of climbing`}>
       <View style={styles.head}>
@@ -23,13 +26,23 @@ export default function TrailCard({ trail, stayMin }: { trail: TrailInfo; stayMi
       </View>
       {prof ? (
         <>
-          <Text style={styles.axis}>{(feet(hi)).toLocaleString()} ft</Text>
-          <View style={styles.graph}>
-            {prof.map((p, i) => (
-              <View key={i} style={[styles.bar, { height: `${8 + (88 * (p[1] - lo)) / span}%` }]} />
-            ))}
+          <View style={styles.plot}>
+            <View style={styles.yAxis}>
+              <Text style={styles.axis}>{feet(top).toLocaleString()} ft</Text>
+              <Text style={styles.axis}>{feet(lo + span / 2).toLocaleString()}</Text>
+              <Text style={styles.axis}>{feet(lo).toLocaleString()} ft</Text>
+            </View>
+            <View style={styles.graphWrap}>
+              <View style={[styles.grid, { top: 0 }]} />
+              <View style={[styles.grid, { top: '50%' }]} />
+              <View style={styles.graph}>
+                {prof.map((p, i) => (
+                  <View key={i} style={[styles.bar, { height: `${Math.max(2, (100 * (p[1] - lo)) / span)}%` }]} />
+                ))}
+              </View>
+            </View>
           </View>
-          <View style={styles.axisRow}>
+          <View style={[styles.axisRow, { marginLeft: Y_W }]}>
             <Text style={styles.axis}>start</Text>
             <Text style={styles.axis}>{miles(trail.length_m)} mi</Text>
           </View>
@@ -43,13 +56,18 @@ export default function TrailCard({ trail, stayMin }: { trail: TrailInfo; stayMi
   );
 }
 
+const Y_W = 58;
 const styles = StyleSheet.create({
+  plot: { flexDirection: 'row', height: 72 },
+  yAxis: { width: Y_W, justifyContent: 'space-between', paddingRight: 6 },
+  graphWrap: { flex: 1 },
+  grid: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: '#2a2a2a' },
   card: { marginHorizontal: 16, marginBottom: 12, padding: 12, borderRadius: 12, backgroundColor: '#111111', borderWidth: 1, borderColor: '#282828', gap: 6 },
   head: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   pill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.signalOk, borderRadius: 11, paddingHorizontal: 8, paddingVertical: 3 },
   pillText: { color: '#ffffff', fontSize: 11, fontWeight: '700' },
   headText: { flex: 1, color: '#ffffff', fontSize: 13, fontWeight: '700' },
-  graph: { height: 64, flexDirection: 'row', alignItems: 'flex-end', gap: 1, borderBottomWidth: 1, borderBottomColor: '#3a3a3a' },
+  graph: { flex: 1, flexDirection: 'row', alignItems: 'flex-end', gap: 1, borderBottomWidth: 1, borderBottomColor: '#3a3a3a' },
   bar: { flex: 1, backgroundColor: '#2f5a42', borderTopWidth: 2, borderTopColor: colors.signalOk },
   axisRow: { flexDirection: 'row', justifyContent: 'space-between' },
   axis: { color: '#888888', fontSize: 10 },
