@@ -26,3 +26,7 @@ begin
   update stops set day_id = null where id in (v_jm, v_af);
   update solver_stop_settings set tier = null, together = null where stop_id in (v_jm, v_af);
 end $m$;
+
+-- Renamed the same day (Phil: "With T.A. Moulton"): the name says the barns.
+update stops set name = 'T.A. Moulton Barn, John Moulton Barn + Pink House'
+ where id = '8200fc29-f054-481f-bdae-5a1031a1d703' and name = 'Mormon Row: Moulton Barns + Pink House';
