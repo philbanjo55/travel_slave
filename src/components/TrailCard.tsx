@@ -12,9 +12,11 @@ export default function TrailCard({ trail, stayMin }: { trail: TrailInfo; stayMi
   const prof = trail.profile.length > 1 ? trail.profile : null;
   const ups = prof ? prof.map(p => p[1]) : [];
   const lo = prof ? Math.min(...ups) : 0, hi = prof ? Math.max(...ups) : 0;
-  // the height axis spans at least 500 ft (152 m), so a nearly flat route draws nearly flat (Phil, 26 Nov 2026: "how do
-  // I know if the low to high is 1 foot or 5k feet"); its top and bottom are labelled in feet
-  const span = Math.max(152.4, hi - lo), top = lo + span;
+  // the height axis fits the route (Phil, 26 Nov 2026: a fixed 500 ft drew most routes flat, "make it so it scales"),
+  // with 15% room above and below and at least 50 ft (15 m) of change, so GPS wobble isn't drawn as hills; the axis
+  // is labelled in feet ("how do I know if the low to high is 1 foot or 5k feet")
+  const range = Math.max(15.24, hi - lo), pad = range * 0.15;
+  const bottom = (lo + hi) / 2 - range / 2 - pad, span = range + 2 * pad, top = bottom + span;
   return (
     <View style={styles.card} accessibilityLabel={`${trailWord(trail)} route: ${trailLine(trail)}, ${feet(trail.climb_m)} feet of climbing`}>
       <View style={styles.head}>
@@ -29,15 +31,15 @@ export default function TrailCard({ trail, stayMin }: { trail: TrailInfo; stayMi
           <View style={styles.plot}>
             <View style={styles.yAxis}>
               <Text style={styles.axis}>{feet(top).toLocaleString()} ft</Text>
-              <Text style={styles.axis}>{feet(lo + span / 2).toLocaleString()}</Text>
-              <Text style={styles.axis}>{feet(lo).toLocaleString()} ft</Text>
+              <Text style={styles.axis}>{feet(bottom + span / 2).toLocaleString()}</Text>
+              <Text style={styles.axis}>{feet(bottom).toLocaleString()} ft</Text>
             </View>
             <View style={styles.graphWrap}>
               <View style={[styles.grid, { top: 0 }]} />
               <View style={[styles.grid, { top: '50%' }]} />
               <View style={styles.graph}>
                 {prof.map((p, i) => (
-                  <View key={i} style={[styles.bar, { height: `${Math.max(2, (100 * (p[1] - lo)) / span)}%` }]} />
+                  <View key={i} style={[styles.bar, { height: `${Math.max(2, (100 * (p[1] - bottom)) / span)}%` }]} />
                 ))}
               </View>
             </View>
