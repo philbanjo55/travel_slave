@@ -10,3 +10,8 @@ insert into public.terrain_near_regions (id, parent, north, south, west, east, n
    'gt_north_of_kelly_z14.png', 343232, 'Public terrarium tiles, zoom 14, about 8 m a point.')
 on conflict (id) do update set north = excluded.north, south = excluded.south, west = excluded.west, east = excluded.east,
   width_m = excluded.width_m, depth_m = excluded.depth_m, bytes = excluded.bytes, note = excluded.note;
+
+-- Winter colour for the box (tools/sun3d/teton_colour/build_teton_colour.py's near-box step run for this one box:
+-- NAIP July 2022 turned to winter by Sentinel-2 30 Dec 2025 / 11 Jan 2026), uploaded to bucket terrain first.
+update public.terrain_near_regions set color_path = 'gt_north_of_kelly_colour.jpg', color_bytes = 277793
+ where id = 'gt_north_of_kelly';
