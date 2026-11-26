@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { TrailInfo, trailFor, trailIcon, trailLine, trailWord, useTrailInfo } from '../services/trailInfo';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, useWindowDimensions } from 'react-native';
 import { colors, spacing, radius } from '../theme';
 import { getPhotoUri } from '../services/photoCache';
@@ -52,7 +54,7 @@ function CardPhoto({ photo, nailed }: { photo: any | null; nailed: boolean }) {
   );
 }
 
-function StopCard({ p, width, onOpen }: { p: Place; width: number; onOpen: (p: Place) => void }) {
+function StopCard({ p, width, onOpen, trail }: { p: Place; width: number; onOpen: (p: Place) => void; trail?: TrailInfo | null }) {
   const nailed = p.status === 'nailed';
   const better = p.status === 'got';
   // (the "3/3 framed" count and its green bar were taken off, Phil 25 Nov 2026: "I don't need it anymore")
@@ -67,9 +69,22 @@ function StopCard({ p, width, onOpen }: { p: Place; width: number; onOpen: (p: P
         {nailed ? <View style={styles.darken} /> : null}
         {nailed ? <View style={styles.nailedWrap}><Text style={styles.nailedText}>NAILED</Text></View> : null}
         {better ? <Text style={styles.goBack}>GO BACK</Text> : null}
+        {trail ? (
+          // a hike / ski stop (Phil, 26 Nov 2026, option C): a green corner with the activity
+          <View style={styles.trailCornerWrap} pointerEvents="none" accessibilityLabel={`${trailWord(trail)} route`}>
+            <View style={styles.trailCorner} />
+            <MaterialCommunityIcons name={trailIcon(trail) as any} size={13} color="#ffffff" style={styles.trailCornerIcon} />
+          </View>
+        ) : null}
         {p.checked || p.review ? <View style={[styles.markDot, { backgroundColor: p.checked ? colors.signalOk : WORKING }]} /> : null}
       </View>
       <Text style={styles.name} numberOfLines={2}>{p.name}</Text>
+      {trail ? (
+        <View style={styles.trailRow}>
+          <MaterialCommunityIcons name={trailIcon(trail) as any} size={12} color={colors.signalOk} />
+          <Text style={styles.trailText} numberOfLines={1}>{trailWord(trail)} {trailLine(trail)}</Text>
+        </View>
+      ) : null}
       {line ? <Text style={styles.line} numberOfLines={1}>{line}</Text> : null}
     </TouchableOpacity>
   );
@@ -93,6 +108,7 @@ export default function StopsView({ tripId, tripData, onOpen, bottomPad = 0 }: {
   tripId: string; tripData: any; onOpen: (p: Place) => void; bottomPad?: number;
 }) {
   const { groups } = useTripPlaces(tripId, tripData);
+  const trails = useTrailInfo();
   const { width } = useWindowDimensions();
   const cardW = Math.floor((width - PAD * 2 - GAP) / 2);
   return (
@@ -106,7 +122,7 @@ export default function StopsView({ tripId, tripData, onOpen, bottomPad = 0 }: {
             <Text style={styles.tally}>{tallyText(g)}</Text>
           </View>
           <View style={styles.grid}>
-            {g.places.map(p => <StopCard key={p.key} p={p} width={cardW} onOpen={onOpen} />)}
+            {g.places.map(p => <StopCard key={p.key} p={p} width={cardW} onOpen={onOpen} trail={trailFor(trails, p.stopIds, p.name)} />)}
           </View>
         </View>
       ))}
@@ -138,6 +154,11 @@ const styles = StyleSheet.create({
   markWork: { borderWidth: 2, borderColor: WORKING },
   markDot: { position: 'absolute', top: 8, right: 8, width: 10, height: 10, borderRadius: 5, borderWidth: 1.5, borderColor: '#000000' },
   name: { fontSize: 14, fontWeight: '600', color: colors.textPrimary, lineHeight: 18 },
+  trailCornerWrap: { position: 'absolute', top: 0, right: 0, width: 34, height: 34 },
+  trailCorner: { width: 0, height: 0, borderTopWidth: 34, borderLeftWidth: 34, borderTopColor: colors.signalOk, borderLeftColor: 'transparent' },
+  trailCornerIcon: { position: 'absolute', top: 3, right: 3 },
+  trailRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  trailText: { flexShrink: 1, fontSize: 11, fontWeight: '700', color: colors.signalOk },
   line: { fontSize: 11, color: colors.textSecondary },
   empty: { fontSize: 13, color: colors.textSecondary, paddingTop: spacing.xl, textAlign: 'center' },
 });

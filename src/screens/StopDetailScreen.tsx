@@ -14,6 +14,8 @@ import StopWeatherCard from '../components/StopWeatherCard';
 import MissingScreen from '../components/MissingScreen';
 import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
 import SpotFoundChip from '../components/SpotFoundChip';
+import TrailCard from '../components/TrailCard';
+import { trailFor, useTrailInfo } from '../services/trailInfo';
 import SunPlannerSection from '../components/sun/SunPlannerSection';
 import { pingNearView } from '../components/sun/nearView';
 import StopLocationEditor from '../components/StopLocationEditor';
@@ -88,6 +90,7 @@ export default function StopDetailScreen() {
   const insets = useSafeAreaInsets();   // the page draws under Android's Home / Back buttons: keep its end above them
   const { stopId, dayId } = route.params;
   const { currentTripData } = useTripStore();
+  const trails = useTrailInfo();   // hike / ski routes linked to stops (Phil, 26 Nov 2026)
   const [fieldPhotoIndex, setFieldPhotoIndex] = useState(0);
   const [viewerPhoto, setViewerPhoto] = useState<any | null>(null);
   const [viewerKind, setViewerKind] = useState<'reference' | 'field'>('reference');
@@ -120,6 +123,7 @@ export default function StopDetailScreen() {
   const { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error } = usePhotoUpload(stop?.id ?? '', groupStops.map((s: any) => s.id));
 
   if (!stop) return <MissingScreen loading={!currentTripData} what="stop" />;
+  const trail = trailFor(trails, [stop.id], stop.name);
 
   const allPhotos = photoGroupPhotos(groupStops);
   const { ref: refPhotos, field: fieldPhotos } = splitStopPhotos(allPhotos);   // also what the 3D view's photo card shows
@@ -258,6 +262,7 @@ export default function StopDetailScreen() {
         {error && (
           <Text style={[styles.uploadError, { marginBottom: spacing.md }]}>{error}</Text>
         )}
+        {trail ? <TrailCard trail={trail} stayMin={stop.duration_minutes ?? null} /> : null}
         <SpotFoundChip stopId={stop.id} stopName={stop.name} />
 
         {/* Planner chance + settings (TEST app only until the solver is signed off) */}
