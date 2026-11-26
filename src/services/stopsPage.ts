@@ -34,7 +34,7 @@ export type Place = {
 };
 export type RankGroup = { tier: string; places: Place[]; todo: number; redo: number; nailed: number };
 
-// Same place = linked repeat visits (photo_group) or the same name.
+// Same place = the same name (repeat visits keep it).
 const nameKey = (n: any) => String(n ?? '').trim().toLowerCase();
 
 export function tripPlaces(tripData: any, settings: Map<string, TripSetting>, pairsOf: (stopId: string) => Pair[] | null): Place[] {
@@ -47,12 +47,15 @@ export function tripPlaces(tripData: any, settings: Map<string, TripSetting>, pa
       visits.push({ s, dayId: d.id, tier: set.tier, status: set.shot_status ?? null });
     }
   }
-  // Join visits that share a photo group or a name (union-find over the two keys).
+  // Join visits that share a name (union-find).
   const parent = visits.map((_, i) => i);
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   const firstBy = new Map<string, number>();
   visits.forEach((v, i) => {
-    for (const k of [v.s.photo_group ? `g:${v.s.photo_group}` : null, `n:${nameKey(v.s.name)}`]) {
+    // by name only (26 Nov 2026, Phil: "Chapel of the Trans has 3 shots but there's only 1"): a photo group can hold
+    // different places that share photos (Chapel + Menor's Ferry = 'moose-historic'), which joined them into one card
+    // with both places' shots and hid Menor's Ferry; repeat visits keep the place's name (as stop_place_key, 18 Nov)
+    for (const k of [`n:${nameKey(v.s.name)}`]) {
       if (!k) continue;
       const j = firstBy.get(k);
       if (j == null) firstBy.set(k, i); else parent[find(i)] = find(j);
