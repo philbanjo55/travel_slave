@@ -418,9 +418,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [belowShut, setBelowShutState] = useState(lastBelowShut);
   const setBelowShut = useCallback((v: boolean) => { lastBelowShut = v; setBelowShutState(v); }, []);
   const splitSat = splitOn && splitMode === 'satellite', splitTer = splitOn && splitMode === 'terrain';
-  // Full screen without split (Phil, 26 Nov 2026): every control sits in a bar above the picture, none over it
-  // (mockup docs/mockups/toolbar_mockup_2.png); split keeps the old layout until Phil decides how it should look.
-  const barMode = !!full && !splitOn && !overhead && !preview;
+  // Frame only on (Phil, 26 Nov 2026): every other button leaves the view; the view turns from anywhere, black included;
+  // only the Frame only button stays, and tapping it again brings the rest back
+  const clean = frame !== 'off' && frameOnly && !hd && !overhead && !preview;
   const setSplitFrac = useCallback((f: number) => { lastSplitFrac = f; setSplitFracState(f); }, []);
   const splitTop = splitOn && box ? Math.round(box.h * splitFrac) : 0;   // where the halves meet, dp from the top
   const mapH = splitOn && box ? box.h - splitTop : 0;                    // the lower half's height: the eye view's overlays sit above it
@@ -928,8 +928,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     try {
       const id = await ensureShot();
       // an incomplete photo placement on any framing goes as none, never as a broken one
-      const clean = list.map(f => (f.photo && (typeof f.photo.key !== 'string' || ![f.photo.s, f.photo.x, f.photo.y, f.photo.w, f.photo.h].every(v => typeof v === 'number' && Number.isFinite(v))) ? { ...f, photo: null } : f));
-      await saveShot({ kind: 'frames', tripId, stopId, vantageId: id, list: clean });
+      const tidy = list.map(f => (f.photo && (typeof f.photo.key !== 'string' || ![f.photo.s, f.photo.x, f.photo.y, f.photo.w, f.photo.h].every(v => typeof v === 'number' && Number.isFinite(v))) ? { ...f, photo: null } : f));
+      await saveShot({ kind: 'frames', tripId, stopId, vantageId: id, list: tidy });
       setSelS({ vid: id, i: show });
       setPhotoMoved(false);
       pickedFor = null;   // the saved framing (lens, landscape / portrait) is what this shot opens with from now on
@@ -1047,7 +1047,81 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       {grid === 'chamonix' && pic && !overhead && !preview && !hd ? <ChamonixOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} /> : null}
     </>
   );
-  const rightButtons = (<>
+  return (
+    <View style={full ? styles.fullWrap : undefined} accessibilityLabel={overhead ? `Overhead 3D ${ready ? 'ready' : phase}, ${overhead.pairs.length} shots` : `3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}${splitOn ? ` · split ${splitMode}` : ''}`}>
+      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}
+        onLayout={full ? (e => { const { width: w, height: h } = e.nativeEvent.layout; setBox(b => (b && Math.abs(b.w - w) < 0.5 && Math.abs(b.h - h) < 0.5 ? b : { w, h })); }) : undefined}>
+        <View style={[styles.web, glassOn ? styles.glass : null, splitSat && box ? { position: 'absolute', top: 0, left: 0, right: 0, height: splitTop, flex: undefined } : null]} pointerEvents="box-none"
+          onLayout={e => { const { width: w, height: h } = e.nativeEvent.layout; setPic(p => (p && Math.abs(p.w - w) < 0.5 && Math.abs(p.h - h) < 0.5 ? p : { w, h })); }}>
+        {region && b64 && !holding ? (
+          <Web
+            ref={web}
+            key={hd ? `${region.id}:hd:${gen}` : `${region.id}|${near?.id ?? ''}|${gen}`}
+            source={hd && hdCfg ? { html: SUN3D_GOOGLE_HTML, baseUrl: hdCfg.origin } : { html: SUN3D_HTML }}
+            originWhitelist={['*']}
+            javaScriptEnabled
+            onMessage={onMessage}
+            onRenderProcessGone={onGone}
+            onContentProcessDidTerminate={onGone}
+            scrollEnabled={false}
+            overScrollMode="never"
+            setSupportMultipleWindows={false}
+            androidLayerType="hardware"
+            style={styles.web}
+          />
+        ) : null}
+        {splitTer && box ? (
+          // Terrain split: the web view covers both halves; the photo and the crop belong to the eye view on top
+          <View style={[styles.eyeBox, { height: splitTop }]} pointerEvents="box-none">{eyeOverlays}</View>
+        ) : eyeOverlays}
+        </View>
+        {splitOn && box ? (
+          <SplitLayer
+            run={run} ready={ready} readyN={readyN} mode={splitMode} onMode={setSplitMode} top={splitTop} h={box.h} frac={splitFrac} onFrac={setSplitFrac}
+            pair={pair} others={others} eye={at ?? (keepRef.current?.id === pair.vantage_id && keepRef.current.eye ? keepRef.current.eye : pair.v)}
+            lens={lens} jumps={jumps} walking={walking} sink={splitSink} onPick={id => pickOtherRef.current?.(id)} viewColor={lensColor(pickLens.id)}
+          />
+        ) : null}
+        {waiting ? (
+          <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
+        ) : null}
+        {oh.controls}
+        <View style={[styles.topRow, preview || overhead || clean ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
+          {/* Camera, then lens (Phil, 23 Nov 2026): 4x5 and 6x17 are backs on the same camera with the same four lenses;
+              the Fuji 6x9 is its own camera with a fixed 90 mm, so it has no lens choice */}
+          <View style={styles.camRow}>
+            <View style={styles.lens} accessibilityRole="tablist">
+              {CAMERAS.map(c => (
+                <TouchableOpacity
+                  key={c.id}
+                  onPress={() => setLens(c.id === '69' ? 'gw690' : c.id === '617' ? `617-${focalOf(lensId) ?? lastFocal}` : (focalOf(lensId) ?? lastFocal))}
+                  style={[styles.lensBtn, camOf(lensId) === c.id && styles.lensOn]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: camOf(lensId) === c.id }}
+                  accessibilityLabel={c.say}
+                >
+                  <Text style={[styles.lensText, camOf(lensId) === c.id && styles.lensTextOn]}>{c.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {camOf(lensId) !== '69' ? (
+              <View style={styles.lens} accessibilityRole="tablist">
+                {FOCALS.map(n => (
+                  <TouchableOpacity
+                    key={n}
+                    onPress={() => { lastFocal = n; setLens(camOf(lensId) === '617' ? `617-${n}` : n); }}
+                    style={[styles.lensBtn, focalOf(lensId) === n && styles.lensOn]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: focalOf(lensId) === n }}
+                    accessibilityLabel={`${n} millimetre lens${camOf(lensId) === '617' ? ' on 6 by 17' : ''}`}
+                  >
+                    <Text style={[styles.lensText, focalOf(lensId) === n && styles.lensTextOn]}>{n}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
+          </View>
+          <View style={styles.rightBtns}>
             {full && !hd && !overhead && !preview && ready ? (
               <TouchableOpacity
                 onPress={() => setSplitWant(!splitWant)}
@@ -1197,106 +1271,21 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
                 <Ionicons name="expand-outline" size={18} color="#ffffff" />
               </TouchableOpacity>
             ) : null}
-          </>);
-  const topControls = (
-        <View style={[barMode ? styles.barTop : styles.topRow, preview || overhead ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
-          {/* Camera, then lens (Phil, 23 Nov 2026): 4x5 and 6x17 are backs on the same camera with the same four lenses;
-              the Fuji 6x9 is its own camera with a fixed 90 mm, so it has no lens choice */}
-          <View style={styles.camRow}>
-            <View style={styles.lens} accessibilityRole="tablist">
-              {CAMERAS.map(c => (
-                <TouchableOpacity
-                  key={c.id}
-                  onPress={() => setLens(c.id === '69' ? 'gw690' : c.id === '617' ? `617-${focalOf(lensId) ?? lastFocal}` : (focalOf(lensId) ?? lastFocal))}
-                  style={[styles.lensBtn, camOf(lensId) === c.id && styles.lensOn]}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: camOf(lensId) === c.id }}
-                  accessibilityLabel={c.say}
-                >
-                  <Text style={[styles.lensText, camOf(lensId) === c.id && styles.lensTextOn]}>{c.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            {camOf(lensId) !== '69' ? (
-              <View style={styles.lens} accessibilityRole="tablist">
-                {FOCALS.map(n => (
-                  <TouchableOpacity
-                    key={n}
-                    onPress={() => { lastFocal = n; setLens(camOf(lensId) === '617' ? `617-${n}` : n); }}
-                    style={[styles.lensBtn, focalOf(lensId) === n && styles.lensOn]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: focalOf(lensId) === n }}
-                    accessibilityLabel={`${n} millimetre lens${camOf(lensId) === '617' ? ' on 6 by 17' : ''}`}
-                  >
-                    <Text style={[styles.lensText, focalOf(lensId) === n && styles.lensTextOn]}>{n}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            ) : null}
           </View>
-          {barMode ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.barBtns} keyboardShouldPersistTaps="handled">{rightButtons}</ScrollView>
-          ) : <View style={styles.rightBtns}>{rightButtons}</View>}
-          
         </View>
-  );
-  // the walk arrows and the reference photo's controls, as rows of the bar (only while walking / while the photo is on)
-  const walkRow = walking && !hd && ready ? (
-    <View style={styles.barRow}>
-      <Text style={styles.barLabel}>WALK</Text>
-      {([['Step left', 'chevron-back', 0, -1], ['Walk forward', 'chevron-up', 1, 0], ['Step right', 'chevron-forward', 0, 1], ['Walk back', 'chevron-down', -1, 0]] as const).map(([label, icon, f, r]) => (
-        <TouchableOpacity key={label} style={styles.barArrow} onPressIn={() => startStepping(f, r)} onPressOut={stopStepping} accessibilityRole="button" accessibilityLabel={label} activeOpacity={0.6}>
-          <Ionicons name={icon as any} size={20} color="#ffffff" />
-        </TouchableOpacity>
-      ))}
-    </View>
-  ) : null;
-  const photoRow = refOn && refMode !== 'off' ? (
-    <SeeThroughBar inBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('off')} move={refMove} onMove={setRefMove}
-      nav={{ index: Math.min(refIdx, refList.length - 1), count: refList.length, onIndex: i => { setRefIdx(i); if (refMode !== 'see') setRefMode('see'); } }} />
-  ) : null;
-  return (
-    <View style={full ? styles.fullWrap : undefined} accessibilityLabel={overhead ? `Overhead 3D ${ready ? 'ready' : phase}, ${overhead.pairs.length} shots` : `3D view ${ready ? 'ready' : phase}${full ? ` · photos ${refList.length} of ${photos?.length ?? 0}` : ''}${splitOn ? ` · split ${splitMode}` : ''}`}>
-      {barMode ? <View style={styles.bar}>{topControls}{walkRow}{photoRow}</View> : null}
-      <View style={[styles.frame, full ? styles.frameFull : { height }]} pointerEvents={preview ? 'none' : 'auto'}
-        onLayout={full ? (e => { const { width: w, height: h } = e.nativeEvent.layout; setBox(b => (b && Math.abs(b.w - w) < 0.5 && Math.abs(b.h - h) < 0.5 ? b : { w, h })); }) : undefined}>
-        <View style={[styles.web, glassOn ? styles.glass : null, splitSat && box ? { position: 'absolute', top: 0, left: 0, right: 0, height: splitTop, flex: undefined } : null]} pointerEvents="box-none"
-          onLayout={e => { const { width: w, height: h } = e.nativeEvent.layout; setPic(p => (p && Math.abs(p.w - w) < 0.5 && Math.abs(p.h - h) < 0.5 ? p : { w, h })); }}>
-        {region && b64 && !holding ? (
-          <Web
-            ref={web}
-            key={hd ? `${region.id}:hd:${gen}` : `${region.id}|${near?.id ?? ''}|${gen}`}
-            source={hd && hdCfg ? { html: SUN3D_GOOGLE_HTML, baseUrl: hdCfg.origin } : { html: SUN3D_HTML }}
-            originWhitelist={['*']}
-            javaScriptEnabled
-            onMessage={onMessage}
-            onRenderProcessGone={onGone}
-            onContentProcessDidTerminate={onGone}
-            scrollEnabled={false}
-            overScrollMode="never"
-            setSupportMultipleWindows={false}
-            androidLayerType="hardware"
-            style={styles.web}
-          />
+        {clean ? (
+          <TouchableOpacity
+            onPress={() => setFrameOnly(false)}
+            style={[styles.fullBtn, styles.lensOn, styles.cleanBtn]}
+            accessibilityRole="button"
+            accessibilityState={{ selected: true }}
+            accessibilityLabel="Frame only: on. Tap to see around the frame"
+            hitSlop={6}
+          >
+            <Ionicons name="crop-outline" size={17} color="#000000" />
+          </TouchableOpacity>
         ) : null}
-        {splitTer && box ? (
-          // Terrain split: the web view covers both halves; the photo and the crop belong to the eye view on top
-          <View style={[styles.eyeBox, { height: splitTop }]} pointerEvents="box-none">{eyeOverlays}</View>
-        ) : eyeOverlays}
-        </View>
-        {splitOn && box ? (
-          <SplitLayer
-            run={run} ready={ready} readyN={readyN} mode={splitMode} onMode={setSplitMode} top={splitTop} h={box.h} frac={splitFrac} onFrac={setSplitFrac}
-            pair={pair} others={others} eye={at ?? (keepRef.current?.id === pair.vantage_id && keepRef.current.eye ? keepRef.current.eye : pair.v)}
-            lens={lens} jumps={jumps} walking={walking} sink={splitSink} onPick={id => pickOtherRef.current?.(id)} viewColor={lensColor(pickLens.id)}
-          />
-        ) : null}
-        {waiting ? (
-          <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
-        ) : null}
-        {oh.controls}
-        {!barMode ? topControls : null}
-        {walking && full && !hd && ready && !barMode ? (
+        {walking && full && !hd && ready && !clean ? (
           <View style={[styles.pad, mapH ? { bottom: 44 + mapH } : null]} pointerEvents="box-none">
             {([['Walk forward', 'chevron-up', 1, 0, styles.padUp], ['Step left', 'chevron-back', 0, -1, styles.padLeft], ['Step right', 'chevron-forward', 0, 1, styles.padRight], ['Walk back', 'chevron-down', -1, 0, styles.padDown]] as const).map(([label, icon, f, r, where]) => (
               <TouchableOpacity
@@ -1313,10 +1302,10 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             ))}
           </View>
         ) : null}
-        {refOn && refMode === 'card' && !barMode ? (
+        {refOn && refMode === 'card' && !clean ? (
           <RefPhotoCard photos={refList} index={Math.min(refIdx, refList.length - 1)} onIndex={setRefIdx} onSee={() => setRefMode('see')} onClose={() => setRefMode('off')} top={8 + topH + 2} />
         ) : null}
-        {refOn && refMode === 'see' && !barMode ? (
+        {refOn && refMode === 'see' && !clean ? (
           // above the caption; while walking, above the walk arrows (bottom-left, up to 192 dp)
           <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('off')} bottom={(walking ? 200 : 34) + mapH} move={refMove} onMove={setRefMove} />
         ) : null}
@@ -1521,12 +1510,7 @@ const styles = StyleSheet.create({
   coverText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
   // The buttons wrap onto a second line when they don't fit: with HD, frame, foreground and frozen lakes the row ran past
   // the right edge of a 1080-px-wide phone and the full-screen button was off screen (emulator, 13 Nov 2026).
-  bar: { backgroundColor: '#000000', paddingHorizontal: 8, paddingTop: 6, paddingBottom: 8, gap: 6, borderBottomWidth: 1, borderBottomColor: '#222222' },
-  barTop: { gap: 6 },
-  barBtns: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: 8 },
-  barRow: { minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  barLabel: { color: '#888888', fontSize: 11, fontWeight: '700', letterSpacing: 0.5, width: 46 },
-  barArrow: { width: 52, height: 38, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#444444', backgroundColor: '#1e1e1e' },
+  cleanBtn: { position: 'absolute', top: 8, right: 8 },
   topRow: { position: 'absolute', top: 8, left: 8, right: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', rowGap: 6, columnGap: 6 },
   camRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   lens: { flexDirection: 'row', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#444444', backgroundColor: 'rgba(0,0,0,0.55)' },

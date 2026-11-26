@@ -178,26 +178,11 @@ export function RefPhotoGhost({ photo, opacity, xf = XF0, move = false, onXf, on
 
 // The bar along the bottom of the picture while the photo is see-through: "Move photo", "See-through", the amount,
 // an X back to the card.
-// `inBar` (Phil, 26 Nov 2026: controls in a bar above the full-screen view, not over it): a plain row for that bar,
-// with the photo's ‹ n of m › in front.
-export function SeeThroughBar({ value, onChange, onClose, bottom, move, onMove, inBar, nav }: {
-  value: number; onChange: (v: number) => void; onClose: () => void; bottom?: number; move?: boolean; onMove?: (on: boolean) => void;
-  inBar?: boolean; nav?: { index: number; count: number; onIndex: (i: number) => void };
+export function SeeThroughBar({ value, onChange, onClose, bottom, move, onMove }: {
+  value: number; onChange: (v: number) => void; onClose: () => void; bottom: number; move?: boolean; onMove?: (on: boolean) => void;
 }) {
   return (
-    <View style={inBar ? styles.barRow : [styles.bar, { bottom: bottom ?? 34 }]}>
-      {inBar ? <Text style={styles.rowLabel}>PHOTO</Text> : null}
-      {nav && nav.count > 1 ? (
-        <>
-          <TouchableOpacity onPress={() => nav.onIndex((nav.index - 1 + nav.count) % nav.count)} style={styles.navBtn} accessibilityRole="button" accessibilityLabel="Previous photo" hitSlop={4}>
-            <Ionicons name="chevron-back" size={16} color="#ffffff" />
-          </TouchableOpacity>
-          <Text style={styles.navText}>{nav.index + 1} of {nav.count}</Text>
-          <TouchableOpacity onPress={() => nav.onIndex((nav.index + 1) % nav.count)} style={styles.navBtn} accessibilityRole="button" accessibilityLabel="Next photo" hitSlop={4}>
-            <Ionicons name="chevron-forward" size={16} color="#ffffff" />
-          </TouchableOpacity>
-        </>
-      ) : null}
+    <View style={[styles.bar, { bottom }]}>
       {onMove ? (
         <TouchableOpacity
           onPress={() => onMove(!move)}
@@ -286,10 +271,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.6)',
   },
   barText: { color: '#ffffff', fontSize: 12 },
-  barRow: { minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowLabel: { color: '#888888', fontSize: 11, fontWeight: '700', letterSpacing: 0.5, width: 46 },
-  navBtn: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#444444', backgroundColor: '#1e1e1e' },
-  navText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
   barX: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   moveBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#666666' },
   moveBtnOn: { backgroundColor: '#ffffff', borderColor: '#ffffff' },
