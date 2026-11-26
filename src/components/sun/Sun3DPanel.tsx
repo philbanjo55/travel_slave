@@ -16,7 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
 import { Overhead3D, useOverhead3D } from './overhead3d';
 import { SplitIcon, SplitLayer, SplitMode } from './SplitMap';
-import { CropOverlay, CropPanel, cropName, fitCrop, ChamonixOverlay, GridOverlay, longInNow, readLongIn, refitCrop, setLongInStored } from './CropOverlay';
+import { CropOverlay, CropPanel, cropName, fitCrop, ChamonixOverlay, FrameOnlyTaps, GridOverlay, longInNow, readLongIn, refitCrop, setLongInStored } from './CropOverlay';
 import type { CropRatio, FrameCrop } from '../../utils/sunEngine';
 
 // 3D view of the shot (TEST app, Phil 12 Nov 2026): the real terrain from the
@@ -418,6 +418,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [belowShut, setBelowShutState] = useState(lastBelowShut);
   const setBelowShut = useCallback((v: boolean) => { lastBelowShut = v; setBelowShutState(v); }, []);
   const splitSat = splitOn && splitMode === 'satellite', splitTer = splitOn && splitMode === 'terrain';
+  // Frame only on (Phil, 26 Nov 2026): no button over the view at all; a tap on the black brings them back
+  const clean = frame !== 'off' && frameOnly && !hd && !overhead && !preview;
   const setSplitFrac = useCallback((f: number) => { lastSplitFrac = f; setSplitFracState(f); }, []);
   const splitTop = splitOn && box ? Math.round(box.h * splitFrac) : 0;   // where the halves meet, dp from the top
   const mapH = splitOn && box ? box.h - splitTop : 0;                    // the lower half's height: the eye view's overlays sit above it
@@ -925,8 +927,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     try {
       const id = await ensureShot();
       // an incomplete photo placement on any framing goes as none, never as a broken one
-      const clean = list.map(f => (f.photo && (typeof f.photo.key !== 'string' || ![f.photo.s, f.photo.x, f.photo.y, f.photo.w, f.photo.h].every(v => typeof v === 'number' && Number.isFinite(v))) ? { ...f, photo: null } : f));
-      await saveShot({ kind: 'frames', tripId, stopId, vantageId: id, list: clean });
+      const tidy = list.map(f => (f.photo && (typeof f.photo.key !== 'string' || ![f.photo.s, f.photo.x, f.photo.y, f.photo.w, f.photo.h].every(v => typeof v === 'number' && Number.isFinite(v))) ? { ...f, photo: null } : f));
+      await saveShot({ kind: 'frames', tripId, stopId, vantageId: id, list: tidy });
       setSelS({ vid: id, i: show });
       setPhotoMoved(false);
       pickedFor = null;   // the saved framing (lens, landscape / portrait) is what this shot opens with from now on
@@ -1042,6 +1044,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       ) : null}
       {grid === 'thirds' && pic && !overhead && !preview && !hd ? <GridOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={frame !== 'off' ? crop : null} box={frame !== 'off'} /> : null}
       {grid === 'chamonix' && pic && !overhead && !preview && !hd ? <ChamonixOverlay pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} /> : null}
+      {clean && pic ? <FrameOnlyTaps pic={pic} unit={unitPx(pic.w, pic.h, lens)} lens={lens} crop={crop} onTap={() => setFrameOnly(false)} /> : null}
     </>
   );
   return (
@@ -1083,7 +1086,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
         ) : null}
         {oh.controls}
-        <View style={[styles.topRow, preview || overhead ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
+        <View style={[styles.topRow, preview || overhead || clean ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
           {/* Camera, then lens (Phil, 23 Nov 2026): 4x5 and 6x17 are backs on the same camera with the same four lenses;
               the Fuji 6x9 is its own camera with a fixed 90 mm, so it has no lens choice */}
           <View style={styles.camRow}>
@@ -1270,7 +1273,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             ) : null}
           </View>
         </View>
-        {walking && full && !hd && ready ? (
+        {walking && full && !hd && ready && !clean ? (
           <View style={[styles.pad, mapH ? { bottom: 44 + mapH } : null]} pointerEvents="box-none">
             {([['Walk forward', 'chevron-up', 1, 0, styles.padUp], ['Step left', 'chevron-back', 0, -1, styles.padLeft], ['Step right', 'chevron-forward', 0, 1, styles.padRight], ['Walk back', 'chevron-down', -1, 0, styles.padDown]] as const).map(([label, icon, f, r, where]) => (
               <TouchableOpacity
@@ -1287,10 +1290,10 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             ))}
           </View>
         ) : null}
-        {refOn && refMode === 'card' ? (
+        {refOn && refMode === 'card' && !clean ? (
           <RefPhotoCard photos={refList} index={Math.min(refIdx, refList.length - 1)} onIndex={setRefIdx} onSee={() => setRefMode('see')} onClose={() => setRefMode('off')} top={8 + topH + 2} />
         ) : null}
-        {refOn && refMode === 'see' ? (
+        {refOn && refMode === 'see' && !clean ? (
           // above the caption; while walking, above the walk arrows (bottom-left, up to 192 dp)
           <SeeThroughBar value={refOpacity} onChange={setRefOpacity} onClose={() => setRefMode('off')} bottom={(walking ? 200 : 34) + mapH} move={refMove} onMove={setRefMove} />
         ) : null}

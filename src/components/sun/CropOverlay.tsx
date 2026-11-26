@@ -333,3 +333,26 @@ const gridStyles = StyleSheet.create({
   rollText: { position: 'absolute', color: 'rgba(255,255,255,0.9)', fontSize: 9, fontWeight: '700', textShadowColor: '#000000', textShadowRadius: 2, textShadowOffset: { width: 0, height: 0 } },
   line: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.7)', shadowColor: '#000000', shadowOpacity: 0.8, shadowRadius: 1, shadowOffset: { width: 0, height: 0 }, elevation: 1 },
 });
+
+// Frame only (Phil, 26 Nov 2026): every button leaves the view and the black around the frame (or the crop) takes a tap
+// to bring them back (Frame only off). The frame itself stays free for dragging the view.
+export function FrameOnlyTaps({ pic, unit, lens, crop, onTap }: { pic: { w: number; h: number }; unit: number; lens: { f: number; fw: number; fh: number }; crop: FrameCrop | null; onTap: () => void }) {
+  const fW = (unit * lens.fw) / lens.f, fH = (unit * lens.fh) / lens.f;
+  const fx = (pic.w - fW) / 2, fy = (pic.h - fH) / 2;
+  const cw = crop ? crop.w * fW : fW, ch = crop ? crop.h * fH : fH;
+  const cx = fx + (crop ? crop.cx * fW : fW / 2) - cw / 2, cy = fy + (crop ? crop.cy * fH : fH / 2) - ch / 2;
+  const bands = [
+    { left: 0, top: 0, width: pic.w, height: Math.max(0, cy) },
+    { left: 0, top: cy + ch, width: pic.w, height: Math.max(0, pic.h - cy - ch) },
+    { left: 0, top: cy, width: Math.max(0, cx), height: ch },
+    { left: cx + cw, top: cy, width: Math.max(0, pic.w - cx - cw), height: ch },
+  ];
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {bands.map((b, i) => (
+        <TouchableOpacity key={i} activeOpacity={1} onPress={onTap} style={[{ position: 'absolute' }, b]}
+          accessibilityRole="button" accessibilityLabel={i === 0 ? 'Frame only is on. Tap to show the buttons again' : undefined} />
+      ))}
+    </View>
+  );
+}
