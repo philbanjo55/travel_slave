@@ -584,3 +584,58 @@ export function tripTerrainLine(t: TripTerrain | null): string | null {
   const left = t.areas - t.saved;
   return t.busy ? `Saving 3D terrain for this trip: ${t.saved} of ${t.areas} areas…` : `3D terrain: ${left} of ${t.areas} areas still to download (needs signal).`;
 }
+
+// ---- One set of 3D pieces for a whole stop (Phil, 25 Nov 2026: going shot to shot at a stop redrew the whole view
+// each time: "can u load the entire like area"). `group` = every shot of the stop (stand spot + subject). Each pick
+// takes the box that serves the most of the stop's shots, so every shot of the stop lands on the same boxes and the
+// view keeps its files; a shot the stop's box does not hold falls back to its own pick (that one still restarts).
+export type ShotPoints = { stand: Point; subject: Point };
+const insideM = (r: Box, p: Point) => {
+  const kx = 111320 * Math.cos(p.lat * Math.PI / 180), kz = 111132;
+  return Math.min((r.north - p.lat) * kz, (p.lat - r.south) * kz, (p.lng - r.west) * kx, (r.east - p.lng) * kx);
+};
+function groupPick<T extends Box & { id: string }>(cands: T[], ok: (r: T, p: Point) => boolean, group: ShotPoints[], area: (r: T) => number): T | null {
+  let best: T | null = null, bs = -1, bj = -1, ba = Infinity;
+  for (const r of cands) {
+    const s = group.filter(g => ok(r, g.stand)).length, j = group.filter(g => inRegion(r, g.subject)).length, a = area(r);
+    if (s > bs || (s === bs && (j > bj || (j === bj && (a < ba || (a === ba && best != null && r.id < best.id)))))) { best = r; bs = s; bj = j; ba = a; }
+  }
+  return best;
+}
+export async function nearForStop(region: TerrainRegion, stand: Point, subject: Point, group: ShotPoints[]): Promise<TerrainNear | null> {
+  if (group.length < 2) return nearFor(region, stand, subject);
+  const all = await loadNear();
+  const edge = 4.2 * Math.max(region.width_m, region.depth_m) / 767 + 30;
+  const ok = (r: TerrainNear, p: Point) => inRegion(r, p) && insideM(r, p) >= edge;
+  const cands = all.filter(r => r.parent === region.id && ok(r, stand));
+  return cands.length ? groupPick(cands, ok, group, r => (r.north - r.south) * (r.east - r.west)) : null;
+}
+export async function detailForStop(region: TerrainRegion, near: TerrainNear | null, stand: Point, subject: Point, group: ShotPoints[]): Promise<TerrainDetail | null> {
+  if (group.length < 2) return detailFor(region, near, stand, subject);
+  const all = await loadDetail();
+  const ok = (r: TerrainDetail, p: Point) => inRegion(r, p) && insideM(r, p) >= 100;
+  const cands = all.filter(r => r.parent === region.id && ok(r, stand)
+    && !(near && !(r.north <= near.north && r.south >= near.south && r.west >= near.west && r.east <= near.east)));
+  // a tie goes to the box the shots sit deepest in, as a single shot's pick does (Phil, 25 Nov 2026: Shane Cabins lost its
+  // 1.5 km box to the older 500 m one when the smaller box won ties)
+  const depth = (r: TerrainDetail) => Math.min(insideM(r, stand), ...group.filter(g => ok(r, g.stand)).map(g => insideM(r, g.stand)));
+  return cands.length ? groupPick(cands, ok, group, r => -depth(r)) : null;
+}
+// the range box most of the stop's shots would pick, when it also holds this shot's subject (or the shot has none of
+// its own); else this shot's own
+export async function rangeForStop(region: TerrainRegion, stand: Point, subject: Point, group: ShotPoints[]): Promise<TerrainRange | null> {
+  const all = await loadRanges();
+  const own = pickRange(all, region, stand, subject);
+  if (group.length < 2) return own;
+  const votes = new Map<string, { r: TerrainRange; n: number }>();
+  for (const g of group) { const r = pickRange(all, region, g.stand, g.subject); if (r) votes.set(r.id, { r, n: (votes.get(r.id)?.n ?? 0) + 1 }); }
+  const top = [...votes.values()].sort((a, b) => b.n - a.n || a.r.id.localeCompare(b.r.id))[0];
+  return top && (!own || inRegion(top.r, subject)) ? top.r : own;   // (no box of its own: the stop's sharp range costs nothing)
+}
+// the building tiles within reach of any of the stop's stand spots
+export async function houseTilesForStop(region: TerrainRegion, stand: Point, group: ShotPoints[]): Promise<TerrainHouseTile[]> {
+  const all = await loadHouseTiles();
+  const seen = new Map<string, TerrainHouseTile>();
+  for (const p of [stand, ...group.map(g => g.stand)]) for (const t of pickHouseTiles(all, region, p)) seen.set(t.id, t);
+  return pickHouseTiles([...seen.values()], region, stand).concat([...seen.values()].filter(t => !pickHouseTiles([t], region, stand).length));
+}

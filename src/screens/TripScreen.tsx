@@ -47,7 +47,8 @@ export default function TripScreen() {
   const [activeDay, setActiveDay] = useState(0);
   // TEST app (Stops page, design "FINAL", Phil 16 Nov 2026): a first tab before the days shows every rated place
   // once, by rank. The day tabs work as before; the main app has no such tab.
-  const [showStops, setShowStops] = useState(false);
+  // Opens on the Stops page (Phil, 25 Nov 2026); a live trip still jumps to today's day (below).
+  const [showStops, setShowStops] = useState(IS_TEST_APP);
   const [recalculating, setRecalculating] = useState(false);
   const [weatherUpdating, setWeatherUpdating] = useState(false);
   const [weatherProgress, setWeatherProgress] = useState<{ done: number; total: number } | null>(null);

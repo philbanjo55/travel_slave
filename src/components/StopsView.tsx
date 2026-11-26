@@ -56,7 +56,8 @@ function StopCard({ p, width, onOpen }: { p: Place; width: number; onOpen: (p: P
   const nailed = p.status === 'nailed';
   const better = p.status === 'got';
   // (the "3/3 framed" count and its green bar were taken off, Phil 25 Nov 2026: "I don't need it anymore")
-  const line = p.minutes ? minutesToHoursMin(p.minutes) : '';
+  // how many shots: every framing of every shot, a shot not framed yet once (Phil, 25 Nov 2026)
+  const line = [p.shotsKnown ? `${p.takes} ${p.takes === 1 ? 'shot' : 'shots'}` : null, p.minutes ? minutesToHoursMin(p.minutes) : null].filter(Boolean).join(' · ');
   return (
     <TouchableOpacity style={[styles.card, { width }, nailed && styles.faded]} onPress={() => onOpen(p)} onLongPress={() => { cyclePlaceMark(p); }} activeOpacity={0.8}
       accessibilityRole="button" accessibilityLabel={`Stop card: ${p.name}${p.checked ? ', reviewed' : p.review ? ', working on it' : ''}`}

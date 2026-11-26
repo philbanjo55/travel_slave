@@ -2493,8 +2493,10 @@
       const sp = rt.g.map(q => ohProj(q.x, q.y, q.z, w, h)), col = rt.color || '#FF5FA2';
       g.lineJoin = 'round'; g.lineCap = 'round'; g.setLineDash([]);
       for (const [lw, c] of [[7, 'rgba(0,0,0,0.55)'], [3.5, col]]) {
+        g.setLineDash(rt.dash && lw < 7 ? [10, 7] : []);   // a fifth route and on: the same colours dashed (25 Nov 2026)
         g.beginPath(); sp.forEach((s, i) => i ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y)); g.lineWidth = lw; g.strokeStyle = c; g.stroke();
       }
+      g.setLineDash([]);
       const a = rt.coords[0], b = rt.coords[rt.coords.length - 1];
       const loop = ohDist({ lat: a[1], lng: a[0] }, { lat: b[1], lng: b[0] }) < 60, nm = String(rt.name || 'Trail');
       ends.push({ p: sp[0], col, start: true, text: (loop ? 'Start / end · ' : 'Start · ') + nm });
@@ -2521,7 +2523,8 @@
         ohLabel(g, e.text.length > 34 ? e.text.slice(0, 33) + '…' : e.text, lx + 12, ly, false);
       });
     }
-    const P = OH.shots.map(s => { const q = ohXZ(s.v), y = ohH(s.v); return { s, q, y, p: ohProj(q.x, y, q.z, w, h) }; });
+    // the lens filter (S3D.shotsHide) only leaves dots out of this drawing: no refit, no new picture from above
+    const P = OH.shots.filter(s => !OH.hide || !OH.hide.has(s.id) || s.id === OH.sel).map(s => { const q = ohXZ(s.v), y = ohH(s.v); return { s, q, y, p: ohProj(q.x, y, q.z, w, h) }; });
     // a compass direction from a ground point, as a unit vector on the screen
     const sdir = (d, az) => { const f = ohProj(d.q.x + Math.sin(az) * 1000, d.y, d.q.z - Math.cos(az) * 1000, w, h), x = f.x - d.p.x, y = f.y - d.p.y, l = Math.hypot(x, y) || 1; return { x: x / l, y: y / l }; };
     const wedgeTo = (d, L) => {   // the two edges of a shot's framing, L px long
@@ -2600,8 +2603,12 @@
       }
     }
     for (const d of [...P.filter(d => d.s !== sel), ds]) {   // the stand spots, the selected one last (on top)
-      const on = d.s === sel, r = on ? 8 : 6;
-      g.beginPath(); g.arc(d.p.x, d.p.y, r, 0, 2 * Math.PI); g.fillStyle = on ? '#E5484D' : '#000000'; g.fill(); g.lineWidth = on ? 2.5 : 2; g.strokeStyle = '#ffffff'; g.stroke();
+      const on = d.s === sel, r = on ? 10 : 6;   // filled with its lens's colour (the app sends it; 25 Nov 2026), the shot you are on bigger
+      g.beginPath(); g.arc(d.p.x, d.p.y, r + (on ? 2.5 : 2), 0, 2 * Math.PI); g.fillStyle = 'rgba(0,0,0,0.85)'; g.fill();   // a dark edge: yellow and grey read on snow
+      if (on && d.s.color) {   // the shot you are on: white in the middle, a thick ring in its lens's colour (Phil, 25 Nov 2026)
+        g.beginPath(); g.arc(d.p.x, d.p.y, r, 0, 2 * Math.PI); g.fillStyle = d.s.color; g.fill();
+        g.beginPath(); g.arc(d.p.x, d.p.y, r - 4, 0, 2 * Math.PI); g.fillStyle = '#ffffff'; g.fill();
+      } else { g.beginPath(); g.arc(d.p.x, d.p.y, r, 0, 2 * Math.PI); g.fillStyle = d.s.color || (on ? '#E5484D' : '#000000'); g.fill(); g.lineWidth = on ? 3 : 2; g.strokeStyle = '#ffffff'; g.stroke(); }
       OH.dots.push({ id: d.s.id, x: d.p.x, y: d.p.y });
     }
     const boxes = [];   // their codes, the selected one first; a code that would sit on another is left out (zoomed far out)
@@ -2734,14 +2741,16 @@
     const at = b => ({ x: p.x + Math.sin(b) * L, y: p.y - Math.cos(b) * L });
     const e1 = at(a - half), e2 = at(a + half);
     g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(e1.x, e1.y); g.arc(p.x, p.y, L, a - half - Math.PI / 2, a + half - Math.PI / 2); g.closePath();
-    const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, L); gr.addColorStop(0, 'rgba(66,133,244,0.55)'); gr.addColorStop(1, 'rgba(66,133,244,0.08)'); g.fillStyle = gr; g.fill();
-    g.lineWidth = 1.5; g.strokeStyle = 'rgba(66,133,244,0.9)'; g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(p.x, p.y); g.lineTo(e2.x, e2.y); g.stroke();
-    const H = { x: p.x + Math.sin(a) * (L + 14), y: p.y - Math.cos(a) * (L + 14) };   // the handle: a white disc with an arrow the way the view looks
-    g.beginPath(); g.moveTo(p.x + Math.sin(a) * L * 0.6, p.y - Math.cos(a) * L * 0.6); g.lineTo(H.x, H.y); g.lineWidth = 2; g.strokeStyle = 'rgba(255,255,255,0.85)'; g.stroke();
-    g.beginPath(); g.arc(H.x, H.y, 13, 0, 2 * Math.PI); g.fillStyle = '#ffffff'; g.fill(); g.lineWidth = 2.5; g.strokeStyle = '#4285F4'; g.stroke();
-    g.save(); g.translate(H.x, H.y); g.rotate(a); g.beginPath(); g.moveTo(0, -7); g.lineTo(6, 4); g.lineTo(-6, 4); g.closePath(); g.fillStyle = '#4285F4'; g.fill(); g.restore();
-    g.beginPath(); g.arc(p.x, p.y, 9, 0, 2 * Math.PI); g.fillStyle = '#4285F4'; g.fill(); g.lineWidth = 3; g.strokeStyle = '#ffffff'; g.stroke();
-    SPL.dot = { x: p.x, y: p.y }; SPL.handle = H;
+    // the cone and the dot in the colour of the lens you are looking through (Phil, 25 Nov 2026: no blue for "you")
+    const cc = SPL.rgb || [66, 133, 244], rgba = a => `rgba(${cc[0]},${cc[1]},${cc[2]},${a})`;
+    const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, L); gr.addColorStop(0, rgba(0.55)); gr.addColorStop(1, rgba(0.08)); g.fillStyle = gr; g.fill();
+    g.lineWidth = 1.5; g.strokeStyle = rgba(0.9); g.beginPath(); g.moveTo(e1.x, e1.y); g.lineTo(p.x, p.y); g.lineTo(e2.x, e2.y); g.stroke();
+    // (the round arrow handle at the cone's end was taken off, Phil 25 Nov 2026: "I don't like it"; the dot still turns it)
+    // where you stand: white in the middle, a thick ring in the lens's colour, a dark edge (like the shot you are on)
+    g.beginPath(); g.arc(p.x, p.y, 12.5, 0, 2 * Math.PI); g.fillStyle = 'rgba(0,0,0,0.85)'; g.fill();
+    g.beginPath(); g.arc(p.x, p.y, 10, 0, 2 * Math.PI); g.fillStyle = rgba(1); g.fill();
+    g.beginPath(); g.arc(p.x, p.y, 5.5, 0, 2 * Math.PI); g.fillStyle = '#ffffff'; g.fill();
+    SPL.dot = { x: p.x, y: p.y }; SPL.handle = null;
   }
   // a pointer on the view from above, in its own coordinates
   const splitLocal = e => ({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY - splitTop(), type: e.type, timeStamp: e.timeStamp });
@@ -2940,6 +2949,10 @@
     yaw(deg) { if (!R || !Number.isFinite(+deg)) return; yaw = +deg * Math.PI / 180; touched = true; touch('look'); heading(); },
     liveLook(on) { SPL.live = !!on; },
     // for tests: where the split's dot and handle are (CSS px in the view from above), the top's height, the heading
+    // the lenses unticked in the map's key (Phil, 25 Nov 2026: filtering redrew everything): shot ids left off the map
+    shotsHide(ids) { OH.hide = new Set(Array.isArray(ids) ? ids : []); dirty = true; },
+    // the colour of the lens you look through, for your dot and cone on the map ('#rrggbb')
+    viewColor(hex) { const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '')); SPL.rgb = m ? [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16)) : null; dirty = true; },
     _split() { return { on: splitOn(), top: splitTop(), dot: SPL.dot, handle: SPL.handle, yaw: Math.round(((yaw * 180 / Math.PI) % 360 + 360) % 360 * 100) / 100, eye, renders: SPL.renders, anchored: OH.anchored, span: OH.span }; },
     _splitCache(c) { SPL.cache = !!c; splitFree(); dirty = true; },
     // ---- from above (see "From above" before tick()) ----
@@ -2970,7 +2983,7 @@
     eyeHeight(m) { const v = Math.max(0.3048, Math.min(10000, +m)); if (!Number.isFinite(v)) return; EYE = v; touch('walk'); if (eye) told(); },
     othersOn(v) { OTH.on = v !== false; dirty = true; },
     // overheadRoutes([{ id, name, coords: [[lng, lat], ...] }]): the stop's trails drawn on the view from above (none = [])
-    overheadRoutes(list) { OH.routes = Array.isArray(list) ? list.filter(r => r && Array.isArray(r.coords) && r.coords.length > 1).map(r => ({ id: r.id, name: r.name, coords: r.coords, color: r.color })) : []; dirty = true; },
+    overheadRoutes(list) { OH.routes = Array.isArray(list) ? list.filter(r => r && Array.isArray(r.coords) && r.coords.length > 1).map(r => ({ id: r.id, name: r.name, coords: r.coords, color: r.color, dash: !!r.dash })) : []; dirty = true; },
     // overheadMe({ lat, lng, acc?, heading?, center? } | null): Find me's dot; center = put it in the middle of the screen
     overheadMe(o) {
       OH.me = o && Number.isFinite(+o.lat) && Number.isFinite(+o.lng) ? { lat: +o.lat, lng: +o.lng, acc: o.acc, heading: o.heading } : null;

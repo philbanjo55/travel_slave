@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { hiddenIds, LensLegend, shotColor, useLensFilter, visibleShots } from './lensColors';
 import { View, Text, StyleSheet, TouchableOpacity, PanResponder, LayoutChangeEvent } from 'react-native';
 import MapView, { Circle, Marker, Polygon, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,7 +22,7 @@ import { fmtDist, overheadShots, useFindMe } from './overhead3d';
 // Terrain (our own 3D from above, works offline) is drawn by the 3D page itself in the same canvas (S3D.split).
 
 export const SPLIT_MIN = 0.3, SPLIT_MAX = 0.7;
-export const SPLIT_HINT = 'Tap the map to stand there · drag the arrow to turn';
+export const SPLIT_HINT = 'Tap the map to stand there · drag the blue dot to turn';
 const coord = (p: LatLng) => ({ latitude: p.lat, longitude: p.lng });
 const MPD_LAT = 110540;
 const norm = (d: number) => ((d % 360) + 360) % 360;
@@ -118,15 +119,23 @@ export function SplitControls({ top, mode, onMode, onZoom, meOn, onMe, onMeOff, 
   );
 }
 
+// '#rrggbb' -> 'rgba(r,g,b,a)' (blue when there is no lens colour)
+const withAlpha = (hex: string | undefined, a: number) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex ?? '');
+  const c = m ? [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16)) : [66, 133, 244];
+  return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+};
+
 type Cam = { lat: number; lng: number; heading: number; zoom: number };
 export type SatReq = { n: number; zoom?: number; center?: LatLng };
 
 // The satellite half. `eye` = where the eye view stands now, `yaw` = where it looks (compass degrees), `fov` = the lens's
 // horizontal angle (degrees). onGo / onYaw move and turn the eye view (the panel sends them to the page).
-export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, onYaw, onPick }: {
+export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, onYaw, onPick, viewColor }: {
   pairs: Pair[]; sel: Pair; eye: LatLng; yaw: number | null; fov: number; routes: TrailRoute[];
   me: { lat: number; lng: number } | null; req: SatReq; onGo: (p: LatLng) => void; onYaw: (deg: number, done: boolean) => void;
   onPick?: (vantageId: string) => void;   // another shot's dot: open that shot as saved (25 Nov 2026)
+  viewColor?: string;
 }) {
   const mapRef = useRef<MapView>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -243,7 +252,11 @@ export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, 
           moveOnMarkerPress={false}
         >
           {routes.map(r => (
-            <Polyline key={`rt-${r.id}`} coordinates={r.coords.map(c => ({ latitude: c[1], longitude: c[0] }))} strokeColor={r.color ?? '#FF5FA2'} strokeWidth={3.5} />
+            <React.Fragment key={`rt-${r.id}`}>
+              {/* a dark edge under the colour, as on the terrain map (white and sand read on snow too) */}
+              <Polyline coordinates={r.coords.map(c => ({ latitude: c[1], longitude: c[0] }))} strokeColor="rgba(0,0,0,0.55)" strokeWidth={7} />
+              <Polyline coordinates={r.coords.map(c => ({ latitude: c[1], longitude: c[0] }))} strokeColor={r.color ?? '#FFFFFF'} strokeWidth={3.5} lineDashPattern={r.dash ? [10, 7] : undefined} />
+            </React.Fragment>
           ))}
           {selFov.aim != null ? (
             <Polyline coordinates={[coord(destination(sel.v, selFov.aim - selFov.fov / 2, Math.max(distanceM(sel.v, sel.s), 20 * mpp))), coord(sel.v), coord(destination(sel.v, selFov.aim + selFov.fov / 2, Math.max(distanceM(sel.v, sel.s), 20 * mpp)))]} strokeColor={SUN} strokeWidth={2} />
@@ -256,23 +269,19 @@ export function SplitSatMap({ pairs, sel, eye, yaw, fov, routes, me, req, onGo, 
               <Marker key={`m-${p.vantage_id}-${on ? 1 : 0}`} coordinate={coord(p.v)} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={track}
                 onPress={() => (!on && onPick ? onPick(p.vantage_id) : onGo(p.v))} accessibilityLabel={on ? `Stand at shot ${p.code ?? ''}` : `Open shot ${p.code ?? ''}`}>
                 <View style={styles.spotWrap}>
-                  <View style={[styles.spot, on && styles.spotOn]} />
+                  <View style={[styles.spot, { backgroundColor: shotColor(p) }, on && styles.spotOn, on && { borderColor: shotColor(p) }]} />
                   <Text style={styles.pinLabel}>{on && p.starred ? '★ ' : ''}{p.code || '•'}</Text>
                 </View>
               </Marker>
             );
           })}
-          <Polygon coordinates={cone} fillColor="rgba(66,133,244,0.35)" strokeColor="rgba(66,133,244,0.9)" strokeWidth={1.5} />
-          <Marker coordinate={coord(tip)} anchor={{ x: 0.5, y: 0.5 }} flat rotation={look} tracksViewChanges={track}>
-            <View style={styles.handle}><View style={styles.handleArrow} /></View>
-          </Marker>
+          <Polygon coordinates={cone} fillColor={withAlpha(viewColor, 0.35)} strokeColor={withAlpha(viewColor, 0.9)} strokeWidth={1.5} />
           <Marker coordinate={coord(eye)} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={track}>
-            <View style={styles.meDot} />
+            <View style={[styles.meDot, viewColor ? { backgroundColor: '#ffffff', borderColor: viewColor, borderWidth: 5, width: 22, height: 22, borderRadius: 11 } : null]} />
           </Marker>
         </MapView>
       ) : null}
       {/* where a finger can take hold of the dot or the arrow (the map's own markers cannot be dragged without a long press) */}
-      {inMap(tipPt) ? <View style={[styles.hit, { left: tipBox.current.x, top: tipBox.current.y, width: HIT, height: HIT, borderRadius: HIT / 2 }]} {...tipPan.panHandlers} accessibilityLabel="Drag the arrow to turn the view" /> : null}
       {inMap(dotPt) ? <View style={[styles.hit, { left: dotBox.current.x, top: dotBox.current.y, width: DOT, height: DOT, borderRadius: DOT / 2 }]} {...dotPan.panHandlers} accessibilityLabel="Where you stand in the view. Drag to turn" /> : null}
     </View>
   );
@@ -302,8 +311,8 @@ const styles = StyleSheet.create({
   hint: { alignItems: 'center' },
   hintText: { color: '#ffffff', fontSize: 12, fontWeight: '600', backgroundColor: 'rgba(0,0,0,0.78)', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden', maxWidth: '100%' },
   spotWrap: { alignItems: 'center' },
-  spot: { width: 14, height: 14, borderRadius: 7, backgroundColor: '#000000', borderWidth: 2, borderColor: '#ffffff' },
-  spotOn: { backgroundColor: '#E5484D' },
+  spot: { width: 14, height: 14, borderRadius: 7, backgroundColor: '#000000', borderWidth: 2, borderColor: '#ffffff', shadowColor: '#000000', shadowOpacity: 0.9, shadowRadius: 1.5, elevation: 2 },
+  spotOn: { width: 22, height: 22, borderRadius: 11, borderWidth: 5, backgroundColor: '#ffffff' },   // the shot you are on: white with a ring in its lens's colour
   pinLabel: { marginTop: 1, color: '#ffffff', fontSize: 12, fontWeight: '700', textShadowColor: '#000000', textShadowRadius: 3, textShadowOffset: { width: 0, height: 0 } },
   handle: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#ffffff', borderWidth: 2.5, borderColor: '#4285F4', alignItems: 'center', justifyContent: 'center' },
   handleArrow: { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 11, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#4285F4', marginBottom: 2 },
@@ -317,18 +326,24 @@ const styles = StyleSheet.create({
 // half's controls, the satellite map and the divider. Sun3DPanel mounts this ONLY while split is on (full screen, chosen,
 // not HD); on unmount the page gets the whole view back. `sink`: Sun3DPanel hands it the page's 'look' / 'overheadMe'
 // messages (none of them reach Sun3DPanel's own state).
-export function SplitLayer({ run, ready, readyN, mode, onMode, top, h, frac, onFrac, pair, others, eye, lens, jumps, walking, sink, onPick }: {
+export function SplitLayer({ run, ready, readyN, mode, onMode, top, h, frac, onFrac, pair, others, eye, lens, jumps, walking, sink, onPick, viewColor }: {
   run: (js: string) => void; ready: boolean; readyN: number; mode: SplitMode; onMode: (m: SplitMode) => void;
   top: number; h: number; frac: number; onFrac: (f: number) => void; pair: Pair; others?: Pair[]; eye: LatLng;
   lens: { f: number; fw: number }; jumps: number; walking: boolean; sink: React.MutableRefObject<((m: any) => void) | null>;
   onPick?: (vantageId: string) => void;
+  viewColor?: string;   // the lens you look through: your dot and cone take its colour (25 Nov 2026)
 }) {
+  useEffect(() => { if (ready) run(`window.S3D.viewColor && window.S3D.viewColor(${JSON.stringify(viewColor ?? '')})`); }, [ready, readyN, viewColor, run]);
   const ter = mode === 'terrain', sat = !ter;
   const pairs = useMemo(() => {
     const list = others && others.length ? others : [pair];
     return list.some(p => p.vantage_id === pair.vantage_id) ? list : [pair, ...list];
   }, [others, pair]);
-  const shotsKey = JSON.stringify(overheadShots(pairs, pair.vantage_id));
+  const hide = useLensFilter();   // the lenses unticked in the map's key (the shot you are on always shows)
+  const shown = useMemo(() => visibleShots(pairs, pair.vantage_id, hide), [pairs, pair.vantage_id, hide]);
+  const shotsKey = JSON.stringify(overheadShots(pairs, pair.vantage_id));   // every shot: the filter only hides dots (below)
+  const hideKey = useMemo(() => JSON.stringify(hiddenIds(pairs, pair.vantage_id, hide)), [pairs, pair.vantage_id, hide]);
+  useEffect(() => { if (ready && ter) run(`window.S3D.shotsHide && window.S3D.shotsHide(${hideKey})`); }, [ready, readyN, ter, hideKey, run]);
   const routes = useTrailRoutes(useMemo(() => pairs.map(p => p.v), [pairs]));
   const routesKey = routes.map(r => `${r.id}:${r.coords.length}:${r.color ?? ''}`).join('|');
   const fracRef = useRef(frac);
@@ -394,14 +409,15 @@ export function SplitLayer({ run, ready, readyN, mode, onMode, top, h, frac, onF
       {sat ? (
         <View style={[styles.mapBox, { top }]}>
           <SplitSatMap
-            pairs={pairs} sel={pair} eye={eye} yaw={yaw} fov={(2 * Math.atan(lens.fw / (2 * lens.f)) * 180) / Math.PI} routes={routes}
+            pairs={shown} sel={pair} eye={eye} yaw={yaw} fov={(2 * Math.atan(lens.fw / (2 * lens.f)) * 180) / Math.PI} routes={routes}
             me={me.on && me.pos ? me.pos : null} req={req}
             onGo={p => run(`window.S3D.goTo && window.S3D.goTo(${p.lat},${p.lng})`)}
             onYaw={deg => { setYaw(Math.round(deg)); run(`window.S3D.yaw && window.S3D.yaw(${deg.toFixed(2)})`); }}
-            onPick={onPick}
+            onPick={onPick} viewColor={viewColor}
           />
         </View>
       ) : null}
+      {ready ? <LensLegend pairs={pairs} style={{ left: 12, top: top + 12 }} /> : null}
       {ready ? (
         <SplitControls top={top} mode={mode} onMode={onMode} onZoom={zoom} meOn={me.on} onMe={findMe} onMeOff={() => me.setOn(false)}
           meLine={meLine} jumps={jumps} walking={walking} onBack={() => run('window.S3D.back && window.S3D.back()')} />

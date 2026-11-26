@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { hiddenIds, LensLegend, shotColor, useLensFilter } from './lensColors';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -46,7 +47,7 @@ export function overheadShots(pairs: Pair[], selId: string) {
     return {
       id: p.vantage_id, code: p.code ?? null, name: p.shot_name ?? p.vantage_name ?? null, subject: shortName(p.subject_name),
       v: p.v, s: p.s, heading_deg: p.framing ? p.framing.heading : null, fov_deg: Math.round(f.fov * 10) / 10,
-      star: !!p.starred, sel: p.vantage_id === selId,
+      star: !!p.starred, sel: p.vantage_id === selId, color: shotColor(p),   // the dot: its lens's colour (lensColors)
     };
   });
 }
@@ -64,8 +65,12 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
   const pickRef = useRef<((p: Pair) => void) | null>(null);
   pickRef.current = overhead?.onPick ?? null;
   const on = !!overhead;
+  const hide = useLensFilter();   // the lenses unticked in the map's key
   const shots = useMemo(() => (overhead ? overheadShots(overhead.pairs, overhead.selId) : []), [overhead?.pairs, overhead?.selId]);
   const shotsKey = JSON.stringify(shots);
+  // the filter goes to the page on its own: it only hides dots (sending a shorter list refit and redrew the whole map)
+  const hideKey = useMemo(() => JSON.stringify(overhead ? hiddenIds(overhead.pairs, overhead.selId, hide) : []), [overhead?.pairs, overhead?.selId, hide]);
+  useEffect(() => { if (on && ready) run(`window.S3D.shotsHide && window.S3D.shotsHide(${hideKey})`); }, [on, ready, hideKey, run]);
   const sunOn = overhead?.sunOn ?? true, shaded = overhead?.shaded;
   const [marks, setMarks] = useOverheadMarks();
   const firstSent = useRef(false);
@@ -80,7 +85,7 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
 
   // the trails, sent once the page is ready and again when they change (they come from the phone's cache or the server)
   const routes = overhead?.routes ?? [];
-  const routesKey = routes.map(r => `${r.id}:${r.coords.length}:${r.color ?? ''}`).join('|');
+  const routesKey = routes.map(r => `${r.id}:${r.coords.length}:${r.color ?? ''}:${r.dash ? 1 : 0}`).join('|');
   useEffect(() => {
     if (!on || !ready) return;
     run(`window.S3D.overheadRoutes && window.S3D.overheadRoutes(${JSON.stringify(routes)})`);
@@ -133,6 +138,7 @@ export function useOverhead3D({ overhead, ready, run, full, onFull }: {
         <Text style={[styles.sunText, sunOn && { color: '#000000' }]}>☀ SUN</Text>
       </TouchableOpacity>
       <MarksButton on={marks} onPress={() => setMarks(!marks)} />
+      <LensLegend pairs={overhead!.pairs} style={{ left: 8, top: 86 }} />
       <TouchableOpacity
         style={styles.compassBtn}
         onPress={compass}
