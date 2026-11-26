@@ -22,7 +22,7 @@ export default function TrailCard({ trail, stayMin }: { trail: TrailInfo; stayMi
           <MaterialCommunityIcons name={trailIcon(trail) as any} size={14} color="#ffffff" />
           <Text style={styles.pillText}>{trail.activity === 'ski' ? 'XC SKI' : 'HIKE'}</Text>
         </View>
-        <Text style={styles.headText} numberOfLines={1}>{miles(trail.length_m)} mi{trail.loop ? ' loop' : ''} · {feet(trail.climb_m)} ft up · {trailLine(trail).split(' · ')[1]}</Text>
+        <Text style={styles.headText} numberOfLines={1}>{miles(trail.length_m)} mi{trail.loop ? ' loop' : ' out & back'} · {feet(trail.climb_m)} ft up · {trailLine(trail).split(' · ')[1]}</Text>
       </View>
       {prof ? (
         <>
@@ -44,6 +44,7 @@ export default function TrailCard({ trail, stayMin }: { trail: TrailInfo; stayMi
           </View>
           <View style={[styles.axisRow, { marginLeft: Y_W }]}>
             <Text style={styles.axis}>start</Text>
+            {!trail.loop ? <Text style={styles.axis}>turn back</Text> : null}
             <Text style={styles.axis}>{miles(trail.length_m)} mi</Text>
           </View>
         </>

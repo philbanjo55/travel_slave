@@ -13,6 +13,7 @@ export type TrailInfo = {
   id: string; name: string; stop_id: string | null; stopName: string | null;
   length_m: number; climb_m: number; loop: boolean; activity: 'ski' | 'hike';
   profile: [number, number][];   // [metres along, metres up] x 100
+  ob?: boolean;                  // already made out and back (a saved copy is never doubled twice)
 };
 
 const DIR = `${FileSystem.documentDirectory}pf_cache/`;
@@ -21,17 +22,31 @@ let cache: TrailInfo[] | null = null;
 let asking: Promise<TrailInfo[]> | null = null;
 const subs = new Set<(v: TrailInfo[]) => void>();
 
+// A route that doesn't come back to its start is walked or skied back the same way (Phil, 26 Nov 2026: "If it's one way,
+// I have to go back ... do the full length and say out and back"): twice the length, the way back's climbs (the way
+// out's descents) added, and the profile drawn out and back.
+function outAndBack(t: TrailInfo): TrailInfo {
+  if (t.loop || t.ob || t.profile.length < 2) return t;
+  let down = 0, base = t.profile[0][1];
+  for (const [, e] of t.profile) {   // drops over 3 m on the smoothed profile, as the climb was counted
+    if (e < base - 3) { down += base - e; base = e; } else if (e > base) base = e;
+  }
+  const L = t.profile[t.profile.length - 1][0];
+  const back = t.profile.slice(0, -1).reverse().map(([d, e]) => [2 * L - d, e] as [number, number]);
+  return { ...t, length_m: t.length_m * 2, climb_m: t.climb_m + down, profile: [...t.profile, ...back], ob: true };
+}
+
 async function load(): Promise<TrailInfo[]> {
   if (asking) return asking;
   asking = (async () => {
     if (!cache) {
-      try { cache = JSON.parse(await FileSystem.readAsStringAsync(FILE)) as TrailInfo[]; subs.forEach(f => f(cache!)); } catch { /* none saved yet */ }
+      try { cache = (JSON.parse(await FileSystem.readAsStringAsync(FILE)) as TrailInfo[]).map(outAndBack); subs.forEach(f => f(cache!)); } catch { /* none saved yet */ }
     }
     try {
       const { data, error } = await supabase.from('trail_routes')
         .select('id,name,stop_id,length_m,climb_m,closed_loop,activity,profile,stops(name)');
       if (error) throw error;
-      const rows: TrailInfo[] = (data ?? []).filter((r: any) => r.stop_id).map((r: any) => ({
+      const rows: TrailInfo[] = (data ?? []).filter((r: any) => r.stop_id).map((r: any) => outAndBack({
         id: r.id, name: r.name, stop_id: r.stop_id, stopName: r.stops?.name ?? null,
         length_m: Number(r.length_m) || 0, climb_m: Number(r.climb_m) || 0, loop: !!r.closed_loop,
         activity: r.activity === 'hike' ? 'hike' : 'ski', profile: Array.isArray(r.profile) ? r.profile : [],
@@ -71,4 +86,4 @@ export function trailTime(t: TrailInfo): string {
 export const trailWord = (t: TrailInfo) => (t.activity === 'ski' ? 'Ski' : 'Hike');
 export const trailIcon = (t: TrailInfo) => (t.activity === 'ski' ? 'ski-cross-country' : 'hiking');
 // "9.2 mi loop · ~4 h"
-export const trailLine = (t: TrailInfo) => `${miles(t.length_m)} mi${t.loop ? ' loop' : ' one way'} · ${trailTime(t)}`;
+export const trailLine = (t: TrailInfo) => `${miles(t.length_m)} mi${t.loop ? ' loop' : ' out & back'} · ${trailTime(t)}`;
