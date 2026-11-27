@@ -11,6 +11,9 @@ import { MODEL, PRICE_IN, PRICE_OUT, LOOK_W, SYSTEM, schema, userText, namedNear
 //   {action: 'claim', job_id} / {action: 'finish', job_id, result | error, overlay_jpeg_base64}  (worker)
 //        Authorization: Bearer <GitHub Actions OIDC token> (audience 'photo-spot', this repo, photo-spot.yml):
 //        no shared secret, the repo is public.
+//   {action: 'step', job_id, step: {key, done?, of?, attempt?, attempts?}}  (worker, 27 Nov 2026): where the search is,
+//        for the app's progress bar; kept in photo_spot_jobs.progress while the job is 'solving' (updated_at untouched,
+//        so the stale-job clock is as before). Same token as claim / finish.
 //   {action: 'look_test', image_url, lat, lng, name?}  (tests) -> the look only, for a picture in bucket
 //        photo-spot/test/ (the hand-solved film scans); nothing stored but the spend.
 // Secrets: ANTHROPIC_API_KEY; GITHUB_DISPATCH_TOKEN (fine-grained token, this repo, Actions: write) starts the
@@ -252,16 +255,26 @@ Deno.serve(async (req) => {
       return json({ ok: true, ...out });
     }
 
-    if (action === 'claim' || action === 'finish') {
+    if (action === 'claim' || action === 'finish' || action === 'step') {
       const bad = await workerAuth(req);
       if (bad) return json({ ok: false, error: bad }, 401);
       const { data: j } = await db.from('photo_spot_jobs').select('*').eq('id', body.job_id).maybeSingle();
       if (!j) return json({ ok: false, error: 'no such job' }, 404);
+      if (action === 'step') {
+        if (j.status !== 'solving') return json({ ok: false, error: `job is ${j.status}` }, 409);
+        const st = body.step && typeof body.step === 'object' ? body.step : {};
+        const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null);
+        const progress = { key: String(st.key ?? '').slice(0, 20), done: num(st.done), of: num(st.of),
+          attempt: typeof st.attempt === 'string' ? st.attempt.slice(0, 10) : num(st.attempt), attempts: num(st.attempts), at: new Date().toISOString() };
+        await db.from('photo_spot_jobs').update({ progress }).eq('id', j.id).eq('status', 'solving');
+        return json({ ok: true });
+      }
       if (action === 'claim') {
         if (!['queued', 'solving'].includes(j.status) || !j.look) return json({ ok: false, error: `job is ${j.status}` }, 409);
         const ctx = await stopCtx(j.stop_id);
         if (!ctx?.region) return json({ ok: false, error: 'no region' }, 422);
         await setJob(j.id, { status: 'solving', note: 'searching the terrain', run_id: body.run_id ?? null });
+        await db.from('photo_spot_jobs').update({ progress: null }).eq('id', j.id);   // a retried run starts its bar afresh (an error, e.g. no column yet, changes nothing)
         // the stop's own stand pins (17 Nov 2026): the solver's tie-break between spots that fit about as well. Pins Find
         // spot placed itself are left out (they would vote for its own earlier answers).
         const { data: sp } = await db.from('stop_sun_pairs').select('scout_vantages(lat, lng, notes)').eq('stop_id', j.stop_id);
