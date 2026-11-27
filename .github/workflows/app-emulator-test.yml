@@ -81,11 +81,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # TEMP 27 Nov 2026: progress-bar build (branch claude/progress-bars) + place-matched chips
+          # TEMP 27 Nov 2026: the progress-bar build (+ stuck-preview fix) on the planner end to end, 3D and Find spot
+          - shard: r1   # one machine: the robot sections share one trip and reset it between them
+            only: robot_chips,robot_accept,robot_replan,robot_replan_restart,robot_tell,robot_faults
           - shard: p1
-            only: trip_order,side_by_side_card,plan_check_card,replan_now_card,ghost_accept
-          - shard: p2
-            only: plans_tab,tell_t,tell_t_setup
+            only: side_by_side_card,plan_check_card,replan_now_card,ghost_accept,plans_tab,tell_t,tell_t_setup
           - shard: a
             only: sun_3d
           - shard: b

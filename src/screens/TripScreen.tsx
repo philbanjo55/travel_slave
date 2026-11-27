@@ -29,6 +29,7 @@ import { GhostTag, TimelineRow } from '../components/planner/DayTimeline';
 import PlanningStrip from '../components/planner/PlanningStrip';
 import { acceptedText } from '../components/planner/PlanView';
 import ProgressBar from '../components/ProgressBar';
+import { errText } from '../utils/errText';
 
 // Accept T's plan from now on (27 Nov 2026: Phil's tap was applied on the server but the screen gave no sign and kept the
 // old day): each real step of the accept as a bar. Checking = T's apply run as a preview on the server (rolled back),
@@ -111,12 +112,18 @@ export default function TripScreen() {
   const pastDay = !!shownDay?.date && isPastDay(shownDay.date, planTz);
   // What accepting T's plan for the rest of the trip does (every day it changes, set aside,
   // tight connections), shown before Accept.
+  // A preview that fails (no signal, server error, 20 s timeout) says so and can be tried again (27 Nov 2026: the
+  // emulator's fault test; it used to spin for ever with Accept greyed out).
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+  const [previewTry, setPreviewTry] = useState(0);
   useEffect(() => {
+    setPreviewErr(null);
     if (!ghost) { setGhostPreview(null); return; }
     let alive = true;
-    applyWeek(tripId, false).then(j => { if (alive) setGhostPreview(j.result); }).catch(() => {});
+    applyWeek(tripId, false).then(j => { if (alive) setGhostPreview(j.result); })
+      .catch((e: any) => { if (alive) setPreviewErr(errText(e)); });
     return () => { alive = false; };
-  }, [ghost, tripId]);
+  }, [ghost, tripId, previewTry]);
   const ghostRows = useMemo(() => {
     if (!ghost || !planner?.best) return null;
     const byId = new Map(changes.map(c => [c.stop_id, c]));
@@ -655,16 +662,18 @@ export default function TripScreen() {
       {PLANNER_ON && ghostRows && !stopsOn ? (
         <View style={[styles.ghostBar, { paddingBottom: spacing.lg + insets.bottom }]}>
           {/* One line of what accepting does; the lists behind Details (the timeline stays visible). */}
-          <TouchableOpacity onPress={() => setGhostDetails(v => !v)} style={styles.ghostSummary} accessibilityRole="button"
+          <TouchableOpacity onPress={() => (previewErr && !ghostPreview ? setPreviewTry(n => n + 1) : setGhostDetails(v => !v))} style={styles.ghostSummary} accessibilityRole="button"
             accessibilityState={{ expanded: ghostDetails }}>
-            {ghostPreview ? (
+            {!ghostPreview && previewErr ? (
+              <Text style={[styles.ghostNote, { color: '#e74c3c' }]} numberOfLines={2}>Could not load what changes: {previewErr}. Tap to try again</Text>
+            ) : ghostPreview ? (
               <Text style={styles.ghostNote} numberOfLines={1}>
                 {ghostPreview.stops_changed ?? 0} stops change{ghostPreview.week_days?.length ? ` over ${ghostPreview.week_days.length} days` : ''}
                 {ghostPreview.set_aside?.length ? ` · ${ghostPreview.set_aside.length} set aside` : ''}
                 {ghostPreview.clashes?.length ? ` · ${ghostPreview.clashes.length} tight` : ''}
               </Text>
             ) : <ActivityIndicator size="small" color={colors.textTertiary} />}
-            <Text style={styles.ghostDetailsLink}>{ghostDetails ? 'Hide' : 'Details'} {ghostDetails ? '▾' : '▸'}</Text>
+            {!ghostPreview && previewErr ? null : <Text style={styles.ghostDetailsLink}>{ghostDetails ? 'Hide' : 'Details'} {ghostDetails ? '▾' : '▸'}</Text>}
           </TouchableOpacity>
           {ghostDetails ? (
             <View style={{ gap: 4 }}>
@@ -687,7 +696,7 @@ export default function TripScreen() {
           {acceptStep ? <AcceptBar a={acceptStep} /> : null}
           <View style={styles.ghostBtns}>
             {canApply(tripId, currentTripData?.trip) ? (
-              <TouchableOpacity style={styles.ghostAccept} onPress={acceptAll} disabled={accepting || !ghostPreview || ghostPreview.nothing} accessibilityRole="button"
+              <TouchableOpacity style={styles.ghostAccept} onPress={acceptAll} disabled={accepting || (!ghostPreview && !previewErr) || !!ghostPreview?.nothing} accessibilityRole="button"
                 accessibilityLabel="Accept T's plan for the rest of the trip: the rest of today and every later day. Past days don't change.">
                 {accepting ? <ActivityIndicator color={colors.textInverse} /> : (
                   <Text style={styles.ghostAcceptText} numberOfLines={1}>Accept T's plan from now on</Text>

@@ -7,12 +7,68 @@
 const SUPABASE_HOST = 'ohshrzlvvxyovcjmdajc.supabase.co';
 // Read-only database functions the app calls with POST.
 const READ_RPCS = new Set([
-  'trip_sun_plan', 'sun_stop_pairs', 'sun_trip_shots', 'planner_t_trip', 'claude_spend_summary', 'planner_t_now_status', 'training_stop_photos',
+  'planner_t_replan_mode', 'trip_sun_plan', 'sun_stop_pairs', 'sun_trip_shots', 'planner_t_trip', 'claude_spend_summary', 'planner_t_now_status', 'training_stop_photos',
 ]);
 // Read-only solver-actions requests.
 const READ_ACTIONS = new Set(['subject_grid', 'stop_settings', 'frames', 'planning_status', 'stop_curve', 'feeds']);
 
 const realFetch: typeof fetch = globalThis.fetch.bind(globalThis);
+
+// ── The test robot trip (27 Nov 2026) ───────────────────────────────────────
+// Trip 7e57bed0-...-0004 is the planner test's own practice copy: on it the test really accepts, re-plans and saves
+// notes (Teton Live, Phil's mock week, stays read-only). A write is let through when its body names that trip, or an
+// id this build has seen belong to it (its stops, days, plans and notes, learned from the app's own reads).
+const ROBOT = '7e57bed0-0000-4000-8000-000000000004';
+const robotIds = new Set<string>([ROBOT]);
+function learn(j: any, depth = 0) {
+  if (!j || depth > 4) return;
+  if (Array.isArray(j)) { for (const x of j) learn(x, depth + 1); return; }
+  if (typeof j !== 'object') return;
+  if (j.trip_id === ROBOT && j.id != null) robotIds.add(String(j.id));
+  for (const k of ['stops', 'days', 'note', 'notes', 'runs', 'plans', 'data']) if (j[k]) learn(j[k], depth + 1);
+}
+function forRobot(url: string, body: any): boolean {
+  const b = body && typeof body === 'object' ? body : {};
+  for (const k of ['trip_id', 'p_trip', 'trip', 'tripId']) if (b[k] === ROBOT) return true;
+  for (const k of ['id', 'stop_id', 'p_stop', 'run_id', 'note_id', 'day_id']) if (b[k] != null && robotIds.has(String(b[k]))) return true;
+  const m = url.match(/[?&](?:id|stop_id|trip_id)=eq\.([0-9a-f-]+)/i);
+  return !!m && robotIds.has(m[1]);
+}
+
+// ── Faults on request (the test asks with RPC e2e_fault(kind, match, secs); table e2e_faults) ──────────────────
+type Fault = { kind: 'error' | 'timeout' | 'offline' | 'slow'; match: string; until: string };
+let faults: Fault[] = [];
+const KEY = 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2';
+async function pollFaults() {
+  try {
+    const r = await realFetch(`https://${SUPABASE_HOST}/rest/v1/e2e_faults?select=kind,match,until&until=gt.${encodeURIComponent(new Date().toISOString())}`,
+      { headers: { apikey: KEY, Authorization: `Bearer ${KEY}` } });
+    const j = await r.json();
+    const next: Fault[] = Array.isArray(j) ? j : [];
+    if (JSON.stringify(next) !== JSON.stringify(faults)) console.warn(`E2E_FAULTS now ${JSON.stringify(next.map(f => `${f.kind}:${f.match}`))}`);
+    faults = next;
+  } catch { /* keep the last list */ }
+}
+setInterval(pollFaults, 2000);
+function faultFor(url: string, bodyText: string): Fault | null {
+  const now = Date.now();
+  if (url.includes('/rest/v1/e2e_faults')) return null;
+  return faults.find(f => Date.parse(f.until) > now && (url.includes(f.match) || bodyText.includes(`"${f.match}"`))) ?? null;
+}
+async function applyFault(f: Fault, input: any, init: any, method: string, url: string): Promise<Response> {
+  console.warn(`E2E_FAULT ${f.kind} ${method} ${url.split(SUPABASE_HOST)[1] ?? url}`);
+  if (f.kind === 'offline') throw new TypeError('Network request failed');
+  if (f.kind === 'error') return new Response(JSON.stringify({ ok: false, error: 'test fault: server error', message: 'test fault: server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  const signal: AbortSignal | undefined = init?.signal;
+  if (f.kind === 'timeout') {
+    return new Promise<Response>((_, rej) => {
+      const t = setTimeout(() => rej(new TypeError('Network request timed out')), 90_000);
+      signal?.addEventListener?.('abort', () => { clearTimeout(t); rej(Object.assign(new Error('Aborted'), { name: 'AbortError' })); });
+    });
+  }
+  await new Promise(r => setTimeout(r, 8000));   // slow
+  return guarded(input, init, true);
+}
 
 function blocked(method: string, url: string, note: string): Response {
   console.warn(`E2E_BLOCKED ${method} ${url} ${note}`);
@@ -21,13 +77,35 @@ function blocked(method: string, url: string, note: string): Response {
   });
 }
 
-globalThis.fetch = (async (input: any, init?: any) => {
+async function readAndLearn(input: any, init: any): Promise<Response> {
+  const r = await realFetch(input, init);
+  try { if (r.ok) learn(await r.clone().json()); } catch { /* not JSON */ }
+  return r;
+}
+
+async function guarded(input: any, init: any, faultDone = false): Promise<Response> {
   const url: string = typeof input === 'string' ? input : input?.url ?? String(input);
   const method: string = String(init?.method ?? input?.method ?? 'GET').toUpperCase();
-  if (!url.includes(SUPABASE_HOST) || method === 'GET' || method === 'HEAD') return realFetch(input, init);
+  if (!url.includes(SUPABASE_HOST)) return realFetch(input, init);
+  const bodyText = typeof init?.body === 'string' ? init.body : '';
+  const f = faultDone ? null : faultFor(url, bodyText);
+  if (f) return applyFault(f, input, init, method, url);
+  if (method === 'GET' || method === 'HEAD') return readAndLearn(input, init);
   const path = url.split(SUPABASE_HOST)[1] ?? '';
+  let body: any = null;
+  try { body = bodyText ? JSON.parse(bodyText) : null; } catch { /* not JSON */ }
+  // the app's own log lines: kept, marked e2e so they are never read as Phil's taps
+  if (path.startsWith('/rest/v1/app_logs')) {
+    const mark = (x: any) => (x && typeof x === 'object' ? { ...x, data: { ...(x.data ?? {}), e2e: true } } : x);
+    const nb = Array.isArray(body) ? body.map(mark) : mark(body);
+    return realFetch(input, { ...init, body: JSON.stringify(nb) });
+  }
+  if (forRobot(url, body)) {
+    console.warn(`E2E_ROBOT ${method} ${path.slice(0, 80)} ${body?.action ?? ''}`);
+    return readAndLearn(input, init);
+  }
   const rpc = path.match(/^\/rest\/v1\/rpc\/([a-z0-9_]+)/i);
-  if (rpc && READ_RPCS.has(rpc[1])) return realFetch(input, init);
+  if (rpc && READ_RPCS.has(rpc[1])) return readAndLearn(input, init);
   // Tell T (11 Nov 2026): the box shows only where notes are switched on. This test build says "on" for every trip so
   // the screens can be tapped through; nothing can be stored (reads are forced dry, every other notes call is blocked).
   if (rpc && rpc[1] === 'planner_t_tell') {
@@ -80,13 +158,16 @@ globalThis.fetch = (async (input: any, init?: any) => {
       } catch (e) { console.warn(`E2E_FEEDS unreadable ${String(e)}`); }
       return r;
     }
-    if (READ_ACTIONS.has(action)) return realFetch(input, init);
+    if (READ_ACTIONS.has(action)) return readAndLearn(input, init);
     return blocked(method, url, `action=${action}`);
   }
   return blocked(method, url, '');
-}) as typeof fetch;
+}
 
-console.warn('E2E_GUARD installed: Supabase writes are blocked in this build');
+globalThis.fetch = ((input: any, init?: any) => guarded(input, init)) as typeof fetch;
+
+console.warn('E2E_GUARD installed: Supabase writes are blocked in this build, except on the test robot trip');
+pollFaults();
 
 // Trip-jump test: log every change of the trip held in memory (the one the trip, day,
 // planner and stop screens draw), so the job log shows which trip's data landed and when.

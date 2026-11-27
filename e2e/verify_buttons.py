@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.dirname(__file__))
 import crawl as C
 import verify as V
+import robot_planner as R
 
 
 OFFLINE = False   # set by offline_3d(): the network is off and every check name gets an 'offline-' prefix
@@ -272,11 +273,16 @@ def replan_now_card():
                 return {'label': t, 'xy': ((x1 + x2) // 2, (y1 + y2) // 2), 'y': y1}
         return None
     top, nav, _, _ = bars(s)
-    btn = rbtn(s)
-    if btn is not None and not (top + 20 <= btn['xy'][1] <= nav - 20):
-        d = btn['xy'][1] - (top + nav) // 2
-        C.adb('shell', 'input', 'swipe', '540', '1500', '540', str(1500 - max(-700, min(700, d))), '600'); s = C.capture(1.2)
+    # 27 Nov 2026 (run 174): 'between the bars' let the button sit under the day tabs, where Android reports an upside-down
+    # box and the tap lands on the tabs. Bring it to the middle third of the screen, as a listed (real-box) clickable.
+    h = R.screen_h()
+    for _ in range(5):
         btn = rbtn(s)
+        listed = btn is not None and any(c['label'] == btn['label'] and c['xy'] == btn['xy'] for c in s.clickables)
+        if listed and 0.35 * h <= btn['xy'][1] <= 0.70 * h:
+            break
+        d = int(btn['xy'][1] - 0.5 * h) if listed else (-500 if btn is not None else 300)   # not listed = under the header: move down
+        C.adb('shell', 'input', 'swipe', '540', str(int(0.6 * h)), '540', str(int(0.6 * h) - max(-600, min(600, d))), '600'); s = C.capture(1.2)
     time.sleep(2)   # 23 Nov 2026: a tap while the page still glides after the swipe only stops the glide
     sent = lambda: any(('planner_t_now' in a) or ('planner_t_replan_one' in a) for a in blocked_lines()[before:])
     after = []
@@ -2833,7 +2839,7 @@ def trip_order():
 
 
 def main():
-    sections = (trip_order, find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d, jenny_3d, offline_jenny)
+    sections = R.SECTIONS + (trip_order, find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d, jenny_3d, offline_jenny)
     # E2E_ONLY = comma list of section names: the workflow runs the sections on several emulators at once (16 Nov 2026)
     only = [x.strip() for x in os.environ.get('E2E_ONLY', '').split(',') if x.strip()]
     if only:
