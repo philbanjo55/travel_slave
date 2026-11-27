@@ -15,7 +15,7 @@ fp_mm = 60 / tan(hfov / 2), a confidence word with spreads, and a plan for each 
 300): same spot and crop, or move along the line to the named foreground thing (closer for a wider lens, back for a
 longer one) so it stays the same size, with the turn that keeps it at the same place in the frame.
 """
-import argparse, base64, json, math, os, subprocess, sys, tempfile, time, urllib.request
+import argparse, base64, json, math, os, subprocess, sys, tempfile, threading, time, urllib.request
 import numpy as np
 import cv2
 
@@ -275,6 +275,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
     if look.get('kind') not in (None, 'ground', 'drone'):   # a drone photo is solved too (17 Nov 2026): the kind is a hint
         v, why = verdict(None, look)
         return dict(ok=False, verdict=v, why=why, confidence=confidence(v, why, None), times=dict(total=time.time() - t0))
+    SV._prog('terrain')
     T = Terrain(rows_file, cache, region)
     hint = look.get('hint') or None   # the user's "I stood about here" pin (17 Nov 2026): {lat, lng, radius_m?, aim_lat?, aim_lng?}
     if hint and (hint.get('lat') is None or hint.get('lng') is None): hint = None
@@ -298,6 +299,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
         seen_.add(key_); tries.append(others + ps)
     best = None
     for i, lms in enumerate(tries):
+        if SV.PROGRESS is not None: SV.PROGRESS.attempt = (i + 1, len(tries))   # (the app's bar: "try 2 of 3")
         lmf = os.path.join(work, f'landmarks{i}.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
         r = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'), hint=hint, stand_pins=stand_pins)
         v, why = verdict(r, dict(look, landmarks=lms))
@@ -310,6 +312,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
         # nothing sure near the user's pin: the open search round the stop says whether the photo fits clearly better
         # elsewhere (a wrong pin still gets 'direction only' when only far peaks show: scan 6 with a pin 1.6 km off)
         log('  hint: no good answer near the pin, open search round the stop')
+        if SV.PROGRESS is not None: SV.PROGRESS.attempt = ('open', None)
         lmf = os.path.join(work, 'landmarks_open.json'); json.dump(dict(kind=look.get('kind'), landmarks=lms), open(lmf, 'w'))
         r2 = SV.solve(pic, rows_file, cache, region, tuple(stop), lmf, log=log, kind=look.get('kind'), stand_pins=stand_pins)
         v2, why2 = verdict(r2, dict(look, landmarks=lms))
@@ -338,6 +341,7 @@ def run(photo, look, stop, region, rows_file, cache, hcache=None, overlay=None, 
     if not r.get('ok') or v == 'not placed':
         return dict(ok=False, verdict=v, why=why, confidence=conf, times=dict(r.get('times') or {}, all=time.time() - t0),
                     hint=hint, open_fit=open_fit)
+    SV._prog('lenses')
     grids = T.stack(r['lat'], r['lng'], 30)
     fp, rows, fg, far = lens_rows(r, lms, T, grids)
     main = None
@@ -416,6 +420,38 @@ def call(api, body, tok):
             return dict(ok=False, error=f'network: {e}')
 
 
+class Steps:
+    """The search's progress for the app's bar (27 Nov 2026): the newest step (terrain / search / check / refine / lenses,
+    with done of n and the try), posted to photo-spot action 'step' from a thread of its own, at most every 3 s. Best
+    effort only: a lost or refused post changes nothing, and the search never waits for one."""
+    def __init__(self, api, job):
+        self.api, self.job, self.attempt = api, job, None
+        self.state = None; self.sent = None; self.tok = None; self.tok_at = 0.0; self.stop_ = False; self.last = 0.0
+        threading.Thread(target=self.loop, daemon=True).start()
+
+    def __call__(self, key, done=None, of=None):
+        a = self.attempt or (None, None)
+        self.state = dict(key=key, done=done, of=of, attempt=a[0], attempts=a[1])
+
+    def loop(self):
+        while not self.stop_:
+            time.sleep(1.0)
+            st = self.state
+            if st is None or st == self.sent: continue
+            new_key = self.sent is None or st['key'] != self.sent.get('key')
+            if time.time() - self.last < (1.0 if new_key else 3.0): continue
+            self.sent, self.last = st, time.time()
+            try:
+                if self.tok is None or time.time() - self.tok_at > 240: self.tok, self.tok_at = oidc_token(), time.time()
+                req = urllib.request.Request(self.api, data=json.dumps(clean(dict(action='step', job_id=self.job, step=st))).encode(), method='POST',
+                                             headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + self.tok})
+                urllib.request.urlopen(req, timeout=10).read()
+            except Exception:  # noqa: BLE001  (an older photo-spot without 'step' answers 400: fine)
+                pass
+
+    def stop(self): self.stop_ = True
+
+
 def worker(a):
     tok = oidc_token()
     c = call(a.api, dict(action='claim', job_id=a.job, run_id=int(os.environ.get('GITHUB_RUN_ID', '0') or 0)), tok)
@@ -430,13 +466,16 @@ def worker(a):
     rows = os.path.join(work, 'rows.json'); json.dump(c['rows'], open(rows, 'w'))
     pic = os.path.join(work, 'photo.jpg'); urllib.request.urlretrieve(job['photo_url'], pic)
     ovf = os.path.join(work, 'overlay.jpg')
+    SV.PROGRESS = Steps(a.api, a.job)
     try:
         pins = [(float(p_['lat']), float(p_['lng'])) for p_ in (job.get('stand_pins') or []) if p_.get('lat') is not None]
         res = run(pic, job['look'], (job['stop']['lat'], job['stop']['lng']), job['region'], rows, a.cache, a.hcache, ovf, stand_pins=pins)
+        SV.PROGRESS.stop()
         ov = base64.b64encode(open(ovf, 'rb').read()).decode() if os.path.exists(ovf) else None
         print(json.dumps({k: res.get(k) for k in ('ok', 'verdict', 'why', 'lat', 'lng', 'yaw', 'hfov', 'fp_mm', 'times')}, default=float))
         f = call(a.api, dict(action='finish', job_id=a.job, result=clean(res), overlay_jpeg_base64=ov), oidc_token())
     except Exception as e:  # noqa: BLE001
+        SV.PROGRESS.stop()
         import traceback; traceback.print_exc()
         f = call(a.api, dict(action='finish', job_id=a.job, error='the search failed: ' + str(e)[:200]), oidc_token())
     print('finish:', json.dumps(f)[:300])

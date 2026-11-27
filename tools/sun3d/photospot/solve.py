@@ -31,6 +31,14 @@ import contours as CT  # noqa: E402
 EYE = 1.7
 HFOVS = np.geomspace(12, 100, 15)
 HCACHE = None   # folder for per-stop horizon tables (set by --hcache)
+PROGRESS = None   # job.py's step reporter for the app's bar (27 Nov 2026): PROGRESS(key, done, of); None = nothing reported
+
+
+def _prog(key, done=None, of=None):
+    """one progress tick (search / check / refine); never stops or slows the search"""
+    if PROGRESS is None: return
+    try: PROGRESS(key, done, of)
+    except Exception: pass  # noqa: BLE001
 MU_REG = 1.0    # weight of the region match (what the model says is tree / building / near ground / far land / sky)
 MU_SEARCH = 0.5  # the same inside the spot search (lighter: it steers, the sky line still leads)
 # Clear view (17 Nov 2026, Glacier View: the search put the camera 550 m away in the Snake River forest, where 20 m
@@ -114,7 +122,7 @@ def rel_x(az, yaw, fp, W):
 
 # ---------------------------------------------------------------- coarse search
 def coarse(T, sky, lms, stop, radius, step, use_names=True, log=print, region_grids=None, extras=True, houses=None, cache_key=None,
-           aim=None, aim_tol=30.0):
+           aim=None, aim_tol=30.0, progress=None):
     """aim = (lat, lng) of what the user says the photo aims at: only headings within aim_tol deg of the bearing from
     each spot to it are tried"""
     W, H = sky['size']
@@ -161,6 +169,7 @@ def coarse(T, sky, lms, stop, radius, step, use_names=True, log=print, region_gr
             z = np.load(cfile); store = {(int(a), int(b)): (z['prof'][i], float(z['eye'][i])) for i, (a, b) in enumerate(z['key'])}
     n_new = 0
     for pi, (dE, dN) in enumerate(P):
+        if progress is not None and pi % 20 == 0: progress(pi, len(P))   # (the app's bar only)
         lat = lat0 + dN / KZ; lng = lng0 + dE / k0
         key = (int(round(dE * 10)), int(round(dN * 10)))
         if key in store:
@@ -746,7 +755,7 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
         center, anchor, crad, cstep, pscale, psig = stop, (0.0, 0.0), radius, step, 1000.0, 1500.0
     key = f"{region}_{center[0]:.6f}_{center[1]:.6f}_r{int(crad)}_s{int(cstep)}"
     co = coarse(T, sky, lms, center, crad, cstep, use_names=use_names, log=log, region_grids=fine, extras=bool(named), houses=hg,
-                cache_key=key, aim=aim, aim_tol=aim_tol)
+                cache_key=key, aim=aim, aim_tol=aim_tol, progress=lambda d, n_: _prog('search', d, n_))
     if hint:   # spots relative to the stop, as everywhere else
         for c in co: c['dE'] = (c['lng'] - stop[1]) * k0; c['dN'] = (c['lat'] - stop[0]) * KZ
 
@@ -772,7 +781,8 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
         h0 = max(home, key=lambda c: c['vote'])
         if all(math.hypot(h0['dE'] - c['dE'], h0['dN'] - c['dN']) > 100 for c in cands): cands.append(h0)
     scr = []
-    for c in cands:
+    for ci, c in enumerate(cands):
+        _prog('check', ci, len(cands))
         qk = R.quick(c)
         if qk is None: continue
         d = dA(c)
@@ -810,7 +820,8 @@ def solve(photo, rows, cache, region, stop, lm_file=None, radius=2500, step=None
     steps1 = (64, 32, 16, 8, 4)
     t3 = time.time()
     sols = []
-    for c in todo:
+    for ti, c in enumerate(todo):
+        _prog('refine', ti, len(todo))
         try:
             c2 = dict(c, yaw=c['q_quick'][0], pitch=c['q_quick'][1], roll=c['q_quick'][2], hfov=c['q_quick'][3])
             sol = R.refine(c2, log=log, steps1=steps1)
