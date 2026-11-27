@@ -11,7 +11,8 @@ import {
 import { VERDICT_COLOR, VERDICT_TEXT, countText, isBig, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
 import { TDay, TWeek, bestElsewhere, tripWeek } from '../../services/plannerWeek';
 import { DayScore, tripToday } from '../../services/plannerDay';
-import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../../services/replanNowStore';
+import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow, replanProgress, REPLAN_STEPS } from '../../services/replanNowStore';
+import ProgressBar from '../ProgressBar';
 import { ONE_PASS_UI } from '../../services/onePass';
 import { OnePassButton } from './OnePassButton';
 import { useTripStore } from '../../store/tripStore';
@@ -329,8 +330,17 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
 // A stop's T chance at its time on the shown day, its light, and one hint: a better time that
 // day, else a better trip day (both from T's own plans).
 export type StopHint = { p: number; light: string | null; chip: string | null; changed?: boolean; done?: boolean; count: string };
-export function stopHint(stopId: string, planner: DayPlanner | null): StopHint | null {
-  const v = planner?.byStop.get(stopId);
+// A visit of the same place counts too (27 Nov 2026, Phil: only Snake River had a chip after Accept): the trip holds one
+// entry per visit of a place, and an Accept can put a different entry of the place on the day than the one T's plan
+// named, so a miss by entry falls back to the plan's visit with the same name.
+const placeName = (n: unknown) => String(n ?? '').trim().toLowerCase();
+export function stopHint(stopId: string, planner: DayPlanner | null, name?: string | null): StopHint | null {
+  let key = stopId;
+  let v = planner?.byStop.get(stopId);
+  if (!v && planner && name) {
+    for (const [k, x] of planner.byStop) if (placeName(x.name) === placeName(name)) { v = x; key = k; break; }
+  }
+  stopId = key;
   if (!v || v.p_good == null) return null;
   const tz: string | undefined = planner?.run?.params?.tz;
   const light = v.light ? LIGHT_WORDS[v.light] ?? v.light : null;
@@ -377,12 +387,19 @@ export function ChanceLine({ hint, label, onChip }: { hint: StopHint; label?: bo
 export function ReplanNowStatus({ tripId }: { tripId: string }) {
   const v = useReplanNow(tripId);
   const { currentTripData } = useTripStore();
-  if (v.phase === 'running') {
-    return <Text style={styles.cardSub}>Re-planning the rest of today with fresh camera pictures (about 1 min)…</Text>;
-  }
+  if (v.phase === 'running') return <ReplanProgress tripId={tripId} />;
   if (v.phase === 'done') return <Text style={styles.warn}>{v.status.done_at ? `${clock12(v.status.done_at, currentTripData?.trip?.timezone ?? undefined)}: ` : ''}{v.message}</Text>;
   if (v.phase === 'error') return <Text style={[styles.cardSub, { color: '#e74c3c' }]}>{v.message}</Text>;
   return null;
+}
+
+// The running request's steps as a bar (Sent -> Reading cameras -> Planning today -> Done), from the server's own
+// status of the request (services/replanNowStore replanProgress); nothing while no request runs.
+export function ReplanProgress({ tripId }: { tripId: string }) {
+  const v = useReplanNow(tripId);
+  if (v.phase !== 'running') return null;
+  const p = replanProgress(v);
+  return <ProgressBar label="Re-plan today" steps={REPLAN_STEPS} step={p.step} within={p.within} detail={p.detail} />;
 }
 
 export function ReplanNowButton({ tripId }: { tripId: string }) {

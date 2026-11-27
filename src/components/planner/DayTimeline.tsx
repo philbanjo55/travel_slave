@@ -83,7 +83,7 @@ function ShootCard({ item, weather: w, planner, ghost, change, onChip, dayDate }
 }) {
   const wxTag = w && w.temperature_c != null ? forecastTag(w, dayDate) : null;
   const tier = planner?.tiers.get(item.id) ?? null;
-  const base = stopHint(item.id, planner);
+  const base = stopHint(item.id, planner, item.name);
   // C2: a stop T's best plan changes gets a chip even without a better-time hint; tapping opens the popover.
   const chip = base?.chip ?? (change?.kind === 'moved' ? `T: ${change.now}` : change?.kind === 'skipped' ? 'T skips this' : null);
   const hint = base ? { ...base, chip: ghost ? null : chip } : null;

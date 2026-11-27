@@ -2892,7 +2892,10 @@
       try {
         if (typeof DecompressionStream === 'undefined') return fail("This phone's web view is too old for the 3D view.");
         if (!inside(eye)) return fail('This spot is outside the 3D terrain for the area.');
-        await load(); build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
+        // where the first picture is (27 Nov 2026, the app's progress bar): unpacking the files, then building the meshes
+        post({ type: 'drawStage', stage: 'unpack' });
+        await load(); post({ type: 'drawStage', stage: 'build' });
+        build(); aim(); wire(); resize(); say(''); relight = dirty = true; requestAnimationFrame(tick);
         if (OH.on) ohApplyR(); else if (SPL.on) splitApply();
         const fore = !!((cfg.detail && dparts.length) || ncparts.length || wcparts.length || (cfg.canopy && cnAny()) || (cfg.range && rparts.length) || (cfg.houses && hsAny()));
         post({ type: 'ready', n: FAR.n, gl: 'webgl2', near: NR ? NR.n : 0, detail: 0, fore }); heading();

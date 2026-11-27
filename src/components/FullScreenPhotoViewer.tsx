@@ -15,7 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { getPhotoUri } from '../services/photoCache';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isOpen, lookupSpot, markSpotSeen, requestSpot, spotProgress, useSpot } from '../services/photoSpot';
+import { isOpen, lookupSpot, markSpotSeen, requestSpot, SPOT_STEPS, spotSteps, useSpot } from '../services/photoSpot';
+import ProgressBar from './ProgressBar';
 import { useTripStore } from '../store/tripStore';
 import FindSpotSheet from './FindSpotSheet';
 import type { SpotHint } from '../services/photoSpot';
@@ -307,14 +308,8 @@ function FindSpot({ photoId, photoUri, stop, onLeave }: {
   const job = kept?.job ?? null;
   const [asking, setAsking] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [, tick] = useState(0);
   useEffect(() => { setErr(null); lookupSpot(photoId, stop.id).catch(() => {}); }, [photoId, stop.id]);
   const open = isOpen(job);
-  useEffect(() => {   // the bar creeps on between polls
-    if (!open) return;
-    const t = setInterval(() => tick(n => n + 1), 1000);
-    return () => clearInterval(t);
-  }, [open]);
   const found = job?.status === 'done' && job.result?.ok;
   const failed = job?.status === 'error' || (job?.status === 'done' && !job.result?.ok);
   const see = () => {
@@ -357,7 +352,7 @@ function FindSpot({ photoId, photoUri, stop, onLeave }: {
             <Text style={styles.spotTitle}>Finding where you stood</Text>
             <Text style={styles.spotSmall}>about 3 min</Text>
           </View>
-          <View style={styles.spotBar}><View style={[styles.spotFill, { width: `${Math.round(spotProgress(job) * 100)}%` }]} /></View>
+          {(() => { const p = spotSteps(job); return <ProgressBar label="Find spot" steps={SPOT_STEPS} step={p.step} within={p.within} detail={p.detail} compact />; })()}
           <Text style={styles.spotSmall}>{job?.note && /set up|did not start/.test(job.note) ? job.note[0].toUpperCase() + job.note.slice(1) : "You can leave. It tells you when it's done."}</Text>
         </View>
       ) : found ? (
@@ -410,8 +405,6 @@ const styles = StyleSheet.create({
   spotRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   spotTitle: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
   spotSmall: { color: '#888888', fontSize: 12 },
-  spotBar: { height: 4, borderRadius: 2, backgroundColor: '#2a2a2a', overflow: 'hidden' },
-  spotFill: { height: 4, borderRadius: 2, backgroundColor: '#5aaa7a' },
   counter: {
     position: 'absolute', top: 54, left: 20, paddingHorizontal: 10, paddingVertical: 4,
     borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.45)',

@@ -81,11 +81,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # TEMP 27 Nov 2026: planner checks only, split over two emulators (Phil: Re-plan and Accept do nothing)
+          # TEMP 27 Nov 2026: progress-bar build (branch claude/progress-bars) + place-matched chips
           - shard: p1
             only: trip_order,side_by_side_card,plan_check_card,replan_now_card,ghost_accept
           - shard: p2
             only: plans_tab,tell_t,tell_t_setup
+          - shard: a
+            only: sun_3d
+          - shard: b
+            only: find_spot,stops_page
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
