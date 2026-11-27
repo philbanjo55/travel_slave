@@ -116,7 +116,8 @@ type Props = {
 const Web = WebView as unknown as React.ComponentType<any>;
 
 // the stages the page reports while it builds the close-up foreground ('detail' messages), in its order
-const LOAD_STEPS = ['Finding', 'Getting', 'Drawing'];   // the 3D view's first load, as the cover's bar shows it
+const LOAD_STEPS = ['Finding', 'Getting', 'Drawing'];
+const HD_STEPS = ['Asking Google', 'Starting', 'Getting tiles', 'More detail'];   // the 3D view's first load, as the cover's bar shows it
 const DETAIL_STAGES = ['decode', 'mask', 'textures', 'trees', 'wide colour', 'photos', 'houses', 'light', 'done'];
 const mbText = (b: number) => (b >= 10e6 ? Math.round(b / 1e6).toString() : (b / 1e6).toFixed(1));
 type Phase = 'finding' | 'none' | 'loading' | 'failed' | 'starting' | 'ready' | 'error';
@@ -385,6 +386,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [wantLocal, setWantLocal] = useState(false);
   const [hdNote, setHdNote] = useState<string | null>(null);
   const [hdLoading, setHdLoading] = useState(false);
+  const [hdShown, setHdShown] = useState(false);   // the HD page says Google's picture is up (progress only)
   const hdRef = useRef<string | null>(null);
   hdRef.current = hd;
   const want = !overhead && (hdOn ?? wantLocal);   // (no HD from above)
@@ -638,7 +640,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   // Change between the offline page and the HD page: the web view is made anew, so everything it reported is cleared.
   const swap = useCallback((root: string | null) => {
     booted.current = false; sent.current = false;
-    setLit(null); setMoments(null); setLook(null); setHdLoading(false); setProblem(null); setShapes(false); setWideTrees(0); setRangeIn(false); setHousesIn(0); setPhotoFore(false);
+    setLit(null); setMoments(null); setLook(null); setHdLoading(false); setHdShown(false); setProblem(null); setShapes(false); setWideTrees(0); setRangeIn(false); setHousesIn(0); setPhotoFore(false);
     setPhase(p => (p === 'ready' || p === 'error' ? 'starting' : p));
     setHd(root);
   }, []);
@@ -819,7 +821,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     }
     else if (m.type === 'otherTap') { if (typeof m.id === 'string' && pickOtherRef.current) pickOtherRef.current(m.id); }
     else if (m.type === 'walk') { walkQ.current.busy = 0; walkQ.current.f = 0; walkQ.current.r = 0; setWalkNote(m.stopped === 'far' ? `That's as far as walk mode goes: ${m.max} m from your saved spot.` : m.stopped === 'sky' ? 'Tap the ground to jump there, not the sky.' : 'That is the edge of the saved terrain.'); }
-    else if (m.type === 'hd') setHdLoading(!!m.loading);
+    else if (m.type === 'hd') { setHdLoading(!!m.loading); setHdShown(!!m.shown); }
     else if (m.type === 'error') {
       if (hdRef.current) {
         // the HD page gave up (no signal, Google's session ran out, the phone's memory): back to the offline view
@@ -1056,7 +1058,11 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     : null;
   // The cover's bar (not for HD, nor once there is nothing to wait for): Finding -> Getting (bytes on the phone of the
   // view's files) -> Drawing (handing the files to the page, then the page's own 'drawStage' messages).
-  const coverProg = hd || holding ? null
+  // HD: what the panel itself sees, as steps (the HD page's bundle can't be rebuilt here, so no counts from inside it):
+  // asking the door for Google's root tile set, the HD page starting, Google's tiles until the first picture, more tiles.
+  const hdStep = want && !hd && hdCfg ? 0 : !hd ? -1 : !ready ? 1 : !hdShown ? 2 : hdLoading ? 3 : -1;
+  const hdBar = hdStep >= 0 ? { steps: HD_STEPS, step: hdStep, within: null, text: HD_STEPS[hdStep] } : null;
+  const coverProg = hd || holding ? (hdBar ? { step: hdBar.step, within: null, text: '', steps: HD_STEPS } : null)
     : phase === 'finding' ? { step: 0, within: null, text: '' }
     : phase === 'loading' ? { step: 1, within: loadProg && loadProg.total ? loadProg.got / loadProg.total : null,
                               text: loadProg && loadProg.total ? `${mbText(loadProg.got)} of ${mbText(loadProg.total)} MB` : '' }
@@ -1130,7 +1136,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         {waiting ? (
           <View style={styles.cover} pointerEvents="none">
             <Text style={styles.coverText}>{waiting}</Text>
-            {coverProg ? <View style={styles.coverBar}><ProgressBar label="3D view" text={coverProg.text} steps={LOAD_STEPS} step={coverProg.step} within={coverProg.within} compact /></View> : null}
+            {coverProg ? <View style={styles.coverBar}><ProgressBar label={hd || holding ? 'HD picture' : '3D view'} text={coverProg.text} steps={'steps' in coverProg ? coverProg.steps : LOAD_STEPS} step={coverProg.step} within={coverProg.within} compact /></View> : null}
           </View>
         ) : null}
         {oh.controls}
@@ -1496,6 +1502,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
             <Text style={styles.perf} numberOfLines={1} accessibilityLabel={`Smoothness: ${perfLine(perf)}`}>Smoothness: {perfLine(perf)}</Text>
           ) : null}
           {foreBusy && !hd && !foreBar ? <Text style={styles.perf}>Foreground loading…</Text> : null}
+          {hdBar && !waiting ? <View style={styles.foreBar}><ProgressBar label="HD picture" text={hdBar.text} steps={hdBar.steps} step={hdBar.step} compact /></View> : null}
           {foreBar ? <View style={styles.foreBar}><ProgressBar label="Foreground" text={foreBar.text} steps={foreBar.steps} step={foreBar.step} within={foreBar.within} compact /></View> : null}
           {hd && left != null ? <Text style={styles.perf}>HD views left: {leftToday != null ? `${leftToday} today, ` : ''}{left} this month</Text> : null}
           <TouchableOpacity
