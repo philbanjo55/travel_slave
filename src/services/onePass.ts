@@ -4,6 +4,7 @@ import { supabase } from './supabase';
 import { fetchPlanningStatus, latestT, nowStatus, waitForT, PlanRun } from './planner';
 import { trackReplanNow } from './replanNowStore';
 import { kickPlanning } from './planningStatus';
+import { isNoSignal } from '../utils/errText';
 
 // One-pass Re-plan (Phil, 15 Nov 2026: "if my initial plan has stop A on it but when I replan stop A is no longer
 // there I want that to trickle down to the rest of the week ... at the same time"). One button instead of Re-plan now
@@ -45,6 +46,7 @@ export type OnePassStart = { mode: ReplanMode; since: string; nowId: number | nu
 // With no signal the call used to wait as long as Android does (a minute or more) and the card said nothing
 // (27 Nov 2026, the emulator's no-signal test): give up after 20 s and say why.
 const NO_SIGNAL = 'No signal: T could not be reached. Try again when you have signal.';
+const offline = (m: string) => isNoSignal(m);
 export async function startOnePass(tripId: string, title?: string): Promise<OnePassStart> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 20_000);
@@ -52,9 +54,9 @@ export async function startOnePass(tripId: string, title?: string): Promise<OneP
   try {
     ({ data, error } = await supabase.rpc('planner_t_replan_one', { p_trip: tripId }).abortSignal(ctl.signal));
   } catch (e: any) {
-    throw new Error(ctl.signal.aborted || /network|fetch|abort/i.test(String(e?.message ?? e)) ? NO_SIGNAL : String(e?.message ?? e));
+    throw new Error(ctl.signal.aborted || offline(String(e?.message ?? e)) ? NO_SIGNAL : String(e?.message ?? e));
   } finally { clearTimeout(timer); }
-  if (error && (ctl.signal.aborted || /network request failed|failed to fetch|abort/i.test(String(error.message ?? '')))) throw new Error(NO_SIGNAL);
+  if (error && (ctl.signal.aborted || offline(String(error.message ?? '')))) throw new Error(NO_SIGNAL);
   kickPlanning(tripId, data?.mode === 'today' ? 60_000 : 0);
   if (error) throw error;
   if (!data?.ok) throw new Error(data?.error ?? data?.week?.error ?? 'T could not start');
