@@ -15,6 +15,7 @@ import MissingScreen from '../components/MissingScreen';
 import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
 import SpotFoundChip from '../components/SpotFoundChip';
 import TrailCard from '../components/TrailCard';
+import ProgressBar from '../components/ProgressBar';
 import { trailFor, useTrailInfo } from '../services/trailInfo';
 import SunPlannerSection from '../components/sun/SunPlannerSection';
 import { pingNearView } from '../components/sun/nearView';
@@ -84,6 +85,16 @@ function PhotoThumb({ photo, count, onPress }: { photo: any; count: number; onPr
   );
 }
 
+// Several photos picked at once: how many are up, of all of them (counted by the upload hook as each one finishes).
+function UploadBar({ n }: { n: { done: number; total: number } }) {
+  return (
+    <View style={{ marginTop: spacing.sm, marginBottom: spacing.md }}>
+      <ProgressBar label="Photo upload" text={n.done < n.total ? `Uploading ${n.done + 1} of ${n.total} photos` : `${n.total} of ${n.total} photos up`}
+        count={null} fraction={n.done / n.total} />
+    </View>
+  );
+}
+
 export default function StopDetailScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -120,7 +131,7 @@ export default function StopDetailScreen() {
   // the early return below: a stop that leaves its day while open (reload, move, a practice
   // trip rolling its days) otherwise renders one hook fewer and crashes the screen.
   const groupStops = photoGroupStops(currentTripData, stop);
-  const { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error } = usePhotoUpload(stop?.id ?? '', groupStops.map((s: any) => s.id));
+  const { pickAndUpload, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, uploadCount, error } = usePhotoUpload(stop?.id ?? '', groupStops.map((s: any) => s.id));
 
   if (!stop) return <MissingScreen loading={!currentTripData} what="stop" />;
   const trail = trailFor(trails, [stop.id], stop.name);
@@ -259,6 +270,7 @@ export default function StopDetailScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        {uploadCount && uploadCount.type === 'reference' ? <UploadBar n={uploadCount} /> : null}
         {error && (
           <Text style={[styles.uploadError, { marginBottom: spacing.md }]}>{error}</Text>
         )}
@@ -482,6 +494,7 @@ export default function StopDetailScreen() {
               <Text style={styles.addPhotoText}>From Roll</Text>
             </TouchableOpacity>
           </View>
+          {uploadCount && uploadCount.type === 'field' ? <UploadBar n={uploadCount} /> : null}
         </View>
 
         <View style={{ height: 80 }} />
