@@ -1,0 +1,56 @@
+name: photo-spot
+
+# Find my spot from a photo (Phil, 16 Nov 2026). Started by edge function photo-spot (workflow_dispatch with the
+# job id) after Claude has named the landmarks in the photo. tools/sun3d/photospot/job.py claims the job, searches
+# our 3D terrain for where the camera stood (~2 min) and sends the answer back. It proves who it is with the run's
+# own OIDC token (audience photo-spot): this repo is public, so the workflow holds no secrets.
+# A push that changes the worker only checks that it still imports (no job).
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: photo_spot_jobs id
+        required: true
+  push:
+    branches: [claude/photo-spot-app]
+    paths: ['.github/workflows/photo-spot.yml', 'tools/sun3d/photospot/**']
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: photo-spot-${{ github.event.inputs.job_id || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  solve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/sun3d
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tools/sun3d/photospot/requirements.txt
+      - run: pip install -r tools/sun3d/photospot/requirements.txt
+      - name: Terrain files (public bucket, kept between runs)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/ps_terrain
+            ~/ps_hcache
+          key: photo-spot-terrain-${{ github.run_id }}
+          restore-keys: photo-spot-terrain-
+      - name: Self-check (push)
+        if: github.event_name == 'push'
+        run: python -c "import sys; sys.path.insert(0, 'tools/sun3d/photospot'); import job; print('worker imports fine')"
+      - name: Solve
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          JOB_ID: ${{ github.event.inputs.job_id }}
+        run: python tools/sun3d/photospot/job.py --job "$JOB_ID" --cache ~/ps_terrain --hcache ~/ps_hcache

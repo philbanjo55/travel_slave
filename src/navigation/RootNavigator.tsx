@@ -1,10 +1,25 @@
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useEffect } from 'react';
+import { NavigationContainer, DarkTheme, createNavigationContainerRef } from '@react-navigation/native';
+import * as Notifications from 'expo-notifications';
+import { PLANNER_ON } from '../utils/variant';
+import { refreshNightly, setupPlannerNotifications } from '../services/plannerNotify';
+import { resumeReplanNow } from '../services/replanNowStore';
 import { createStackNavigator } from '@react-navigation/stack';
 import TripsScreen from '../screens/TripsScreen';
 import TripScreen from '../screens/TripScreen';
 import DayScreen from '../screens/DayScreen';
 import StopDetailScreen from '../screens/StopDetailScreen';
+import ReciprocityScreen from '../screens/ReciprocityScreen';
+import FocusSpreadScreen from '../screens/FocusSpreadScreen';
+import ExposuresScreen from '../screens/ExposuresScreen';
+import ExposureDetailScreen from '../screens/ExposureDetailScreen';
+import ExposureImportScreen from '../screens/ExposureImportScreen';
+import DayCompareScreen from '../screens/DayCompareScreen';
+import PlannerScreen from '../screens/PlannerScreen';
+import TrainingScreen from '../screens/TrainingScreen';
+import FeedsScreen from '../screens/FeedsScreen';
+import PhotoSpotScreen from '../screens/PhotoSpotScreen';
+import { resumePhotoSpots } from '../services/photoSpot';
 import { colors } from '../theme';
 
 export type RootStackParamList = {
@@ -12,13 +27,29 @@ export type RootStackParamList = {
   Trip: { tripId: string };
   Day: { tripId: string; dayIndex: number };
   StopDetail: { stopId: string; dayId: string };
+  Reciprocity: undefined;
+  FocusSpread: undefined;
+  Exposures: undefined;
+  ExposureDetail: { id: string };
+  ExposureImport: undefined;
+  DayCompare: { dayTitle: string; dayNumber: number; stops: any[]; weather: Record<string, any> };
+  // Solver Planner, TEST app only (see utils/variant).
+  Planner: { tripId: string; tab?: 'overview' | 'plans' | 'subjects' | 'map' | 'setup'; date?: string };
+  // Live training trips (trips.training_of), TEST app only.
+  Training: undefined;
+  // Every live feed for a trip (cameras, airport, last updated), TEST app only.
+  Feeds: { tripId: string };
+  // Find my spot: where a stop photo was taken from (both apps).
+  PhotoSpot: { jobId: string; stopName?: string | null };
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
 
 const navigationTheme = {
+  ...DarkTheme,
   dark: true,
   colors: {
+    ...DarkTheme.colors,
     primary: colors.accent,
     background: colors.background,
     card: colors.surface,
@@ -28,9 +59,35 @@ const navigationTheme = {
   },
 };
 
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
+// TEST app: tapping the nightly brief opens that trip's Planner (through the
+// trip page, which loads the trip).
+function usePlannerNotificationTaps() {
+  const last = Notifications.useLastNotificationResponse();
+  useEffect(() => { resumePhotoSpots().catch(() => {}); }, []);
+  useEffect(() => { if (PLANNER_ON) { setupPlannerNotifications(); refreshNightly().catch(() => {}); resumeReplanNow().catch(() => {}); } }, []);
+  useEffect(() => {
+    const data: any = last?.notification.request.content.data;
+    if (data?.kind === 'photo_spot' && data.jobId) {   // Find spot finished while the app was in the background
+      const open = () => { if (!navigationRef.isReady()) { setTimeout(open, 300); return; } navigationRef.navigate('PhotoSpot', { jobId: data.jobId }); };
+      open();
+      return;
+    }
+    if (!PLANNER_ON || data?.kind !== 'planner_brief' || !data.tripId) return;
+    const go = () => {
+      if (!navigationRef.isReady()) { setTimeout(go, 300); return; }
+      navigationRef.navigate('Trip', { tripId: data.tripId });
+      navigationRef.navigate('Planner', { tripId: data.tripId, tab: 'overview' });
+    };
+    go();
+  }, [last?.notification.request.identifier, last?.actionIdentifier]);
+}
+
 export default function RootNavigator() {
+  usePlannerNotificationTaps();
   return (
-    <NavigationContainer theme={navigationTheme}>
+    <NavigationContainer theme={navigationTheme} ref={navigationRef}>
       <Stack.Navigator
         screenOptions={{
           headerShown: false,
@@ -49,9 +106,20 @@ export default function RootNavigator() {
         }}
       >
         <Stack.Screen name="Trips" component={TripsScreen} />
-        <Stack.Screen name="Trip" component={TripScreen} />
+        <Stack.Screen name="Trip" component={TripScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Day" component={DayScreen} />
-        <Stack.Screen name="StopDetail" component={StopDetailScreen} />
+        <Stack.Screen name="StopDetail" component={StopDetailScreen} options={{ gestureEnabled: false }} />
+        <Stack.Screen name="Reciprocity" component={ReciprocityScreen} />
+        <Stack.Screen name="FocusSpread" component={FocusSpreadScreen} />
+        <Stack.Screen name="Exposures" component={ExposuresScreen} />
+        <Stack.Screen name="ExposureDetail" component={ExposureDetailScreen} />
+        <Stack.Screen name="ExposureImport" component={ExposureImportScreen} />
+        <Stack.Screen name="DayCompare" component={DayCompareScreen} />
+        {/* No swipe-back: it grabbed sideways swipes on the camera strip and moved the whole screen. */}
+        <Stack.Screen name="Planner" component={PlannerScreen} options={{ gestureEnabled: false }} />
+        <Stack.Screen name="Training" component={TrainingScreen} />
+        <Stack.Screen name="Feeds" component={FeedsScreen} />
+        <Stack.Screen name="PhotoSpot" component={PhotoSpotScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
