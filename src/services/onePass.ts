@@ -43,7 +43,9 @@ export type OnePassStart = { mode: ReplanMode; since: string; nowId: number | nu
 // Starts the one Re-plan (RPC planner_t_replan_one). Today's part is followed by the Re-plan now store (the card's
 // line and the Plans tab), the rest of the trip by the planning strip.
 export async function startOnePass(tripId: string, title?: string): Promise<OnePassStart> {
+  console.warn('E2E_REPLAN rpc start');
   const { data, error } = await supabase.rpc('planner_t_replan_one', { p_trip: tripId });
+  console.warn(`E2E_REPLAN rpc done ${JSON.stringify(error ?? data)}`);
   kickPlanning(tripId, data?.mode === 'today' ? 60_000 : 0);
   if (error) throw error;
   if (!data?.ok) throw new Error(data?.error ?? data?.week?.error ?? 'T could not start');

@@ -299,6 +299,14 @@ def replan_now_card():
         aft0 = C.capture(0.5)
         print('INFO after the tap: ' + ' | '.join(t for t in aft0.all_texts if 'plan' in t.lower() or 'blocked' in t.lower())[:600], flush=True)
     print('INFO blocked after Re-plan now: ' + ' | '.join(a[-160:] for a in after)[:800], flush=True)
+    try:
+        lc = C.adb('logcat', '-d', '-s', 'ReactNativeJS:*', capture=True) if 'capture' in C.adb.__code__.co_varnames else None
+    except Exception as ex: lc = None
+    import subprocess
+    try:
+        out = subprocess.run(['adb', 'logcat', '-d', '-s', 'ReactNativeJS:*'], capture_output=True, text=True, timeout=30).stdout
+        print('INFO REPLAN logcat: ' + ' || '.join(l[-200:] for l in out.splitlines() if 'E2E_REPLAN' in l)[:3000], flush=True)
+    except Exception as ex: print('INFO REPLAN logcat failed ' + str(ex), flush=True)
     # the one Re-plan button (18 Nov 2026) sends planner_t_replan_one (Re-plan now + the rest of the trip)
     V.check('btn-replan-now-sent', any(('planner_t_now' in a) or ('planner_t_replan_one' in a) for a in after), 'the tap sent planner_t_now / planner_t_replan_one (blocked)')
     V.check('btn-replan-now-alive', C.app_alive())

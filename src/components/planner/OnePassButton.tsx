@@ -22,9 +22,10 @@ export function OnePassButton({ tripId, variant, onStarted, onError, disabled }:
   const busy = starting || now.phase === 'running';
   const sub = MODE_SUB[mode ?? 'rest'];
   const go = async () => {
+    console.warn(`E2E_REPLAN go variant=${variant} off=${busy || !!disabled} phase=${now.phase} mode=${mode}`);
     setStarting(true);
-    try { onStarted?.(await startOnePass(tripId, currentTripData?.trip?.title)); }
-    catch (e: any) { const m = errText(e); failReplanNow(tripId, m); onError?.(m); }
+    try { const r = await startOnePass(tripId, currentTripData?.trip?.title); console.warn(`E2E_REPLAN started ${JSON.stringify(r)}`); onStarted?.(r); }
+    catch (e: any) { const m = errText(e); console.warn(`E2E_REPLAN error ${m}`); failReplanNow(tripId, m); onError?.(m); }
     setStarting(false);
   };
   const label = `Re-plan: ${sub}. Plan again and Re-plan now with the cameras in one`;
@@ -53,7 +54,7 @@ export function OnePassButton({ tripId, variant, onStarted, onError, disabled }:
     );
   }
   return (
-    <TouchableOpacity onPress={go} disabled={off} style={[styles.card, off && { opacity: 0.6 }]} activeOpacity={0.8} accessibilityRole="button"
+    <TouchableOpacity onPress={go} onPressIn={() => console.warn('E2E_REPLAN pressIn card')} onPressOut={() => console.warn('E2E_REPLAN pressOut card')} disabled={off} style={[styles.card, off && { opacity: 0.6 }]} activeOpacity={0.8} accessibilityRole="button"
       accessibilityState={{ disabled: off, busy }} accessibilityLabel={label}>
       {busy ? <ActivityIndicator size="small" color={colors.textPrimary} /> : null}
       <View style={{ alignItems: 'center' }}>
