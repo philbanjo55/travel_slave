@@ -280,7 +280,7 @@ def robot_accept():
         V.check('robot-accept-shown', None, 'T matches the itinerary on the next 3 days: nothing to accept'); return
     day_id = d['id']
     before = {s['id']: (s['day_id'], s['position'], s['time_label']) for s in robot_stops()}
-    last0 = max([a['id'] for a in state().get('applies', [])] or [0])
+    seen0 = {str(a['id']) for a in state().get('applies', [])}
     if not (safe_tap("Show T's changes on the timeline", 'accept') or safe_tap('See what T leaves out', 'accept')):
         V.check('robot-accept-shown', False, "the card's button could not be tapped"); return
     # the preview line ("N stops change over M days") must come, not a spinner for ever
@@ -305,7 +305,7 @@ def robot_accept():
     if alert: V.dialog_ok(); time.sleep(2)
     after = {s['id']: (s['day_id'], s['position'], s['time_label']) for s in robot_stops()}
     moved = sum(1 for k, v in after.items() if before.get(k) != v)
-    new_applies = [a for a in state().get('applies', []) if a['id'] > last0]
+    new_applies = [a for a in state().get('applies', []) if str(a['id']) not in seen0]
     print(f'INFO accept: preview said {n_pre}, server moved {moved} stops, new applies {new_applies}', flush=True)
     V.check('robot-accept-server', moved > 0 or n_pre == 0, f'{moved} stops changed on the server (preview said {n_pre})')
     V.check('robot-accept-once', len(new_applies) <= 1,
@@ -346,7 +346,7 @@ def robot_replan():
     b = replan_button(s)
     mode = b['label'].split('.')[0] if b else '?'
     print(f'INFO replan mode: {mode}', flush=True)
-    last_run = max([r['id'] for r in state().get('runs', [])] or [0])
+    seen_runs = {r['id'] for r in state().get('runs', [])}
     sent0 = len(robot_logs('planner_t_replan_one'))
     t0 = time.time()
     b = safe_tap('Re-plan: ', 'replan')
@@ -364,11 +364,14 @@ def robot_replan():
     done = None
     for _ in range(36):   # up to 6 min
         time.sleep(10)
-        runs = [r for r in state().get('runs', []) if r['id'] > last_run and r.get('name') != 'app_T']
+        runs = [r for r in state().get('runs', []) if r['id'] not in seen_runs and r.get('name') != 'app_T']
+        # a draft replaced by a newer one is 'stopped' (one-pass restarts the rest-of-trip draft from today's new plan)
         if runs and all(r['status'] in ('done', 'error', 'stopped') for r in runs):
             done = runs; break
-    print(f'INFO replan runs: {done} after {time.time() - t0:.0f} s', flush=True)
-    V.check('robot-replan-server', bool(done) and all(r['status'] == 'done' for r in done),
+    secs = time.time() - t0
+    print(f'INFO replan runs: {done} after {secs:.0f} s', flush=True)
+    V.check('robot-replan-time', done is not None and secs < 240, f'whole re-plan (today + rest of trip) took {secs:.0f} s (aim: under 4 min)')
+    V.check('robot-replan-server', bool(done) and done[-1]['status'] == 'done' and not any(r['status'] == 'error' for r in done),
             f"{len(done or [])} new T runs, statuses {[r['status'] for r in done or []]}" if done else 'no new T run finished in 6 min')
     st = C.capture(2)
     V.check('robot-replan-idle-again', replan_button(st) is not None or find('Re-plan: ', 4) is not None, 'the button is back after the re-plan')
@@ -494,8 +497,15 @@ def robot_tell():
         st = C.capture(2)
         if not (V.has(st, 'Send the note to T') or V.has(st, 'Looks right')): break
         if not V.tap_text(st, 'Close Tell T'): V.back()
-    scroll_top()
-    st = find('YOUR NOTES FOR T', 8)
+    st = None
+    for _ in range(4):   # the card refreshes its notes after the sheet closes: give it a few tries
+        scroll_top()
+        st = find('YOUR NOTES FOR T', 8)
+        if st is not None: break
+        time.sleep(5)
+    if st is None:
+        rows = all_screen(8)
+        print('INFO card after the note: ' + ' | '.join(t for _, _, t in rows if 'note' in t.lower() or 'T' in t[:2])[:1500], flush=True)
     V.check('robot-tell-on-card', st is not None, 'the note is listed on the card')
     if st is None or note is None: return
     rm = next((c for c in st.clickables if c['label'].startswith('Remove the note')), None)
