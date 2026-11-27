@@ -329,8 +329,17 @@ export function DayScoreCard({ tripId, date, planner, score, onShowChanges, past
 // A stop's T chance at its time on the shown day, its light, and one hint: a better time that
 // day, else a better trip day (both from T's own plans).
 export type StopHint = { p: number; light: string | null; chip: string | null; changed?: boolean; done?: boolean; count: string };
-export function stopHint(stopId: string, planner: DayPlanner | null): StopHint | null {
-  const v = planner?.byStop.get(stopId);
+// A visit of the same place counts too (27 Nov 2026, Phil: only Snake River had a chip after Accept): the trip holds one
+// entry per visit of a place, and an Accept can put a different entry of the place on the day than the one T's plan
+// named, so a miss by entry falls back to the plan's visit with the same name.
+const placeName = (n: unknown) => String(n ?? '').trim().toLowerCase();
+export function stopHint(stopId: string, planner: DayPlanner | null, name?: string | null): StopHint | null {
+  let key = stopId;
+  let v = planner?.byStop.get(stopId);
+  if (!v && planner && name) {
+    for (const [k, x] of planner.byStop) if (placeName(x.name) === placeName(name)) { v = x; key = k; break; }
+  }
+  stopId = key;
   if (!v || v.p_good == null) return null;
   const tz: string | undefined = planner?.run?.params?.tz;
   const light = v.light ? LIGHT_WORDS[v.light] ?? v.light : null;
