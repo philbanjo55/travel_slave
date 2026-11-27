@@ -218,8 +218,9 @@ def chips_check(tag):
     names = {s['name'] for s in stops if s.get('day_id') and tiers.get(s['id']) and s.get('shot_type') != 'logistics'}
     # walk the screen in order: a stop name opens a card, a verdict line before the next name belongs to it
     seq, cur = [], None
+    TIME = re.compile(r'^\d{1,2}:\d\d\s?(AM|PM)\s', re.I)
     for k, y, t in rows:
-        nm = next((n for n in names if t == n or t.endswith(' ' + n) or t.startswith(n + ',')), None)
+        nm = next((n for n in names if TIME.match(t) and (t[TIME.match(t).end():] == n or t[TIME.match(t).end():].startswith(n + ','))), None)
         if nm:
             if cur is None or cur[0] != nm: cur = [nm, False]; seq.append(cur)
             continue
@@ -238,8 +239,10 @@ def timeline_order_matches(day_id, tag):
     stops = [s for s in robot_stops() if s.get('day_id') == day_id]
     want = [s['name'] for s in sorted(stops, key=lambda s: s['position'])]
     got = []
+    TIME = re.compile(r'^\d{1,2}:\d\d\s?(AM|PM)\s', re.I)
     for _, _, t in rows:
-        nm = next((n for n in want if t == n), None)
+        m = TIME.match(t)
+        nm = next((n for n in want if m and (t[m.end():] == n or t[m.end():].startswith(n + ','))), None)
         if nm and (not got or got[-1] != nm): got.append(nm)
     ok = [n for n in got if n in want] == [n for n in want if n in got] and len(set(got)) >= max(1, len(set(want)) - 1)
     V.check(f'robot-{tag}-order', ok, f'screen {got} vs server {want}')
@@ -324,8 +327,10 @@ def robot_accept():
     r = prepare('accept-undo')   # the robot back to the itinerary: the reset must undo what Accept moved
     if r:
         back = {s['id']: (s['day_id'], s['position'], s['time_label']) for s in robot_stops()}
-        V.check('robot-accept-reset', sum(1 for k, v in back.items() if before.get(k) != v) <= 1,
-                f"after the reset {sum(1 for k, v in back.items() if before.get(k) != v)} stops still differ from before Accept")
+        diff = [k for k, v in before.items() if back.get(k) != v]
+        extra = [k for k, v in back.items() if k not in before and v[0] is not None]
+        V.check('robot-accept-reset', len(diff) <= 1 and not extra,
+                f"after the reset {len(diff)} stops differ from before Accept, {len(extra)} extra visits still on a day")
 
 
 def replan_button(s):
@@ -458,6 +463,11 @@ def robot_faults():
                     st = C.capture(2)
                     if any(re.search(r'signal|offline|network|could not|not reach', t, re.I) for t in st.all_texts): break
                 txt = ' | '.join(st.all_texts) if st else ''
+                if not re.search(r'signal|offline|network|could not|not reach', txt, re.I):
+                    C.adb('shell', 'input', 'swipe', '540', '900', '540', '1500', '400'); st2 = C.capture(1.5)
+                    txt += ' | ' + ' | '.join(st2.all_texts)
+                    print('INFO offline log: ' + ' || '.join(l[-160:] for l in V.logcat().splitlines()
+                          if re.search(r'E2E_|Re-plan|replan|Network|abort', l))[-2500:], flush=True)
                 V.check('robot-offline-replan-says-why', bool(re.search(r'signal|offline|network|could not|not reach', txt, re.I)), txt[:300])
                 V.check('robot-offline-no-object-text', '[object Object]' not in txt)
     finally:
@@ -495,7 +505,7 @@ def robot_tell():
     # the sheet closes, the note shows on the card, and T re-plans (a new robot run)
     for _ in range(8):
         st = C.capture(2)
-        if not (V.has(st, 'Send the note to T') or V.has(st, 'Looks right')): break
+        if not (V.has(st, 'Close Tell T') or V.has(st, 'Send the note to T') or V.has(st, 'Looks right')): break
         if not V.tap_text(st, 'Close Tell T'): V.back()
     st = None
     for _ in range(4):   # the card refreshes its notes after the sheet closes: give it a few tries
