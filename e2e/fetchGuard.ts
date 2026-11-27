@@ -90,7 +90,12 @@ async function guarded(input: any, init: any, faultDone = false): Promise<Respon
   const bodyText = typeof init?.body === 'string' ? init.body : '';
   const f = faultDone ? null : faultFor(url, bodyText);
   if (f) return applyFault(f, input, init, method, url);
-  if (method === 'GET' || method === 'HEAD') return readAndLearn(input, init);
+  // reads: learn robot ids only from the app's own data calls; tiles, terrain and photos pass straight through
+  // (27 Nov 2026: reading every big download for ids is the likeliest reason the HD view failed in run 178)
+  if (method === 'GET' || method === 'HEAD') {
+    const p0 = url.split(SUPABASE_HOST)[1] ?? '';
+    return p0.startsWith('/rest/v1/') ? readAndLearn(input, init) : realFetch(input, init);
+  }
   const path = url.split(SUPABASE_HOST)[1] ?? '';
   let body: any = null;
   try { body = bodyText ? JSON.parse(bodyText) : null; } catch { /* not JSON */ }
