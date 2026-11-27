@@ -10,7 +10,7 @@ import { NowStatus, nowStatus, replanNow } from './planner';
 // soon as the app opens again.
 export type NowView =
   | { phase: 'idle' }
-  | { phase: 'running'; since: number }
+  | { phase: 'running'; since: number; status?: NowStatus | null }
   | { phase: 'done'; status: NowStatus; message: string; at: number }
   | { phase: 'error'; message: string; at: number };
 
@@ -55,7 +55,14 @@ async function check() {
       const s = await nowStatus(p.tripId).catch(() => null);
       const finished = s && s.id === p.id && (s.status === 'done' || s.status === 'error');
       const lost = s && s.id !== p.id && Date.now() - p.since > 10 * 60_000;
-      if (!finished && !lost) continue;
+      if (!finished && !lost) {
+        // progress only: the request's own status as it moves (queued -> planning) for the card's bar
+        const v = views.get(p.tripId);
+        if (s && s.id === p.id && v?.phase === 'running' && (v.status?.status !== s.status || v.status?.cams_now !== s.cams_now)) {
+          set(p.tripId, { phase: 'running', since: v.since, status: s });
+        }
+        continue;
+      }
       pending = pending.filter(x => x !== p);
       await save();
       if (s!.status === 'done' && s!.id === p.id) {
@@ -93,6 +100,24 @@ export async function trackReplanNow(tripId: string, id: number, title?: string)
   await save();
   set(tripId, { phase: 'running', since: Date.now() });
   kick();
+}
+
+// The 4 steps of a running request (Sent -> Reading cameras -> Planning today -> Done), from the polled server status
+// (planner_t_now: queued -> planning -> done). While queued the planner waits for this hour's camera pictures (2 or more
+// labelled, at most 4 min, none in the dark or with a sky report); the newer status counts them, else the step just shows.
+export const REPLAN_STEPS = ['Sent', 'Reading cameras', 'Planning today', 'Done'];
+export function replanProgress(v: NowView): { step: number; within: number | null; detail: string | null } {
+  if (v.phase === 'done') return { step: 3, within: 1, detail: null };
+  if (v.phase !== 'running') return { step: 0, within: 0, detail: null };
+  const s = v.status;
+  if (!s) return { step: 0, within: 1, detail: null };
+  if (s.status === 'planning') return { step: 2, within: null, detail: null };
+  if (s.status === 'done' || s.status === 'error') return { step: 3, within: 1, detail: null };
+  const need = s.cams_need ?? null, got = s.cams_now ?? null;
+  if (need && got != null && s.cams_wait !== false) {
+    return { step: 1, within: Math.min(1, got / need), detail: `${Math.min(got, need)} of ${need} pictures` };
+  }
+  return { step: 1, within: null, detail: null };
 }
 
 export function failReplanNow(tripId: string, message: string) { set(tripId, { phase: 'error', message, at: Date.now() }); }

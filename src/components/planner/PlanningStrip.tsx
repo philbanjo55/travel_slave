@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { format, parseISO } from 'date-fns';
 import { colors, spacing } from '../../theme';
 import { ack, usePlanningStatus } from '../../services/planningStatus';
+import { ProgressTrack } from '../ProgressBar';
 
 // TEST app only (redesign B1): "T is re-planning Nov 1–6 · 3 of 6 days" with a thin bar while
 // T works in the background, then "New plans ready · View" until Phil taps it or opens Plans.
@@ -39,7 +40,7 @@ export default function PlanningStrip({ tripId, onView }: { tripId: string; onVi
           </Text>
           <Text style={styles.link}>View ›</Text>
         </View>
-        <View style={styles.track}><View style={[styles.fill, { width: `${Math.max(frac * 100, 4)}%` }]} /></View>
+        <ProgressTrack fraction={Math.max(frac, 0.04)} min={4} />
       </View>
     </TouchableOpacity>
   );
@@ -56,7 +57,5 @@ const styles = StyleSheet.create({
   text: { flex: 1, fontSize: 13, fontWeight: '600', color: colors.textPrimary },
   sub: { fontWeight: '400', color: colors.textSecondary },
   link: { fontSize: 13, fontWeight: '700', color: colors.signalOk },
-  track: { height: 3, borderRadius: 2, backgroundColor: colors.border, overflow: 'hidden' },
-  fill: { height: 3, borderRadius: 2, backgroundColor: colors.signalOk },
   hint: { fontSize: 10, color: colors.textTertiary },
 });

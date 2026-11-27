@@ -18,7 +18,7 @@ import { ONE_PASS_UI, OnePassStart, waitOnePass } from '../../services/onePass';
 import { OnePassButton } from './OnePassButton';
 import { useTripStore } from '../../store/tripStore';
 import { dayBadge } from './dayBadge';
-import { useTierOf, forgetTiers } from './DayPlannerHints';
+import { useTierOf, forgetTiers, ReplanProgress } from './DayPlannerHints';
 import { ShotsText } from './ScoreBar';
 import { errText } from '../../utils/errText';
 
@@ -144,6 +144,7 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
           </Text>
         </TouchableOpacity>
       ) : null}
+      {t && isToday && nowView.phase === 'running' ? <ReplanProgress tripId={tripId} /> : null}
       {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>
           {nowNote ? <Text style={styles.warn}>{nowNote}</Text> : null}
