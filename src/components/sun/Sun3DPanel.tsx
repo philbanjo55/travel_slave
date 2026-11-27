@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { SUN3D_HTML } from './sun3dHtml';
 import { SUN3D_GOOGLE_HTML } from './sun3dGoogleHtml';
-import { detailForStop, houseTilesForStop, nearForStop, rangeForStop, detailBuildings, detailColor, detailFor, detailLeaf, detailMask, detailTrees, TREE_STYLE, treeTilesLeaf, detailWater, houseTileFile, houseTilesFor, nearColor, nearFor, rangeFile, rangeFor, regionColor, regionFor, terrainData, TerrainDetail, TerrainHouseTile, TerrainNear, TerrainRange, TerrainRegion, TerrainTreeTile, treeTileFile, treeTilesFor, tripTerrainLine, useTripTerrain } from '../../services/terrain';
+import { detailForStop, houseTilesForStop, nearForStop, rangeForStop, detailBuildings, detailColor, detailFor, detailLeaf, detailMask, detailTrees, TREE_STYLE, treeTilesLeaf, detailWater, houseTileFile, houseTilesFor, nearColor, nearFor, rangeFile, rangeFor, regionColor, regionFor, terrainData, TerrainDetail, TerrainFile, useTerrainProgress, TerrainHouseTile, TerrainNear, TerrainRange, TerrainRegion, TerrainTreeTile, treeTileFile, treeTilesFor, tripTerrainLine, useTripTerrain } from '../../services/terrain';
 import { hdForget, hdLeftThisMonth, hdLeftToday, hdRoot, hdSetup, HdSetup } from '../../services/tiles3d';
 import { fmtMinute, sunPosition } from '../../utils/sunEngine';
 import { framingsOf, saveShot, takeRefusal, useShotSaves, waitingFor } from '../../services/shotSaves';
@@ -16,6 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PhotoXf, RefPhoto, RefPhotoCard, RefPhotoGhost, SeeThroughBar, XF0 } from './RefPhotoOverlay';
 import { Overhead3D, useOverhead3D } from './overhead3d';
 import { SplitIcon, SplitLayer, SplitMode } from './SplitMap';
+import ProgressBar from '../ProgressBar';
 import { CropOverlay, CropPanel, cropName, fitCrop, ChamonixOverlay, GridOverlay, longInNow, readLongIn, refitCrop, setLongInStored } from './CropOverlay';
 import type { CropRatio, FrameCrop } from '../../utils/sunEngine';
 
@@ -114,6 +115,10 @@ type Props = {
 // The package's prop types don't resolve against this React Native version's types; the props used below are its documented ones.
 const Web = WebView as unknown as React.ComponentType<any>;
 
+// the stages the page reports while it builds the close-up foreground ('detail' messages), in its order
+const LOAD_STEPS = ['Finding', 'Getting', 'Drawing'];   // the 3D view's first load, as the cover's bar shows it
+const DETAIL_STAGES = ['decode', 'mask', 'textures', 'trees', 'wide colour', 'photos', 'houses', 'light', 'done'];
+const mbText = (b: number) => (b >= 10e6 ? Math.round(b / 1e6).toString() : (b / 1e6).toFixed(1));
 type Phase = 'finding' | 'none' | 'loading' | 'failed' | 'starting' | 'ready' | 'error';
 type Moments = { firstSubject: number | null; lastSubject: number | null; firstHere: number | null; lastHere: number | null; trees: boolean };
 // Phil's cameras (12 Nov 2026): his 4x5 lenses, and the Fuji GW690III (a fixed 90 mm lens on 6x9 roll film).
@@ -267,6 +272,15 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const [iceChoice, setIceChoice] = useState<boolean | null>(lastIce);   // null = the page's own default (frozen where the ground is snow)
   const [shapes, setShapes] = useState(false);   // the page says it is drawing the detail box
   const [foreBusy, setForeBusy] = useState(false);   // the foreground has been sent and the page has not answered yet
+  // Progress (27 Nov 2026, bars instead of a bare "loading"): the plain view's files being downloaded (their bytes),
+  // the page's own drawing stage ('send' = the files are being handed to the page, then its 'drawStage' messages),
+  // the foreground's files and then its parts as the page reports each one done.
+  const [loadFiles, setLoadFiles] = useState<TerrainFile[] | null>(null);
+  const [drawStage, setDrawStage] = useState<'send' | 'unpack' | 'build'>('send');
+  const [foreFiles, setForeFiles] = useState<TerrainFile[] | null>(null);
+  const [foreProg, setForeProg] = useState<{ steps: string[]; done: string[]; within: number | null; n: number; at: number } | null>(null);
+  const loadProg = useTerrainProgress(loadFiles);
+  const foreFileProg = useTerrainProgress(foreFiles);
   const [foreground, setForegroundState] = useState(lastForeground);
   const [treesOn, setTreesState] = useState(lastTrees);
   const treesRef = useRef(lastTrees);
@@ -343,6 +357,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
   const sent = useRef(false);
   const foreSent = useRef(false);
   const [readyN, setReadyN] = useState(0);                   // counts the page's 'ready' messages (a restart that keeps 'ready')
+  const readyNRef = useRef(0);
+  readyNRef.current = readyN;
   const [gen, setGen] = useState(0);                         // bumped to start the web view afresh after it died
   const [heavy, setHeavy] = useState(foregroundTooHeavy);
   const loaded = useRef<string | null>(null);   // the files the plain view holds: "<region>|<fine box or nothing>"
@@ -543,6 +559,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         loaded.current = null; loadedDetail.current = ''; nearUsed.current = null; booted.current = false; sent.current = false; foreSent.current = false;
         setPhase('finding'); setRegion(null); setNear(null); setB64(null); setNearB64(null); setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null); setWideColorB64(null); setShapes(false); setWideTrees(0); setRangeIn(false); setHousesIn(0); setLaser(false); setPhotoFore(false); setForeBusy(false); setLit(null); setMoments(null);
         if (!r) { setPhase('none'); return; }
+        setLoadFiles(nr ? [r, nr] : [r]); setDrawStage('send');
         setPhase('loading');
         // The fine file is an extra: with a weak signal it gets 10 s, then the wide grid draws alone (the download carries on).
         const fine = nr ? Promise.race([terrainData(nr), new Promise<null>(res => setTimeout(() => res(null), 10000))]) : Promise.resolve(null);
@@ -580,6 +597,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       setDetail(null); setDetailB64(null); setMaskB64(null); setTreesB64(null); setWaterB64(null); setColorB64(null); setBldB64(null); setNearColorB64(null); setWideColorB64(null); setTreeTiles(null); setRangeBox(null); setHouseTiles(null);
       if (!dt0 && !nck && !wck && !tts.length && !rg && !hts.length) return;
       const mk = dt0 && detailMask(dt0), tk = dt0 && detailTrees(dt0), wk = dt0 && detailWater(dt0), ck = dt0 && detailColor(dt0), bk = dt0 && detailBuildings(dt0);
+      // (progress only: every file the foreground needs, for the bar while they come down)
+      setForeFiles([dt0, mk, tk, wk, ck, bk, nck, wck, ...tts.map(treeTileFile), rg ? rangeFile(rg) : null, ...hts.map(houseTileFile)].filter((f): f is TerrainFile => !!f));
       const [dd, md, td, wd, cd, bd, ncd, wcd] = await Promise.all([dt0 ? terrainData(dt0) : null, mk ? terrainData(mk) : null, tk ? terrainData(tk) : null, wk ? terrainData(wk) : null,
         ck ? terrainData(ck) : null, bk ? terrainData(bk) : null, nck ? terrainData(nck) : null, wck ? terrainData(wck) : null]);
       // the tree tiles one at a time (a few hundred KB each): a tile that is not there (no signal) is simply left out
@@ -589,6 +608,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       const hds: { t: TerrainHouseTile; d: string }[] = [];
       for (const t of hts) { const d = await terrainData(houseTileFile(t)); if (!alive || loadedDetail.current !== key) return; if (d) hds.push({ t, d }); }
       if (!alive || loadedDetail.current !== key) return;
+      setForeFiles(null);
       if (!dd && !ncd && !wcd && !tds.length && !rgd && !hds.length) { loadedDetail.current = ''; return; }   // not on the phone and no signal: tried again with the next shot
       setRangeBox(rg && rgd ? { r: rg, data: rgd } : null);
       setHouseTiles(hds.length ? { tiles: hds.map(x => x.t), data: hds.map(x => x.d) } : null);
@@ -596,7 +616,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       setTreeTiles(tds.length ? { tiles: tds.map(x => x.t), data: tds.map(x => x.d) } : null);
       if (dt0 && dd) { setMaskB64(md); setTreesB64(td); setWaterB64(wd); setColorB64(cd); setBldB64(bd); setDetailB64(dd); setDetail(dt0); }
     })();
-    return () => { alive = false; };
+    return () => { alive = false; setForeFiles(null); };   // (a run called off leaves no download bar behind)
   }, [vLat, vLng, sLat, sLng, preview, group]);
 
   const dayPath = useMemo(() => {
@@ -690,6 +710,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       trees: overhead ? true : treesRef.current,   // the foreground's trees shown or hidden (older pages ignore it)
       ...(hd && hdCfg ? { tiles: { base: hdCfg.base, draco: hdCfg.draco, root: hd } } : null),
     };
+    setDrawStage('send');
     run(`window.S3D.init(${JSON.stringify(cfg)})`);
     for (let i = 0; i < b64.length; i += CHUNK) run(`window.S3D.chunk("${b64.slice(i, i + CHUNK)}")`);
     if (!hd && near && nearB64) for (let i = 0; i < nearB64.length; i += CHUNK) run(`window.S3D.chunk("${nearB64.slice(i, i + CHUNK)}","near")`);
@@ -707,6 +728,9 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     const det = detail && detailB64 ? detail : null, nc = near && nearB64 ? nearColorB64 : null;   // a fine-box photo needs the fine box in the page
     if (!det && !nc && !wideColorB64 && !treeTiles && !rangeBox && !houseTiles) return;
     foreSent.current = true; setForeBusy(true);
+    // the parts in the order the page builds them, each ticked off by its own message (progress only)
+    setForeProg({ steps: [rangeBox ? 'Mountains' : '', det || nc || wideColorB64 ? 'Close-up' : '', houseTiles ? 'Buildings' : '', treeTiles ? 'Trees' : ''].filter(Boolean),
+      done: [], within: null, n: readyNRef.current, at: Date.now() });
     const fore = {
       detail: det ? {
         n: det.n, north: det.north, south: det.south, west: det.west, east: det.east, base: det.base_m, step: det.step_m,
@@ -756,6 +780,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     } else { setProblem('The 3D view stopped on this phone.'); setPhase('error'); }
   }, [setWant]);
 
+  // a foreground part the page says it has finished (drawn or left out: either way it is over)
+  const foreTick = useCallback((part: string) => setForeProg(p => p && !p.done.includes(part) ? { ...p, done: [...p.done, part], within: null } : p), []);
   const walkQ = useRef({ busy: 0, f: 0, r: 0 });   // walk steps in flight (see sendWalk)
   const walkAnsweredRef = useRef<() => void>(() => {});   // set by the walk code below (a step answered)
   const onMessage = useCallback((e: { nativeEvent: { data: string } }) => {
@@ -770,10 +796,12 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
       if (typeof m.ms === 'number') setPerf({ ms: m.ms, worst: typeof m.worst === 'number' ? m.worst : m.ms, quality: typeof m.quality === 'string' ? m.quality : 'full' });
     }
     else if (m.type === 'ready') { setPhase('ready'); setReadyN(n => n + 1); }   // every page start gets the pins again
-    else if (m.type === 'foreground') { setShapes(!!m.ok); setLaser(!!(m.ok && m.detail)); setPhotoFore(!!(m.ok && m.colour)); setForeBusy(false); }   // not ok = the page dropped it and kept the plain view
-    else if (m.type === 'wideTrees') setWideTrees(m.ok && typeof m.trees === 'number' ? m.trees : 0);   // not ok = left out, the rest stays
-    else if (m.type === 'range') setRangeIn(!!m.ok);   // not ok = left out, the view stays as it was
-    else if (m.type === 'houses') { setHousesIn(m.ok && typeof m.count === 'number' ? m.count : 0); setForeBusy(false); }   // the last stage before the trees
+    else if (m.type === 'drawStage') { if (m.stage === 'unpack' || m.stage === 'build') setDrawStage(m.stage); }   // progress only
+    else if (m.type === 'detail') { const k = DETAIL_STAGES.indexOf(String(m.stage)); if (k >= 0) setForeProg(p => p && { ...p, within: (k + 1) / (DETAIL_STAGES.length + 1) }); }
+    else if (m.type === 'foreground') { foreTick('Close-up'); setShapes(!!m.ok); setLaser(!!(m.ok && m.detail)); setPhotoFore(!!(m.ok && m.colour)); setForeBusy(false); }   // not ok = the page dropped it and kept the plain view
+    else if (m.type === 'wideTrees') { foreTick('Trees'); setWideTrees(m.ok && typeof m.trees === 'number' ? m.trees : 0); }   // not ok = left out, the rest stays
+    else if (m.type === 'range') { foreTick('Mountains'); setRangeIn(!!m.ok); }   // not ok = left out, the view stays as it was
+    else if (m.type === 'houses') { foreTick('Buildings'); setHousesIn(m.ok && typeof m.count === 'number' ? m.count : 0); setForeBusy(false); }   // the last stage before the trees
     else if (m.type === 'lost') onGone();
     else if (m.type === 'state') setLit({ subjectLit: !!m.subjectLit, hereLit: !!m.hereLit, up: !!m.up, trees: !!m.trees });
     else if (m.type === 'moments') setMoments({ firstSubject: m.firstSubject ?? null, lastSubject: m.lastSubject ?? null, firstHere: m.firstHere ?? null, lastHere: m.lastHere ?? null, trees: !!m.trees });
@@ -800,7 +828,7 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
         setWant(false);
       } else { setProblem(String(m.msg ?? '')); setPhase(p => (p === 'ready' ? p : 'error')); }
     }
-  }, [start, setWant, onGone, oh.onMessage]);
+  }, [start, setWant, onGone, oh.onMessage, foreTick]);
 
   // The sun follows the slider; the place and the day's first / last light follow the chosen shot.
   const az = sun.az, alt = sun.alt;
@@ -1026,6 +1054,23 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
     : phase === 'none' ? 'No 3D terrain for this area yet.'
     : phase === 'failed' ? "Couldn't get the terrain. It needs a signal the first time."
     : null;
+  // The cover's bar (not for HD, nor once there is nothing to wait for): Finding -> Getting (bytes on the phone of the
+  // view's files) -> Drawing (handing the files to the page, then the page's own 'drawStage' messages).
+  const coverProg = hd || holding ? null
+    : phase === 'finding' ? { step: 0, within: null, text: '' }
+    : phase === 'loading' ? { step: 1, within: loadProg && loadProg.total ? loadProg.got / loadProg.total : null,
+                              text: loadProg && loadProg.total ? `${mbText(loadProg.got)} of ${mbText(loadProg.total)} MB` : '' }
+    : phase === 'starting' ? { step: 2, within: drawStage === 'send' ? 0 : drawStage === 'unpack' ? 1 / 3 : 2 / 3,
+                               text: drawStage === 'send' ? 'Handing over' : drawStage === 'unpack' ? 'Unpacking' : 'Building' }
+    : null;
+  // The foreground's bar under a ready view: its files coming down, then its parts as the page finishes each one.
+  const foreShown = ready && !hd && !preview && foreground;
+  const fp = foreProg && foreProg.n === readyN && foreProg.done.length < foreProg.steps.length && Date.now() - foreProg.at < 90000 ? foreProg : null;
+  const foreBar = !foreShown ? null
+    : foreFiles && foreFileProg && foreFileProg.total && foreFileProg.got < foreFileProg.total
+      ? { steps: ['Getting files', 'Building'], step: 0, within: foreFileProg.got / foreFileProg.total, text: `Getting files  ·  ${mbText(foreFileProg.got)} of ${mbText(foreFileProg.total)} MB` }
+    : fp ? (() => { const i = fp.steps.findIndex(x => !fp.done.includes(x)); return { steps: fp.steps, step: i, within: fp.steps[i] === 'Close-up' ? fp.within : null, text: fp.steps[i] }; })()
+    : null;
   const left = hd ? hdLeftThisMonth() : null;
   const leftToday = hd ? hdLeftToday() : null;
   const subject = pair.subject_name || 'The subject';
@@ -1083,7 +1128,10 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           />
         ) : null}
         {waiting ? (
-          <View style={styles.cover} pointerEvents="none"><Text style={styles.coverText}>{waiting}</Text></View>
+          <View style={styles.cover} pointerEvents="none">
+            <Text style={styles.coverText}>{waiting}</Text>
+            {coverProg ? <View style={styles.coverBar}><ProgressBar label="3D view" text={coverProg.text} steps={LOAD_STEPS} step={coverProg.step} within={coverProg.within} compact /></View> : null}
+          </View>
         ) : null}
         {oh.controls}
         <View style={[styles.topRow, preview || overhead || clean ? { display: 'none' } : null]} pointerEvents="box-none" onLayout={e => setTopH(Math.round(e.nativeEvent.layout.height))}>
@@ -1447,7 +1495,8 @@ export default function Sun3DPanel({ pair, tripId, stopId, sun, day0, height = 2
           {perf && !hd ? (
             <Text style={styles.perf} numberOfLines={1} accessibilityLabel={`Smoothness: ${perfLine(perf)}`}>Smoothness: {perfLine(perf)}</Text>
           ) : null}
-          {foreBusy && !hd ? <Text style={styles.perf}>Foreground loading…</Text> : null}
+          {foreBusy && !hd && !foreBar ? <Text style={styles.perf}>Foreground loading…</Text> : null}
+          {foreBar ? <View style={styles.foreBar}><ProgressBar label="Foreground" text={foreBar.text} steps={foreBar.steps} step={foreBar.step} within={foreBar.within} compact /></View> : null}
           {hd && left != null ? <Text style={styles.perf}>HD views left: {leftToday != null ? `${leftToday} today, ` : ''}{left} this month</Text> : null}
           <TouchableOpacity
             onPress={() => Linking.openURL(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${pair.v.lat},${pair.v.lng}&heading=${look ?? 0}`).catch(() => {})}
@@ -1508,6 +1557,8 @@ const styles = StyleSheet.create({
   glass: { transform: [{ rotate: '180deg' }] },
   cover: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', padding: 16, backgroundColor: colors.surface },
   coverText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
+  coverBar: { width: '72%', maxWidth: 320, marginTop: 10 },
+  foreBar: { flexBasis: '100%', marginTop: 4, paddingHorizontal: 2 },
   // The buttons wrap onto a second line when they don't fit: with HD, frame, foreground and frozen lakes the row ran past
   // the right edge of a 1080-px-wide phone and the full-screen button was off screen (emulator, 13 Nov 2026).
   cleanBtn: { position: 'absolute', top: 8, right: 8 },
