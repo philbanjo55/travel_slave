@@ -113,6 +113,14 @@ declare
   v_sync jsonb; v_wx int; v_cols text; v_tz text; v_today date; v_ahead int; v_notes int;
 begin
   if not exists (select 1 from trips where id = e) then raise exception 'no test robot trip'; end if;
+  -- extra visits a test's Accept added (no twin on the main trip): set aside (never deleted), so each run starts
+  -- from the main trip's itinerary
+  update stops s set day_id = null
+   where s.trip_id = e and s.day_id is not null
+     and not exists (select 1 from training_copy_map m where m.trip_id = e and m.kind = 'stop' and m.new_id = s.id);
+  update solver_stop_settings ss set tier = null
+    from stops s where s.id = ss.stop_id and s.trip_id = e and s.day_id is null and ss.tier is not null
+     and not exists (select 1 from training_copy_map m where m.trip_id = e and m.kind = 'stop' and m.new_id = s.id);
   v_sync := to_jsonb(training_sync(e));
   -- weather: Teton Live's newest row per stop and hour, onto the robot's twin stop and day (same day number)
   select string_agg(quote_ident(column_name), ', ' order by ordinal_position) into v_cols
