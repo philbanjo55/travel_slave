@@ -1,4 +1,4 @@
--- Find my spot progress (27 Nov 2026, DRAFT: not applied yet).
+-- Find my spot progress (27 Nov 2026; applied 27 Nov 2026, Phil OK'd the before / after).
 -- The worker (tools/sun3d/photospot/job.py) posts where its search is to photo-spot action 'step'; the function keeps
 -- the newest step here while the job is 'solving': {key: terrain | search | check | refine | lenses, done, of,
 -- attempt, attempts, at}. The app's status call returns the whole row, so it reads it from there; old jobs have null.

@@ -1,4 +1,4 @@
--- Progress for the Re-plan bar (27 Nov 2026, DRAFT: not applied yet).
+-- Progress for the Re-plan bar (27 Nov 2026; applied 27 Nov 2026, Phil OK'd the before / after).
 -- planner_t_now_status(trip) also returns, for the newest request:
 --   planned_at  when the planner took it (status planning)
 --   cams        how many cameras the finished plan used (result.cams)
