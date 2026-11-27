@@ -106,7 +106,10 @@ export async function replanT(tripId: string): Promise<string> {
 // Re-plan now (Phil, 5 Nov 2026): T re-plans the rest of today from where the plan says you are,
 // with fresh camera pictures (RPC planner_t_now; one at a time, a running one is reused).
 export type NowStatus = { id: number; status: 'queued' | 'planning' | 'done' | 'error'; requested_at: string; done_at: string | null;
-                          note: string | null; changed: boolean | null; hidden: number | null };
+                          note: string | null; changed: boolean | null; hidden: number | null;
+                          // progress (migration 20261127100000; absent on the older function): while queued, this hour's
+                          // labelled camera pictures, how many the planner waits for, and whether it waits at all
+                          planned_at?: string | null; cams_now?: number | null; cams_need?: number | null; cams_wait?: boolean | null };
 export async function replanNow(tripId: string): Promise<{ id: number; since: string }> {
   const { data, error } = await supabase.rpc('planner_t_now', { p_trip: tripId });
   if (error) throw error;

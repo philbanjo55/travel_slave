@@ -46,6 +46,8 @@ async function uploadToStorage(stopId: string, uri: string): Promise<{ id: strin
 export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
+  // photos of a multi-photo pick already uploaded, of all picked (progress bar only); null when not uploading several
+  const [uploadCount, setUploadCount] = useState<{ done: number; total: number; type: PhotoType } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { refreshCurrentTrip } = useTripStore();
   const ownStopIds = groupStopIds?.length ? groupStopIds : [stopId];
@@ -122,14 +124,17 @@ export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
       for (const asset of result.assets) {
         uploaded++;
         setUploadProgress(total > 1 ? `${uploaded}/${total}` : '');
+        setUploadCount(total > 1 ? { done: uploaded - 1, total, type: photoType } : null);
         await uploadSinglePhoto(asset.uri, photoType);
       }
+      if (total > 1) setUploadCount({ done: total, total, type: photoType });
       await refreshCurrentTrip();
     } catch (err: any) {
       setError(`Upload failed: ${err.message || 'unknown error'}`);
     } finally {
       setUploading(false);
       setUploadProgress('');
+      setUploadCount(null);
     }
   };
 
@@ -212,5 +217,5 @@ export function usePhotoUpload(stopId: string, groupStopIds?: string[]) {
     }
   };
 
-  return { pickAndUpload, pickOne, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, error };
+  return { pickAndUpload, pickOne, takePhoto, deletePhoto, makeFirst, uploading, uploadProgress, uploadCount, error };
 }

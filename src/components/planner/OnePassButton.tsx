@@ -11,6 +11,7 @@ import { supabase } from '../../services/supabase';
 // Re-plan taps go to app_logs (27 Nov 2026: on Phil's phone the card's Re-plan sent no request, on the emulator it
 // failed once and worked once): each touch, whether it became a press, and what the server said.
 const tapLog = (message: string, data: Record<string, unknown>) => {
+  console.warn(`E2E_REPLAN ${message} ${JSON.stringify(data)}`);   // TEST BRANCH ONLY: logcat for the emulator
   try { supabase.from('app_logs').insert({ level: 'info', message, data }).then(() => {}, () => {}); } catch { /* not logged */ }
 };
 

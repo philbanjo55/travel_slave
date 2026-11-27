@@ -28,6 +28,14 @@ import { briefSeenAt } from '../services/plannerSeen';
 import { GhostTag, TimelineRow } from '../components/planner/DayTimeline';
 import PlanningStrip from '../components/planner/PlanningStrip';
 import { acceptedText } from '../components/planner/PlanView';
+import ProgressBar from '../components/ProgressBar';
+import { errText } from '../utils/errText';
+
+// Accept T's plan from now on (27 Nov 2026: Phil's tap was applied on the server but the screen gave no sign and kept the
+// old day): each real step of the accept as a bar. Checking = T's apply run as a preview on the server (rolled back),
+// Moving = the same run applied, Reloading = the trip read again, Done = how many stops moved.
+const ACCEPT_STEPS = ['Checking the plan', 'Moving stops', 'Reloading the trip', 'Done'];
+type AcceptStep = { step: number; text?: string; error?: string; at: number };
 
 // Today's date in the trip's time zone (the phone's date if the zone is unknown).
 function tripToday(tz?: string): string {
@@ -92,18 +100,30 @@ export default function TripScreen() {
   const [pop, setPop] = useState<string | null>(null);
   const [ghostPreview, setGhostPreview] = useState<any | null>(null);
   const [accepting, setAccepting] = useState(false);
+  const [acceptStep, setAcceptStep] = useState<AcceptStep | null>(null);
+  useEffect(() => {   // the Done / error line stays a few seconds after ghost mode closes
+    if (!acceptStep || acceptStep.step < 3 && !acceptStep.error) return;
+    const t = setTimeout(() => setAcceptStep(a => (a && a.at === acceptStep.at ? null : a)), acceptStep.error ? 15000 : 8000);
+    return () => clearTimeout(t);
+  }, [acceptStep]);
   const [ghostDetails, setGhostDetails] = useState(false);
   useEffect(() => { setGhost(false); setPop(null); }, [activeDay, planner?.run?.id]);
   // A day that is over: no changes to show or accept (past days never change).
   const pastDay = !!shownDay?.date && isPastDay(shownDay.date, planTz);
   // What accepting T's plan for the rest of the trip does (every day it changes, set aside,
   // tight connections), shown before Accept.
+  // A preview that fails (no signal, server error, 20 s timeout) says so and can be tried again (27 Nov 2026: the
+  // emulator's fault test; it used to spin for ever with Accept greyed out).
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+  const [previewTry, setPreviewTry] = useState(0);
   useEffect(() => {
+    setPreviewErr(null);
     if (!ghost) { setGhostPreview(null); return; }
     let alive = true;
-    applyWeek(tripId, false).then(j => { if (alive) setGhostPreview(j.result); }).catch(() => {});
+    applyWeek(tripId, false).then(j => { if (alive) setGhostPreview(j.result); })
+      .catch((e: any) => { if (alive) setPreviewErr(errText(e)); });
     return () => { alive = false; };
-  }, [ghost, tripId]);
+  }, [ghost, tripId, previewTry]);
   const ghostRows = useMemo(() => {
     if (!ghost || !planner?.best) return null;
     const byId = new Map(changes.map(c => [c.stop_id, c]));
@@ -127,14 +147,40 @@ export default function TripScreen() {
   }, [ghost, changes, shownStops, planner, currentTripData]);
   const acceptAll = useCallback(async () => {
     setAccepting(true);
+    const at = Date.now();
+    let moved = false;
     try {
+      setAcceptStep({ step: 0, at });
+      const pv = await applyWeek(tripId, false);
+      if (pv.result?.nothing) throw new Error("T has no plan left to accept for this trip.");
+      if (pv.result) setGhostPreview(pv.result);
+      setAcceptStep({ step: 1, text: pv.result?.stops_changed != null ? `Moving ${pv.result.stops_changed} stops` : undefined, at });
       const j = await applyWeek(tripId, true);
       if (j.preview_only) throw new Error('This trip is preview only.');
       if (j.result?.nothing) throw new Error("T has no plan left to accept for this trip.");
-      await loadTrip(tripId);
+      moved = true;
+      setAcceptStep({ step: 2, at });
+      // The new times on screen as soon as the trip's itinerary is read again (loadTrip goes on with the slower parts,
+      // weather and the offline copy, after that); at most 30 s, then the screen carries on as it is.
+      const before = useTripStore.getState().currentTripData;
+      await Promise.race([
+        loadTrip(tripId),
+        new Promise<void>(res => {
+          const t0 = Date.now();
+          const tick = () => { const d = useTripStore.getState().currentTripData; if ((d && d !== before && d.trip?.id === tripId) || Date.now() - t0 > 30000) res(); else setTimeout(tick, 250); };
+          tick();
+        }),
+      ]);
       setGhost(false);
+      const n = j.result?.stops_changed ?? 0;
+      setAcceptStep({ step: 3, text: `Done · ${n} stop${n === 1 ? '' : 's'} moved`, at });
       Alert.alert('Plan accepted', acceptedText(j.result));
-    } catch (e: any) { Alert.alert('Not applied', String(e?.message ?? e)); }
+    } catch (e: any) {
+      const words = String(e?.message ?? e);
+      setAcceptStep(a => ({ step: a?.step ?? 0, error: words, at }));
+      if (moved) loadTrip(tripId);   // applied on the server: show it even if the reload above failed
+      Alert.alert('Not applied', words);
+    }
     setAccepting(false);
   }, [tripId]);
 
@@ -616,16 +662,18 @@ export default function TripScreen() {
       {PLANNER_ON && ghostRows && !stopsOn ? (
         <View style={[styles.ghostBar, { paddingBottom: spacing.lg + insets.bottom }]}>
           {/* One line of what accepting does; the lists behind Details (the timeline stays visible). */}
-          <TouchableOpacity onPress={() => setGhostDetails(v => !v)} style={styles.ghostSummary} accessibilityRole="button"
+          <TouchableOpacity onPress={() => (previewErr && !ghostPreview ? setPreviewTry(n => n + 1) : setGhostDetails(v => !v))} style={styles.ghostSummary} accessibilityRole="button"
             accessibilityState={{ expanded: ghostDetails }}>
-            {ghostPreview ? (
+            {!ghostPreview && previewErr ? (
+              <Text style={[styles.ghostNote, { color: '#e74c3c' }]} numberOfLines={2}>Could not load what changes: {previewErr}. Tap to try again</Text>
+            ) : ghostPreview ? (
               <Text style={styles.ghostNote} numberOfLines={1}>
                 {ghostPreview.stops_changed ?? 0} stops change{ghostPreview.week_days?.length ? ` over ${ghostPreview.week_days.length} days` : ''}
                 {ghostPreview.set_aside?.length ? ` · ${ghostPreview.set_aside.length} set aside` : ''}
                 {ghostPreview.clashes?.length ? ` · ${ghostPreview.clashes.length} tight` : ''}
               </Text>
             ) : <ActivityIndicator size="small" color={colors.textTertiary} />}
-            <Text style={styles.ghostDetailsLink}>{ghostDetails ? 'Hide' : 'Details'} {ghostDetails ? '▾' : '▸'}</Text>
+            {!ghostPreview && previewErr ? null : <Text style={styles.ghostDetailsLink}>{ghostDetails ? 'Hide' : 'Details'} {ghostDetails ? '▾' : '▸'}</Text>}
           </TouchableOpacity>
           {ghostDetails ? (
             <View style={{ gap: 4 }}>
@@ -645,9 +693,10 @@ export default function TripScreen() {
               ) : null}
             </View>
           ) : null}
+          {acceptStep ? <AcceptBar a={acceptStep} /> : null}
           <View style={styles.ghostBtns}>
             {canApply(tripId, currentTripData?.trip) ? (
-              <TouchableOpacity style={styles.ghostAccept} onPress={acceptAll} disabled={accepting || !ghostPreview || ghostPreview.nothing} accessibilityRole="button"
+              <TouchableOpacity style={styles.ghostAccept} onPress={acceptAll} disabled={accepting || (!ghostPreview && !previewErr) || !!ghostPreview?.nothing} accessibilityRole="button"
                 accessibilityLabel="Accept T's plan for the rest of the trip: the rest of today and every later day. Past days don't change.">
                 {accepting ? <ActivityIndicator color={colors.textInverse} /> : (
                   <Text style={styles.ghostAcceptText} numberOfLines={1}>Accept T's plan from now on</Text>
@@ -663,8 +712,21 @@ export default function TripScreen() {
             </TouchableOpacity>
           </View>
         </View>
+      ) : PLANNER_ON && acceptStep && !accepting ? (
+        <View style={[styles.ghostBar, { paddingBottom: spacing.lg + insets.bottom }]}>
+          <AcceptBar a={acceptStep} />
+        </View>
       ) : null}
     </SafeAreaView>
+  );
+}
+
+function AcceptBar({ a }: { a: AcceptStep }) {
+  return (
+    <View style={{ gap: 4 }}>
+      <ProgressBar label="Accept T's plan" steps={ACCEPT_STEPS} step={a.step} within={a.step === 3 ? 1 : null} text={a.text} compact />
+      {a.error ? <Text style={styles.acceptError} numberOfLines={3}>{a.error}</Text> : null}
+    </View>
   );
 }
 
@@ -767,4 +829,5 @@ const styles = StyleSheet.create({
   ghostNo: { minHeight: 48, paddingHorizontal: spacing.lg, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   ghostNoText: { fontSize: 14, color: colors.textPrimary },
   ghostNote: { fontSize: 11, color: colors.textSecondary },
+  acceptError: { fontSize: 12, color: '#e74c3c' },
 });

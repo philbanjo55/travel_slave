@@ -457,7 +457,11 @@ def robot_faults():
         if p is not None and open_day(date, 'offline-day') is not None:
             seq = chips_check('offline')
             scroll_top()
-            if find('Re-plan: ', 8) and safe_tap('Re-plan: ', 'offline'):
+            b0 = find('Re-plan: ', 8)
+            if b0 is not None:
+                print('INFO offline before tap: ' + ' | '.join(t for t in b0.all_texts if re.search(r'plan|Progress', t, re.I))[:800]
+                      + ' / clickable: ' + ' | '.join(c['label'][:50] for c in b0.clickables if 'plan' in c['label'].lower()), flush=True)
+            if b0 is not None and safe_tap('Re-plan: ', 'offline'):
                 st = None
                 for _ in range(15):
                     st = C.capture(2)

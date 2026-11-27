@@ -34,7 +34,11 @@ export type SpotJob = {
   id: string; stop_id: string; photo_id: string | null; photo_url: string | null;
   status: 'queued' | 'looking' | 'solving' | 'done' | 'error'; note: string | null; error: string | null;
   result: SpotResult | null; shots: Record<string, string>; overlay_url: string | null; created_at: string; updated_at: string;
+  // where the worker's search is (photo_spot_jobs.progress, 27 Nov 2026; null on older jobs and before the first report)
+  progress?: SpotStep | null;
 };
+export type SpotStep = { key: 'terrain' | 'search' | 'check' | 'refine' | 'lenses' | string; done: number | null; of: number | null;
+                         attempt: number | string | null; attempts: number | null; at?: string };
 export type Kept = { jobId: string; stopId: string; photoId: string; stopName?: string; job?: SpotJob | null; seen?: boolean; at: number };
 
 const OPEN = new Set(['queued', 'looking', 'solving']);
@@ -166,10 +170,22 @@ export function useStopSpotsNew(stopId?: string | null): Kept[] {
 }
 
 // Progress for the card: a rough share of the ~2 minutes, from when the job was made.
-export function spotProgress(j?: SpotJob | null): number {
-  if (!j) return 0;
-  if (!isOpen(j)) return 1;
-  const s = (Date.now() - new Date(j.created_at).getTime()) / 1000;
-  const base = j.status === 'looking' ? 0.05 : j.status === 'queued' ? 0.15 : 0.25;
-  return Math.min(0.95, Math.max(base, s / 150));
+// The job's real steps for the progress bar: the job's own status (looking -> queued -> solving -> done), and inside
+// the search the worker's reports (terrain, the spot search with spots done of all, the check and fine-tuning of the
+// best few). No report yet (or an older worker): the status step alone, with no amount.
+export const SPOT_STEPS = ['Looking at the photo', 'Starting the search', 'Loading terrain', 'Searching spots', 'Fine-tuning', 'Done'];
+export function spotSteps(j?: SpotJob | null): { step: number; within: number | null; detail: string | null } {
+  if (!j || j.status === 'looking') return { step: 0, within: null, detail: null };
+  if (j.status === 'queued') return { step: 1, within: null, detail: null };
+  if (!isOpen(j)) return { step: 5, within: 1, detail: null };
+  const p = j.progress;
+  const frac = p && p.of ? Math.max(0, Math.min(1, (p.done ?? 0) / p.of)) : null;
+  const tryText = p && typeof p.attempt === 'number' && (p.attempts ?? 0) > 1 ? `try ${p.attempt} of ${p.attempts}` : p?.attempt === 'open' ? 'wider search' : null;
+  const join = (...a: (string | null)[]) => a.filter(Boolean).join(' · ') || null;
+  if (!p || p.key === 'terrain') return { step: 2, within: null, detail: tryText };
+  if (p.key === 'search') return { step: 3, within: frac, detail: join(p.of ? `${p.done ?? 0} of ${p.of} spots` : null, tryText) };
+  if (p.key === 'check') return { step: 4, within: frac != null ? 0.3 * frac : null, detail: join(p.of ? `checking ${(p.done ?? 0) + 1} of ${p.of}` : null, tryText) };
+  if (p.key === 'refine') return { step: 4, within: frac != null ? 0.3 + 0.6 * frac : null, detail: join(p.of ? `best ${(p.done ?? 0) + 1} of ${p.of}` : null, tryText) };
+  if (p.key === 'lenses') return { step: 4, within: 0.95, detail: 'lens plans' };
+  return { step: 2, within: null, detail: null };
 }

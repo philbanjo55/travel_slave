@@ -6,7 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import Sun3DPanel from '../components/sun/Sun3DPanel';
 import { colors } from '../theme';
 import { supabase } from '../services/supabase';
-import { addShotRemember, fetchSpotJob, isOpen, markSpotSeen, requestSpot, SpotJob, SpotResult, SpotHint, Lens } from '../services/photoSpot';
+import { addShotRemember, fetchSpotJob, isOpen, markSpotSeen, requestSpot, SpotJob, SpotResult, SpotHint, Lens, SPOT_STEPS, spotSteps } from '../services/photoSpot';
+import ProgressBar from '../components/ProgressBar';
 import FindSpotSheet from '../components/FindSpotSheet';
 import { useTripStore } from '../store/tripStore';
 import { dayStartMs, sunPosition } from '../utils/sunEngine';
@@ -192,7 +193,10 @@ export default function PhotoSpotScreen() {
       ) : !job ? (
         <Text style={styles.empty}>Not found. Needs a signal the first time.</Text>
       ) : isOpen(job) ? (
-        <Text style={styles.empty}>Still finding where you stood…</Text>
+        <View>
+          <Text style={styles.empty}>Still finding where you stood…</Text>
+          {(() => { const p = spotSteps(job); return <View style={styles.progress}><ProgressBar label="Find spot" steps={SPOT_STEPS} step={p.step} within={p.within} detail={p.detail} /></View>; })()}
+        </View>
       ) : (
         <ScrollView contentContainerStyle={[styles.body, { paddingBottom: 16 }]} accessibilityLabel="Your spot result">
           {job.overlay_url || job.photo_url ? (
@@ -382,6 +386,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#2a2a2a' },
   title: { color: '#fff', fontSize: 16, fontWeight: '600' },
   empty: { color: '#888', fontSize: 14, textAlign: 'center', marginTop: 40 },
+  progress: { marginTop: 16, marginHorizontal: 32 },
   body: { padding: 16, gap: 12 },
   photo: { width: '100%', height: 200, borderRadius: 10, backgroundColor: '#111' },
   tiles: { flexDirection: 'row', gap: 10 },

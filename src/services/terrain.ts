@@ -439,12 +439,42 @@ export function nearColor(n: TerrainNear): TerrainFile | null {
   return n.color_path ? { id: `${n.id}_color`, path: n.color_path, bytes: n.color_bytes ?? null } : null;
 }
 
-type TerrainFile = { id: string; path: string; bytes: number | null };
+export type TerrainFile = { id: string; path: string; bytes: number | null };
 const fileFor = (r: TerrainFile) => `${DIR}terrain_${r.id}_${r.bytes ?? 0}.png`;
 const fetching: Record<string, Promise<boolean> | undefined> = {};
 
+// Download progress (27 Nov 2026, the 3D panel's bar): bytes really written per file, from the download's own
+// progress callback; a file found on the phone counts as whole. Shown only, nothing waits on it.
+const progress: Record<string, { got: number; total: number }> = {};
+const progressListeners = new Set<() => void>();
+let progressTimer: ReturnType<typeof setTimeout> | null = null;
+function setProgress(file: string, got: number, total: number) {
+  progress[file] = { got, total };
+  if (!progressTimer) progressTimer = setTimeout(() => { progressTimer = null; progressListeners.forEach(f => f()); }, 200);   // at most 5 a second
+}
+export function onTerrainProgress(f: () => void) { progressListeners.add(f); return () => { progressListeners.delete(f); }; }
+// Bytes on the phone of these files out of their size (the rows' bytes columns, else the server's own length).
+export function terrainProgress(files: TerrainFile[]): { got: number; total: number } {
+  let got = 0, total = 0;
+  for (const r of files) {
+    const p = progress[fileFor(r)], size = r.bytes ?? p?.total ?? 0;
+    total += size;
+    got += data[r.id] ? size : Math.min(size || Infinity, p?.got ?? 0);
+  }
+  return { got: Math.min(got, total), total };
+}
+export function useTerrainProgress(files: TerrainFile[] | null): { got: number; total: number } | null {
+  const [, setTick] = useState(0);
+  useEffect(() => (files?.length ? onTerrainProgress(() => setTick(n => n + 1)) : undefined), [files]);
+  return files?.length ? terrainProgress(files) : null;
+}
+
 async function onPhone(r: TerrainFile): Promise<boolean> {
-  try { const info = await FileSystem.getInfoAsync(fileFor(r)); return info.exists && !!(info as any).size; } catch { return false; }
+  try {
+    const info = await FileSystem.getInfoAsync(fileFor(r)), size = (info as any).size;
+    if (info.exists && size) setProgress(fileFor(r), size, r.bytes ?? size);
+    return info.exists && !!size;
+  } catch { return false; }
 }
 
 // Makes sure the file is on the phone (downloads it when it is not). Never throws; false = not there and no signal.
@@ -456,8 +486,10 @@ function saveFile(r: TerrainFile): Promise<boolean> {
       await ensureDir();
       if (await onPhone(r)) return true;
       const tmp = `${file}.tmp`;
-      const res = await FileSystem.downloadAsync(FILES_URL + r.path, tmp);
-      if (res.status !== 200) { await FileSystem.deleteAsync(tmp, { idempotent: true }); return false; }
+      setProgress(file, 0, r.bytes ?? 0);
+      const dl = FileSystem.createDownloadResumable(FILES_URL + r.path, tmp, {}, p => setProgress(file, p.totalBytesWritten, r.bytes ?? (p.totalBytesExpectedToWrite > 0 ? p.totalBytesExpectedToWrite : 0)));
+      const res = await dl.downloadAsync();
+      if (!res || res.status !== 200) { await FileSystem.deleteAsync(tmp, { idempotent: true }); return false; }
       await FileSystem.deleteAsync(file, { idempotent: true });
       await FileSystem.moveAsync({ from: tmp, to: file });
       return true;
