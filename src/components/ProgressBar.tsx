@@ -19,15 +19,16 @@ export type ProgressProps = {
   step?: number;
   within?: number | null;
   compact?: boolean;
+  count?: string | null;   // the right-hand count instead of "2 of 4" / "50%" (null = none)
 };
 
 const clamp = (x: number) => Math.max(0, Math.min(1, x));
 
-export default function ProgressBar({ label, text, detail, fraction, steps, step = 0, within, compact }: ProgressProps) {
+export default function ProgressBar({ label, text, detail, fraction, steps, step = 0, within, compact, count: countIn }: ProgressProps) {
   const n = steps?.length ?? 0;
   const i = n ? Math.max(0, Math.min(n - 1, step)) : 0;
   const line = text ?? (n ? steps![i] : '');
-  const count = n ? `${i + 1} of ${n}` : fraction != null ? `${Math.round(clamp(fraction) * 100)}%` : '';
+  const count = countIn !== undefined ? countIn ?? '' : n ? `${i + 1} of ${n}` : fraction != null ? `${Math.round(clamp(fraction) * 100)}%` : '';
   const a11y = `Progress: ${label}${line ? `, ${line}` : ''}${detail ? `, ${detail}` : ''}${n ? `, step ${i + 1} of ${n}` : fraction != null ? `, ${Math.round(clamp(fraction) * 100)} percent` : ''}`;
   return (
     <View style={[styles.wrap, compact && { gap: 3 }]} accessibilityRole="progressbar" accessibilityLabel={a11y}

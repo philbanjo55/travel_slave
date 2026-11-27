@@ -13,7 +13,8 @@ import {
 import { onPlanLanded, startReplanNow, failReplanNow, useReplanNow } from '../../services/replanNowStore';
 import { VERDICT_COLOR, VERDICT_TEXT, countText, expShots, forecastCount, isLightOnly, lateReplan, planKindText, shotsText, verdictOf } from '../../services/plannerWords';
 import { forgetWeek } from '../../services/plannerWeek';
-import { startReplan, ack } from '../../services/planningStatus';
+import { startReplan, ack, usePlanningStatus } from '../../services/planningStatus';
+import ProgressBar from '../ProgressBar';
 import { ONE_PASS_UI, OnePassStart, waitOnePass } from '../../services/onePass';
 import { OnePassButton } from './OnePassButton';
 import { useTripStore } from '../../store/tripStore';
@@ -145,7 +146,7 @@ export function DayPlanView({ tripId, tripDate }: { tripId: string; tripDate: st
         </TouchableOpacity>
       ) : null}
       {t && isToday && nowView.phase === 'running' ? <ReplanProgress tripId={tripId} /> : null}
-      {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
+      {busy ? <Busy text={busy} tripId={tripId} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>
           {nowNote ? <Text style={styles.warn}>{nowNote}</Text> : null}
           {nowView.phase === 'error' ? <Text style={styles.error}>{nowView.message}</Text> : null}
@@ -237,7 +238,7 @@ export function MultiPlanView({ tripId, tripDates }: { tripId: string; tripDates
         </TouchableOpacity>
         )}
       </View>
-      {busy ? <Busy text={busy} /> : error ? <Text style={styles.error}>{error}</Text> : (
+      {busy ? <Busy text={busy} tripId={tripId} /> : error ? <Text style={styles.error}>{error}</Text> : (
         <>
           {run ? <Text style={styles.hint}>Planned {ago(run.created_at)}{note ? `\n${note}` : ''}</Text> : note ? <Text style={styles.hint}>{note}</Text> : null}
           <PlanBody tripId={tripId} run={run} plans={plans} byDay />
@@ -485,8 +486,22 @@ export function VisitRow({ v, tz, mine, onPress, index, run, dayFirst }: { v: Pl
   );
 }
 
-function Busy({ text }: { text: string }) {
-  return <View style={styles.center}><ActivityIndicator color={colors.accent} /><Text style={styles.hint}>{text}</Text></View>;
+// While T's week draft runs (the same store and days-done numbers as the planning strip on top), the wait shows them
+// as a bar; any other wait (loading, the one-request day plans) has no amount to show and keeps the spinner.
+function Busy({ text, tripId }: { text: string; tripId?: string }) {
+  const v = usePlanningStatus(tripId);
+  const s = v.kind === 'running' ? v.status : null;
+  const running = !!s && (s.status === 'queued' || s.status === 'running') && s.nights > 0;
+  if (v.kind !== 'running' || text === 'Loading…') {
+    return <View style={styles.center}><ActivityIndicator color={colors.accent} /><Text style={styles.hint}>{text}</Text></View>;
+  }
+  return (
+    <View style={[styles.center, { alignItems: 'stretch', paddingHorizontal: spacing.lg }]}>
+      <Text style={[styles.hint, { textAlign: 'center' }]}>{text}</Text>
+      <ProgressBar label="T planning" text={running ? `${s!.night} of ${s!.nights} days` : 'Starting'} count={null}
+        fraction={running ? s!.night / s!.nights : null} />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
