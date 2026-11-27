@@ -81,11 +81,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # TEMP 27 Nov 2026: planner checks only, split over two emulators (Phil: Re-plan and Accept do nothing)
+          # TEMP 27 Nov 2026: planner checks only (Phil: "make sure it covers everything and edge cases"): the robot
+          # trip end to end (real Accept / Re-plan / Tell T, faults, restart) plus the read-only checks on Teton Live
+          - shard: r1
+            only: robot_chips,robot_accept
+          - shard: r2
+            only: robot_replan,robot_replan_restart
+          - shard: r3
+            only: robot_tell,robot_faults
           - shard: p1
-            only: trip_order,side_by_side_card,plan_check_card,replan_now_card,ghost_accept
-          - shard: p2
-            only: plans_tab,tell_t,tell_t_setup
+            only: side_by_side_card,plan_check_card,replan_now_card,ghost_accept,plans_tab,tell_t,tell_t_setup
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
