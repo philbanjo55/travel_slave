@@ -13,9 +13,3 @@ export const IS_TEST_APP: boolean =
 // everything the TEST app had; TEST is where new things are built next).
 // IS_TEST_APP still tells the two builds apart (logs, update channel).
 export const PLANNER_ON = true;
-
-// Planner redesign, option 3 "Week strip on top" (Phil, 28 Nov 2026: "I like the idea of option 3"; mockup
-// https://claude.ai/artifact/6bFbuwwtbZDFQLeDVYQ7Po). TEST app only: the day tabs become week tiles (T's number and
-// changes per day), one "Re-plan from now on" button, the timeline always shows T's day merged with yours, the stop
-// page's T block has no tabs, and the Planner screen moves behind the trip's ⋯ menu.
-export const OPTION3_UI: boolean = IS_TEST_APP;

@@ -8,7 +8,6 @@ import { ChanceLine, DayPlanner, stopHint } from './DayPlannerHints';
 import { DayChange } from '../../services/planner';
 import { VERDICT_TEXT, verdictOf } from '../../services/plannerWords';
 import { sunPosition, parseTimeLabel, SUN_UP_GEO } from '../../utils/sunEngine';
-import { OPTION3_UI } from '../../utils/variant';
 
 // A rated stop whose time on the day is after that day's sunset at the stop (sun below the horizon at its start time,
 // worked out from the stop's own position and date, never a fixed hour): T gives it no chance, so the card says why
@@ -32,8 +31,7 @@ export function afterSunset(item: any, date: string | null | undefined, tz: stri
 
 // Ghost mode (redesign C4): the day in T's best plan's order and times. moved / added stops
 // get a dashed green card and the new time; skipped ones stay, dimmed (applying keeps them).
-// say (option 3, the merged timeline): the card's own line instead of the ghost words ("T adds this", "T moved it to Mon").
-export type GhostTag = { kind: 'same' | 'moved' | 'added' | 'skipped'; change?: DayChange; say?: string | null };
+export type GhostTag = { kind: 'same' | 'moved' | 'added' | 'skipped'; change?: DayChange };
 
 // TEST app only: one stop on the day timeline (mockup E5). Times sit in the
 // left column, each stop is a dot on the line with the drive between stops on
@@ -52,7 +50,7 @@ export function TimelineRow({ item, index, isLast, weather, planner, onPress, gh
       {index > 0 ? (
         <View style={styles.driveRow}>
           <View style={styles.gutter} />
-          {OPTION3_UI ? null : <View style={styles.lineCol}><View style={styles.lineFill} /></View>}
+          <View style={styles.lineCol}><View style={styles.lineFill} /></View>
           {drive ? (
             <View style={styles.drive}>
               <Ionicons name="car-outline" size={11} color={colors.textTertiary} />
@@ -69,15 +67,13 @@ export function TimelineRow({ item, index, isLast, weather, planner, onPress, gh
             <Text style={styles.endTime}>{addMinutesToTimeLabel(item.time_label, item.duration_minutes)}</Text>
           ) : null}
         </View>
-        {OPTION3_UI ? null : (
-          <View style={styles.lineCol}>
-            <View style={[styles.lineTop, index === 0 && styles.lineHidden]} />
-            <View style={[styles.dot, shoot ? styles.dotShoot : styles.dotStop]} />
-            <View style={[styles.lineFill, isLast && styles.lineHidden]} />
-          </View>
-        )}
+        <View style={styles.lineCol}>
+          <View style={[styles.lineTop, index === 0 && styles.lineHidden]} />
+          <View style={[styles.dot, shoot ? styles.dotShoot : styles.dotStop]} />
+          <View style={[styles.lineFill, isLast && styles.lineHidden]} />
+        </View>
         <View style={styles.body}>
-          {shoot && OPTION3_UI ? <ShootCard3 item={item} weather={weather} planner={planner} ghost={ghost} dayDate={dayDate} /> : shoot ? <ShootCard item={item} weather={weather} planner={planner} ghost={ghost} change={change} onChip={onChip} dayDate={dayDate} /> : (
+          {shoot ? <ShootCard item={item} weather={weather} planner={planner} ghost={ghost} change={change} onChip={onChip} dayDate={dayDate} /> : (
             <View style={[styles.logRow, fresh && styles.ghostLog]}>
               <Text style={styles.logEmoji}>{item.emoji || '📍'}</Text>
               <Text style={styles.logName} numberOfLines={1}>{item.name}</Text>
@@ -93,7 +89,6 @@ export function TimelineRow({ item, index, isLast, weather, planner, onPress, gh
 
 // What T's plan does to this stop, in a few words, for the ghost card.
 function ghostLine(ghost: GhostTag): string | null {
-  if (ghost.say !== undefined) return ghost.say;
   const c = ghost.change;
   // T's verdict, never a bare % (one chance per stop, the same words everywhere).
   const vd = (x?: number | null) => (x == null ? null : VERDICT_TEXT[verdictOf(x)]);
@@ -164,55 +159,6 @@ function ShootCard({ item, weather: w, planner, ghost, change, onChip, dayDate }
   );
 }
 
-// Planner look round 2 (Phil, 28 Nov 2026): no dots on a line; each shoot card shows its chance at its time as a number on
-// the right ("61%" over CHANCE, green for a good bet, amber for a long shot) and a thin bar along its bottom. T's added
-// stops are dashed green, your stops T leaves out are faded and struck with where they went.
-const AMBER = '#e0b34a';
-function ShootCard3({ item, weather: w, planner, ghost, dayDate }: {
-  item: any; weather?: WeatherRow; planner: DayPlanner | null; ghost?: GhostTag | null; dayDate?: string | null;
-}) {
-  const tier = planner?.tiers.get(item.id) ?? null;
-  const hint = stopHint(item.id, planner, item.name);
-  const g = ghost?.kind;
-  const gone = g === 'skipped';
-  const fresh = g === 'added' || g === 'moved';
-  const line = ghost ? ghostLine(ghost) : null;
-  const wx = w && w.temperature_c != null ? `${Math.round(cToF(w.temperature_c))}°F · ${conditionsText(w.weather_code).toLowerCase()}` : null;
-  const vd = hint && !hint.done ? verdictOf(hint.p) : null;
-  const col = vd === 'good' ? colors.signalOk : vd === 'long' ? AMBER : '#8a8a8a';
-  const pct = hint && !hint.done ? Math.round(hint.p * 100) : null;
-  const dark = !hint && !ghost && tier && afterSunset(item, dayDate, planner?.run?.params?.tz);
-  return (
-    <View style={[styles.card3, g === 'added' && styles.card3New, gone && styles.card3Gone]}>
-      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <View style={styles.cardHead}>
-          <Text style={[styles.cardName, gone && styles.struck]} numberOfLines={1}>{item.name}</Text>
-          {tier ? <Text style={styles.tier3}>{tier}</Text> : null}
-          {item.signal_status === 'none' ? <Ionicons name="wifi-outline" size={12} color={colors.signalNone} /> : null}
-        </View>
-        <View style={styles.meta3Row}>
-          {[gone ? null : wx, fresh || gone ? line : null].some(Boolean) ? (
-            <Text style={styles.meta3} numberOfLines={2}>{[gone ? null : wx, fresh || gone ? line : null].filter(Boolean).join(' · ')}</Text>
-          ) : null}
-          {vd ? <Text style={[styles.meta3, { color: col, fontWeight: '700' }]}>{VERDICT_TEXT[vd]}</Text> : null}
-          {hint?.done ? <Text style={styles.meta3}>Done · this time has passed</Text> : null}
-          {dark ? <Text style={styles.meta3} accessibilityLabel="After sunset">After sunset</Text> : null}
-        </View>
-        {!gone && hint?.chip ? <Text style={styles.chip3} numberOfLines={1}>{hint.chip}</Text> : null}
-      </View>
-      {!gone && pct != null ? (
-        <View style={styles.pct3} accessibilityLabel={`${pct} percent chance`}>
-          <Text style={[styles.pct3N, { color: col }]}>{pct}%</Text>
-          <Text style={styles.pct3L}>CHANCE</Text>
-        </View>
-      ) : null}
-      {!gone && pct != null ? (
-        <View style={styles.cbar3}><View style={[styles.cbar3Fill, { width: `${Math.max(2, pct)}%`, backgroundColor: col }]} /></View>
-      ) : null}
-    </View>
-  );
-}
-
 const GUTTER = 58;
 const styles = StyleSheet.create({
   darkLine: { fontSize: 11, color: colors.textSecondary, marginTop: 4 },
@@ -262,20 +208,4 @@ const styles = StyleSheet.create({
   wxTag: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5, color: colors.signalWarning, borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.signalWarning, borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1 },
   stars: { flexDirection: 'row', gap: 1, marginLeft: 'auto' },
-  card3: {
-    flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, paddingTop: 9, paddingBottom: 13, borderRadius: 12,
-    backgroundColor: colors.surface, borderWidth: 1, borderColor: '#262626', overflow: 'hidden',
-  },
-  card3New: { borderStyle: 'dashed', borderColor: colors.signalOk, backgroundColor: '#0d140f' },
-  card3Gone: { opacity: 0.42 },
-  struck: { textDecorationLine: 'line-through' },
-  tier3: { fontSize: 9, fontWeight: '800', borderWidth: 1, borderColor: '#444444', borderRadius: 5, paddingHorizontal: 4, color: '#cccccc' },
-  meta3: { fontSize: 11, color: '#8a8a8a', flexShrink: 1 },
-  meta3Row: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 6, rowGap: 1 },
-  chip3: { fontSize: 10, fontWeight: '700', color: colors.signalOk },
-  pct3: { alignItems: 'flex-end' },
-  pct3N: { fontFamily: 'Georgia', fontSize: 19, lineHeight: 21 },
-  pct3L: { fontSize: 8.5, letterSpacing: 0.8, color: '#8a8a8a', fontWeight: '700' },
-  cbar3: { position: 'absolute', left: 10, right: 10, bottom: 6, height: 3, borderRadius: 2, backgroundColor: '#232323', overflow: 'hidden' },
-  cbar3Fill: { height: 3, borderRadius: 2 },
 });

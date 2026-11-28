@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { format, parseISO } from 'date-fns';
@@ -14,12 +14,6 @@ import { ONE_PASS_UI } from '../../services/onePass';
 import { OnePassButton } from './OnePassButton';
 import SettingsEditor, { settingsSummary } from './SettingsEditor';
 import { DayPlanner } from './DayPlannerHints';
-import { OPTION3_UI } from '../../utils/variant';
-import { replanFromNow } from '../../services/replanFromNow';
-import { failReplanNow, useReplanNow } from '../../services/replanNowStore';
-import { errText } from '../../utils/errText';
-import { useTripStore } from '../../store/tripStore';
-import { ScrollView } from 'react-native';
 
 type Tab = 'today' | 'trip' | 'settings';
 
@@ -79,21 +73,6 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
   ].filter(Boolean).join(' · ');
   const vd = mineV ? verdictOf(mineV.p_good) : null;
 
-  // Option 3 (Phil, 28 Nov 2026): a change to the stop's chips re-plans by itself, 4 s after the last tap.
-  const { currentTripData } = useTripStore();
-  const nowRun = useReplanNow(OPTION3_UI ? tripId : null);
-  const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (autoTimer.current) clearTimeout(autoTimer.current); }, []);
-  const autoReplan = () => {
-    if (!tripId) return;
-    if (autoTimer.current) clearTimeout(autoTimer.current);
-    autoTimer.current = setTimeout(() => {
-      autoTimer.current = null;
-      replanFromNow(tripId, currentTripData?.trip?.title).then(() => setSaved(false)).catch((e: any) => failReplanNow(tripId, errText(e)));
-    }, 4000);
-  };
-  const tierDays = days.filter((d: any) => d.date);
-
   const replan = async () => {
     if (!tripId) return;
     setReplanning(true);
@@ -126,52 +105,21 @@ export default function StopPlannerSection({ stopId, planner, tripId, tripDate, 
             </View>
           ) : null}
           {/* The peak time is on the Today chart below (its "peak" tag): no second line here (Phil, 13 Nov 2026: less text). */}
-          {updated && !OPTION3_UI ? <Text style={styles.updated}>{updated}</Text> : null}
+          {updated ? <Text style={styles.updated}>{updated}</Text> : null}
         </View>
         {tier ? <Text style={styles.tierPill}>{tier}</Text> : null}
       </View>
 
-      {OPTION3_UI ? (
-        <View style={{ gap: spacing.md }}>
-          {tripDate ? <TodayChart slots={curve?.slots ?? null} error={curveError} tz={tz} timeLabel={timeLabel} duration={duration} />
-            : <Text style={styles.hint}>This stop isn't on a dated day.</Text>}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} accessibilityLabel="T's verdict for this stop on each day">
-            {tierDays.map((d: any) => {
-              const td = week?.byDate.get(d.date);
-              const t = td?.best?.visits.find(v => samePlace(week, v.stop_id, stopId) && v.p_good != null) ?? null;
-              const own = d.date === tripDate ? mineVisit(week, stopId, d.date) : null;
-              const v = t ?? own;
-              const k = v ? verdictOf(v.p_good) : null;
-              const best = placements(week, stopId)[0]?.date === d.date;
-              const here = d.date === tripDate;
-              return (
-                <TouchableOpacity key={d.id} style={[styles.dayBox, best && styles.dayBest, here && styles.dayHere]} activeOpacity={0.8}
-                  onPress={() => tripId && (navigation as any).popTo('Trip', { tripId, date: d.date })}
-                  accessibilityRole="button" accessibilityLabel={`${format(parseISO(d.date), 'EEEE d MMM')}: ${k ? VERDICT_TEXT[k] : td ? "not in T's plan" : 'not planned yet'}${best ? ', best day' : ''}. Open that day`}>
-                  <Text style={[styles.dayBoxA, here && styles.bold]}>{format(parseISO(d.date), 'EEE d')}</Text>
-                  <Text style={[styles.dayBoxB, { color: k ? VERDICT_COLOR[k] : colors.textTertiary }]}>{k ? (k === 'good' ? 'Good' : k === 'long' ? 'Long' : 'Skip') : '–'}</Text>
-                  {v?.start ? <Text style={styles.dayBoxC}>{clock12(v.start, td?.run?.params?.tz ?? tz)}</Text> : null}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-          <SettingsEditor stopId={stopId} initial={setting} onChange={s => { setSetting(s); setSaved(true); autoReplan(); }} />
-          {nowRun.phase === 'running' ? <Text style={styles.replanText}>T is re-planning with this change…</Text>
-            : saved ? <Text style={styles.replanText}>Saved. T re-plans with it in a moment.</Text>
-            : nowRun.phase === 'error' ? <Text style={[styles.hint, { color: '#e74c3c' }]}>{nowRun.message}</Text> : null}
-        </View>
-      ) : null}
-
-      {OPTION3_UI ? null : <View style={styles.seg} accessibilityRole="tablist">
+      <View style={styles.seg} accessibilityRole="tablist">
         {(['today', 'trip', 'settings'] as Tab[]).map(t => (
           <TouchableOpacity key={t} style={[styles.segBtn, tab === t && styles.segOn]} onPress={() => setTab(t)}
             accessibilityRole="tab" accessibilityState={{ selected: tab === t }}>
             <Text style={[styles.segText, tab === t && styles.segTextOn]}>{t === 'today' ? 'Today' : t === 'trip' ? 'Trip' : 'Settings'}</Text>
           </TouchableOpacity>
         ))}
-      </View>}
+      </View>
 
-      {OPTION3_UI ? null : tab === 'today' ? (
+      {tab === 'today' ? (
         tripDate ? <TodayChart slots={curve?.slots ?? null} error={curveError} tz={tz} timeLabel={timeLabel} duration={duration} />
           : <Text style={styles.hint}>This stop isn't on a dated day.</Text>
       ) : tab === 'trip' ? (
@@ -314,10 +262,4 @@ const styles = StyleSheet.create({
   replan: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 40, paddingHorizontal: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.signalOk },
   replanText: { flex: 1, fontSize: 12, color: colors.textPrimary },
   replanGo: { fontSize: 13, fontWeight: '700', color: colors.signalOk },
-  dayBox: { minWidth: 58, paddingHorizontal: 6, paddingVertical: 5, alignItems: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, gap: 1 },
-  dayBest: { borderColor: colors.signalOk },
-  dayHere: { backgroundColor: colors.surfaceElevated },
-  dayBoxA: { fontSize: 10, color: colors.textSecondary },
-  dayBoxB: { fontSize: 12, fontWeight: '800' },
-  dayBoxC: { fontSize: 9, color: colors.textTertiary },
 });
