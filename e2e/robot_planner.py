@@ -379,9 +379,11 @@ def robot_replan():
         V.check('robot-replan-tap', False, 'button never came to a tappable place'); return
     C.tap(b['xy'])   # a second, quick tap: must not start a second re-plan
     busy = None
-    for _ in range(6):
+    for k in range(6):
         st = C.capture(1)
         if V.has(st, 'Re-planning') or V.has(st, 'Progress:') or V.has(st, 'T is re-planning'): busy = st; break
+        top = [x for x in st.all_texts if re.search(r're-plan|progress|planned|signal|error|could not', x, re.I)]
+        print(f'INFO replan busy look {k} +{time.time() - t0:.1f}s: ' + ' | '.join(x[:90] for x in top)[:500], flush=True)
     V.check('robot-replan-busy-shown', busy is not None, 'the card shows it is working within ~10 s of the tap')
     sent = robot_logs('planner_t_replan_one')[sent0:]
     V.check('robot-replan-sent-once', len([l for l in sent if 'E2E_ROBOT' in l]) == 1, f'{len(sent)} requests after a double tap')

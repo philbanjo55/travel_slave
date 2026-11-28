@@ -81,17 +81,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # planner look round 2 (option 3, 28 Nov 2026): the new checks, the old planner checks that still apply, the robot
-          # trip end to end, and the stop page's 3D (the stop page changed above it)
-          - shard: o3
-            only: option3_checks,stops_page
-          - shard: p1
-            only: replan_now_card,ghost_accept,plan_check_card,tell_t,tell_t_setup,today_auto_open
+          # option 3: the robot's Re-plan (busy line) and the stop page's 3D four times (noise check against the control)
           - shard: r1
-            only: robot_chips,robot_accept,robot_replan,robot_replan_restart,robot_tell,robot_faults
+            only: robot_replan
           - shard: a
             only: sun_3d
           - shard: a2
+            only: sun_3d
+          - shard: a3
+            only: sun_3d
+          - shard: a4
             only: sun_3d
     steps:
       - uses: actions/checkout@v4
