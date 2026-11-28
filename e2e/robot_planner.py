@@ -489,7 +489,7 @@ def robot_tell():
     sh = C.capture(2.5)
     V.check('robot-tell-open', V.has(sh, 'Send the note to T') or V.has(sh, 'Send to T'))
     V.tap_text(sh, 'Your note for T'); time.sleep(1)
-    C.adb('shell', 'input', 'text', 'Back%sat%sthe%shotel%sby%s4%sPM')
+    C.adb('shell', 'input', 'text', 'Tomorrow%sback%sat%sthe%shotel%sby%s4%sPM')
     time.sleep(1)
     s = C.capture(1)
     V.tap_text(s, 'Send the note to T') or V.tap_text(s, 'Send to T')
