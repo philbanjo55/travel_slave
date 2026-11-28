@@ -53,13 +53,13 @@ export function ReplanFromNowBar({ tripId, tripTitle, run, tz, forecastTo }: { t
         </View>
         <View style={{ flex: 1, gap: 2 }}>
           <Text style={styles.rpText}>{busy ? 'Re-planning…' : 'Re-plan from now on'}</Text>
-          {now.phase === 'running' || later ? null : now.phase === 'error'
-            ? <Text style={styles.rpErr} numberOfLines={2}>{now.message}</Text>
+          {now.phase === 'error' ? <Text style={styles.rpErr} numberOfLines={3}>{now.message}</Text>
+            : now.phase === 'running' || later ? null
             : <Text style={styles.rpLine} numberOfLines={1} accessibilityLabel={planned}>{planned}</Text>}
         </View>
       </TouchableOpacity>
       {now.phase === 'running' ? <ReplanProgress tripId={tripId} />
-        : later ? <ProgressBar label={s && s.status !== 'queued' ? 'T is planning the later days' : 'T is starting'} compact
+        : later && now.phase !== 'error' ? <ProgressBar label={s && s.status !== 'queued' ? 'T is re-planning the later days' : 'T is re-planning…'} compact
           fraction={total ? Math.max(0.04, done / total) : null} text={total ? `${done} of ${total} days` : undefined} />
         : null}
     </View>

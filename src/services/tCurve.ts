@@ -30,15 +30,16 @@ export async function fetchTCurve(stopId: string, date: string): Promise<TCurve>
   }
 }
 
-// undefined while loading (or unreachable with nothing saved), null = no forecast that day.
-export function useTCurves(stopId: string | null | undefined, dates: string[]): Map<string, TCurve | undefined> {
-  const [m, setM] = useState<Map<string, TCurve | undefined>>(new Map());
+// undefined while loading, null = no forecast that day, false = couldn't be read (no signal and nothing saved).
+export function useTCurves(stopId: string | null | undefined, dates: string[]): Map<string, TCurve | false | undefined> {
+  const [m, setM] = useState<Map<string, TCurve | false | undefined>>(new Map());
   const key = `${stopId}|${dates.join(',')}`;
   useEffect(() => {
     if (!stopId || !dates.length) return;
     let alive = true;
     dates.forEach(d => {
-      fetchTCurve(stopId, d).then(v => { if (alive) setM(prev => new Map(prev).set(d, v)); }).catch(() => {});
+      fetchTCurve(stopId, d).then(v => { if (alive) setM(prev => new Map(prev).set(d, v)); })
+        .catch(() => { if (alive) setM(prev => new Map(prev).set(d, false)); });
     });
     return () => { alive = false; };
   }, [key]);

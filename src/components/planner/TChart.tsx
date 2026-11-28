@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, LayoutChangeEvent } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { View, Text, StyleSheet, LayoutChangeEvent, PanResponder } from 'react-native';
 import { colors } from '../../theme';
 import { minutesLabel, tzMinutes } from '../../services/planner';
 import { TSlot, bestWindow } from '../../services/tCurve';
@@ -47,6 +47,18 @@ export function TDayChart({ slots, typical, tz, youMin, youLabel }: {
   const pick = (px: number) => Math.max(0, Math.min(n - 1, Math.round(((px - L) / Math.max(1, w - L - R)) * (n - 1))));
   const colW = n > 1 ? (w - L - R) / (n - 1) : 4;
   const tip = touch != null && n ? data[touch] : null;
+  // Only a sideways drag reads the chart: an up / down swipe that starts on it scrolls the page (the first build took
+  // every touch, so the page would not scroll over the chart: emulator run 186).
+  const pickRef = useRef(pick); pickRef.current = pick;
+  const pan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > 1.5 * Math.abs(g.dy),
+    onPanResponderGrant: e => setTouch(pickRef.current(e.nativeEvent.locationX)),
+    onPanResponderMove: e => setTouch(pickRef.current(e.nativeEvent.locationX)),
+    onPanResponderRelease: () => setTouch(null),
+    onPanResponderTerminate: () => setTouch(null),
+    onPanResponderTerminationRequest: () => true,
+  }), []);
   return (
     <View onLayout={onLayout} style={{ height: H }} accessibilityLabel={dim ? 'Typical light only: no forecast for this day yet' : 'How good each 15 minutes is'}>
       {w > 0 && n > 0 ? (
@@ -91,12 +103,7 @@ export function TDayChart({ slots, typical, tz, youMin, youLabel }: {
               </View>
             </>
           ) : null}
-          <View style={StyleSheet.absoluteFill}
-            onStartShouldSetResponder={() => true} onMoveShouldSetResponder={() => true}
-            onResponderGrant={e => setTouch(pick(e.nativeEvent.locationX))}
-            onResponderMove={e => setTouch(pick(e.nativeEvent.locationX))}
-            onResponderRelease={() => setTouch(null)} onResponderTerminate={() => setTouch(null)}
-            onResponderTerminationRequest={() => true} />
+          <View style={StyleSheet.absoluteFill} {...pan.panHandlers} />
         </>
       ) : null}
     </View>
