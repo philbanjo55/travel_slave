@@ -2838,8 +2838,80 @@ def trip_order():
     V.check('triporder-alive', C.app_alive())
 
 
+def option3_shots():
+    """Planner redesign option 3 (28 Nov 2026): screenshots of Teton Live's trip page (top, tomorrow's day, its
+    timeline), the ALL tile and a stop page, the same steps on the old and the new build (before / after for Phil).
+    Read only: taps only open screens."""
+    os.makedirs(os.path.join(os.environ.get('OUT', 'out'), 'shots'), exist_ok=True)
+    p = open_live()
+    if p is None:
+        return
+    C.screenshot('o3-01-trip-open')
+    d = datetime.datetime.now(ZoneInfo('America/Denver')) + datetime.timedelta(days=1)
+    tile = f"{d.strftime('%a')} {d.day}".upper()          # new week strip: 'SAT 28'
+    tab = f"{d.strftime('%b')} {d.day}"                     # old day tabs: 'Nov 28'
+    s = C.capture(1)
+    hit = False
+    for _ in range(5):
+        if V.tap_text(s, tile, exact=True) or V.tap_text(s, tab, exact=True):
+            hit = True; break
+        C.adb('shell', 'input', 'swipe', '900', '520', '300', '520', '300'); s = C.capture(0.8)
+    V.check('o3-tomorrow', hit, f'{tile} / {tab}')
+    s = C.capture(4)
+    V.show('o3-day', s)
+    C.screenshot('o3-02-day-top')
+    C.adb('shell', 'input', 'swipe', '540', '1500', '540', '800', '600'); s = C.capture(1.5)
+    C.screenshot('o3-03-day-timeline')
+    V.show('o3-day-timeline', s)
+    C.adb('shell', 'input', 'swipe', '540', '1500', '540', '800', '600'); s = C.capture(1.5)
+    C.screenshot('o3-04-day-timeline-2')
+    scroll_top()
+    s = C.capture(1)
+    # Details / Use T's plan bar (new) or the card's Details (old)
+    s = scroll_find('Details') or s
+    if V.tap_text(s, 'Details'):
+        time.sleep(1.5); C.screenshot('o3-05-details'); V.show('o3-details', C.capture(0.5))
+        V.tap_text(C.capture(0.5), 'Less') or V.tap_text(C.capture(0.5), 'Details')
+    scroll_top()
+    # the stop page: Snake River Overlook on that day
+    s = C.capture(1)
+    opened = False
+    for _ in range(10):
+        hit = next((c for c in s.clickables if 'Snake River Overlook' in c['label'] and 0.25 * 1920 <= c['xy'][1] <= 0.8 * 1920), None)
+        if hit:
+            C.tap(hit['xy']); opened = True; break
+        C.adb('shell', 'input', 'swipe', '540', '1300', '540', '900', '500'); s = C.capture(1.2)
+    V.check('o3-stop-open', opened, 'Snake River Overlook')
+    if opened:
+        s = C.capture(5)
+        C.screenshot('o3-06-stop-top'); V.show('o3-stop-top', s)
+        for k in range(1, 4):
+            C.adb('shell', 'input', 'swipe', '540', '1500', '540', '700', '600'); s = C.capture(2)
+            C.screenshot(f'o3-0{6 + k}-stop-scroll{k}'); V.show(f'o3-stop-scroll{k}', s)
+        V.back()
+        time.sleep(2)
+    # the ALL tile / Stops tab
+    scroll_top()
+    s = C.capture(1)
+    for _ in range(4):
+        if V.tap_text(s, 'ALL', exact=True) or V.tap_text(s, 'Stops', exact=True):
+            break
+        C.adb('shell', 'input', 'swipe', '300', '520', '900', '520', '300'); s = C.capture(0.8)
+    s = C.capture(4)
+    C.screenshot('o3-10-all'); V.show('o3-all', s)
+    C.adb('shell', 'input', 'swipe', '540', '1500', '540', '800', '600'); s = C.capture(1.5)
+    C.screenshot('o3-11-all-2')
+    # the trip menu (new) / Planner (old)
+    scroll_top()
+    s = C.capture(1)
+    menu = next((c for c in s.clickables if c['label'].startswith('Trip menu')), None)
+    if menu:
+        C.tap(menu['xy']); s = C.capture(2); C.screenshot('o3-12-menu'); V.show('o3-menu', s); V.back()
+    V.check('o3-alive', C.app_alive())
+
+
 def main():
-    sections = R.SECTIONS + (trip_order, find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d, jenny_3d, offline_jenny)
+    sections = R.SECTIONS + (trip_order, find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d, jenny_3d, offline_jenny, option3_shots)
     # E2E_ONLY = comma list of section names: the workflow runs the sections on several emulators at once (16 Nov 2026)
     only = [x.strip() for x in os.environ.get('E2E_ONLY', '').split(',') if x.strip()]
     if only:

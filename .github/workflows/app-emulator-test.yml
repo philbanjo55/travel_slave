@@ -8,7 +8,7 @@ name: App emulator test (trip and day stay put)
 
 on:
   push:
-    branches: [claude/planner-buttons-test, claude/planner-buttons-ctl]
+    branches: [claude/planner-option3-emu, claude/planner-option3-emu-before]
   workflow_dispatch:
 
 concurrency:
@@ -81,13 +81,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # TEMP 27 Nov 2026: clean planner run with every test fix (robot trip end to end, Teton Live read-only, 3D)
-          - shard: r1   # one machine: the robot sections share one trip and reset it between them
-            only: robot_chips,robot_accept,robot_replan,robot_replan_restart,robot_tell,robot_faults
-          - shard: p1
-            only: side_by_side_card,plan_check_card,replan_now_card,ghost_accept,plans_tab,tell_t,tell_t_setup
-          - shard: a
-            only: sun_3d
+          - shard: o3
+            only: option3_shots
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

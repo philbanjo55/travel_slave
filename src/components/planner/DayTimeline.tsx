@@ -7,6 +7,27 @@ import { minutesToHoursMin, addMinutesToTimeLabel } from '../../utils/helpers';
 import { ChanceLine, DayPlanner, stopHint } from './DayPlannerHints';
 import { DayChange } from '../../services/planner';
 import { VERDICT_TEXT, verdictOf } from '../../services/plannerWords';
+import { sunPosition, parseTimeLabel, SUN_UP_GEO } from '../../utils/sunEngine';
+
+// A rated stop whose time on the day is after that day's sunset at the stop (sun below the horizon at its start time,
+// worked out from the stop's own position and date, never a fixed hour): T gives it no chance, so the card says why
+// instead of a blank line (Phil, 28 Nov 2026).
+function localMs(date: string, minutes: number, tz: string): number | null {
+  try {
+    const [y, m, d] = date.split('-').map(Number);
+    const guess = Date.UTC(y, m - 1, d, Math.floor(minutes / 60), minutes % 60);
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      .formatToParts(new Date(guess)).reduce((o: any, x) => (o[x.type] = x.value, o), {});
+    const shown = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute);
+    return guess - (shown - guess);
+  } catch { return null; }
+}
+export function afterSunset(item: any, date: string | null | undefined, tz: string | null | undefined): boolean {
+  const min = parseTimeLabel(item?.time_label);
+  if (min == null || !date || !tz || item?.lat == null || item?.lng == null) return false;
+  const ms = localMs(date, min, tz);
+  return ms != null && sunPosition(ms, Number(item.lat), Number(item.lng)).geo < SUN_UP_GEO;
+}
 
 // Ghost mode (redesign C4): the day in T's best plan's order and times. moved / added stops
 // get a dashed green card and the new time; skipped ones stay, dimmed (applying keeps them).
@@ -126,6 +147,9 @@ function ShootCard({ item, weather: w, planner, ghost, change, onChip, dayDate }
       ) : null}
       {line ? <Text style={[styles.ghostText, g === 'skipped' && styles.ghostSkip]}>{line}</Text> : null}
       {hint ? <ChanceLine hint={hint} onChip={!ghost && chip && change && change.kind !== 'added' ? onChip : undefined} /> : null}
+      {!hint && !ghost && tier && afterSunset(item, dayDate, planner?.run?.params?.tz) ? (
+        <Text style={styles.darkLine} accessibilityLabel="After sunset">After sunset</Text>
+      ) : null}
       {!hint && !ghost && chip && change ? (
         <TouchableOpacity onPress={onChip} style={styles.loneChip} accessibilityRole="button" accessibilityLabel={`${chip}. Part of T's best plan`}>
           <Text style={styles.loneChipText}>{chip}</Text>
@@ -137,6 +161,7 @@ function ShootCard({ item, weather: w, planner, ghost, change, onChip, dayDate }
 
 const GUTTER = 58;
 const styles = StyleSheet.create({
+  darkLine: { fontSize: 11, color: colors.textSecondary, marginTop: 4 },
   row: { flexDirection: 'row', alignItems: 'stretch' },
   driveRow: { flexDirection: 'row', alignItems: 'center', minHeight: 22 },
   gutter: { width: GUTTER },
