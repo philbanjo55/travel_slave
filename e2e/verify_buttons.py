@@ -3048,7 +3048,7 @@ def option3_checks():
             okg = o3_find_label(C.capture(1), 'Close the stop settings') is not None or seen_has(seen_g, 'T re-plans on its own')
             V.check('o3-settings-open', okg and (seen_has(seen_g, 'Not yet') and seen_has(seen_g, 'Nailed')), ' | '.join(t for t in seen_g if t in ('SHOT', 'TIER', 'LIGHT', 'Not yet', 'Nailed', 'GOD'))[:120])
             C.screenshot('o3-stop-settings')
-            cut_off('o3-settings-open', C.capture(1), strict=False)
+            # no cut-off read here: the open settings sit mid-way down a scrolling page, so page text runs on under the buttons by design
             if V.tap_text(mid_screen(C.capture(1), 'Close the stop settings'), 'Close the stop settings'):
                 time.sleep(1)
                 V.check('o3-settings-fold', V.has(C.capture(1), 'Stop settings:'), 'folds back to one line')
@@ -3056,16 +3056,21 @@ def option3_checks():
                 V.check('o3-settings-fold', False, 'no close row')
         else:
             V.check('o3-settings-open', False, 'no settings summary row')
+        # page-end cut-offs first (they press Back from sub-screens), then the day card jump, which leaves the stop page
         stop_page_cut_offs()
-        # a day card jumps to that day on the trip page
-        scroll_top(6)
-        st = scroll_find('. Open that day', 8) or C.capture(1)
-        day = next((t for t in st.all_texts if t.endswith('. Open that day')), None)
+        print('INFO o3 day-jump from: ' + ('trip page' if o3_find_label(C.capture(1), 'Trip menu') is not None else C.focus_pkg() or '?'), flush=True)
+        scroll_top(10)
+        day, st = None, C.capture(1)
+        for _ in range(8):
+            day = next((t for t in st.all_texts if t.endswith('. Open that day')), None)
+            if day is not None:
+                break
+            C.adb('shell', 'input', 'swipe', '540', '1500', '540', '1100', '500'); st = C.capture(1.2)
         if day is not None and V.tap_text(mid_screen(st, day), day):
             t = C.capture(4)
-            V.check('o3-day-jump', V.has(t, 'Trip menu'), day[:60])
+            V.check('o3-day-jump', o3_find_label(t, 'Trip menu') is not None or V.has(t, 'Trip menu'), day[:60])
         else:
-            V.check('o3-day-jump', False, 'no day card to tap')
+            V.check('o3-day-jump', False, 'no day card to tap: ' + ' | '.join(st.all_texts[:8])[:160])
             V.back()
     # ALL tile
     p = open_live() if o3_find_label(C.capture(1), 'Trip menu') is None else C.capture(1)
