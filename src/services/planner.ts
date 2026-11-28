@@ -489,7 +489,7 @@ export function dayChanges(dayStops: any[], allDays: any[], mine: Plan | undefin
     if (s) {
       const was = labelMinutes(s.time_label);
       if (now != null && (was == null || Math.abs(was - now) >= 10)) {
-        out.push({ kind: 'moved', stop_id: v.stop_id, name: v.name, was: s.time_label ?? null, now: now != null ? minutesLabel(now) : null,
+        out.push({ kind: 'moved', stop_id: s.id, name: v.name, was: s.time_label ?? null, now: now != null ? minutesLabel(now) : null,
                    p_good: v.p_good ?? null, wasP: mineP.get(v.stop_id) ?? null });
       }
     } else {
