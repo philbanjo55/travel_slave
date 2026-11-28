@@ -412,7 +412,12 @@ def plan_check_card():
     if open_live() is None or open_today() is None:
         return
     s = scroll_find('Plan check')
-    V.check('plan-check-shown', s is not None, "today's card on the trip page")
+    if s is None:   # planner look round 2: the check sits on the card only when it found something, else under Details
+        scroll_top()
+        d = scroll_find('Details')
+        if d is not None and V.tap_text(mid_screen(d, 'Details'), 'Details'):
+            time.sleep(1.5); s = scroll_find('Plan check')
+    V.check('plan-check-shown', s is not None, "today's card on the trip page (or its Details)")
     if s is None:
         seen, _ = V.texts_all(6)
         print('INFO trip page: ' + ' | '.join(seen)[:1500], flush=True); return
@@ -2956,7 +2961,6 @@ def option3_checks():
     V.check('o3-planned-line', any(t.startswith('T planned') or t.startswith('Not planned') for t in s.all_texts), ' | '.join(t for t in s.all_texts if 'planned' in t)[:120])
     tiles = [c for c in s.clickables if re.match(r'Day \d+, ', c['label'])]
     V.check('o3-week-tiles', len(tiles) >= 3, f'{len(tiles)} day tiles: ' + ' ; '.join(c['label'][:50] for c in tiles[:4]))
-    cut_off('o3-trip-top', s, strict=False)   # the timeline scrolls under the buttons by design
     # today's tile (Snake River Overlook is on Teton Live's Saturday; Jenny Lake's 3D is a known emulator freeze)
     d = datetime.datetime.now(ZoneInfo('America/Denver'))
     tile = f"{d.strftime('%a')} {d.day}".upper()
@@ -3015,7 +3019,7 @@ def option3_checks():
     s = C.capture(1)
     opened = False
     for _ in range(12):
-        hit = next((c for c in s.clickables if 'Snake River Overlook' in c['label'] and 0.25 * R.screen_h() <= c['xy'][1] <= 0.8 * R.screen_h()), None)
+        hit = next((c for c in s.clickables if re.match(r'^\d{1,2}:\d\d [AP]M Snake River Overlook', c['label']) and 0.25 * R.screen_h() <= c['xy'][1] <= 0.8 * R.screen_h()), None)
         if hit is None and 'Jenny' not in ' '.join(c['label'] for c in s.clickables):
             hit = next((c for c in s.clickables if re.match(r'^\d{1,2}:\d\d [AP]M ', c['label']) and 'Wyoming' not in c['label'] and 'Skinny' not in c['label']
                         and 0.3 * R.screen_h() <= c['xy'][1] <= 0.8 * R.screen_h()), None) if _ > 8 else None

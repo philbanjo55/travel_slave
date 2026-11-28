@@ -190,12 +190,14 @@ function ShootCard3({ item, weather: w, planner, ghost, dayDate }: {
           {tier ? <Text style={styles.tier3}>{tier}</Text> : null}
           {item.signal_status === 'none' ? <Ionicons name="wifi-outline" size={12} color={colors.signalNone} /> : null}
         </View>
-        <Text style={styles.meta3} numberOfLines={2}>
-          {[gone ? null : wx, fresh || gone ? line : null].filter(Boolean).join(' · ')}
-          {!gone && vd ? <Text style={{ color: col, fontWeight: '700' }}>{(wx || (fresh && line)) ? ' · ' : ''}{VERDICT_TEXT[vd]}</Text> : null}
-          {hint?.done ? <Text>{wx ? ' · ' : ''}Done · this time has passed</Text> : null}
-          {dark ? <Text accessibilityLabel="After sunset">{wx ? ' · ' : ''}After sunset</Text> : null}
-        </Text>
+        <View style={styles.meta3Row}>
+          {[gone ? null : wx, fresh || gone ? line : null].some(Boolean) ? (
+            <Text style={styles.meta3} numberOfLines={2}>{[gone ? null : wx, fresh || gone ? line : null].filter(Boolean).join(' · ')}</Text>
+          ) : null}
+          {!gone && vd ? <Text style={[styles.meta3, { color: col, fontWeight: '700' }]}>{VERDICT_TEXT[vd]}</Text> : null}
+          {hint?.done ? <Text style={styles.meta3}>Done · this time has passed</Text> : null}
+          {dark ? <Text style={styles.meta3} accessibilityLabel="After sunset">After sunset</Text> : null}
+        </View>
         {!gone && hint?.chip ? <Text style={styles.chip3} numberOfLines={1}>{hint.chip}</Text> : null}
       </View>
       {!gone && pct != null ? (
@@ -268,7 +270,8 @@ const styles = StyleSheet.create({
   card3Gone: { opacity: 0.42 },
   struck: { textDecorationLine: 'line-through' },
   tier3: { fontSize: 9, fontWeight: '800', borderWidth: 1, borderColor: '#444444', borderRadius: 5, paddingHorizontal: 4, color: '#cccccc' },
-  meta3: { fontSize: 11, color: '#8a8a8a' },
+  meta3: { fontSize: 11, color: '#8a8a8a', flexShrink: 1 },
+  meta3Row: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 6, rowGap: 1 },
   chip3: { fontSize: 10, fontWeight: '700', color: colors.signalOk },
   pct3: { alignItems: 'flex-end' },
   pct3N: { fontFamily: 'Georgia', fontSize: 19, lineHeight: 21 },

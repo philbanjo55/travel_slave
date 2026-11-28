@@ -178,6 +178,11 @@ def safe_tap(prefix, tag, tries=4):
         if b is None:
             C.swipe_up(); s = C.capture(1); continue
         y = b['xy'][1]
+        # planner look round 2 (option 3): the Re-plan button sits in the trip page's fixed top, not in the list
+        if b['label'].startswith('Re-plan: ') and 0.06 * h <= y < 0.35 * h:
+            C.tap(b['xy'])
+            print(f"INFO tapped {b['label'][:70]!r} at {b['xy']} ({tag}, fixed top)", flush=True)
+            return b
         if 0.35 * h <= y <= 0.70 * h:
             time.sleep(1.5)   # let the list stop gliding
             s = C.capture(0.5); b = button(s, prefix) or b

@@ -8,7 +8,7 @@ name: App emulator test (trip and day stay put)
 
 on:
   push:
-    branches: [claude/planner-option3-emu, claude/planner-option3-emu-before]
+    branches: [claude/planner-option3-emu, claude/planner-option3-emu-before, claude/planner-option3-emu2]
   workflow_dispatch:
 
 concurrency:
