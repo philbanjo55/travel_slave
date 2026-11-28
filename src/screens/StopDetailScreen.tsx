@@ -24,7 +24,7 @@ import StopDurationEditor from '../components/StopDurationEditor';
 import StopPlannerSection from '../components/planner/StopPlannerSection';
 import StopCameraHero, { useNearbyFrames } from '../components/planner/StopCameraHero';
 import { useDayPlanner } from '../components/planner/DayPlannerHints';
-import { PLANNER_ON } from '../utils/variant';
+import { OPTION3_UI, PLANNER_ON } from '../utils/variant';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { photoGroupPhotos, photoGroupStops, splitStopPhotos } from '../utils/photoGroups';
@@ -224,6 +224,8 @@ export default function StopDetailScreen() {
         onScroll={pingNearView} scrollEventThrottle={100}
         contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}>
         {hero ? <StopCameraHero cams={cams} weather={stop.weather ?? null} timeLabel={stop.time_label} onClosed={reloadCams} dayDate={day?.date} /> : null}
+        {/* Option 3: the weather's detail opens from under the picture (no separate weather row further down). */}
+        {OPTION3_UI && hero ? <HeroWeatherMore stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} /> : null}
         {PLANNER_ON && !hero ? (
           <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
         ) : null}
@@ -288,7 +290,7 @@ export default function StopDetailScreen() {
             camera picture, which already shows the headline numbers. */}
         {!PLANNER_ON ? (
           <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} />
-        ) : hero ? (
+        ) : hero && !OPTION3_UI ? (
           <StopWeatherCard stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} foldable hideHeadline />
         ) : null}
 
@@ -533,7 +535,24 @@ const darkMapStyle = [
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
 ];
 
+// Option 3 (Phil, 28 Nov 2026): the weather sits on the camera picture; its full card (hours, models, wind) opens from
+// one line right under it instead of a separate weather row further down the page.
+function HeroWeatherMore({ stopId, shotType, dayDate, weather }: { stopId: string; shotType?: string | null; dayDate?: string | null; weather: any }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View>
+      <TouchableOpacity onPress={() => setOpen(o => !o)} style={styles.wxMore} accessibilityRole="button"
+        accessibilityLabel={open ? 'Hide the weather details' : 'Show the weather details'}>
+        <Text style={styles.wxMoreText}>{open ? 'Hide weather details' : 'Weather details: hours, wind, models'} {open ? '▾' : '›'}</Text>
+      </TouchableOpacity>
+      {open ? <StopWeatherCard stopId={stopId} shotType={shotType as any} dayDate={dayDate as any} weather={weather} hideHeadline /> : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  wxMore: { paddingHorizontal: spacing.xl, paddingVertical: spacing.sm },
+  wxMoreText: { fontSize: 12, fontWeight: '700', color: colors.signalOk },
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
