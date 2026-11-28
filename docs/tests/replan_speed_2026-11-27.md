@@ -47,3 +47,32 @@ already fine.
 Prove 1 on the test lane only: a copy of the scheduler loop that runs one *lab* draft's steps back to back
 (`solver-replay-lab`, config `lane: 'lab'`, never published), and compare its wall time and its plans with the same
 draft run the normal way. T's own scheduler (`replay_run_tick`) and the live runs stay untouched.
+
+## Lab proof, 28 Nov 2026 (Phil: "a bunch of plans would need to be identical. You'd have to convince me")
+
+Lab only: function `solver-replay-lab` (its self-calls now go to the lab, never to `solver-replay`), runs with
+`lane: 'lab'`, `publish: false` (planned like the app in memory, nothing written to the app). Live T runs and
+`replay_run_tick` were not changed. Each run = a copy of the real "rest of the trip" draft for that trip at the
+same moment (same seed, same settings). A = normal tick pace, B = chained (`chain` + `chain_nights`), A2 = normal
+again (to see how much the planner wobbles on its own). Records: table `lab_speed_runs`; helper `lab_speed_make`.
+
+Wave 1 (all 15 at once, 01:28 UTC): the lab worker was overloaded (WORKER_RESOURCE_LIMIT), Faroes 2027 failed on all
+three. Plans: 25 of 25 days identical A = A2 = B on the other four trips.
+
+Wave 2 (one run at a time, 01:40-02:55 UTC):
+
+| trip | days | A (tick) | A2 (tick) | B (chained) | B = A | A2 = A |
+|---|---|---|---|---|---|---|
+| Test robot | 6 | 190 s | 219 s | 18 s | 6/6 | 6/6 |
+| Teton Live | 6 | 242 s | 221 s | 18 s | 6/6 | 6/6 |
+| Faroes Live | 6 | 443 s | 425 s | 35 s | 6/6 | 6/6 |
+| Grand Teton Winter 2026 | 7 | 196 s | 190 s | 29 s | 7/7 | 7/7 |
+| Faroe Islands 2027 | 16 | 1141 s | 649 s | 512 s | 16/16 | 6/16 |
+
+B matched A on every day (41 of 41 in wave 2, 66 of 66 counting wave 1). A2 differed from A on 10 Faroes 2027
+days: the planner's time budgets make the big 16-day trip wobble between two normal runs, so that is not the
+chaining. Faroes 2027 chained: 3 of 29 self-calls hit the edge CPU limit (546) and each waited for the tick's
+2-minute reset, which is most of its 512 s.
+
+Switch-on (not done; needs Phil): `planner_t_trips.config.chain_nights = true` per trip; `planner_t_rest`
+already turns on `chain` + `chain_nights` for the draft and starts it directly. Undo: set it back to null.

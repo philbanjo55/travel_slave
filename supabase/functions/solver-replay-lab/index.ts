@@ -344,7 +344,8 @@ const r2 = (x: number) => Math.round(x * 100) / 100;
 const DEFAULTS = { TIER_W: { ...TIER_W }, LAMBDA, DRIVE_PENALTY, LONG_LEG_MIN, LONG_LEG_PENALTY };
 // Where a draft calls itself (run configs chain / chain_nights). SOLVER_REPLAY_URL (unset on the edge) points a local
 // test copy at itself.
-const SELF_URL = () => Deno.env.get('SOLVER_REPLAY_URL') ?? `${Deno.env.get('SUPABASE_URL')}/functions/v1/solver-replay`;
+// Lab (28 Nov 2026, re-plan speed test): a lab run chains to this lab function, never to the live solver-replay.
+const SELF_URL = () => Deno.env.get('SOLVER_REPLAY_URL') ?? `${Deno.env.get('SUPABASE_URL')}/functions/v1/solver-replay-lab`;
 
 Deno.serve(async (req) => {
   const json = (b: any, status = 200) =>
