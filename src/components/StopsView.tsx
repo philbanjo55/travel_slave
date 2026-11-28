@@ -54,7 +54,7 @@ function CardPhoto({ photo, nailed }: { photo: any | null; nailed: boolean }) {
   );
 }
 
-function StopCard({ p, width, onOpen, trail }: { p: Place; width: number; onOpen: (p: Place) => void; trail?: TrailInfo | null }) {
+function StopCard({ p, width, onOpen, trail, best }: { p: Place; width: number; onOpen: (p: Place) => void; trail?: TrailInfo | null; best?: string | null }) {
   const nailed = p.status === 'nailed';
   const better = p.status === 'got';
   // (the "3/3 framed" count and its green bar were taken off, Phil 25 Nov 2026: "I don't need it anymore")
@@ -86,6 +86,7 @@ function StopCard({ p, width, onOpen, trail }: { p: Place; width: number; onOpen
         </View>
       ) : null}
       {line ? <Text style={styles.line} numberOfLines={1}>{line}</Text> : null}
+      {best ? <Text style={styles.best} numberOfLines={1}>{best}</Text> : null}
     </TouchableOpacity>
   );
 }
@@ -104,8 +105,10 @@ export function StopsTab({ tripId, tripData, active, onPress, styles: t }: {
   );
 }
 
-export default function StopsView({ tripId, tripData, onOpen, bottomPad = 0 }: {
-  tripId: string; tripData: any; onOpen: (p: Place) => void; bottomPad?: number;
+// bestOf (planner redesign option 3, Phil 28 Nov 2026): one green line per card, the place's best day in T's plans
+// ("Best: Sat · Good bet"), so the Stops page also does what the Planner's Subjects tab did.
+export default function StopsView({ tripId, tripData, onOpen, bottomPad = 0, bestOf }: {
+  tripId: string; tripData: any; onOpen: (p: Place) => void; bottomPad?: number; bestOf?: (p: Place) => string | null;
 }) {
   const { groups } = useTripPlaces(tripId, tripData);
   const trails = useTrailInfo();
@@ -122,7 +125,7 @@ export default function StopsView({ tripId, tripData, onOpen, bottomPad = 0 }: {
             <Text style={styles.tally}>{tallyText(g)}</Text>
           </View>
           <View style={styles.grid}>
-            {g.places.map(p => <StopCard key={p.key} p={p} width={cardW} onOpen={onOpen} trail={trailFor(trails, p.stopIds, p.name)} />)}
+            {g.places.map(p => <StopCard key={p.key} p={p} width={cardW} onOpen={onOpen} trail={trailFor(trails, p.stopIds, p.name)} best={bestOf ? bestOf(p) : null} />)}
           </View>
         </View>
       ))}
@@ -160,5 +163,6 @@ const styles = StyleSheet.create({
   trailRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   trailText: { flexShrink: 1, fontSize: 11, fontWeight: '700', color: colors.signalOk },
   line: { fontSize: 11, color: colors.textSecondary },
+  best: { fontSize: 11, fontWeight: '700', color: colors.signalOk },
   empty: { fontSize: 13, color: colors.textSecondary, paddingTop: spacing.xl, textAlign: 'center' },
 });

@@ -31,7 +31,8 @@ export function afterSunset(item: any, date: string | null | undefined, tz: stri
 
 // Ghost mode (redesign C4): the day in T's best plan's order and times. moved / added stops
 // get a dashed green card and the new time; skipped ones stay, dimmed (applying keeps them).
-export type GhostTag = { kind: 'same' | 'moved' | 'added' | 'skipped'; change?: DayChange };
+// say (option 3, the merged timeline): the card's own line instead of the ghost words ("T adds this", "T moved it to Mon").
+export type GhostTag = { kind: 'same' | 'moved' | 'added' | 'skipped'; change?: DayChange; say?: string | null };
 
 // TEST app only: one stop on the day timeline (mockup E5). Times sit in the
 // left column, each stop is a dot on the line with the drive between stops on
@@ -89,6 +90,7 @@ export function TimelineRow({ item, index, isLast, weather, planner, onPress, gh
 
 // What T's plan does to this stop, in a few words, for the ghost card.
 function ghostLine(ghost: GhostTag): string | null {
+  if (ghost.say !== undefined) return ghost.say;
   const c = ghost.change;
   // T's verdict, never a bare % (one chance per stop, the same words everywhere).
   const vd = (x?: number | null) => (x == null ? null : VERDICT_TEXT[verdictOf(x)]);
