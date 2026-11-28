@@ -470,10 +470,22 @@ export function dayChanges(dayStops: any[], allDays: any[], mine: Plan | undefin
   const onDay = new Map(dayStops.map((s: any) => [s.id, s]));
   const inBest = new Set(best.visits.map(v => v.stop_id));
   const mineP = new Map((mine?.visits ?? []).map(v => [v.stop_id, v.p_good ?? null]));
+  // A plan visit can name another entry of the same place than the one now on the day (an Accept makes new entries,
+  // 28 Nov 2026: the merged timeline showed the place twice, once added and once left out): match by name too, each
+  // entry of the day once.
+  const key = (n: unknown) => String(n ?? '').trim().toLowerCase();
+  const used = new Set<string>(best.visits.filter(v => onDay.has(v.stop_id)).map(v => v.stop_id));
+  const twin = new Map<string, any>();
+  for (const v of best.visits) {
+    if (onDay.has(v.stop_id)) continue;
+    const s = dayStops.find((x: any) => !used.has(x.id) && !inBest.has(x.id) && key(x.name) === key(v.name));
+    if (s) { used.add(s.id); twin.set(v.stop_id, s); }
+  }
+  for (const s of twin.values()) inBest.add(s.id);
   for (const v of best.visits) {
     if (v.booked) continue;
     const now = tzMinutes(v.start, tz);
-    const s = onDay.get(v.stop_id);
+    const s = onDay.get(v.stop_id) ?? twin.get(v.stop_id);
     if (s) {
       const was = labelMinutes(s.time_label);
       if (now != null && (was == null || Math.abs(was - now) >= 10)) {
