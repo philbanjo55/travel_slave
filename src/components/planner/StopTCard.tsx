@@ -36,7 +36,8 @@ export default function StopTCard({ stopId, planner, tripId, tripDate, days, tim
   const run = planner?.run ?? null;
   const dates = useMemo(() => days.filter((d: any) => d.date).map((d: any) => d.date as string), [days]);
   const curves = useTCurves(stopId, dates);
-  const curve: TCurve | undefined = tripDate ? curves.get(tripDate) : undefined;
+  const got = tripDate ? curves.get(tripDate) : undefined;
+  const curve: TCurve | undefined = got === false ? undefined : got;
   // Past the forecast: the old light-only curve, drawn dotted (typical light).
   const [typical, setTypical] = useState<CurveSlot[] | null>(null);
   useEffect(() => {
@@ -59,6 +60,7 @@ export default function StopTCard({ stopId, planner, tripId, tripDate, days, tim
   const vd = mineV ? verdictOf(mineV.p_good) : null;
   const light = mineV?.light ? LIGHT_WORDS[mineV.light] ?? mineV.light : null;
   const bestDay = placements(week, stopId)[0]?.date ?? null;
+  const pressAt = useRef<{ x: number; y: number } | null>(null);
 
   return (
     <View style={st.card}>
@@ -75,6 +77,7 @@ export default function StopTCard({ stopId, planner, tripId, tripDate, days, tim
                 <Text style={st.q}>best light, {slots![win![0]].good} of {slots![win![0]].of} models</Text>
               </>
             ) : curve === null ? <Text style={st.q}>Typical light only: no forecast for this day yet.</Text>
+              : got === false ? <Text style={st.q}>No signal: T's chances show once it can read them.</Text>
               : curve === undefined ? <Text style={st.q}>Loading T's chances…</Text>
               : <Text style={st.q}>No good light or weather at any time this day.</Text>}
           </View>
@@ -94,12 +97,19 @@ export default function StopTCard({ stopId, planner, tripId, tripDate, days, tim
               const tv = td?.best?.visits.find(v => samePlace(week, v.stop_id, stopId) && v.p_good != null) ?? null;
               const v = tv ?? (d.date === tripDate ? mineVisit(week, stopId, d.date) : null);
               const k = v ? verdictOf(v.p_good) : null;
-              const c = curves.get(d.date);
+              const cg = curves.get(d.date);
+              const c = cg === false ? undefined : cg;
               const pick = d.date === bestDay;
               const here = d.date === tripDate;
               return (
                 <TouchableOpacity key={d.id} style={[st.dy, pick && st.dyPick, here && !pick && st.dyHere]} activeOpacity={0.8}
-                  onPress={() => tripId && (navigation as any).popTo('Trip', { tripId, date: d.date })}
+                  onPressIn={e => { pressAt.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY }; }}
+                  onPress={e => {
+                    // a swipe that ended on a card is not a tap (emulator run 186: a page swipe opened Sunday)
+                    const p = pressAt.current;
+                    if (p && (Math.abs(e.nativeEvent.pageX - p.x) > 10 || Math.abs(e.nativeEvent.pageY - p.y) > 10)) return;
+                    if (tripId) (navigation as any).popTo('Trip', { tripId, date: d.date });
+                  }}
                   accessibilityRole="button" accessibilityLabel={`${format(parseISO(d.date), 'EEEE d MMM')}: ${k ? VERDICT_TEXT[k] : c === null ? 'typical light' : "not in T's plan"}${pick ? ', best day' : ''}. Open that day`}>
                   <Text style={[st.dyA, here && { color: colors.textPrimary }]}>{format(parseISO(d.date), 'EEE d')}</Text>
                   <Text style={[st.dyV, { color: k ? VCOLOR[k] : '#666666' }]} numberOfLines={1}>{k ? SHORT[k] : c === null ? 'typical' : '–'}</Text>

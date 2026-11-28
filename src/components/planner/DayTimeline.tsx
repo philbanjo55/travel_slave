@@ -194,7 +194,7 @@ function ShootCard3({ item, weather: w, planner, ghost, dayDate }: {
           {[gone ? null : wx, fresh || gone ? line : null].some(Boolean) ? (
             <Text style={styles.meta3} numberOfLines={2}>{[gone ? null : wx, fresh || gone ? line : null].filter(Boolean).join(' · ')}</Text>
           ) : null}
-          {!gone && vd ? <Text style={[styles.meta3, { color: col, fontWeight: '700' }]}>{VERDICT_TEXT[vd]}</Text> : null}
+          {vd ? <Text style={[styles.meta3, { color: col, fontWeight: '700' }]}>{VERDICT_TEXT[vd]}</Text> : null}
           {hint?.done ? <Text style={styles.meta3}>Done · this time has passed</Text> : null}
           {dark ? <Text style={styles.meta3} accessibilityLabel="After sunset">After sunset</Text> : null}
         </View>

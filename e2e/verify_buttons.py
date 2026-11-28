@@ -3038,26 +3038,20 @@ def option3_checks():
         V.check('o3-your-time', any(t.startswith('At your ') for t in seen_s), ' | '.join(t for t in seen_s if t.startswith('At your'))[:120])
         V.check('o3-no-tabs', not (seen_has(seen_s, 'Today') and seen_has(seen_s, 'Trip') and seen_has(seen_s, 'Settings') and seen_has(seen_s, 'T · THIS STOP')), 'old tabs gone')
         V.check('o3-camera-band', any(re.search(r'\d+ cameras? · ', t) for t in seen_s) or not seen_has(seen_s, 'Tap for the full picture'), ' | '.join(t for t in seen_s if 'camera' in t)[:120])
-        scroll_top(6)
-        st = None
-        for _ in range(10):
-            st = C.capture(1)
-            if o3_find_label(st, "T's verdict for this stop on each day") or o3_find_label(st, 'Stop settings:'):
-                break
-            C.swipe_up()
-        days_row = next((c for c in st.clickables if re.search(r': (Good bet|Long shot|Skip|typical light|not in T.s plan)(, best day)?\. Open that day$', c['label'])), None)
-        V.check('o3-day-cards', days_row is not None, (days_row['label'] if days_row else 'no day cards')[:80])
+        st = C.capture(1)
+        cards = [t for t in st.all_texts if t.endswith('. Open that day')]
+        V.check('o3-day-cards', len(cards) >= 2, ' ; '.join(cards)[:160] or 'no day cards')
         C.screenshot('o3-stop-closed')
-        if o3_mid_tap('Stop settings:', 'o3-settings'):
+        if V.tap_text(mid_screen(st, 'Stop settings:'), 'Stop settings:'):
             g = C.capture(2)
             seen_g, _ = V.texts_all(2)
             okg = o3_find_label(C.capture(1), 'Close the stop settings') is not None or seen_has(seen_g, 'T re-plans on its own')
             V.check('o3-settings-open', okg and (seen_has(seen_g, 'Not yet') and seen_has(seen_g, 'Nailed')), ' | '.join(t for t in seen_g if t in ('SHOT', 'TIER', 'LIGHT', 'Not yet', 'Nailed', 'GOD'))[:120])
             C.screenshot('o3-stop-settings')
             cut_off('o3-settings-open', C.capture(1), strict=False)
-            if o3_mid_tap('Close the stop settings', 'o3-settings-close'):
+            if V.tap_text(mid_screen(C.capture(1), 'Close the stop settings'), 'Close the stop settings'):
                 time.sleep(1)
-                V.check('o3-settings-fold', o3_find_label(C.capture(1), 'Stop settings:') is not None, 'folds back to one line')
+                V.check('o3-settings-fold', V.has(C.capture(1), 'Stop settings:'), 'folds back to one line')
             else:
                 V.check('o3-settings-fold', False, 'no close row')
         else:
@@ -3065,15 +3059,11 @@ def option3_checks():
         stop_page_cut_offs()
         # a day card jumps to that day on the trip page
         scroll_top(6)
-        for _ in range(10):
-            st = C.capture(1)
-            if o3_find_label(st, "T's verdict for this stop on each day"):
-                break
-            C.swipe_up()
-        day = next((c for c in C.capture(1).clickables if c['label'].endswith('Open that day')), None)
-        if day is not None:
-            C.tap(day['xy']); t = C.capture(4)
-            V.check('o3-day-jump', o3_find_label(t, 'Trip menu') is not None, day['label'][:60])
+        st = scroll_find('. Open that day', 8) or C.capture(1)
+        day = next((t for t in st.all_texts if t.endswith('. Open that day')), None)
+        if day is not None and V.tap_text(mid_screen(st, day), day):
+            t = C.capture(4)
+            V.check('o3-day-jump', V.has(t, 'Trip menu'), day[:60])
         else:
             V.check('o3-day-jump', False, 'no day card to tap')
             V.back()

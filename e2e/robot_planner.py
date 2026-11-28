@@ -261,6 +261,9 @@ def timeline_order_matches(day_id, tag):
         m = TIME.match(t)
         nm = next((n for n in want if m and (t[m.end():] == n or t[m.end():].startswith(n + ','))), None)
         if nm and (not got or got[-1] != nm): got.append(nm)
+    # the page is read in overlapping scroll steps: a name read again later is the same card, unless the day really
+    # holds that place more than once (planner look round 2: its taller fixed top made the steps overlap more)
+    got = [n for i, n in enumerate(got) if got[:i].count(n) < max(1, want.count(n))]
     ok = [n for n in got if n in want] == [n for n in want if n in got] and len(set(got)) >= max(1, len(set(want)) - 1)
     V.check(f'robot-{tag}-order', ok, f'screen {got} vs server {want}')
 

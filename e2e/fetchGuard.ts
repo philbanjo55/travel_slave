@@ -8,6 +8,7 @@ const SUPABASE_HOST = 'ohshrzlvvxyovcjmdajc.supabase.co';
 // Read-only database functions the app calls with POST.
 const READ_RPCS = new Set([
   'planner_t_replan_mode', 'trip_sun_plan', 'sun_stop_pairs', 'sun_trip_shots', 'planner_t_trip', 'claude_spend_summary', 'planner_t_now_status', 'training_stop_photos',
+  't_stop_curve',   // planner look round 2 (28 Nov 2026): T's chance curve, a STABLE read
 ]);
 // Read-only solver-actions requests.
 const READ_ACTIONS = new Set(['subject_grid', 'stop_settings', 'frames', 'planning_status', 'stop_curve', 'feeds']);
