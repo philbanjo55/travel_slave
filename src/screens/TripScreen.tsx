@@ -23,7 +23,7 @@ import {
   labelMinutes, DayChange,
 } from '../services/planner';
 import { DayScoreCard, dayScore, moveReasons, useDayPlanner } from '../components/planner/DayPlannerHints';
-import { VERDICT_TEXT, shotsText, verdictOf } from '../services/plannerWords';
+import { VERDICT_TEXT, isLightOnly, shotsText, verdictOf } from '../services/plannerWords';
 import { placements } from '../services/plannerWeekPure';
 import { briefSeenAt } from '../services/plannerSeen';
 import { GhostTag, TimelineRow } from '../components/planner/DayTimeline';
@@ -233,6 +233,11 @@ export default function TripScreen() {
   const { count: placeCount } = useTripPlaces(OPTION3_UI ? tripId : null, currentTripData);
   const tiles = useMemo(() => weekTiles(planner?.week ?? null, currentTripData?.days ?? [], id => planner?.tiers.get(id) ?? null, todayDate, planTz),
     [planner?.week, planner?.tiers, currentTripData, todayDate, planTz]);
+  // The last trip day T planned on a real forecast (the rest are typical light): "forecast to Mon".
+  const forecastTo = useMemo(() => {
+    const ds = (planner?.week?.days ?? []).filter(d => d.date >= todayDate && d.run && !isLightOnly(d.run)).map(d => d.date).sort();
+    return ds.length ? format(parseISO(ds[ds.length - 1]), 'EEE') : null;
+  }, [planner?.week, todayDate]);
   const places3 = useMemo(() => {
     const names = new Set<string>();
     for (const d of currentTripData?.days ?? []) for (const st of d.stops ?? []) if (planner?.tiers.has(st.id) && !st.time_locked) names.add(st.name);
@@ -482,7 +487,7 @@ export default function TripScreen() {
           onOpenPlanner={() => navigation.navigate('Planner', { tripId })} onOpenFeeds={() => navigation.navigate('Feeds', { tripId })} />
       ) : null}
 
-      {OPTION3_UI ? <ReplanFromNowBar tripId={tripId} tripTitle={trip.title} run={planner?.run ?? null} tz={planTz} />
+      {OPTION3_UI ? <ReplanFromNowBar tripId={tripId} tripTitle={trip.title} run={planner?.run ?? null} tz={planTz} forecastTo={forecastTo} />
         : PLANNER_ON ? <PlanningStrip tripId={tripId} onView={() => navigation.navigate('Planner', { tripId, tab: 'plans', date: day?.date })} /> : null}
 
       <View style={styles.tabBarWrapper}>
@@ -578,7 +583,7 @@ export default function TripScreen() {
           <View style={styles.listHead}>
             {day?.date ? (
               <DayBar tripId={tripId} date={day.date} planner={planner} score={score} past={pastDay} places={places3}
-                details={score?.reasons ?? []} onUse={() => { setPop(null); setGhost(true); }}
+                details={score?.reasons ?? []} days={days} onUse={() => { setPop(null); setGhost(true); }}
                 weather={<DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />} />
             ) : null}
           </View>

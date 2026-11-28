@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getPhotoUri } from '../services/photoCache';
 import { usePhotoUpload } from '../hooks/usePhotoUpload';
 import { useTripStore } from '../store/tripStore';
+import StopTCard from '../components/planner/StopTCard';
 import StopWeatherCard from '../components/StopWeatherCard';
 import MissingScreen from '../components/MissingScreen';
 import FullScreenPhotoViewer from '../components/FullScreenPhotoViewer';
@@ -223,7 +224,7 @@ export default function StopDetailScreen() {
       <ScrollView showsVerticalScrollIndicator={false} directionalLockEnabled disableScrollViewPanResponder
         onScroll={pingNearView} scrollEventThrottle={100}
         contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}>
-        {hero ? <StopCameraHero cams={cams} weather={stop.weather ?? null} timeLabel={stop.time_label} onClosed={reloadCams} dayDate={day?.date} /> : null}
+        {hero ? <StopCameraHero cams={cams} weather={stop.weather ?? null} timeLabel={stop.time_label} onClosed={reloadCams} dayDate={day?.date} compact={OPTION3_UI} /> : null}
         {/* Option 3: the weather's detail opens from under the picture (no separate weather row further down). */}
         {OPTION3_UI && hero ? <HeroWeatherMore stopId={stop.id} shotType={stop.shot_type} dayDate={day?.date} weather={stop.weather ?? null} /> : null}
         {PLANNER_ON && !hero ? (
@@ -280,7 +281,11 @@ export default function StopDetailScreen() {
         <SpotFoundChip stopId={stop.id} stopName={stop.name} />
 
         {/* Planner chance + settings (TEST app only until the solver is signed off) */}
-        {PLANNER_ON && (
+        {PLANNER_ON && OPTION3_UI ? (
+          <StopTCard stopId={stop.id} planner={planner} tripId={currentTripData?.trip?.id ?? null} tripDate={day?.date ?? null}
+            days={currentTripData?.days ?? []} timeLabel={stop.time_label ?? null} tz={currentTripData?.trip?.timezone ?? undefined} />
+        ) : null}
+        {PLANNER_ON && !OPTION3_UI && (
           <StopPlannerSection stopId={stop.id} planner={planner} tripId={currentTripData?.trip?.id ?? null} tripDate={day?.date ?? null}
             days={currentTripData?.days ?? []} timeLabel={stop.time_label ?? null} duration={stop.duration_minutes ?? null}
             tz={currentTripData?.trip?.timezone ?? undefined} />

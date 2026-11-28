@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO } from 'date-fns';
 import { colors, spacing, radius } from '../../theme';
 import { ClaudeSpend, DayChange, PlanRun, clock12, dayChanges, fetchClaudeSpend, spendLine } from '../../services/planner';
-import { expShots, isLightOnly, shotsText } from '../../services/plannerWords';
+import { expShots, isLightOnly, planKindText, shotsText } from '../../services/plannerWords';
 import { TWeek, placements, samePlace } from '../../services/plannerWeekPure';
 import { failReplanNow, useReplanNow } from '../../services/replanNowStore';
 import { usePlanningStatus } from '../../services/planningStatus';
@@ -14,7 +14,9 @@ import { replanFromNow } from '../../services/replanFromNow';
 import { errText } from '../../utils/errText';
 import ProgressBar from '../ProgressBar';
 import { ReplanProgress, DayPlanner } from './DayPlannerHints';
-import { PlanCheckRow, usePlanReview } from './PlanCheck';
+import { MiniCurve } from './TChart';
+import { PlanCheckRow, headline, usePlanReview } from './PlanCheck';
+import { moveReasons } from '../../services/plannerDay';
 import { TellTRow } from './TellT';
 import NightlyToggle from './NightlyToggle';
 import type { DayScore } from '../../services/plannerDay';
@@ -26,7 +28,7 @@ import type { DayScore } from '../../services/plannerDay';
 
 // ----- Re-plan from now on --------------------------------------------------------------------------------------------
 
-export function ReplanFromNowBar({ tripId, tripTitle, run, tz }: { tripId: string; tripTitle?: string; run: PlanRun | null; tz?: string }) {
+export function ReplanFromNowBar({ tripId, tripTitle, run, tz, forecastTo }: { tripId: string; tripTitle?: string; run: PlanRun | null; tz?: string; forecastTo?: string | null }) {
   const now = useReplanNow(tripId);
   const planning = usePlanningStatus(tripId);
   const mode = useReplanMode(tripId);
@@ -41,27 +43,32 @@ export function ReplanFromNowBar({ tripId, tripTitle, run, tz }: { tripId: strin
   const later = planning.kind === 'running';
   const done = later && s && (s.status === 'queued' || s.status === 'running') ? s.night : 0;
   const total = later && s && (s.status === 'queued' || s.status === 'running') ? s.nights : 0;
-  const planned = run ? `T planned ${clock12(run.created_at, tz)}${format(parseISO(run.created_at), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd') ? '' : ` ${format(parseISO(run.created_at), 'EEE')}`} · ${isLightOnly(run) ? 'typical weather' : 'forecast'}` : 'Not planned yet';
+  const planned = run ? `T planned ${clock12(run.created_at, tz)}${format(parseISO(run.created_at), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd') ? '' : ` ${format(parseISO(run.created_at), 'EEE')}`} · ${forecastTo ? `forecast to ${forecastTo}` : isLightOnly(run) ? 'typical weather' : 'forecast'}` : 'Not planned yet';
   return (
     <View style={styles.rpWrap}>
-      <TouchableOpacity onPress={go} disabled={busy} style={[styles.rpBtn, busy && { opacity: 0.6 }]} activeOpacity={0.8} accessibilityRole="button"
-        accessibilityState={{ disabled: busy, busy }} accessibilityLabel={`Re-plan from now on: ${MODE_SUB[mode ?? 'rest']}. Plan again and Re-plan now with the cameras in one`}>
-        {busy ? <ActivityIndicator size="small" color={colors.textPrimary} /> : <Ionicons name="refresh" size={16} color={colors.textPrimary} />}
-        <Text style={styles.rpText}>{busy ? 'Re-planning…' : 'Re-plan from now on'}</Text>
-        <Text style={styles.rpSub}>· {MODE_SUB[mode ?? 'rest']}</Text>
+      <TouchableOpacity onPress={go} disabled={busy} style={[styles.rpCard, busy && { opacity: 0.75 }]} activeOpacity={0.8} accessibilityRole="button"
+        accessibilityState={{ disabled: busy, busy }} accessibilityLabel={`Re-plan: from now on, ${MODE_SUB[mode ?? 'rest']}. Plan again and Re-plan now with the cameras in one`}>
+        <View style={styles.rpGo}>
+          {busy ? <ActivityIndicator size="small" color="#000000" /> : <Ionicons name="refresh" size={17} color="#000000" />}
+        </View>
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={styles.rpText}>{busy ? 'Re-planning…' : 'Re-plan from now on'}</Text>
+          {now.phase === 'running' || later ? null : now.phase === 'error'
+            ? <Text style={styles.rpErr} numberOfLines={2}>{now.message}</Text>
+            : <Text style={styles.rpLine} numberOfLines={1} accessibilityLabel={planned}>{planned}</Text>}
+        </View>
       </TouchableOpacity>
       {now.phase === 'running' ? <ReplanProgress tripId={tripId} />
         : later ? <ProgressBar label={s && s.status !== 'queued' ? 'T is planning the later days' : 'T is starting'} compact
           fraction={total ? Math.max(0.04, done / total) : null} text={total ? `${done} of ${total} days` : undefined} />
-        : now.phase === 'error' ? <Text style={styles.rpErr} numberOfLines={3}>{now.message}</Text>
-        : <Text style={styles.rpLine} accessibilityLabel={planned}>{planned}</Text>}
+        : null}
     </View>
   );
 }
 
 // ----- Week strip -----------------------------------------------------------------------------------------------------
 
-export type WeekTile = { t: number | null; changes: number; planned: boolean; past: boolean };
+export type WeekTile = { t: number | null; changes: number; planned: boolean; past: boolean; curve: number[] | null; light: boolean };
 
 // One tile per trip day from the week of T plans the trip page already reads (planner.week): T's good shots of the big
 // subjects and how many stops T's plan changes on that day against the day as it stands.
@@ -71,10 +78,13 @@ export function weekTiles(week: TWeek | null, days: any[], tierOf: (id: string) 
     if (!d.date) continue;
     const td = week?.byDate.get(d.date);
     const past = d.date < today;
-    if (!td?.best) { out.set(d.date, { t: null, changes: 0, planned: false, past }); continue; }
+    if (!td?.best) { out.set(d.date, { t: null, changes: 0, planned: false, past, curve: null, light: true }); continue; }
     const t = td.run?.stats?.exp_big != null ? Number(td.run.stats.exp_big) : expShots(td.best, tierOf);
     const ch: DayChange[] = past ? [] : dayChanges(d.stops ?? [], days, td.mine, td.best, td.run?.params?.tz ?? tz, tierOf);
-    out.set(d.date, { t, changes: ch.length, planned: true, past });
+    // The tile's curve: T's chance at each of its visits, in time order (cheap: from the plan the page already has).
+    const vs = td.best.visits.filter(v => v.p_good != null && v.start).sort((a, b) => a.start!.localeCompare(b.start!));
+    const curve = vs.length >= 2 ? vs.map(v => Math.round((v.p_good ?? 0) * 100)) : vs.length === 1 ? [Math.round((vs[0].p_good ?? 0) * 100), Math.round((vs[0].p_good ?? 0) * 100)] : null;
+    out.set(d.date, { t, changes: ch.length, planned: true, past, curve, light: isLightOnly(td.run) });
   }
   return out;
 }
@@ -100,10 +110,12 @@ export function WeekStrip({ days, tiles, activeIndex, allOn, allCount, todayInde
           <TouchableOpacity key={d.id} style={[styles.tile, today && styles.tileToday, on && styles.tileOn]} onPress={() => onDay(i)} onLongPress={() => onLongDay(d)}
             accessibilityRole="tab" accessibilityState={{ selected: on }}
             accessibilityLabel={`Day ${d.day_number}${d.date ? `, ${format(parseISO(d.date), 'EEE MMM d')}` : ''}${today ? ', today' : ''}${tile?.t != null ? `, T ${shotsText(tile.t)} good shots` : ''}${sub ? `, ${sub}` : ''}`}>
-            <Text style={[styles.tileA, today && { color: colors.signalOk }]}>{d.date ? format(parseISO(d.date), 'EEE d').toUpperCase() : `DAY ${d.day_number}`}</Text>
+            <Text style={[styles.tileA, (today || on) && { color: colors.signalOk }]}>{d.date ? format(parseISO(d.date), 'EEE d').toUpperCase() : `DAY ${d.day_number}`}</Text>
             <Text style={styles.tileB}>{tile?.t != null ? shotsText(tile.t) : '–'}</Text>
-            <Text style={[styles.tileC, (!tile?.changes || tile.past) && styles.tileGrey]} numberOfLines={1}>{today ? 'TODAY' : sub}</Text>
-            {d.checked ? <View style={[styles.mark, { backgroundColor: colors.signalOk }]} /> : d.review ? <View style={[styles.mark, { backgroundColor: '#d4a017' }]} /> : null}
+            <MiniCurve values={tile?.curve ?? null} width={48} height={14} dim={!!tile?.light || !!tile?.past} />
+            <Text style={[styles.tileC, (!tile?.changes || tile.past) && styles.tileGrey, on && { color: colors.signalOk }]} numberOfLines={1}>{tile && !tile.planned ? 'typical' : sub}</Text>
+            {today ? <View style={[styles.mark, { backgroundColor: colors.signalOk }]} accessibilityLabel="TODAY" /> : null}
+            {d.checked || d.review ? <View style={[styles.mark, { top: 14, backgroundColor: d.checked ? colors.signalOk : '#d4a017' }]} /> : null}
           </TouchableOpacity>
         );
       })}
@@ -124,12 +136,21 @@ export const sameStop = (planner: DayPlanner | null, a: string, b: string) => sa
 
 // ----- Day bar --------------------------------------------------------------------------------------------------------
 
-export function DayBar({ tripId, date, planner, score, past, places, onUse, details, weather }: {
+const AMBER = '#e0b34a';
+const shortName = (n: string) => n.split(/\s+[—–-]\s+|\s+\+\s+/)[0];
+const hm = (m: number) => `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, '0')}`;
+
+// The day card, planner look round 2 (Phil, 28 Nov 2026): T's number big with two thin bars against yours, the driving
+// against yours, T's changes as short chips (a tap says why), the plan check as one amber row only when it found
+// something, and Tell T | Use T's plan. Details holds the rest (every reason, the week, an OK plan check, day weather).
+export function DayBar({ tripId, date, planner, score, past, places, onUse, details, weather, days }: {
   tripId: string; date: string; planner: DayPlanner | null; score: DayScore | null; past: boolean; places: string[];
-  onUse: () => void; details: string[]; weather?: React.ReactNode;
+  onUse: () => void; details: string[]; weather?: React.ReactNode; days?: any[];
 }) {
   const [open, setOpen] = useState(false);
   const [tell, setTell] = useState<string | null>(null);
+  const [sel, setSel] = useState<string | null>(null);
+  const [checkOpen, setCheckOpen] = useState(false);
   const review = usePlanReview(tripId, date);
   const flagged = !!review && review.verdict !== 'ok' && (review.flags ?? []).some(f => f.severity !== 'info');
   const tz: string | undefined = planner?.run?.params?.tz;
@@ -143,32 +164,90 @@ export function DayBar({ tripId, date, planner, score, past, places, onUse, deta
     );
   }
   const real = score.changes.filter(c => c.kind !== 'skipped');
+  const moves = real.filter(c => c.kind === 'moved');
+  const adds = real.filter(c => c.kind === 'added');
+  const reasonOf = (c: DayChange) => moveReasons([c], planner, date)[0] ?? null;
+  const dayOf = (n: number | null | undefined) => (days ?? []).find((d: any) => d.day_number === n)?.date ?? null;
   const tNum = score.bigOnDay ? shotsText(score.best) : '–';
   const mineNum = !score.bigOnDay ? null : score.mine != null ? shotsText(score.mine) : '–';
+  const top = Math.max(score.best, score.mine ?? 0, 0.01);
+  const tD = planner.best?.drive_minutes ?? null, yD = planner.mine?.drive_minutes ?? null;
+  const dd = tD != null && yD != null ? Math.round(tD - yD) : null;
+  const selC = sel ? real.find(c => c.stop_id === sel) ?? null : null;
   return (
     <View style={styles.bar}>
-      <View style={styles.barHead}>
-        <Text style={styles.barBig} accessibilityLabel={`T's day: ${tNum} good shots of big subjects`}>{tNum}</Text>
-        <Text style={styles.barSub} numberOfLines={2}>
-          {score.bigOnDay ? `good shots · yours ${mineNum}` : `no big subjects this day${score.others >= 0.05 ? ` · ${shotsText(score.others)} of the others` : ''}`}
-        </Text>
+      <View style={styles.vs}>
+        <View accessibilityLabel={`T's day: ${tNum} good shots of big subjects`}>
+          <Text style={styles.vsLab}>T'S DAY</Text>
+          <Text style={styles.barBig}>{tNum}</Text>
+        </View>
+        <View style={styles.cmp}>
+          {score.bigOnDay ? (
+            <>
+              <View style={styles.cbar}><View style={[styles.cbarFill, { width: `${Math.round((100 * score.best) / top)}%`, backgroundColor: colors.signalOk }]} /></View>
+              <View style={styles.cbar}><View style={[styles.cbarFill, { width: `${Math.round((100 * (score.mine ?? 0)) / top)}%`, backgroundColor: '#666666' }]} /></View>
+              <Text style={styles.yoursLine}>good shots of big subjects · yours {mineNum}</Text>
+            </>
+          ) : <Text style={styles.yoursLine}>no big subjects this day{score.others >= 0.05 ? ` · ${shotsText(score.others)} of the others` : ''}</Text>}
+        </View>
         <TouchableOpacity onPress={() => setOpen(o => !o)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 6 }} accessibilityRole="button"
           accessibilityLabel={open ? 'Hide the details' : 'Show the details of this plan'}>
           <Text style={styles.link}>{open ? 'Less' : 'Details'} ›</Text>
         </TouchableOpacity>
       </View>
-      {score.late ? <Text style={styles.warn}>Re-plan came at {clock12(planner.run.created_at, tz)}, after the first stop: go by your plan for it.</Text> : null}
-      {flagged ? <PlanCheckRow tripId={tripId} date={date} tz={tz} onTellT={setTell} /> : null}
+      {tD != null ? (
+        <Text style={styles.drive} accessibilityLabel={`T drives ${hm(tD)}${dd ? `, ${Math.abs(dd)} minutes ${dd < 0 ? 'less' : 'more'} than yours` : ''}`}>
+          🚗  <Text style={styles.driveB}>{hm(tD)}</Text> driving
+          {dd != null && Math.abs(dd) >= 5 ? (
+            <Text>
+              <Text style={{ color: dd < 0 ? colors.signalOk : AMBER, fontWeight: '800' }}> · {Math.abs(dd)} min {dd < 0 ? 'less' : 'more'}</Text>
+              <Text style={styles.driveSub}> than yours ({hm(yD!)})</Text>
+            </Text>
+          ) : dd != null ? <Text style={styles.driveSub}> · about the same as yours</Text> : null}
+        </Text>
+      ) : null}
+      {score.late ? <Text style={styles.warnText}>Re-plan came at {clock12(planner.run.created_at, tz)}, after the first stop: go by your plan for it.</Text> : null}
+      {adds.length || moves.length ? (
+        <View style={styles.chips}>
+          {adds.map(c => {
+            const from = c.fromDay ? dayOf(c.fromDay) : null;
+            const label = from && from !== date ? `← ${shortName(c.name)} from ${format(parseISO(from), 'EEE')}` : `+ ${shortName(c.name)}${c.now ? ` ${c.now.replace(/:00 /, ' ').replace(' AM', '').replace(' PM', '')}` : ''}`;
+            const isAdd = !(from && from !== date);
+            return (
+              <TouchableOpacity key={c.stop_id} onPress={() => setSel(x => (x === c.stop_id ? null : c.stop_id))} style={[styles.chip, isAdd && styles.chipAdd, sel === c.stop_id && styles.chipOn]}
+                accessibilityRole="button" accessibilityLabel={`${label}. Why`}>
+                <Text style={[styles.chipT, isAdd && { color: '#bfe3cc' }]} numberOfLines={1}>{label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+          {moves.length ? (
+            <TouchableOpacity onPress={() => setSel(x => (x === 'moves' ? null : 'moves'))} style={[styles.chip, styles.chipMore]} accessibilityRole="button"
+              accessibilityLabel={`${moves.length} time moves. Show them`}>
+              <Text style={[styles.chipT, { color: colors.signalOk }]}>+{moves.length} time move{moves.length === 1 ? '' : 's'} ›</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : null}
+      {selC ? <Text style={styles.reason}>{reasonOf(selC)}</Text> : null}
+      {sel === 'moves' ? moves.map(c => <Text key={c.stop_id} style={styles.reason}>· {reasonOf(c)}</Text>) : null}
+      {flagged && review ? (
+        <TouchableOpacity onPress={() => setCheckOpen(o => !o)} style={styles.warnRow} accessibilityRole="button"
+          accessibilityLabel={`Claude's plan check: ${headline(review)}. ${checkOpen ? 'Hide' : 'Show'} details`}>
+          <Text style={styles.warnRowT} numberOfLines={2}>⚠ {headline(review)} {checkOpen ? '⌃' : '›'}</Text>
+        </TouchableOpacity>
+      ) : null}
+      {flagged && checkOpen ? <PlanCheckRow tripId={tripId} date={date} tz={tz} onTellT={setTell} /> : null}
       {past ? <Text style={styles.barSub}>This day is over: nothing to change.</Text> : (
         <TellTRow tripId={tripId} date={date} dayLabel={dayWords} places={places} open={tell} onOpened={() => setTell(null)}
           side={real.length || score.reasons.length ? (
-            <TouchableOpacity onPress={onUse} style={styles.useBtn} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Use T's plan from now on">
+            <TouchableOpacity onPress={onUse} style={styles.useBtn} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Use T's plan: Show T's changes on the timeline">
               <Text style={styles.useText}>Use T's plan</Text>
             </TouchableOpacity>
           ) : null} />
       )}
       {open ? (
         <View style={styles.details}>
+          <Text style={styles.detailLine}>{planKindText(planner.run)} · {clock12(planner.run.created_at, tz)}</Text>
           {details.map(d => <Text key={d} style={styles.detailLine}>· {d}</Text>)}
           {score.lowerWhy ? <Text style={styles.detailLine}>{score.lowerWhy}</Text> : null}
           {score.week && score.week.days > 1 ? (
@@ -229,29 +308,50 @@ export function useStableWeek(week: TWeek | null | undefined): TWeek | null {
 
 const styles = StyleSheet.create({
   rpWrap: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.xs, gap: 6 },
-  rpBtn: { minHeight: 42, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: '#555555' },
+  rpCard: { minHeight: 48, flexDirection: 'row', gap: 10, alignItems: 'center', paddingHorizontal: 12, paddingVertical: 9, borderRadius: 12,
+    borderWidth: 1, borderColor: '#262626', backgroundColor: '#131313' },
+  rpGo: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.textPrimary, alignItems: 'center', justifyContent: 'center' },
   rpText: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   rpSub: { fontSize: 11, color: colors.textSecondary },
-  rpLine: { fontSize: 11, color: colors.textSecondary, textAlign: 'center' },
+  rpLine: { fontSize: 11, color: colors.textSecondary },
   rpErr: { fontSize: 12, color: '#e74c3c' },
-  tile: { width: 66, minHeight: 64, paddingHorizontal: 7, paddingVertical: 6, marginRight: 6, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: 1 },
-  tileOn: { borderColor: colors.signalOk, backgroundColor: '#0f1a14' },
-  tileToday: { borderColor: '#2f5a40' },
-  tileA: { fontSize: 10, fontWeight: '700', letterSpacing: 0.6, color: colors.textSecondary },
-  tileB: { fontFamily: 'Georgia', fontSize: 18, color: colors.textPrimary },
-  tileC: { fontSize: 9, fontWeight: '700', color: colors.signalOk },
-  tileGrey: { color: colors.textSecondary, fontWeight: '400' },
-  mark: { position: 'absolute', top: 5, right: 5, width: 6, height: 6, borderRadius: 3 },
+  tile: { width: 62, paddingHorizontal: 7, paddingTop: 6, paddingBottom: 5, marginRight: 6, borderRadius: 10, borderWidth: 1, borderColor: '#262626', backgroundColor: colors.surface, gap: 2 },
+  tileOn: { borderColor: colors.signalOk, backgroundColor: '#0f1913' },
+  tileToday: {},
+  tileA: { fontSize: 9, fontWeight: '800', letterSpacing: 1, color: '#8a8a8a' },
+  tileB: { fontFamily: 'Georgia', fontSize: 19, lineHeight: 22, color: colors.textPrimary },
+  tileC: { fontSize: 9, fontWeight: '700', color: '#8a8a8a' },
+  tileGrey: { color: '#8a8a8a', fontWeight: '700' },
+  mark: { position: 'absolute', top: 6, right: 6, width: 5, height: 5, borderRadius: 3 },
   bar: {
-    marginHorizontal: spacing.xl, marginTop: spacing.sm, marginBottom: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 8,
-    borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
+    marginHorizontal: spacing.lg, marginTop: spacing.sm, marginBottom: spacing.xs, paddingHorizontal: 12, paddingVertical: 11, gap: 9,
+    borderRadius: 14, borderWidth: 1, borderColor: '#262626', backgroundColor: colors.surface,
   },
   barHead: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
-  barBig: { fontFamily: 'Georgia', fontSize: 24, color: colors.textPrimary },
+  barBig: { fontFamily: 'Georgia', fontSize: 30, lineHeight: 32, color: colors.textPrimary },
+  vs: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  vsLab: { fontSize: 10, letterSpacing: 1.1, fontWeight: '800', color: colors.signalOk },
+  cmp: { flex: 1, gap: 4 },
+  cbar: { height: 5, borderRadius: 3, backgroundColor: '#222222', overflow: 'hidden' },
+  cbarFill: { height: 5, borderRadius: 3 },
+  yoursLine: { fontSize: 11, color: '#8a8a8a' },
+  drive: { fontSize: 12, color: '#dddddd' },
+  driveB: { fontWeight: '700' },
+  driveSub: { color: '#8a8a8a' },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip: { borderRadius: 99, paddingHorizontal: 9, paddingVertical: 4, borderWidth: 1, borderColor: '#333333', maxWidth: '100%' },
+  chipAdd: { borderColor: '#2f5c43', backgroundColor: '#0f1913' },
+  chipOn: { borderColor: colors.textPrimary },
+  chipMore: { borderColor: 'transparent', paddingLeft: 2 },
+  chipT: { fontSize: 11, color: '#dddddd' },
+  reason: { fontSize: 11.5, color: '#bbbbbb', lineHeight: 16 },
+  warnRow: { backgroundColor: '#1a160b', borderWidth: 1, borderColor: '#3a2f12', borderRadius: 9, paddingHorizontal: 9, paddingVertical: 6 },
+  warnRowT: { fontSize: 11, color: '#e9d39a' },
+  warnText: { fontSize: 12, color: colors.textPrimary, borderLeftWidth: 2, borderLeftColor: colors.textPrimary, paddingLeft: 8 },
   barSub: { flex: 1, fontSize: 12, color: colors.textSecondary, lineHeight: 17 },
   link: { fontSize: 12, fontWeight: '700', color: colors.signalOk },
   warn: { fontSize: 12, color: colors.textPrimary, borderLeftWidth: 2, borderLeftColor: colors.textPrimary, paddingLeft: 8 },
-  useBtn: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, backgroundColor: colors.textPrimary },
+  useBtn: { flex: 1.4, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, backgroundColor: colors.textPrimary },
   useText: { fontSize: 14, fontWeight: '700', color: colors.textInverse },
   details: { gap: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: 8 },
   detailLine: { fontSize: 12, color: colors.textSecondary, lineHeight: 17 },

@@ -32,8 +32,10 @@ const H = Math.round(W * 0.66);
 // TEST app only (mockup S3e): the nearest camera's picture, swipe for the
 // next two, with the forecast for the stop's time written over it. Tap opens
 // the full frame with Live and the label buttons.
-export default function StopCameraHero({ cams, weather, timeLabel, onClosed, dayDate }: {
-  cams: CameraFrame[] | null; weather: WeatherRow | null; timeLabel?: string | null; onClosed: () => void; dayDate?: string | null;
+// compact (planner look round 2, Phil 28 Nov 2026): the band under the picture is the temperature, one weather line and
+// "3 cameras · 7:10 AM ›" (opens the picture with Live).
+export default function StopCameraHero({ cams, weather, timeLabel, onClosed, dayDate, compact }: {
+  cams: CameraFrame[] | null; weather: WeatherRow | null; timeLabel?: string | null; onClosed: () => void; dayDate?: string | null; compact?: boolean;
 }) {
   const [page, setPage] = useState(0);
   const [open, setOpen] = useState<CameraFrame | null>(null);
@@ -80,8 +82,20 @@ export default function StopCameraHero({ cams, weather, timeLabel, onClosed, day
         </View>
       ) : null}
       </View>
+      {compact ? (
+        <TouchableOpacity style={styles.forecast} activeOpacity={0.85} onPress={() => cur && setOpen(cur)}
+          accessibilityRole="button" accessibilityLabel={`Forecast${timeLabel ? ` at ${timeLabel}` : ''}${w ? `: ${tempText(w.temperature_c)}, ${conditionsText(w.weather_code)}` : ''}. ${cams.length} camera${cams.length === 1 ? '' : 's'}: open the picture`}>
+          {w ? <Text style={styles.temp}>{tempText(w.temperature_c)}</Text> : null}
+          <View style={{ flex: 1 }}>
+            {w ? <Text style={styles.line} numberOfLines={1}>{conditionsText(w.weather_code)}{w.wind_speed_kmh != null ? ` · wind ${windText(w.wind_speed_kmh).replace(' mph', '')}` : ''}{forecastTag(w, dayDate) ? ` · ${forecastTag(w, dayDate)}` : ''}</Text> : null}
+            <Text style={styles.forecastLabel} numberOfLines={1}>
+              {cams.length} camera{cams.length === 1 ? '' : 's'}{cur ? ` · ${cur === cams[page] && live && !live.failed ? format(live.at, 'h:mm a') : ago(cur.frame!.taken_at ?? cur.frame!.captured_at)}` : ''} ›
+            </Text>
+          </View>
+        </TouchableOpacity>
+      ) : null}
       {/* The forecast sits under the picture (Phil, 1 Nov 2026: over it, its dark band hid the view). */}
-      {w ? (
+      {w && !compact ? (
         <View style={styles.forecast}>
           <Text style={styles.temp}>{tempText(w.temperature_c)}</Text>
           <View style={{ flex: 1 }}>
