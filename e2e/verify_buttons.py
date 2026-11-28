@@ -2910,8 +2910,188 @@ def option3_shots():
     V.check('o3-alive', C.app_alive())
 
 
+def o3_find_label(st, start):
+    return next((c for c in st.clickables if c['label'].startswith(start)), None)
+
+
+def o3_mid_tap(start, tag, tries=10):
+    """Bring a clickable whose label starts with `start` to the middle of the screen and tap it."""
+    h = R.screen_h()
+    s = C.capture(1)
+    for _ in range(tries):
+        b = o3_find_label(s, start)
+        if b is not None and 0.25 * h <= b['xy'][1] <= 0.75 * h:
+            C.tap(b['xy']); return True
+        if b is not None and b['xy'][1] < 0.25 * h:
+            C.adb('shell', 'input', 'swipe', '540', str(int(0.45 * h)), '540', str(int(0.65 * h)), '500')
+        else:
+            C.adb('shell', 'input', 'swipe', '540', str(int(0.65 * h)), '540', str(int(0.45 * h)), '500')
+        s = C.capture(1.2)
+    print(f'INFO {tag}: no {start!r} to tap; on screen: ' + ' | '.join(c['label'][:40] for c in s.clickables)[:900], flush=True)
+    return False
+
+
+def option3_checks():
+    """Planner look round 2 (option 3, 28 Nov 2026) on Teton Live, read only (writes are blocked): the re-plan card, week
+    tiles, the day card (bars, driving, change chips, Tell T | Use T's plan), the Accept bar, the merged timeline with
+    chance numbers, the stop page's T card (best window, your time, chart, day cards, folded settings that open and
+    close), a day card jumping back to the trip page, the ALL tile with best days, and the trip menu -> Planner."""
+    os.makedirs(os.path.join(os.environ.get('OUT', 'out'), 'shots'), exist_ok=True)
+    if open_live() is None:
+        return
+    s = C.capture(2)
+    V.check('o3-replan-card', V.has(s, 'Re-plan from now on'), 'the re-plan card at the top')
+    V.check('o3-planned-line', any(t.startswith('T planned') or t.startswith('Not planned') for t in s.all_texts), ' | '.join(t for t in s.all_texts if 'planned' in t)[:120])
+    tiles = [c for c in s.clickables if re.match(r'Day \d+, ', c['label'])]
+    V.check('o3-week-tiles', len(tiles) >= 3, f'{len(tiles)} day tiles: ' + ' ; '.join(c['label'][:50] for c in tiles[:4]))
+    cut_off('o3-trip-top', s)
+    d = datetime.datetime.now(ZoneInfo('America/Denver')) + datetime.timedelta(days=1)
+    tile = f"{d.strftime('%a')} {d.day}".upper()
+    hit = False
+    for _ in range(5):
+        if V.tap_text(s, tile, exact=True):
+            hit = True; break
+        C.adb('shell', 'input', 'swipe', '900', '560', '300', '560', '300'); s = C.capture(0.8)
+    V.check('o3-tomorrow-tile', hit, tile)
+    s = C.capture(4)
+    C.screenshot('o3-trip-day')
+    seen, _ = V.texts_all(3)
+    V.show('o3-trip-day', s)
+    V.check('o3-day-card', seen_has(seen, "T'S DAY"), "T'S DAY on the day card")
+    V.check('o3-day-yours', seen_has(seen, 'yours'), 'yours beside T')
+    V.check('o3-drive-line', any(' driving' in t for t in seen), ' | '.join(t for t in seen if 'driving' in t)[:120] or 'no driving line')
+    V.check('o3-tell-use', seen_has(seen, 'Tell T') and seen_has(seen, "Use T's plan"), 'Tell T | Use T\'s plan')
+    V.check('o3-chance-numbers', any(re.match(r'^\d+%$', t.strip()) for t in seen) and seen_has(seen, 'CHANCE'), 'a chance number on a stop card')
+    V.check('o3-no-old-card', not seen_has(seen, "YOUR DAY VS T'S DAY") and not seen_has(seen, 'T · THIS DAY'), 'the old card is gone')
+    V.check('o3-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined') and not seen_has(seen, 'NaN'))
+    # a change chip says why
+    scroll_top()
+    s = C.capture(1)
+    chip = next((c for c in s.clickables if c['label'].endswith('. Why') or c['label'].endswith('time moves. Show them')), None)
+    if chip is None:
+        V.check('o3-chip-reason', None, 'no change chips on this day')
+    else:
+        before = set(s.all_texts)
+        C.tap(chip['xy']); s2 = C.capture(1.5)
+        new = [t for t in s2.all_texts if t not in before]
+        V.check('o3-chip-reason', len(new) > 0, (chip['label'][:50] + ' -> ' + ' | '.join(new))[:200])
+    # Use T's plan -> the Accept bar
+    scroll_top()
+    if o3_mid_tap("Use T's plan", 'o3-use'):
+        a = C.capture(5)
+        seen_a, _ = V.texts_all(2)
+        ok = seen_has(seen_a, "Accept T's plan from now on") or seen_has(seen_a, 'Preview only')
+        V.check('o3-accept-bar', ok, 'Accept bar after Use T\'s plan')
+        if ok:
+            cut_off('o3-accept-bar', C.capture(1), within="Accept T's plan" if seen_has(seen_a, "Accept T's plan from now on") else 'Preview only')
+        V.tap_text(C.capture(1), 'Not now')
+    else:
+        V.check('o3-accept-bar', None, 'no Use T\'s plan on this day (T matches your day)')
+    # Tell T sheet
+    scroll_top()
+    if o3_mid_tap('Tell T about this day', 'o3-tell'):
+        sh = C.capture(2.5)
+        okt = V.has(sh, 'Send the note to T') or V.has(sh, 'Send to T')
+        V.check('o3-tell-sheet', okt, 'Tell T sheet opens from the day card')
+        if okt:
+            cut_off('o3-tell-sheet', sh)
+        close_tell_sheet()
+    # the stop page: Snake River Overlook on that day
+    scroll_top()
+    s = C.capture(1)
+    opened = False
+    for _ in range(12):
+        hit = next((c for c in s.clickables if 'Snake River Overlook' in c['label'] and 0.25 * R.screen_h() <= c['xy'][1] <= 0.8 * R.screen_h()), None)
+        if hit is None:
+            hit = next((c for c in s.clickables if re.match(r'^\d{1,2}:\d\d [AP]M ', c['label']) and 'Wyoming' not in c['label'] and 'Skinny' not in c['label']
+                        and 0.3 * R.screen_h() <= c['xy'][1] <= 0.8 * R.screen_h()), None) if _ > 8 else None
+        if hit:
+            print('INFO o3 stop: ' + hit['label'][:80], flush=True)
+            C.tap(hit['xy']); opened = True; break
+        C.adb('shell', 'input', 'swipe', '540', '1500', '540', '1000', '500'); s = C.capture(1.2)
+    V.check('o3-stop-open', opened)
+    if opened:
+        s = C.capture(5)
+        seen_s, _ = V.texts_all(4)
+        V.show('o3-stop', s)
+        V.check('o3-tcard-head', any(t.startswith('T · ') for t in seen_s), ' | '.join(t for t in seen_s if t.startswith('T · '))[:80] or 'no T · header')
+        V.check('o3-best-or-typical', any(re.match(r'^\d{1,2}:\d\d [AP]M – ', t) for t in seen_s) or seen_has(seen_s, 'Typical light only') or seen_has(seen_s, 'No good light'),
+                ' | '.join(t for t in seen_s if ' – ' in t or 'Typical' in t)[:120])
+        V.check('o3-your-time', any(t.startswith('At your ') for t in seen_s), ' | '.join(t for t in seen_s if t.startswith('At your'))[:120])
+        V.check('o3-no-tabs', not (seen_has(seen_s, 'Today') and seen_has(seen_s, 'Trip') and seen_has(seen_s, 'Settings') and seen_has(seen_s, 'T · THIS STOP')), 'old tabs gone')
+        V.check('o3-camera-band', any(re.search(r'\d+ cameras? · ', t) for t in seen_s) or not seen_has(seen_s, 'Tap for the full picture'), ' | '.join(t for t in seen_s if 'camera' in t)[:120])
+        scroll_top(6)
+        st = None
+        for _ in range(10):
+            st = C.capture(1)
+            if o3_find_label(st, "T's verdict for this stop on each day") or o3_find_label(st, 'Stop settings:'):
+                break
+            C.swipe_up()
+        days_row = next((c for c in st.clickables if re.search(r': (Good bet|Long shot|Skip|typical light|not in T.s plan)(, best day)?\. Open that day$', c['label'])), None)
+        V.check('o3-day-cards', days_row is not None, (days_row['label'] if days_row else 'no day cards')[:80])
+        C.screenshot('o3-stop-closed')
+        if o3_mid_tap('Stop settings:', 'o3-settings'):
+            g = C.capture(2)
+            seen_g, _ = V.texts_all(2)
+            okg = o3_find_label(C.capture(1), 'Close the stop settings') is not None or seen_has(seen_g, 'T re-plans on its own')
+            V.check('o3-settings-open', okg and (seen_has(seen_g, 'Not yet') and seen_has(seen_g, 'Nailed')), ' | '.join(t for t in seen_g if t in ('SHOT', 'TIER', 'LIGHT', 'Not yet', 'Nailed', 'GOD'))[:120])
+            C.screenshot('o3-stop-settings')
+            cut_off('o3-settings-open', C.capture(1), strict=False)
+            if o3_mid_tap('Close the stop settings', 'o3-settings-close'):
+                time.sleep(1)
+                V.check('o3-settings-fold', o3_find_label(C.capture(1), 'Stop settings:') is not None, 'folds back to one line')
+            else:
+                V.check('o3-settings-fold', False, 'no close row')
+        else:
+            V.check('o3-settings-open', False, 'no settings summary row')
+        stop_page_cut_offs()
+        # a day card jumps to that day on the trip page
+        scroll_top(6)
+        for _ in range(10):
+            st = C.capture(1)
+            if o3_find_label(st, "T's verdict for this stop on each day"):
+                break
+            C.swipe_up()
+        day = next((c for c in C.capture(1).clickables if c['label'].endswith('Open that day')), None)
+        if day is not None:
+            C.tap(day['xy']); t = C.capture(4)
+            V.check('o3-day-jump', o3_find_label(t, 'Trip menu') is not None, day['label'][:60])
+        else:
+            V.check('o3-day-jump', False, 'no day card to tap')
+            V.back()
+    # ALL tile
+    p = open_live() if o3_find_label(C.capture(1), 'Trip menu') is None else C.capture(1)
+    if p is not None:
+        s = C.capture(1)
+        for _ in range(4):
+            if o3_find_label(s, 'Stops: all'):
+                break
+            C.adb('shell', 'input', 'swipe', '200', '560', '1000', '560', '300'); s = C.capture(0.8)
+        a = o3_find_label(s, 'Stops: all')
+        if a:
+            C.tap(a['xy']); s = C.capture(4)
+            seen_all, _ = V.texts_all(2)
+            V.check('o3-all-tile', V.has(s, 'Stops view') or seen_has(seen_all, 'TIER'), 'ALL tile opens the Stops view')
+            V.check('o3-all-best', any(t.startswith('Best: ') for t in seen_all), ' | '.join(t for t in seen_all if t.startswith('Best'))[:120] or 'no best-day line')
+        else:
+            V.check('o3-all-tile', False, 'no ALL tile')
+        scroll_top()
+        m = o3_find_label(C.capture(1), 'Trip menu')
+        if m:
+            C.tap(m['xy']); mm = C.capture(2)
+            V.check('o3-menu', V.has(mm, 'Daily plan alert') and V.has(mm, 'Open the Planner'), 'menu: alert, spend, feeds, planner')
+            cut_off('o3-menu', mm)
+            if V.tap_text(mm, 'Open the Planner'):
+                o = C.capture(5)
+                V.check('o3-planner-open', V.has(o, 'Plans'), 'old Planner screens from the menu')
+                V.back(); time.sleep(1.5)
+        else:
+            V.check('o3-menu', False, 'no Trip menu button')
+    V.check('o3-alive', C.app_alive())
+
+
 def main():
-    sections = R.SECTIONS + (trip_order, find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d, jenny_3d, offline_jenny, option3_shots)
+    sections = R.SECTIONS + (trip_order, find_spot, sun_3d, overhead_walk, stops_page, today_auto_open, side_by_side_card, plan_check_card, replan_now_card, ghost_accept, plans_tab, tell_t, tell_t_setup, faroes_3d, emily_3d, offline_3d, jenny_3d, offline_jenny, option3_shots, option3_checks)
     # E2E_ONLY = comma list of section names: the workflow runs the sections on several emulators at once (16 Nov 2026)
     only = [x.strip() for x in os.environ.get('E2E_ONLY', '').split(',') if x.strip()]
     if only:
