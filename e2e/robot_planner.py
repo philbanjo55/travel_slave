@@ -19,7 +19,7 @@ import verify as V
 ROBOT = '7e57bed0-0000-4000-8000-000000000004'
 HOST = 'https://ohshrzlvvxyovcjmdajc.supabase.co'
 KEY = 'sb_publishable_T0_nU1MSX1HaW3EOVZ4y_Q_07yC-Jb2'
-VERDICTS = ('Good bet', 'Long shot', 'Skip', 'Done, this time has passed')
+VERDICTS = ('Good bet', 'Long shot', 'Skip', 'Done, this time has passed', 'Done · this time has passed')
 PREP = {}
 
 
