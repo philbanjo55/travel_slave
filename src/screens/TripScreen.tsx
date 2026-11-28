@@ -16,20 +16,23 @@ import DayWeatherOverview from '../components/DayWeatherOverview';
 import { colors, typography, spacing, radius } from '../theme';
 import { minutesToHoursMin, addMinutesToTimeLabel } from '../utils/helpers';
 import { format, parseISO } from 'date-fns';
-import { IS_TEST_APP, PLANNER_ON } from '../utils/variant';
+import { IS_TEST_APP, OPTION3_UI, PLANNER_ON } from '../utils/variant';
 import StopsView, { StopsTab } from '../components/StopsView';
 import {
   fetchClaudeSpend, spendLine, fetchDayRuns, dayChanges, applyWeek, isPastDay, canApply, changesLine,
   labelMinutes, DayChange,
 } from '../services/planner';
 import { DayScoreCard, dayScore, moveReasons, useDayPlanner } from '../components/planner/DayPlannerHints';
-import { shotsText } from '../services/plannerWords';
+import { VERDICT_TEXT, isLightOnly, shotsText, verdictOf } from '../services/plannerWords';
+import { placements } from '../services/plannerWeekPure';
 import { briefSeenAt } from '../services/plannerSeen';
 import { GhostTag, TimelineRow } from '../components/planner/DayTimeline';
 import PlanningStrip from '../components/planner/PlanningStrip';
 import { acceptedText } from '../components/planner/PlanView';
 import ProgressBar from '../components/ProgressBar';
 import { errText } from '../utils/errText';
+import { DayBar, ReplanFromNowBar, TripMenu, WeekStrip, skipWords, weekTiles } from '../components/planner/Option3';
+import { useTripPlaces } from '../services/stopsPage';
 
 // Accept T's plan from now on (27 Nov 2026: Phil's tap was applied on the server but the screen gave no sign and kept the
 // old day): each real step of the accept as a bar. Checking = T's apply run as a preview on the server (rolled back),
@@ -48,6 +51,7 @@ export default function TripScreen() {
   const insets = useSafeAreaInsets();   // room for the phone's own buttons under the Accept bar
   const route = useRoute<any>();
   const { tripId } = route.params;
+  const jumpDate: string | undefined = route.params?.date;
   const { loadTrip, isSyncing, setCurrentDay } = useTripStore();
   // Only this trip's data: while another trip is in memory the page shows its spinner.
   const currentTripData = useTripData(tripId);
@@ -124,8 +128,19 @@ export default function TripScreen() {
       .catch((e: any) => { if (alive) setPreviewErr(errText(e)); });
     return () => { alive = false; };
   }, [ghost, tripId, previewTry]);
+  // Option 3 (Phil, 28 Nov 2026): the timeline is always T's day merged with yours (T's added stops dashed green, your
+  // stops T leaves out faded with where they went); ghost then only opens the Accept bar.
+  const merged = OPTION3_UI && !pastDay && !!planner?.best && !(IS_TEST_APP && showStops);
   const ghostRows = useMemo(() => {
-    if (!ghost || !planner?.best) return null;
+    if (!(ghost || merged) || !planner?.best) return null;
+    const today3 = tripToday(planTz);
+    const say = (c: DayChange | undefined, item: any): string | null | undefined => {
+      if (!OPTION3_UI) return undefined;
+      if (!c) return null;
+      if (c.kind === 'added') return c.fromDay ? `T adds this (from Day ${c.fromDay})` : 'T adds this';
+      if (c.kind === 'moved') return c.was ? `T moves it from ${c.was}` : 'T moves it';
+      return shownDay?.date ? skipWords(planner, item.id, shownDay.date, today3) : 'T skips this';
+    };
     const byId = new Map(changes.map(c => [c.stop_id, c]));
     const rows: { item: any; tag: GhostTag; k: number }[] = [];
     let last = -1;
@@ -135,16 +150,16 @@ export default function TripScreen() {
       const m = labelMinutes(item.time_label);
       const k = i === 0 && m == null ? -1 : i === shownStops.length - 1 && m == null ? 1e5 : m ?? last;
       if (m != null) last = m;
-      rows.push({ item, tag: { kind: c ? c.kind : 'same', change: c }, k });
+      rows.push({ item, tag: { kind: c ? c.kind : 'same', change: c, say: say(c, item) }, k });
     });
     for (const c of changes.filter(x => x.kind === 'added')) {
       const src = (currentTripData?.days ?? []).flatMap((d: any) => d.stops ?? []).find((x: any) => x.id === c.stop_id);
       const v = planner.best.visits.find(x => x.stop_id === c.stop_id);
-      rows.push({ item: { ...(src ?? { id: c.stop_id, name: c.name, shot_type: 'landscape' }), id: c.stop_id, time_label: c.now }, tag: { kind: 'added', change: c },
+      rows.push({ item: { ...(src ?? { id: c.stop_id, name: c.name, shot_type: 'landscape' }), id: c.stop_id, time_label: c.now }, tag: { kind: 'added', change: c, say: say(c, src ?? c) },
                   k: labelMinutes(c.now) ?? (v ? 0 : 1e4) });
     }
     return rows.sort((a, b) => a.k - b.k);
-  }, [ghost, changes, shownStops, planner, currentTripData]);
+  }, [ghost, merged, changes, shownStops, planner, currentTripData, planTz, shownDay?.date]);
   const acceptAll = useCallback(async () => {
     setAccepting(true);
     const at = Date.now();
@@ -207,6 +222,27 @@ export default function TripScreen() {
     const t = setTimeout(() => goToDay(todayIndex), 50);  // after the tab bar has laid out
     return () => clearTimeout(t);
   }, [tripId, todayDate, todayIndex, goToDay]));
+
+  // Option 3: a stop page's days row opens this page on that day (route param date).
+  useEffect(() => {
+    if (!jumpDate) return;
+    const i = (currentTripData?.days ?? []).findIndex((d: any) => d.date === jumpDate);
+    if (i >= 0) { goToDay(i); navigation.setParams({ date: undefined }); }
+  }, [jumpDate, currentTripData, goToDay]);
+  const [menu, setMenu] = useState(false);
+  const { count: placeCount } = useTripPlaces(OPTION3_UI ? tripId : null, currentTripData);
+  const tiles = useMemo(() => weekTiles(planner?.week ?? null, currentTripData?.days ?? [], id => planner?.tiers.get(id) ?? null, todayDate, planTz),
+    [planner?.week, planner?.tiers, currentTripData, todayDate, planTz]);
+  // The last trip day T planned on a real forecast (the rest are typical light): "forecast to Mon".
+  const forecastTo = useMemo(() => {
+    const ds = (planner?.week?.days ?? []).filter(d => d.date >= todayDate && d.run && !isLightOnly(d.run)).map(d => d.date).sort();
+    return ds.length ? format(parseISO(ds[ds.length - 1]), 'EEE') : null;
+  }, [planner?.week, todayDate]);
+  const places3 = useMemo(() => {
+    const names = new Set<string>();
+    for (const d of currentTripData?.days ?? []) for (const st of d.stops ?? []) if (planner?.tiers.has(st.id) && !st.time_locked) names.add(st.name);
+    return [...names].sort();
+  }, [currentTripData, planner]);
 
   const cycleDayStatus = useCallback(async (dayId: string, checked: boolean, review: boolean) => {
     // Cycle: off → green → yellow → off
@@ -426,22 +462,33 @@ export default function TripScreen() {
         <TouchableOpacity onPress={recalcDriveTimes} disabled={recalculating}>
           <Ionicons name="time-outline" size={20} color={recalculating ? colors.textTertiary : colors.textSecondary} />
         </TouchableOpacity>
-        {PLANNER_ON && (
+        {PLANNER_ON && !OPTION3_UI && (
           <TouchableOpacity onPress={() => navigation.navigate('Feeds', { tripId })} style={styles.plannerBtn}
             accessibilityLabel="Open the live feeds">
             <Ionicons name="videocam-outline" size={18} color={colors.textPrimary} />
           </TouchableOpacity>
         )}
-        {PLANNER_ON && (
+        {PLANNER_ON && !OPTION3_UI && (
           <TouchableOpacity onPress={() => navigation.navigate('Planner', { tripId })} style={styles.plannerBtn}
             accessibilityLabel="Open the Planner">
             <Ionicons name="sparkles-outline" size={18} color={colors.textPrimary} />
             {briefNew ? <View style={styles.plannerDot} /> : null}
           </TouchableOpacity>
         )}
+        {OPTION3_UI && (
+          <TouchableOpacity onPress={() => setMenu(true)} style={styles.plannerBtn} accessibilityLabel="Trip menu">
+            <Ionicons name="ellipsis-horizontal" size={18} color={colors.textPrimary} />
+            {briefNew ? <View style={styles.plannerDot} /> : null}
+          </TouchableOpacity>
+        )}
       </View>
+      {OPTION3_UI ? (
+        <TripMenu visible={menu} onClose={() => setMenu(false)} tripId={tripId} tripTitle={trip.title} tripTz={trip.timezone}
+          onOpenPlanner={() => navigation.navigate('Planner', { tripId })} onOpenFeeds={() => navigation.navigate('Feeds', { tripId })} />
+      ) : null}
 
-      {PLANNER_ON ? <PlanningStrip tripId={tripId} onView={() => navigation.navigate('Planner', { tripId, tab: 'plans', date: day?.date })} /> : null}
+      {OPTION3_UI ? <ReplanFromNowBar tripId={tripId} tripTitle={trip.title} run={planner?.run ?? null} tz={planTz} forecastTo={forecastTo} />
+        : PLANNER_ON ? <PlanningStrip tripId={tripId} onView={() => navigation.navigate('Planner', { tripId, tab: 'plans', date: day?.date })} /> : null}
 
       <View style={styles.tabBarWrapper}>
         <ScrollView
@@ -452,11 +499,16 @@ export default function TripScreen() {
           overScrollMode="never"
           contentContainerStyle={styles.tabBarContent}
         >
-          {IS_TEST_APP ? (
+          {OPTION3_UI ? (
+            <WeekStrip days={days} tiles={tiles} activeIndex={activeDay} allOn={stopsOn} allCount={placeCount} todayIndex={todayIndex}
+              onDay={goToDay} onAll={() => { setShowStops(true); setGhost(false); setPop(null); }}
+              onLongDay={(d: any) => cycleDayStatus(d.id, d.checked, d.review)} />
+          ) : null}
+          {OPTION3_UI ? null : IS_TEST_APP ? (
             <StopsTab tripId={tripId} tripData={currentTripData} active={stopsOn} styles={styles}
               onPress={() => { setShowStops(true); setGhost(false); setPop(null); }} />
           ) : null}
-          {days.map((d: any, index: number) => {
+          {OPTION3_UI ? null : days.map((d: any, index: number) => {
             const isActive = !stopsOn && index === activeDay;
             const isToday = index === todayIndex;
             return (
@@ -483,6 +535,7 @@ export default function TripScreen() {
 
       {stopsOn ? (
         <StopsView tripId={tripId} tripData={currentTripData} bottomPad={insets.bottom}
+          bestOf={OPTION3_UI ? (p => bestDayLine(planner, p.stopIds, todayDate)) : undefined}
           onOpen={p => navigation.navigate('StopDetail', { stopId: p.stopId, dayId: p.dayId })} />
       ) : null}
 
@@ -526,7 +579,15 @@ export default function TripScreen() {
         // Tell T's sheet opens from the day card in this list's header: without this, a tap on its Send or quick
         // buttons while the keyboard is up only closes the keyboard (emulator test, 11 Nov 2026).
         keyboardShouldPersistTaps="handled"
-        ListHeaderComponent={PLANNER_ON ? (
+        ListHeaderComponent={OPTION3_UI ? (
+          <View style={styles.listHead}>
+            {day?.date ? (
+              <DayBar tripId={tripId} date={day.date} planner={planner} score={score} past={pastDay} places={places3}
+                details={score?.reasons ?? []} days={days} onUse={() => { setPop(null); setGhost(true); }}
+                weather={<DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />} />
+            ) : null}
+          </View>
+        ) : PLANNER_ON ? (
           <View style={styles.listHead}>
             <DayWeatherOverview rows={Object.values(dayWeather)} dayDate={day?.date} />
             {day?.date ? (
@@ -535,7 +596,7 @@ export default function TripScreen() {
             ) : null}
           </View>
         ) : undefined}
-        contentContainerStyle={[styles.stopList, ghostRows ? { paddingBottom: (ghostDetails ? 260 : 130) + insets.bottom } : null]}
+        contentContainerStyle={[styles.stopList, ghostRows && (ghost || !OPTION3_UI) ? { paddingBottom: (ghostDetails ? 260 : 130) + insets.bottom } : null]}
         renderItem={({ item, index }: { item: any; index: number }) => PLANNER_ON ? (
           <TimelineRow item={item} index={index} isLast={index === (ghostRows ?? stops).length - 1} weather={dayWeather[item.id]} dayDate={day?.date}
             planner={planner} ghost={ghostRows ? ghostRows[index]?.tag : null}
@@ -659,7 +720,7 @@ export default function TripScreen() {
         )}
       />}
 
-      {PLANNER_ON && ghostRows && !stopsOn ? (
+      {PLANNER_ON && ghostRows && !stopsOn && (ghost || !OPTION3_UI) ? (
         <View style={[styles.ghostBar, { paddingBottom: spacing.lg + insets.bottom }]}>
           {/* One line of what accepting does; the lists behind Details (the timeline stays visible). */}
           <TouchableOpacity onPress={() => (previewErr && !ghostPreview ? setPreviewTry(n => n + 1) : setGhostDetails(v => !v))} style={styles.ghostSummary} accessibilityRole="button"
@@ -720,6 +781,17 @@ export default function TripScreen() {
     </SafeAreaView>
   );
 }
+
+// Option 3, ALL tile: a place's best day still ahead in T's plans, e.g. "Best: Sat · Good bet".
+function bestDayLine(planner: any, stopIds: string[], today: string): string | null {
+  if (p3Status(planner, stopIds)) return null;
+  const week = planner?.week ?? null;
+  const all = stopIds.flatMap(id => placements(week, id)).filter(x => x.date >= today);
+  const top = all.sort((x, y) => (y.visit.p_good ?? 0) - (x.visit.p_good ?? 0))[0];
+  if (!top) return null;
+  return `Best: ${format(parseISO(top.date), 'EEE')} · ${VERDICT_TEXT[verdictOf(top.visit.p_good)]}`;
+}
+const p3Status = (planner: any, stopIds: string[]) => stopIds.some(id => planner?.nailed?.has(id));
 
 function AcceptBar({ a }: { a: AcceptStep }) {
   return (
