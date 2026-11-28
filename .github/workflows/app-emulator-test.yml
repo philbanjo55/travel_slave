@@ -91,6 +91,8 @@ jobs:
             only: robot_chips,robot_accept,robot_replan,robot_replan_restart,robot_tell,robot_faults
           - shard: a
             only: sun_3d
+          - shard: a2
+            only: sun_3d
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

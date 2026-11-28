@@ -47,7 +47,7 @@ export function ReplanFromNowBar({ tripId, tripTitle, run, tz, forecastTo }: { t
   return (
     <View style={styles.rpWrap}>
       <TouchableOpacity onPress={go} disabled={busy} style={[styles.rpCard, busy && { opacity: 0.75 }]} activeOpacity={0.8} accessibilityRole="button"
-        accessibilityState={{ disabled: busy, busy }} accessibilityLabel={`Re-plan: from now on, ${MODE_SUB[mode ?? 'rest']}. Plan again and Re-plan now with the cameras in one`}>
+        accessibilityState={{ disabled: busy, busy }} accessibilityLabel={`Re-plan: from now on, ${MODE_SUB[mode ?? 'rest']}. ${busy ? 'Re-planning now' : 'Plan again and Re-plan now with the cameras in one'}`}>
         <View style={styles.rpGo}>
           {busy ? <ActivityIndicator size="small" color="#000000" /> : <Ionicons name="refresh" size={17} color="#000000" />}
         </View>
@@ -59,7 +59,7 @@ export function ReplanFromNowBar({ tripId, tripTitle, run, tz, forecastTo }: { t
         </View>
       </TouchableOpacity>
       {now.phase === 'running' ? <ReplanProgress tripId={tripId} />
-        : later && now.phase !== 'error' ? <ProgressBar label={s && s.status !== 'queued' ? 'T is re-planning the later days' : 'T is re-planning…'} compact
+        : (later || starting) && now.phase !== 'error' ? <ProgressBar label={s && s.status !== 'queued' ? 'T is re-planning the later days' : 'T is re-planning…'} compact
           fraction={total ? Math.max(0.04, done / total) : null} text={total ? `${done} of ${total} days` : undefined} />
         : null}
     </View>
