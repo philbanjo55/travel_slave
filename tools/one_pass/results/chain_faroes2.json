@@ -1,0 +1,92 @@
+{
+ "run": 9427,
+ "nights": 14,
+ "done_nights": 14,
+ "secs": 129.3,
+ "per_night_t": [
+  {
+   "done": 3115,
+   "wait": 262,
+   "light": 0,
+   "loaded": 2179
+  },
+  {
+   "done": 3378,
+   "wait": 243,
+   "light": 0,
+   "loaded": 2093
+  },
+  {
+   "done": 3099,
+   "wait": 241,
+   "light": 0,
+   "loaded": 2060
+  },
+  {
+   "done": 2715,
+   "wait": 230,
+   "light": 0,
+   "loaded": 1863
+  },
+  {
+   "done": 3117,
+   "wait": 228,
+   "light": 0,
+   "loaded": 2231
+  },
+  {
+   "done": 3329,
+   "wait": 251,
+   "light": 0,
+   "loaded": 2102
+  },
+  {
+   "done": 2798,
+   "wait": 234,
+   "light": 0,
+   "loaded": 2036
+  },
+  {
+   "done": 2813,
+   "wait": 231,
+   "light": 0,
+   "loaded": 2089
+  },
+  {
+   "done": 2904,
+   "wait": 278,
+   "light": 0,
+   "loaded": 2104
+  },
+  {
+   "done": 5587,
+   "wait": 1969,
+   "light": 0,
+   "loaded": 2279
+  },
+  {
+   "done": 2868,
+   "wait": 227,
+   "light": 0,
+   "loaded": 2174
+  },
+  {
+   "done": 2727,
+   "wait": 225,
+   "light": 0,
+   "loaded": 2008
+  },
+  {
+   "done": 2944,
+   "wait": 244,
+   "light": 0,
+   "loaded": 2210
+  },
+  {
+   "done": 4878,
+   "wait": 1252,
+   "light": 0,
+   "loaded": 2784
+  }
+ ]
+}

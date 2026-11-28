@@ -1,0 +1,3906 @@
+{
+ "summary": {
+  "label": "winters",
+  "replans": 168,
+  "weeks": 56,
+  "same_plan": 0,
+  "fc_days_used": 429,
+  "days_planned": 672,
+  "unscored_visits": 0,
+  "no_route": {
+   "op": 0,
+   "opfc": 0
+  },
+  "points": {
+   "mean_op": 12.863690476190476,
+   "mean_fc": 14.012119047619047,
+   "diff": 1.1484285714285716,
+   "se_week": 0.2303998058639726,
+   "better": 108,
+   "worse": 48
+  },
+  "places_seen": {
+   "mean_op": 6.107142857142857,
+   "mean_fc": 6.125,
+   "diff": 0.017857142857142856,
+   "se_week": 0.12977381890576747,
+   "better": 62,
+   "worse": 57
+  },
+  "big_seen": {
+   "mean_op": 2.2083333333333335,
+   "mean_fc": 2.1607142857142856,
+   "diff": -0.047619047619047616,
+   "se_week": 0.07026468790009527,
+   "better": 32,
+   "worse": 44
+  },
+  "errors": 0
+ },
+ "pairs": [
+  {
+   "R": 6887,
+   "d": 0,
+   "op": {
+    "pts": 28.936000000000007,
+    "seen": 12,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 31.428,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6897,
+   "d": 0,
+   "op": {
+    "pts": 19.055999999999997,
+    "seen": 8,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 21.531999999999993,
+    "seen": 11,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6889,
+   "d": 0,
+   "op": {
+    "pts": 29.476000000000003,
+    "seen": 13,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 28.852,
+    "seen": 14,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6893,
+   "d": 0,
+   "op": {
+    "pts": 12.58,
+    "seen": 10,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 17.592000000000002,
+    "seen": 8,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6887,
+   "d": 2,
+   "op": {
+    "pts": 8.728,
+    "seen": 10,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 10.12,
+    "seen": 8,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6893,
+   "d": 2,
+   "op": {
+    "pts": 10.791999999999998,
+    "seen": 10,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 11.328,
+    "seen": 10,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6897,
+   "d": 2,
+   "op": {
+    "pts": 2.992,
+    "seen": 5,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 2.892,
+    "seen": 4,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6889,
+   "d": 2,
+   "op": {
+    "pts": 11.076,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 13.975999999999999,
+    "seen": 7,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6889,
+   "d": 4,
+   "op": {
+    "pts": 0.0,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.0,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6897,
+   "d": 4,
+   "op": {
+    "pts": 2.64,
+    "seen": 5,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.96,
+    "seen": 1,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6887,
+   "d": 4,
+   "op": {
+    "pts": 4.24,
+    "seen": 5,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 4.48,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6893,
+   "d": 4,
+   "op": {
+    "pts": 0.632,
+    "seen": 3,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 1.1720000000000002,
+    "seen": 2,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6895,
+   "d": 0,
+   "op": {
+    "pts": 7.395999999999998,
+    "seen": 4,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 6.555999999999998,
+    "seen": 5,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6899,
+   "d": 0,
+   "op": {
+    "pts": 31.188,
+    "seen": 7,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 31.548000000000005,
+    "seen": 12,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6891,
+   "d": 0,
+   "op": {
+    "pts": 23.664,
+    "seen": 11,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 24.18,
+    "seen": 9,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6901,
+   "d": 0,
+   "op": {
+    "pts": 21.28,
+    "seen": 5,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 11.972,
+    "seen": 6,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6895,
+   "d": 2,
+   "op": {
+    "pts": 0.24,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.24,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6891,
+   "d": 2,
+   "op": {
+    "pts": 7.3839999999999995,
+    "seen": 4,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 7.659999999999999,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6899,
+   "d": 2,
+   "op": {
+    "pts": 24.02,
+    "seen": 11,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 26.952000000000005,
+    "seen": 11,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6901,
+   "d": 2,
+   "op": {
+    "pts": 19.732,
+    "seen": 6,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 16.04,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6899,
+   "d": 4,
+   "op": {
+    "pts": 22.48,
+    "seen": 9,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 19.348,
+    "seen": 10,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6891,
+   "d": 4,
+   "op": {
+    "pts": 0.12,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.12,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6895,
+   "d": 4,
+   "op": {
+    "pts": 2.2,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 2.2,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6901,
+   "d": 4,
+   "op": {
+    "pts": 5.859999999999999,
+    "seen": 4,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 14.86,
+    "seen": 5,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6903,
+   "d": 0,
+   "op": {
+    "pts": 33.952,
+    "seen": 13,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 37.099999999999994,
+    "seen": 11,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6905,
+   "d": 0,
+   "op": {
+    "pts": 25.979999999999993,
+    "seen": 12,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 23.788,
+    "seen": 11,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6911,
+   "d": 0,
+   "op": {
+    "pts": 17.299999999999997,
+    "seen": 4,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 22.392,
+    "seen": 7,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6907,
+   "d": 0,
+   "op": {
+    "pts": 3.5000000000000004,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 13.796000000000001,
+    "seen": 7,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6903,
+   "d": 2,
+   "op": {
+    "pts": 25.012,
+    "seen": 10,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 29.2,
+    "seen": 12,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6905,
+   "d": 2,
+   "op": {
+    "pts": 12.22,
+    "seen": 5,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 11.76,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6911,
+   "d": 2,
+   "op": {
+    "pts": 2.1,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 1.02,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6907,
+   "d": 2,
+   "op": {
+    "pts": 3.72,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 3.672,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6903,
+   "d": 4,
+   "op": {
+    "pts": 0.18,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.844,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6905,
+   "d": 4,
+   "op": {
+    "pts": 9.48,
+    "seen": 2,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 10.02,
+    "seen": 3,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6911,
+   "d": 4,
+   "op": {
+    "pts": 0.912,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 2.64,
+    "seen": 2,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6907,
+   "d": 4,
+   "op": {
+    "pts": 0.06,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.06,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6915,
+   "d": 0,
+   "op": {
+    "pts": 2.5800000000000005,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 2.6120000000000005,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6909,
+   "d": 0,
+   "op": {
+    "pts": 5.9399999999999995,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 9.572,
+    "seen": 2,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6913,
+   "d": 0,
+   "op": {
+    "pts": 8.46,
+    "seen": 2,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 3.22,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6919,
+   "d": 0,
+   "op": {
+    "pts": 8.275999999999998,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 10.016,
+    "seen": 4,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6915,
+   "d": 2,
+   "op": {
+    "pts": 2.592,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 7.771999999999999,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6909,
+   "d": 2,
+   "op": {
+    "pts": 3.244,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 2.536,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6913,
+   "d": 2,
+   "op": {
+    "pts": 1.4400000000000002,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 8.395999999999999,
+    "seen": 4,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6919,
+   "d": 2,
+   "op": {
+    "pts": 9.528000000000002,
+    "seen": 5,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 7.3519999999999985,
+    "seen": 2,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6909,
+   "d": 4,
+   "op": {
+    "pts": 1.7200000000000002,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 2.9400000000000004,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6915,
+   "d": 4,
+   "op": {
+    "pts": 0.2,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.212,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6913,
+   "d": 4,
+   "op": {
+    "pts": 7.08,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 3.9560000000000004,
+    "seen": 4,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6919,
+   "d": 4,
+   "op": {
+    "pts": 0.10799999999999998,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 1.34,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6847,
+   "d": 0,
+   "op": {
+    "pts": 26.891999999999992,
+    "seen": 9,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 17.328,
+    "seen": 10,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6917,
+   "d": 0,
+   "op": {
+    "pts": 36.72,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 36.14,
+    "seen": 11,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6921,
+   "d": 0,
+   "op": {
+    "pts": 41.264,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 41.112,
+    "seen": 12,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6925,
+   "d": 0,
+   "op": {
+    "pts": 19.347999999999995,
+    "seen": 4,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 21.319999999999997,
+    "seen": 6,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6847,
+   "d": 2,
+   "op": {
+    "pts": 12.84,
+    "seen": 8,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 20.723999999999997,
+    "seen": 8,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6917,
+   "d": 2,
+   "op": {
+    "pts": 36.839999999999996,
+    "seen": 10,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 35.544,
+    "seen": 9,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6921,
+   "d": 2,
+   "op": {
+    "pts": 7.46,
+    "seen": 3,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 5.552,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6925,
+   "d": 2,
+   "op": {
+    "pts": 0.8400000000000001,
+    "seen": 2,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 1.488,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6917,
+   "d": 4,
+   "op": {
+    "pts": 4.8,
+    "seen": 5,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 7.0,
+    "seen": 6,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6847,
+   "d": 4,
+   "op": {
+    "pts": 19.979999999999997,
+    "seen": 9,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 21.84,
+    "seen": 9,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6921,
+   "d": 4,
+   "op": {
+    "pts": 0.0,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.0,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6925,
+   "d": 4,
+   "op": {
+    "pts": 0.0,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.0,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6923,
+   "d": 0,
+   "op": {
+    "pts": 27.24,
+    "seen": 8,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 15.772,
+    "seen": 7,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6929,
+   "d": 0,
+   "op": {
+    "pts": 24.459999999999997,
+    "seen": 9,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 27.363999999999997,
+    "seen": 11,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6931,
+   "d": 0,
+   "op": {
+    "pts": 41.455999999999996,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 37.57999999999999,
+    "seen": 12,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6849,
+   "d": 0,
+   "op": {
+    "pts": 36.036,
+    "seen": 13,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 38.44,
+    "seen": 13,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6923,
+   "d": 2,
+   "op": {
+    "pts": 18.34,
+    "seen": 7,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 9.752,
+    "seen": 6,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6931,
+   "d": 2,
+   "op": {
+    "pts": 7.5040000000000004,
+    "seen": 6,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 5.5200000000000005,
+    "seen": 5,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6929,
+   "d": 2,
+   "op": {
+    "pts": 22.872,
+    "seen": 7,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 32.33599999999999,
+    "seen": 6,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6849,
+   "d": 2,
+   "op": {
+    "pts": 6.295999999999999,
+    "seen": 7,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 12.416,
+    "seen": 9,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6923,
+   "d": 4,
+   "op": {
+    "pts": 12.2,
+    "seen": 6,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 31.464,
+    "seen": 7,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6931,
+   "d": 4,
+   "op": {
+    "pts": 4.2,
+    "seen": 5,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 3.36,
+    "seen": 2,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6929,
+   "d": 4,
+   "op": {
+    "pts": 6.26,
+    "seen": 5,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 8.219999999999999,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6849,
+   "d": 4,
+   "op": {
+    "pts": 6.076,
+    "seen": 3,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 6.191999999999999,
+    "seen": 3,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6927,
+   "d": 0,
+   "op": {
+    "pts": 23.612,
+    "seen": 10,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 24.988,
+    "seen": 12,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6933,
+   "d": 0,
+   "op": {
+    "pts": 15.2,
+    "seen": 11,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 17.288000000000004,
+    "seen": 13,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6935,
+   "d": 0,
+   "op": {
+    "pts": 35.952000000000005,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 35.584,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6937,
+   "d": 0,
+   "op": {
+    "pts": 43.212,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 44.36000000000001,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6935,
+   "d": 2,
+   "op": {
+    "pts": 17.704,
+    "seen": 11,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 17.583999999999996,
+    "seen": 8,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6927,
+   "d": 2,
+   "op": {
+    "pts": 11.388,
+    "seen": 9,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 11.643999999999997,
+    "seen": 8,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6933,
+   "d": 2,
+   "op": {
+    "pts": 16.819999999999997,
+    "seen": 9,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 15.496,
+    "seen": 6,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6937,
+   "d": 2,
+   "op": {
+    "pts": 17.259999999999998,
+    "seen": 11,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 18.759999999999998,
+    "seen": 10,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6927,
+   "d": 4,
+   "op": {
+    "pts": 2.8440000000000003,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 5.579999999999999,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6935,
+   "d": 4,
+   "op": {
+    "pts": 2.4,
+    "seen": 5,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 1.8000000000000003,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6933,
+   "d": 4,
+   "op": {
+    "pts": 5.268000000000001,
+    "seen": 7,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 5.3,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6937,
+   "d": 4,
+   "op": {
+    "pts": 0.5,
+    "seen": 4,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.5,
+    "seen": 1,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6941,
+   "d": 0,
+   "op": {
+    "pts": 14.991999999999997,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 22.392,
+    "seen": 4,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6851,
+   "d": 0,
+   "op": {
+    "pts": 2.588,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 2.588,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6853,
+   "d": 0,
+   "op": {
+    "pts": 25.779999999999998,
+    "seen": 6,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 17.731999999999996,
+    "seen": 6,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6943,
+   "d": 0,
+   "op": {
+    "pts": 23.919999999999998,
+    "seen": 8,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 25.395999999999997,
+    "seen": 9,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6851,
+   "d": 2,
+   "op": {
+    "pts": 1.268,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 1.8400000000000003,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6941,
+   "d": 2,
+   "op": {
+    "pts": 0.524,
+    "seen": 1,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 3.704,
+    "seen": 1,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6853,
+   "d": 2,
+   "op": {
+    "pts": 18.403999999999996,
+    "seen": 4,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 15.223999999999998,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6943,
+   "d": 2,
+   "op": {
+    "pts": 25.664,
+    "seen": 8,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 16.208,
+    "seen": 6,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6851,
+   "d": 4,
+   "op": {
+    "pts": 0.06,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.06,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6941,
+   "d": 4,
+   "op": {
+    "pts": 1.1800000000000002,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 2.7560000000000002,
+    "seen": 2,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6853,
+   "d": 4,
+   "op": {
+    "pts": 6.084,
+    "seen": 4,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 20.34,
+    "seen": 6,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6943,
+   "d": 4,
+   "op": {
+    "pts": 7.268,
+    "seen": 4,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 11.268,
+    "seen": 4,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6855,
+   "d": 0,
+   "op": {
+    "pts": 39.58,
+    "seen": 12,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 41.968,
+    "seen": 13,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6857,
+   "d": 0,
+   "op": {
+    "pts": 24.556000000000004,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 24.700000000000003,
+    "seen": 13,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6939,
+   "d": 0,
+   "op": {
+    "pts": 21.424,
+    "seen": 12,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 16.772,
+    "seen": 11,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6859,
+   "d": 0,
+   "op": {
+    "pts": 7.799999999999999,
+    "seen": 5,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 8.628,
+    "seen": 6,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6855,
+   "d": 2,
+   "op": {
+    "pts": 28.032,
+    "seen": 11,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 29.472000000000005,
+    "seen": 12,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6857,
+   "d": 2,
+   "op": {
+    "pts": 10.872,
+    "seen": 7,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 16.1,
+    "seen": 8,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6939,
+   "d": 2,
+   "op": {
+    "pts": 1.92,
+    "seen": 2,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 3.056,
+    "seen": 3,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6859,
+   "d": 2,
+   "op": {
+    "pts": 0.5640000000000001,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 2.06,
+    "seen": 2,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6857,
+   "d": 4,
+   "op": {
+    "pts": 2.04,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 1.456,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6855,
+   "d": 4,
+   "op": {
+    "pts": 14.979999999999999,
+    "seen": 9,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 15.092,
+    "seen": 10,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6939,
+   "d": 4,
+   "op": {
+    "pts": 5.12,
+    "seen": 1,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 5.12,
+    "seen": 1,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6859,
+   "d": 4,
+   "op": {
+    "pts": 0.16799999999999998,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.368,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6861,
+   "d": 0,
+   "op": {
+    "pts": 14.399999999999999,
+    "seen": 4,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 15.763999999999998,
+    "seen": 6,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6865,
+   "d": 0,
+   "op": {
+    "pts": 21.288,
+    "seen": 5,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 17.079999999999995,
+    "seen": 6,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6863,
+   "d": 0,
+   "op": {
+    "pts": 13.06,
+    "seen": 8,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 27.779999999999998,
+    "seen": 8,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6949,
+   "d": 0,
+   "op": {
+    "pts": 9.619999999999997,
+    "seen": 6,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 14.483999999999998,
+    "seen": 10,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6861,
+   "d": 2,
+   "op": {
+    "pts": 4.8,
+    "seen": 5,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 7.840000000000001,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6865,
+   "d": 2,
+   "op": {
+    "pts": 12.284,
+    "seen": 8,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 16.66,
+    "seen": 6,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6863,
+   "d": 2,
+   "op": {
+    "pts": 2.8800000000000003,
+    "seen": 2,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 7.739999999999999,
+    "seen": 5,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6861,
+   "d": 4,
+   "op": {
+    "pts": 4.220000000000001,
+    "seen": 4,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 10.104,
+    "seen": 6,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6949,
+   "d": 2,
+   "op": {
+    "pts": 4.52,
+    "seen": 3,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 7.203999999999999,
+    "seen": 5,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6865,
+   "d": 4,
+   "op": {
+    "pts": 4.139999999999999,
+    "seen": 3,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 4.555999999999999,
+    "seen": 3,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6863,
+   "d": 4,
+   "op": {
+    "pts": 0.12,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.12,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6945,
+   "d": 0,
+   "op": {
+    "pts": 28.396,
+    "seen": 12,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 33.472,
+    "seen": 12,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6949,
+   "d": 4,
+   "op": {
+    "pts": 2.34,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 6.920000000000001,
+    "seen": 5,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6867,
+   "d": 0,
+   "op": {
+    "pts": 39.22,
+    "seen": 13,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 42.611999999999995,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6871,
+   "d": 0,
+   "op": {
+    "pts": 18.583999999999996,
+    "seen": 8,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 20.779999999999998,
+    "seen": 10,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6945,
+   "d": 2,
+   "op": {
+    "pts": 34.37200000000001,
+    "seen": 13,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 34.012,
+    "seen": 11,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6869,
+   "d": 0,
+   "op": {
+    "pts": 5.959999999999999,
+    "seen": 5,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 13.72,
+    "seen": 7,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6867,
+   "d": 2,
+   "op": {
+    "pts": 10.919999999999998,
+    "seen": 6,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 11.4,
+    "seen": 7,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6945,
+   "d": 4,
+   "op": {
+    "pts": 13.392,
+    "seen": 8,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 14.34,
+    "seen": 7,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6871,
+   "d": 2,
+   "op": {
+    "pts": 3.2,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 5.024,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6867,
+   "d": 4,
+   "op": {
+    "pts": 0.752,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.76,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6869,
+   "d": 2,
+   "op": {
+    "pts": 9.74,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 7.087999999999999,
+    "seen": 2,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6875,
+   "d": 0,
+   "op": {
+    "pts": 9.16,
+    "seen": 2,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 9.620000000000003,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6871,
+   "d": 4,
+   "op": {
+    "pts": 2.5,
+    "seen": 2,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.0,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6869,
+   "d": 4,
+   "op": {
+    "pts": 0.0,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.04,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6873,
+   "d": 0,
+   "op": {
+    "pts": 17.020000000000003,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 11.452000000000002,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6951,
+   "d": 0,
+   "op": {
+    "pts": 26.58,
+    "seen": 8,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 30.892000000000007,
+    "seen": 12,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6875,
+   "d": 2,
+   "op": {
+    "pts": 1.6640000000000001,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 7.04,
+    "seen": 1,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6947,
+   "d": 0,
+   "op": {
+    "pts": 40.224000000000004,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 38.952,
+    "seen": 14,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6873,
+   "d": 2,
+   "op": {
+    "pts": 13.668,
+    "seen": 4,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 17.96,
+    "seen": 3,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6875,
+   "d": 4,
+   "op": {
+    "pts": 0.1,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 6.843999999999999,
+    "seen": 1,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6951,
+   "d": 2,
+   "op": {
+    "pts": 25.455999999999996,
+    "seen": 11,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 30.740000000000002,
+    "seen": 11,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6873,
+   "d": 4,
+   "op": {
+    "pts": 2.76,
+    "seen": 2,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 16.42,
+    "seen": 4,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6947,
+   "d": 2,
+   "op": {
+    "pts": 28.856,
+    "seen": 13,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 29.26,
+    "seen": 13,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6877,
+   "d": 0,
+   "op": {
+    "pts": 27.811999999999994,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 28.240000000000002,
+    "seen": 14,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6951,
+   "d": 4,
+   "op": {
+    "pts": 18.924,
+    "seen": 9,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 20.200000000000003,
+    "seen": 9,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6947,
+   "d": 4,
+   "op": {
+    "pts": 6.928,
+    "seen": 7,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 10.491999999999999,
+    "seen": 8,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6953,
+   "d": 0,
+   "op": {
+    "pts": 31.951999999999998,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 30.384,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6881,
+   "d": 0,
+   "op": {
+    "pts": 27.412000000000003,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 27.332,
+    "seen": 14,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6877,
+   "d": 2,
+   "op": {
+    "pts": 16.34,
+    "seen": 8,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 16.840000000000003,
+    "seen": 7,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6879,
+   "d": 0,
+   "op": {
+    "pts": 29.536000000000005,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 29.804,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6953,
+   "d": 2,
+   "op": {
+    "pts": 9.395999999999999,
+    "seen": 8,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 11.0,
+    "seen": 7,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6877,
+   "d": 4,
+   "op": {
+    "pts": 0.9,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.5,
+    "seen": 1,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 1,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6881,
+   "d": 2,
+   "op": {
+    "pts": 18.728,
+    "seen": 10,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 18.412000000000003,
+    "seen": 8,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6953,
+   "d": 4,
+   "op": {
+    "pts": 0.252,
+    "seen": 4,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.6000000000000001,
+    "seen": 3,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6879,
+   "d": 2,
+   "op": {
+    "pts": 4.779999999999999,
+    "seen": 6,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 4.98,
+    "seen": 6,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6955,
+   "d": 0,
+   "op": {
+    "pts": 24.011999999999997,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 28.708000000000002,
+    "seen": 15,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6881,
+   "d": 4,
+   "op": {
+    "pts": 0.5,
+    "seen": 3,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.648,
+    "seen": 2,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6885,
+   "d": 0,
+   "op": {
+    "pts": 30.359999999999996,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 29.436000000000003,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6879,
+   "d": 4,
+   "op": {
+    "pts": 2.532,
+    "seen": 5,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.0,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6955,
+   "d": 2,
+   "op": {
+    "pts": 9.58,
+    "seen": 8,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 9.2,
+    "seen": 7,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6957,
+   "d": 0,
+   "op": {
+    "pts": 24.804000000000002,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 24.620000000000005,
+    "seen": 14,
+    "big": 5,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6883,
+   "d": 0,
+   "op": {
+    "pts": 24.816000000000003,
+    "seen": 13,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 6,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 25.392000000000003,
+    "seen": 13,
+    "big": 4,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 6,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6885,
+   "d": 2,
+   "op": {
+    "pts": 14.616,
+    "seen": 8,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 17.156,
+    "seen": 8,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6955,
+   "d": 4,
+   "op": {
+    "pts": 4.04,
+    "seen": 3,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 4.628,
+    "seen": 4,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6885,
+   "d": 4,
+   "op": {
+    "pts": 6.0680000000000005,
+    "seen": 6,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 7.472,
+    "seen": 5,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6957,
+   "d": 2,
+   "op": {
+    "pts": 11.188,
+    "seen": 9,
+    "big": 3,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 13.216000000000001,
+    "seen": 10,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6883,
+   "d": 2,
+   "op": {
+    "pts": 8.58,
+    "seen": 9,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 4,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 11.823999999999998,
+    "seen": 10,
+    "big": 2,
+    "no_route": 0,
+    "fc_days": 3,
+    "days": 4,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6957,
+   "d": 4,
+   "op": {
+    "pts": 1.62,
+    "seen": 4,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 1.8,
+    "seen": 2,
+    "big": 1,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  },
+  {
+   "R": 6883,
+   "d": 4,
+   "op": {
+    "pts": 0.06,
+    "seen": 0,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 0,
+    "days": 2,
+    "unscored": 0
+   },
+   "opfc": {
+    "pts": 0.6,
+    "seen": 1,
+    "big": 0,
+    "no_route": 0,
+    "fc_days": 2,
+    "days": 2,
+    "unscored": 0
+   },
+   "same_plan": false
+  }
+ ]
+}

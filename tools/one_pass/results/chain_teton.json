@@ -1,0 +1,44 @@
+{
+ "run": 7836,
+ "nights": 6,
+ "done_nights": 6,
+ "secs": 30.0,
+ "per_night_t": [
+  {
+   "done": 3896,
+   "wait": 533,
+   "light": 6,
+   "loaded": 2498
+  },
+  {
+   "done": 3445,
+   "wait": 505,
+   "light": 0,
+   "loaded": 2056
+  },
+  {
+   "done": 3608,
+   "wait": 545,
+   "light": 0,
+   "loaded": 2173
+  },
+  {
+   "done": 3104,
+   "wait": 520,
+   "light": 0,
+   "loaded": 2103
+  },
+  {
+   "done": 3420,
+   "wait": 507,
+   "light": 0,
+   "loaded": 2087
+  },
+  {
+   "done": 3171,
+   "wait": 506,
+   "light": 0,
+   "loaded": 2075
+  }
+ ]
+}

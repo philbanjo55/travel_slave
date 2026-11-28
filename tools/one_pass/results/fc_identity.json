@@ -1,0 +1,530 @@
+{
+ "bench": [
+  {
+   "R": 6887,
+   "old_run": 10183,
+   "new_run": 10185,
+   "nights": 7,
+   "nights_new": 7,
+   "identical": 7,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 7,
+    "reqs": 21,
+    "secs": 68.8
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 7,
+    "reqs": 21,
+    "secs": 74.2
+   }
+  },
+  {
+   "R": 6923,
+   "old_run": 10204,
+   "new_run": 10205,
+   "nights": 7,
+   "nights_new": 7,
+   "identical": 7,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 7,
+    "reqs": 21,
+    "secs": 71.1
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 7,
+    "reqs": 21,
+    "secs": 74.4
+   }
+  },
+  {
+   "R": 6945,
+   "old_run": 10227,
+   "new_run": 10226,
+   "nights": 7,
+   "nights_new": 7,
+   "identical": 7,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 7,
+    "reqs": 21,
+    "secs": 75.0
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 7,
+    "reqs": 21,
+    "secs": 79.4
+   }
+  },
+  {
+   "R": 7246,
+   "old_run": 10250,
+   "new_run": 10249,
+   "nights": 15,
+   "nights_new": 15,
+   "identical": 15,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 15,
+    "reqs": 34,
+    "secs": 142.3
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 15,
+    "reqs": 35,
+    "secs": 146.1
+   }
+  },
+  {
+   "R": 7260,
+   "old_run": 10286,
+   "new_run": 10287,
+   "nights": 15,
+   "nights_new": 15,
+   "identical": 15,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 15,
+    "reqs": 33,
+    "secs": 139.5
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 15,
+    "reqs": 35,
+    "secs": 140.4
+   }
+  }
+ ],
+ "draft": [
+  {
+   "R": 6887,
+   "old_run": 10124,
+   "new_run": 10123,
+   "nights": 6,
+   "nights_new": 6,
+   "identical": 6,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 6,
+    "reqs": 18,
+    "secs": 62.9
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 6,
+    "reqs": 18,
+    "secs": 58.1
+   }
+  },
+  {
+   "R": 6853,
+   "old_run": 10141,
+   "new_run": 10140,
+   "nights": 6,
+   "nights_new": 6,
+   "identical": 6,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 6,
+    "reqs": 18,
+    "secs": 57.5
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 6,
+    "reqs": 18,
+    "secs": 58.3
+   }
+  },
+  {
+   "R": 7242,
+   "old_run": 10156,
+   "new_run": 10157,
+   "nights": 14,
+   "nights_new": 14,
+   "identical": 14,
+   "diff_nights": [],
+   "ok_old": {
+    "ok": true,
+    "n": 14,
+    "reqs": 25,
+    "secs": 96.8
+   },
+   "ok_new": {
+    "ok": true,
+    "n": 14,
+    "reqs": 26,
+    "secs": 100.4
+   }
+  }
+ ],
+ "now": [
+  {
+   "id": 1,
+   "identical": true,
+   "ok": false,
+   "old_s": 0.5,
+   "new_s": 0.5,
+   "err": "{'ok': False, 'error': 'replay builds missing'}",
+   "plan": null
+  },
+  {
+   "id": 2,
+   "identical": true,
+   "ok": false,
+   "old_s": 0.5,
+   "new_s": 0.5,
+   "err": "{'ok': False, 'error': 'replay builds missing'}",
+   "plan": null
+  },
+  {
+   "id": 3,
+   "identical": true,
+   "ok": false,
+   "old_s": 0.5,
+   "new_s": 0.5,
+   "err": "{'ok': False, 'error': 'replay builds missing'}",
+   "plan": null
+  },
+  {
+   "id": 4,
+   "identical": true,
+   "ok": true,
+   "old_s": 3.2,
+   "new_s": 3.1,
+   "err": null,
+   "plan": [
+    "T.A. Moulton Barn, John Moulton Barn + Pink House 14:45",
+    "Teton Point Turnout 19:45",
+    "Cunningham Cabin 20:30",
+    "Snake River Overlook 21:45",
+    "Glacier View Turnout 22:45",
+    "Blacktail Ponds Overlook 23:45"
+   ]
+  },
+  {
+   "id": 5,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.7,
+   "new_s": 4.9,
+   "err": null,
+   "plan": [
+    "T.A. Moulton Barn, John Moulton Barn + Pink House 14:45",
+    "Teton Point Turnout 19:45",
+    "Cunningham Cabin 20:30",
+    "Snake River Overlook 21:45",
+    "Glacier View Turnout 22:45",
+    "Blacktail Ponds Overlook 23:45"
+   ]
+  },
+  {
+   "id": 6,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.8,
+   "new_s": 4.5,
+   "err": null,
+   "plan": [
+    "Oxbow Bend 18:45",
+    "Teton Point Turnout 19:45",
+    "Snake River Overlook 20:30",
+    "Glacier View Turnout 21:30",
+    "Shane Cabins + Gros Ventre River 22:45"
+   ]
+  },
+  {
+   "id": 7,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.5,
+   "new_s": 2.5,
+   "err": null,
+   "plan": [
+    "T.A. Moulton Barn, John Moulton Barn + Pink House 14:45",
+    "Oxbow Bend 18:45",
+    "Teton Point Turnout 19:45",
+    "Glacier View Turnout 22:30",
+    "Snake River Overlook 23:30"
+   ]
+  },
+  {
+   "id": 8,
+   "identical": true,
+   "ok": true,
+   "old_s": 3.0,
+   "new_s": 3.2,
+   "err": null,
+   "plan": [
+    "T.A. Moulton Barn, John Moulton Barn + Pink House 14:45",
+    "Oxbow Bend 18:45",
+    "Teton Point Turnout 19:45",
+    "Shane Cabins + Gros Ventre River 21:15",
+    "Glacier View Turnout 22:45",
+    "Snake River Overlook 23:45"
+   ]
+  },
+  {
+   "id": 9,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.8,
+   "new_s": 2.3,
+   "err": null,
+   "plan": [
+    "T.A. Moulton Barn, John Moulton Barn + Pink House 14:45",
+    "Oxbow Bend 18:45",
+    "Teton Point Turnout 19:45",
+    "Snake River Overlook 20:45",
+    "Cunningham Cabin 21:30",
+    "Glacier View Turnout 22:45",
+    "Blacktail Ponds Overlook 23:30"
+   ]
+  },
+  {
+   "id": 10,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.8,
+   "new_s": 2.9,
+   "err": null,
+   "plan": [
+    "T.A. Moulton Barn, John Moulton Barn + Pink House 14:45",
+    "Oxbow Bend 18:45",
+    "Teton Point Turnout 19:45",
+    "Snake River Overlook 20:45",
+    "Cunningham Cabin 21:30",
+    "Glacier View Turnout 22:45",
+    "Blacktail Ponds Overlook 23:30"
+   ]
+  },
+  {
+   "id": 11,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.6,
+   "new_s": 2.8,
+   "err": null,
+   "plan": [
+    "T.A. Moulton Barn, John Moulton Barn + Pink House 14:45",
+    "Oxbow Bend 18:45",
+    "Teton Point Turnout 19:45",
+    "Snake River Overlook 20:45",
+    "Cunningham Cabin 21:30",
+    "Glacier View Turnout 22:45",
+    "Blacktail Ponds Overlook 23:30"
+   ]
+  },
+  {
+   "id": 12,
+   "identical": true,
+   "ok": true,
+   "old_s": 3.1,
+   "new_s": 3.4,
+   "err": null,
+   "plan": [
+    "T.A. Moulton Barn, John Moulton Barn + Pink House 13:45",
+    "Shane Cabins + Gros Ventre River 21:15",
+    "Glacier View Turnout 22:45",
+    "Snake River Overlook 23:30"
+   ]
+  },
+  {
+   "id": 13,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.9,
+   "new_s": 3.1,
+   "err": null,
+   "plan": [
+    "Snake River Overlook 20:15",
+    "Shane Cabins + Gros Ventre River 22:15",
+    "Glacier View Turnout 23:45"
+   ]
+  },
+  {
+   "id": 14,
+   "identical": true,
+   "ok": true,
+   "old_s": 5.0,
+   "new_s": 3.4,
+   "err": null,
+   "plan": [
+    "Jenny Lake 13:45",
+    "Teton Point Turnout 20:30",
+    "Snake River Overlook 21:30",
+    "Glacier View Turnout 22:45",
+    "Blacktail Ponds Overlook 23:45"
+   ]
+  },
+  {
+   "id": 17,
+   "identical": true,
+   "ok": true,
+   "old_s": 3.3,
+   "new_s": 2.8,
+   "err": null,
+   "plan": [
+    "Glacier View Turnout 19:30",
+    "Teton Point Turnout 20:45",
+    "Snake River Overlook 21:30",
+    "Blacktail Ponds Overlook 22:30",
+    "North of Kelly 23:30"
+   ]
+  },
+  {
+   "id": 18,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.8,
+   "new_s": 2.7,
+   "err": null,
+   "plan": [
+    "Glacier View Turnout 19:30",
+    "Teton Point Turnout 20:45",
+    "Snake River Overlook 21:30",
+    "Blacktail Ponds Overlook 22:30",
+    "North of Kelly 23:30"
+   ]
+  },
+  {
+   "id": 19,
+   "identical": true,
+   "ok": true,
+   "old_s": 4.7,
+   "new_s": 3.1,
+   "err": null,
+   "plan": [
+    "North of Kelly 19:45",
+    "Glacier View Turnout 20:30",
+    "Snake River Overlook 21:30",
+    "Teton Point Turnout 23:30"
+   ]
+  },
+  {
+   "id": 20,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.9,
+   "new_s": 2.4,
+   "err": null,
+   "plan": [
+    "North of Kelly 19:45",
+    "Glacier View Turnout 20:30",
+    "Snake River Overlook 21:30",
+    "Teton Point Turnout 23:30"
+   ]
+  },
+  {
+   "id": 21,
+   "identical": true,
+   "ok": true,
+   "old_s": 4.4,
+   "new_s": 2.9,
+   "err": null,
+   "plan": [
+    "North of Kelly 19:45",
+    "Glacier View Turnout 20:30",
+    "Snake River Overlook 21:30",
+    "Teton Point Turnout 23:30"
+   ]
+  },
+  {
+   "id": 22,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.4,
+   "new_s": 2.5,
+   "err": null,
+   "plan": [
+    "North of Kelly 19:45",
+    "Glacier View Turnout 20:30",
+    "Snake River Overlook 21:30",
+    "Teton Point Turnout 23:30"
+   ]
+  },
+  {
+   "id": 23,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.8,
+   "new_s": 4.7,
+   "err": null,
+   "plan": [
+    "North of Kelly 19:45",
+    "Glacier View Turnout 20:30",
+    "Snake River Overlook 21:30",
+    "Teton Point Turnout 23:30"
+   ]
+  },
+  {
+   "id": 24,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.5,
+   "new_s": 2.8,
+   "err": null,
+   "plan": [
+    "North of Kelly 19:45",
+    "Glacier View Turnout 20:30",
+    "Snake River Overlook 21:30",
+    "Teton Point Turnout 23:30"
+   ]
+  },
+  {
+   "id": 25,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.4,
+   "new_s": 2.6,
+   "err": null,
+   "plan": [
+    "North of Kelly 19:45",
+    "Glacier View Turnout 20:30",
+    "Snake River Overlook 21:30",
+    "Teton Point Turnout 23:30"
+   ]
+  },
+  {
+   "id": 26,
+   "identical": true,
+   "ok": true,
+   "old_s": 2.4,
+   "new_s": 3.2,
+   "err": null,
+   "plan": [
+    "North of Kelly 19:45",
+    "Glacier View Turnout 20:30",
+    "Snake River Overlook 21:30",
+    "Teton Point Turnout 23:30"
+   ]
+  },
+  {
+   "id": 27,
+   "identical": true,
+   "ok": true,
+   "old_s": 5.7,
+   "new_s": 2.8,
+   "err": null,
+   "plan": [
+    "North of Kelly 19:45",
+    "Glacier View Turnout 20:30",
+    "Snake River Overlook 21:30",
+    "Teton Point Turnout 23:30"
+   ]
+  }
+ ]
+}

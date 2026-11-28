@@ -1,0 +1,431 @@
+[
+ {
+  "R": 6887,
+  "d": 3,
+  "run": 7833,
+  "unit": "g:19",
+  "names": [
+   "Emily's Pond Levee"
+  ],
+  "days": [
+   {
+    "date": "2024-12-05",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 3,
+    "missing": []
+   },
+   {
+    "date": "2024-12-06",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 2,
+    "missing": []
+   },
+   {
+    "date": "2024-12-07",
+    "feasible": false,
+    "checked": true,
+    "alone": false,
+    "n_planned": 2,
+    "missing": [
+     "Teton Point Turnout",
+     "Menor's Ferry",
+     "Emily's Pond Levee"
+    ]
+   }
+  ],
+  "fits_with_plan": true,
+  "fits_alone": true
+ },
+ {
+  "R": 6887,
+  "d": 4,
+  "run": 7842,
+  "unit": "g:20",
+  "names": [
+   "Elk Ranch Flats"
+  ],
+  "days": [
+   {
+    "date": "2024-12-06",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 3,
+    "missing": []
+   },
+   {
+    "date": "2024-12-07",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 2,
+    "missing": []
+   }
+  ],
+  "fits_with_plan": true,
+  "fits_alone": true
+ },
+ {
+  "R": 6893,
+  "d": 0,
+  "run": 7846,
+  "unit": "g:23",
+  "names": [
+   "Snake River Overlook"
+  ],
+  "days": [
+   {
+    "date": "2024-12-08",
+    "feasible": false,
+    "checked": true,
+    "alone": true,
+    "n_planned": 6,
+    "missing": [
+     "Teton Point Turnout",
+     "Willow Flats Overlook",
+     "Shane Cabins + Gros Ventre River",
+     "Snake River Overlook",
+     "Menor's Ferry",
+     "Chapel of the Transfiguration",
+     "Teton Pines Nordic Center \u2014 Groomed Ski"
+    ]
+   },
+   {
+    "date": "2024-12-09",
+    "feasible": false,
+    "checked": true,
+    "alone": true,
+    "n_planned": 4,
+    "missing": [
+     "T.A. Moulton Barn",
+     "John Moulton Barn + Pink House",
+     "Taggart & Bradley Lakes",
+     "Snake River Overlook",
+     "Menor's Ferry"
+    ]
+   },
+   {
+    "date": "2024-12-10",
+    "feasible": false,
+    "checked": true,
+    "alone": true,
+    "n_planned": 4,
+    "missing": [
+     "T.A. Moulton Barn",
+     "John Moulton Barn + Pink House",
+     "Jenny Lake",
+     "Snake River Overlook",
+     "Menor's Ferry"
+    ]
+   },
+   {
+    "date": "2024-12-11",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 3,
+    "missing": []
+   },
+   {
+    "date": "2024-12-12",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 2,
+    "missing": []
+   },
+   {
+    "date": "2024-12-13",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 2,
+    "missing": []
+   }
+  ],
+  "fits_with_plan": true,
+  "fits_alone": true
+ },
+ {
+  "R": 6895,
+  "d": 4,
+  "run": 7874,
+  "unit": "g:24",
+  "names": [
+   "Swan Lake\u2013Heron Pond Loop"
+  ],
+  "days": [
+   {
+    "date": "2024-12-16",
+    "feasible": false,
+    "checked": true,
+    "alone": true,
+    "n_planned": 6,
+    "missing": [
+     "T.A. Moulton Barn",
+     "Teton Point Turnout",
+     "John Moulton Barn + Pink House",
+     "Chapel of the Transfiguration",
+     "Swan Lake\u2013Heron Pond Loop",
+     "Shane Cabins + Gros Ventre River",
+     "Menor's Ferry"
+    ]
+   },
+   {
+    "date": "2024-12-17",
+    "feasible": false,
+    "checked": true,
+    "alone": false,
+    "n_planned": 2,
+    "missing": [
+     "Chapel of the Transfiguration",
+     "Teton Point Turnout",
+     "Swan Lake\u2013Heron Pond Loop"
+    ]
+   }
+  ],
+  "fits_with_plan": false,
+  "fits_alone": true
+ },
+ {
+  "R": 6897,
+  "d": 3,
+  "run": 7828,
+  "unit": "g:19",
+  "names": [
+   "Emily's Pond Levee"
+  ],
+  "days": [
+   {
+    "date": "2024-12-09",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 5,
+    "missing": []
+   },
+   {
+    "date": "2024-12-10",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 3,
+    "missing": []
+   },
+   {
+    "date": "2024-12-11",
+    "feasible": false,
+    "checked": true,
+    "alone": false,
+    "n_planned": 2,
+    "missing": [
+     "Chapel of the Transfiguration",
+     "Teton Point Turnout",
+     "Emily's Pond Levee"
+    ]
+   }
+  ],
+  "fits_with_plan": true,
+  "fits_alone": true
+ },
+ {
+  "R": 6897,
+  "d": 4,
+  "run": 7834,
+  "unit": "g:20",
+  "names": [
+   "Elk Ranch Flats"
+  ],
+  "days": [
+   {
+    "date": "2024-12-10",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 5,
+    "missing": []
+   },
+   {
+    "date": "2024-12-11",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 2,
+    "missing": []
+   }
+  ],
+  "fits_with_plan": true,
+  "fits_alone": true
+ },
+ {
+  "R": 6903,
+  "d": 1,
+  "run": 7895,
+  "unit": "g:17",
+  "names": [
+   "Glacier View Turnout"
+  ],
+  "days": [
+   {
+    "date": "2024-12-19",
+    "feasible": false,
+    "checked": true,
+    "alone": true,
+    "n_planned": 4,
+    "missing": [
+     "T.A. Moulton Barn",
+     "Teton Point Turnout",
+     "John Moulton Barn + Pink House",
+     "Taggart & Bradley Lakes",
+     "Glacier View Turnout"
+    ]
+   },
+   {
+    "date": "2024-12-20",
+    "feasible": false,
+    "checked": true,
+    "alone": true,
+    "n_planned": 4,
+    "missing": [
+     "Shane Cabins + Gros Ventre River",
+     "Jenny Lake",
+     "Glacier View Turnout",
+     "Chapel of the Transfiguration",
+     "Menor's Ferry"
+    ]
+   },
+   {
+    "date": "2024-12-21",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 3,
+    "missing": []
+   },
+   {
+    "date": "2024-12-22",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 2,
+    "missing": []
+   },
+   {
+    "date": "2024-12-23",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 2,
+    "missing": []
+   }
+  ],
+  "fits_with_plan": true,
+  "fits_alone": true
+ },
+ {
+  "R": 6903,
+  "d": 4,
+  "run": 7911,
+  "unit": "g:6",
+  "names": [
+   "Cunningham Cabin"
+  ],
+  "days": [
+   {
+    "date": "2024-12-22",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 4,
+    "missing": []
+   },
+   {
+    "date": "2024-12-23",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 2,
+    "missing": []
+   }
+  ],
+  "fits_with_plan": true,
+  "fits_alone": true
+ },
+ {
+  "R": 6907,
+  "d": 0,
+  "run": 7933,
+  "unit": "g:6",
+  "names": [
+   "Cunningham Cabin"
+  ],
+  "days": [
+   {
+    "date": "2024-12-22",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 6,
+    "missing": []
+   },
+   {
+    "date": "2024-12-23",
+    "feasible": false,
+    "checked": true,
+    "alone": true,
+    "n_planned": 4,
+    "missing": [
+     "T.A. Moulton Barn",
+     "John Moulton Barn + Pink House",
+     "Taggart & Bradley Lakes",
+     "Cunningham Cabin",
+     "Menor's Ferry"
+    ]
+   },
+   {
+    "date": "2024-12-24",
+    "feasible": false,
+    "checked": true,
+    "alone": true,
+    "n_planned": 4,
+    "missing": [
+     "T.A. Moulton Barn",
+     "John Moulton Barn + Pink House",
+     "Jenny Lake",
+     "Cunningham Cabin",
+     "Menor's Ferry"
+    ]
+   },
+   {
+    "date": "2024-12-25",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 3,
+    "missing": []
+   },
+   {
+    "date": "2024-12-26",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 2,
+    "missing": []
+   },
+   {
+    "date": "2024-12-27",
+    "feasible": true,
+    "checked": true,
+    "alone": null,
+    "n_planned": 2,
+    "missing": []
+   }
+  ],
+  "fits_with_plan": true,
+  "fits_alone": true
+ }
+]
