@@ -81,10 +81,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # control for the option 3 stop page: the work branch's app, the same 3D section, twice
+          # control for the option 3 stop page: the work branch's app, the same 3D section, four times
           - shard: a
             only: sun_3d
           - shard: a2
+            only: sun_3d
+          - shard: a3
+            only: sun_3d
+          - shard: a4
             only: sun_3d
     steps:
       - uses: actions/checkout@v4
