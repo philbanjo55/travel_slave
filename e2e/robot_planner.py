@@ -114,6 +114,18 @@ def open_robot():
     return p if ok else None
 
 
+def tap_day(s, short):
+    """Open a day by its tab text ('Nov 28'), or, on the planner look round 2 (option 3), by its week tile, whose label
+    reads 'Day 2, Sat Nov 28, ...'."""
+    if V.tap_text(s, short, exact=True):
+        return True
+    rx = re.compile(r'^Day \d+, \w{3} ' + re.escape(short) + r'(,|$)')
+    hit = next((c for c in s.clickables if rx.match(c['label'])), None)
+    if hit is not None:
+        C.tap(hit['xy']); return True
+    return False
+
+
 def tab_for(date_str):
     d = datetime.date.fromisoformat(date_str)
     return f"{d.strftime('%b')} {d.day}"
@@ -123,7 +135,7 @@ def open_day(date_str, tag):
     want = tab_for(date_str)
     s = C.capture(1)
     for _ in range(5):
-        if V.tap_text(s, want, exact=True):
+        if tap_day(s, want):
             t = C.capture(4)
             V.check(f'robot-{tag}-tab', True, want); return t
         C.adb('shell', 'input', 'swipe', '900', '700', '200', '700', '300'); s = C.capture(0.8)

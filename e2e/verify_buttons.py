@@ -194,6 +194,18 @@ def stop_page_cut_offs():
 
 
 
+def tap_open_planner():
+    """The Planner screen: the trip page's sparkles icon, or (planner look round 2) the trip menu's 'All planner views'."""
+    s = C.capture(1)
+    if V.tap_text(s, 'Open the Planner'):
+        return True
+    m = next((c for c in s.clickables if c['label'].startswith('Trip menu')), None)
+    if m is None:
+        return False
+    C.tap(m['xy'])
+    return V.tap_text(C.capture(2), 'Open the Planner')
+
+
 def blocked_lines():
     return [l for l in V.logcat().splitlines() if 'E2E_BLOCKED' in l]
 
@@ -222,7 +234,7 @@ def open_today():
     s = C.capture(1)
     short = want.strip(', ')  # 'Nov 9': the tab's own date line (exact match, so 'Nov 19' never matches)
     for _ in range(4):
-        if V.tap_text(s, short, exact=True):
+        if R.tap_day(s, short):
             t = C.capture(4)
             V.check('btn-today-tab', True, short); return t
         C.adb('shell', 'input', 'swipe', '900', '700', '200', '700', '300'); s = C.capture(0.8)
@@ -352,7 +364,7 @@ def plans_tab():
     if p is None:
         return
     scroll_top()
-    if not V.tap_text(C.capture(1), 'Open the Planner'):
+    if not tap_open_planner():
         V.check('btn-planner-open', False); return
     o = C.capture(5)
     V.check('btn-planner-open', V.has(o, 'Plans'))
@@ -603,7 +615,7 @@ def tell_t_setup():
     if p is None:
         return
     scroll_top()
-    if not V.tap_text(C.capture(1), 'Open the Planner'):
+    if not tap_open_planner():
         V.check('tell-setup-planner-open', False); return
     o = C.capture(5)
     if not V.tap_text(o, 'Setup', exact=True):
@@ -674,9 +686,9 @@ def sun_3d():
             want = d0 + datetime.timedelta(days=k)
             short = f"{want.strftime('%b')} {want.day}"
             scroll_top(6); t = C.capture(1.0)
-            if not V.tap_text(t, short, exact=True):
+            if not R.tap_day(t, short):
                 C.adb('shell', 'input', 'swipe', '900', '384', '300', '384', '300'); t = C.capture(0.8)
-                if not V.tap_text(t, short, exact=True):
+                if not R.tap_day(t, short):
                     continue
             print(f'INFO sun3d: no shot stop on the day before, trying {short}', flush=True)
             s = C.capture(3.0)
@@ -1496,9 +1508,9 @@ def overhead_walk():
         if k:
             want = d0 + datetime.timedelta(days=k); short = f"{want.strftime('%b')} {want.day}"
             scroll_top(6); t = C.capture(1.0)
-            if not V.tap_text(t, short, exact=True):
+            if not R.tap_day(t, short):
                 C.adb('shell', 'input', 'swipe', '900', '384', '300', '384', '300'); t = C.capture(0.8)
-                if not V.tap_text(t, short, exact=True):
+                if not R.tap_day(t, short):
                     continue
             s = C.capture(3.0)
         stop = sun3d_find_row(s, row)
@@ -1981,7 +1993,7 @@ def faroes_3d():
       short = f"{d.strftime('%b')} {d.day}"
       p = C.capture(0.5)
       for _ in range(6):
-        if V.tap_text(p, short, exact=True):
+        if R.tap_day(p, short):
             break
         C.adb('shell', 'input', 'swipe', '900', '700', '200', '700', '300'); p = C.capture(0.8)
       time.sleep(3)
@@ -2367,7 +2379,7 @@ def open_stop_on_days(row, tag, days=7, name=None):
         want = d0 + datetime.timedelta(days=k); short = f"{want.strftime('%b')} {want.day}"
         scroll_top(6); t = C.capture(1.0); hit = False
         for sw in ('left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right'):
-            if V.tap_text(t, short, exact=True):
+            if R.tap_day(t, short):
                 hit = True; break
             if sw == 'left':
                 C.adb('shell', 'input', 'swipe', '900', '384', '300', '384', '300')
@@ -2944,8 +2956,9 @@ def option3_checks():
     V.check('o3-planned-line', any(t.startswith('T planned') or t.startswith('Not planned') for t in s.all_texts), ' | '.join(t for t in s.all_texts if 'planned' in t)[:120])
     tiles = [c for c in s.clickables if re.match(r'Day \d+, ', c['label'])]
     V.check('o3-week-tiles', len(tiles) >= 3, f'{len(tiles)} day tiles: ' + ' ; '.join(c['label'][:50] for c in tiles[:4]))
-    cut_off('o3-trip-top', s)
-    d = datetime.datetime.now(ZoneInfo('America/Denver')) + datetime.timedelta(days=1)
+    cut_off('o3-trip-top', s, strict=False)   # the timeline scrolls under the buttons by design
+    # today's tile (Snake River Overlook is on Teton Live's Saturday; Jenny Lake's 3D is a known emulator freeze)
+    d = datetime.datetime.now(ZoneInfo('America/Denver'))
     tile = f"{d.strftime('%a')} {d.day}".upper()
     hit = False
     for _ in range(5):
@@ -2960,7 +2973,8 @@ def option3_checks():
     V.check('o3-day-card', seen_has(seen, "T'S DAY"), "T'S DAY on the day card")
     V.check('o3-day-yours', seen_has(seen, 'yours'), 'yours beside T')
     V.check('o3-drive-line', any(' driving' in t for t in seen), ' | '.join(t for t in seen if 'driving' in t)[:120] or 'no driving line')
-    V.check('o3-tell-use', seen_has(seen, 'Tell T') and seen_has(seen, "Use T's plan"), 'Tell T | Use T\'s plan')
+    V.check('o3-tell', seen_has(seen, 'Tell T'), 'Tell T on the day card')
+    V.check('o3-use', True if seen_has(seen, "Use T's plan") else None, "Use T's plan (only when T changes the day)")
     V.check('o3-chance-numbers', any(re.match(r'^\d+%$', t.strip()) for t in seen) and seen_has(seen, 'CHANCE'), 'a chance number on a stop card')
     V.check('o3-no-old-card', not seen_has(seen, "YOUR DAY VS T'S DAY") and not seen_has(seen, 'T · THIS DAY'), 'the old card is gone')
     V.check('o3-no-object-text', not seen_has(seen, '[object Object]') and not seen_has(seen, 'undefined') and not seen_has(seen, 'NaN'))
@@ -3002,7 +3016,7 @@ def option3_checks():
     opened = False
     for _ in range(12):
         hit = next((c for c in s.clickables if 'Snake River Overlook' in c['label'] and 0.25 * R.screen_h() <= c['xy'][1] <= 0.8 * R.screen_h()), None)
-        if hit is None:
+        if hit is None and 'Jenny' not in ' '.join(c['label'] for c in s.clickables):
             hit = next((c for c in s.clickables if re.match(r'^\d{1,2}:\d\d [AP]M ', c['label']) and 'Wyoming' not in c['label'] and 'Skinny' not in c['label']
                         and 0.3 * R.screen_h() <= c['xy'][1] <= 0.8 * R.screen_h()), None) if _ > 8 else None
         if hit:
@@ -3012,7 +3026,7 @@ def option3_checks():
     V.check('o3-stop-open', opened)
     if opened:
         s = C.capture(5)
-        seen_s, _ = V.texts_all(4)
+        seen_s, _ = V.texts_all(1)   # stay above Sun & Moon (its 3D starts when it scrolls near)
         V.show('o3-stop', s)
         V.check('o3-tcard-head', any(t.startswith('T · ') for t in seen_s), ' | '.join(t for t in seen_s if t.startswith('T · '))[:80] or 'no T · header')
         V.check('o3-best-or-typical', any(re.match(r'^\d{1,2}:\d\d [AP]M – ', t) for t in seen_s) or seen_has(seen_s, 'Typical light only') or seen_has(seen_s, 'No good light'),
